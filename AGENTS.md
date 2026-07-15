@@ -23,13 +23,14 @@
 
 ## 2. 当前阶段与优先级
 
-仓库当前处于方案和工程初始化阶段。开始任务前先检查实际目录、配置、ADR、测试和
-Git 状态，不要假设计划中的目录或技术已经存在。
+仓库当前已建立阶段 0 的语料、评测、产品范围和首批 ADR 基线，但语料仍处于
+`draft_pending_license_review`，尚未冻结；代码仓库仍处于工程初始化阶段。开始任务前
+先检查实际目录、配置、ADR、测试和 Git 状态，不要假设计划中的目录或技术已经存在。
 
 按以下顺序推进：
 
-1. 脱敏真实语料、带证据问题和验收指标。
-2. ADR-001 至 ADR-004。
+1. 完成阶段 0 语料的授权复核、人工标注复核和版本冻结。
+2. 遵守已接受的 ADR-001 至 ADR-004，不重复讨论已固定基线，除非触发重新评估条件。
 3. API、Worker、Web、PostgreSQL 和 CI 工程骨架。
 4. 核心数据模型与数据库迁移。
 5. 单个 Markdown 文件的幂等摄入闭环。
@@ -48,6 +49,33 @@ Git 状态，不要假设计划中的目录或技术已经存在。
 
 P0 闭环未完成或没有评测基线时，不实现 P2。接口可以预留，但不要创建未被真实需求
 使用的抽象或基础设施。
+
+### 2.1 阶段 0 基线文件
+
+阶段 0 资料当前位于仓库同级目录 `../cases/`。路径必须相对于本仓库解析，不要在代码、
+配置或文档中写死某台机器的绝对路径。以下文件具有不同职责：
+
+- `../cases/docs/product/mvp-scope.md`：P0/P1/P2 范围、暂定质量门槛和阶段退出条件。
+- `../cases/docs/product/personas-and-stories.md`：persona 与端到端验收故事。
+- `../cases/docs/product/workbench-flow.md`：工作台页面、异常状态和 API/任务交互低保真流程。
+- `../cases/docs/glossary.md`：领域术语的统一定义；代码、schema 和文档优先沿用这些名称。
+- `../cases/docs/privacy/demo-data-policy.md`：语料分类、脱敏、外部模型、日志和公开演示规则。
+- `../cases/docs/adr/001-*.md` 至 `004-*.md`：模块化单体、PostgreSQL/pgvector、Agent
+  Runtime 边界和本地优先数据边界的已接受决策。
+- `../cases/evals/corpus/v0/manifest.yaml`：评测语料的唯一允许列表、Space、来源版本和
+  使用权限；周边目录不是可摄入语料。
+- `../cases/evals/corpus/v0/README.md`：manifest 的路径、哈希和使用说明。
+- `../cases/evals/corpus/v0/fixtures/`：版本、来源冲突和恶意文档的确定性测试 fixture，
+  不用于代表真实业务语料质量。
+- `../cases/evals/datasets/knowledge-qa-v0/cases.jsonl`：30 条带 claim-evidence 关系的
+  开发/holdout 评测用例。
+- `../cases/evals/datasets/knowledge-qa-v0/schema.json`：每条 JSONL 记录必须满足的 JSON
+  Schema。
+- `../cases/evals/datasets/knowledge-qa-v0/README.md`：Evidence、拒答、split 和评分语义。
+
+开始摄入、检索、引用、问答、Skill 或评测相关任务前，必须阅读与变更相关的上述文件。
+工程文档迁入本仓库时应保留历史并一次性更新引用；不得在 `code/docs` 与 `cases/docs`
+长期维护内容分叉的两个权威版本。
 
 ## 3. 架构不变量
 
@@ -186,6 +214,22 @@ Knowledge Service 只负责返回带分数、来源和定位信息的证据，�
 测试和演示语料必须脱敏。不要把真实个人笔记、论文授权受限内容、API 响应缓存或
 Embedding 产物直接提交仓库，除非已有明确授权和数据策略。
 
+### 8.1 基线语料使用规则
+
+- 只处理 `../cases/evals/corpus/v0/manifest.yaml` 中明确列出的来源。禁止递归摄入整个
+  `../cases/`；其周边包含缓存、二进制、个人标识、受限教学材料和未审核资源。
+- manifest 中的 `path` 相对于 `../cases/` 根目录解析。读取来源前校验原始文件字节的
+  SHA-256 与 `content_sha256` 一致；不一致视为新版本或语料损坏，不能静默继续。
+- `sensitivity`、`allowed_uses` 和 `redistribution` 同时生效，使用范围取最严格交集。
+  只有 `public_demo` 且明确包含 `repository_fixture` 的来源可进入仓库或公开演示包。
+- `private_local`、`restricted_educational`、`undetermined` 和
+  `prohibited_pending_review` 来源只能按 manifest 的授权在本地处理，不得发送给外部
+  Provider、提交仓库、制作公开截图或写入包含正文的日志。
+- 解析缓存、Embedding、Evidence quote、模型回答、评测报告和截图继承来源的敏感级别，
+  不会因为是派生数据而自动变为可公开。
+- 当前 manifest 状态为 `draft_pending_license_review`。许可证复核完成前不得将整个
+  corpus 宣称为公开、可发布或已冻结数据集。
+
 ## 9. 测试与评测要求
 
 变更的测试范围与风险匹配：
@@ -203,6 +247,29 @@ CI 中的大多数测试不得依赖真实付费模型。为确定性逻辑提�
 修复缺陷时先增加能复现问题的测试。检索和回答效果不能只凭单个演示问题判断；至少
 比较关键词、向量和混合基线。LLM-as-judge 只能作为一个信号，关键用例还需规则、
 证据匹配或人工抽检。
+
+### 9.1 基线评测集使用规则
+
+- `cases.jsonl` 每个非空行是一条独立 JSON 记录，必须通过同目录 `schema.json` 校验；
+  不用注释、尾逗号或跨行 JSON 对象扩展 JSONL 格式。
+- `space_id` 是查询唯一可见的 Space。回答用例的 Evidence 必须属于该 Space；拒答用例
+  中的 `reference_scope` 只是人工复核范围，不是支持答案的证据。
+- `source_version` 必须等于 manifest 中对应来源的 `content_sha256`。PDF 页码和文本行号
+  都从 1 开始，文本行区间包含首尾行。
+- `quote` 必须真实出现在指定页或行区间内。`excerpt_sha256` 的规范化算法为 Unicode
+  NFKC、连续空白折叠为一个空格、去除首尾空白，然后对 UTF-8 字节计算 SHA-256。
+- 每个 `answer_claims[].id` 必须至少被一个 `evidence[].supports_claims` 覆盖。拒答用例的
+  `answer_claims` 和 `evidence` 必须为空，并通过 `forbidden_claims` 与
+  `retrieval_expectations` 约束不可接受行为。
+- `development` split 可用于诊断和调参；`holdout` split 不得用于 prompt、分块、权重、
+  top-k、模型或阈值调优。只在预先约定的里程碑运行并记录 holdout 结果。
+- `fixtures/` 只验证版本、冲突、隔离和安全等确定性行为，不得混入真实语料指标后声称
+  检索质量提升。
+- 修改来源、问题、claim、Evidence、split 或评分语义后，至少检查：YAML/JSON/JSONL
+  可解析、JSON Schema 通过、ID/source_key 唯一、所有路径和哈希有效、quote 可回到定位、
+  claim 覆盖完整、Evidence 不跨 Space、私有来源没有 `repository_fixture` 权限。
+- 数据集冻结后，影响期望行为或评分语义的修改必须创建新版本；修复旧版本时保留变更
+  记录，不得原地重写后仍声称结果可与旧 EvalRun 直接比较。
 
 ## 10. 可观测性要求
 
@@ -257,7 +324,8 @@ deploy/                   本地与发布部署配置
 
 开始实现前：
 
-1. 阅读 `README.md`、本文件、实施计划及相关 ADR。
+1. 阅读 `README.md`、本文件、实施计划及相关 ADR；摄入、检索、引用、问答、Skill、
+   前端旅程或评测任务还必须读取 `../cases/` 中对应的阶段 0 基线文件。
 2. 检查当前工作树，保留并兼容已有用户改动。
 3. 确认任务属于哪个阶段和优先级，并追踪从入口到数据层的现有实现。
 4. 明确行为变化、失败模式、迁移影响和验证方式。
@@ -276,7 +344,7 @@ deploy/                   本地与发布部署配置
 1. 运行受影响模块的格式化、lint、类型检查和测试。
 2. 对共享接口、迁移、摄入、检索或用户旅程变更扩大测试范围。
 3. 检查日志、错误响应和测试 fixture 是否泄漏隐私或密钥。
-4. 更新受影响文档、OpenAPI、Skill schema、迁移说明或 ADR。
+4. 更新受影响文档、OpenAPI、Skill schema、评测 schema/manifest、迁移说明或 ADR。
 5. 汇报实际运行的验证命令；无法运行的检查必须说明原因。
 
 ## 14. 命令发现规则
@@ -316,6 +384,6 @@ ADR 必须包含背景、决定、备选方案、后果和重新评估触发条�
 - 长任务可观测、可恢复；写入幂等；失败对用户可解释。
 - 引用可定位，空间隔离和删除语义没有退化。
 - 不泄漏密钥、私密正文或敏感日志。
+- 语料使用符合 manifest 和隐私策略；评测引用、版本、Space 与 holdout 语义没有退化。
 - API、数据迁移、Skill、prompt、评测集和文档按需版本化或更新。
 - 没有为了展示扩展性而提前引入未使用的服务、Agent 或抽象。
-
