@@ -143,7 +143,7 @@ API / Worker -> Application -> Domain Ports
 
 - 建立 Python 项目和锁文件，只创建首批实际使用的包。
 - 初始化 Vite/React/TypeScript 应用和锁文件。
-- 配置 Ruff、mypy、pytest、ESLint、TypeScript 和前端测试框架。
+- 配置 Ruff、mypy、pytest、Oxlint、TypeScript 和前端测试框架。
 - 添加 `.env.example`，只提供非敏感默认值和变量说明。
 - 定义本地与 CI 使用的规范命令，避免维护两套入口。
 
@@ -156,11 +156,11 @@ uv run ruff check .
 uv run mypy apps packages
 uv run pytest
 uv run alembic upgrade head
-corepack pnpm --dir apps/web install --frozen-lockfile
-corepack pnpm --dir apps/web lint
-corepack pnpm --dir apps/web typecheck
-corepack pnpm --dir apps/web test
-corepack pnpm --dir apps/web build
+corepack pnpm@10.20.0 --dir apps/web install --frozen-lockfile
+corepack pnpm@10.20.0 --dir apps/web lint
+corepack pnpm@10.20.0 --dir apps/web typecheck
+corepack pnpm@10.20.0 --dir apps/web test
+corepack pnpm@10.20.0 --dir apps/web build
 docker compose -f deploy/compose.yaml up --build
 ```
 

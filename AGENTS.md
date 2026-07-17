@@ -1,7 +1,7 @@
 # AGENTS.md
 
 本文件适用于整个仓库。它将 `README.md` 中的项目目标和
-`code/docs/project-implementation-plan.md` 中的实施方案转化为日常开发约束。
+`docs/project-implementation-plan.md` 中的实施方案转化为日常开发约束。
 
 ## 1. 项目目标
 
@@ -18,7 +18,7 @@
 5. 同一知识能力能够从 Web、HTTP API 和 Skill 调用。
 6. 检索和回答质量能够通过版本化评测集回归验证。
 
-完整方案见 `code/docs/project-implementation-plan.md`。实现与方案冲突时，不要静默偏离；
+完整方案见 `docs/project-implementation-plan.md`。实现与方案冲突时，不要静默偏离；
 对影响模块边界、数据模型、公开接口或技术基线的改变，应新增或更新 ADR。
 
 ## 2. 当前阶段与优先级
@@ -46,7 +46,7 @@
 - `cases/docs/product/personas-and-stories.md`：persona 与验收故事。
 - `cases/docs/glossary.md`：领域术语统一定义。
 - `cases/docs/privacy/demo-data-policy.md`：语料分类、脱敏和演示规则。
-- `code/docs/adr/001-*.md` 至 `004-*.md`：已接受架构决策。
+- `docs/adr/001-*.md` 至 `004-*.md`：已接受架构决策。
 - `cases/evals/corpus/v0/manifest.yaml`：评测语料的唯一允许列表。
 - `cases/evals/corpus/v0/fixtures/`：确定性测试 fixture。
 - `cases/evals/datasets/knowledge-qa-v0/cases.jsonl`：评测用例。
@@ -139,7 +139,7 @@
 
 ## 7. ADR 触发条件
 
-出现以下情况时新增或更新 `code/docs/adr/` 下的记录：
+出现以下情况时新增或更新 `docs/adr/` 下的记录：
 
 - 改变模块化单体、Worker 或部署边界。
 - 更换数据库、检索后端、任务队列、Agent 引擎或主要前端框架。

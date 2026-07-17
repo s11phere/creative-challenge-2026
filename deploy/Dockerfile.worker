@@ -6,8 +6,8 @@ WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
 COPY packages/ packages/
-COPY apps/api/pyproject.toml apps/api/
-COPY apps/worker/pyproject.toml apps/worker/
+COPY apps/api/pyproject.toml apps/api/pyproject.toml
+COPY apps/worker/ apps/worker/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
@@ -26,4 +26,4 @@ COPY packages/ packages/
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-CMD ["python", "-m", "apps.worker.main"]
+CMD ["python", "-m", "worker.main"]

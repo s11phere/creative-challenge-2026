@@ -30,7 +30,7 @@ Checked on 2026-07-17:
 | Python 3.12 | Missing; Python 3.13 and 3.14 are installed | Install with uv before backend commands |
 | uv | 0.11.1 installed | No installation needed |
 | Node.js | 24.11.0 installed | No installation needed |
-| pnpm | 10.20.0 installed | Invoke through `corepack pnpm`; do not call `pnpm.ps1` |
+| pnpm | 10.20.0 installed | Invoke through `corepack pnpm@10.20.0`; do not call `pnpm.ps1` |
 | Docker CLI / Compose | 29.4.0 / 5.1.2 installed | Start Docker Desktop or another Docker Engine |
 | Docker daemon | Not running or not reachable | Start the engine and verify `docker version` shows a Server section |
 | PostgreSQL / pgvector | No local service is required yet | Step 7 supplies the Compose service |
@@ -55,12 +55,12 @@ Enable the pinned pnpm version after step 1 has added the `packageManager` field
 ```powershell
 corepack enable
 corepack install
-corepack pnpm --version
+corepack pnpm@10.20.0 --version
 ```
 
 PowerShell on this machine blocks the globally installed `pnpm.ps1`. The canonical commands use
-`corepack pnpm`, which avoids relying on that script. Do not weaken the machine-wide execution policy
-for this project.
+`corepack pnpm@10.20.0`, which both pins the selected version and avoids relying on that script. Do not
+weaken the machine-wide execution policy for this project.
 
 Start Docker Desktop, then verify both client and server:
 

@@ -21,6 +21,10 @@ members = [
 name = "agent-knowledge-repo"
 version = "0.1.0"
 source = { virtual = "." }
+dependencies = [
+    { name = "api" },
+    { name = "worker" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -34,6 +38,10 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [
+    { name = "api", editable = "apps/api" },
+    { name = "worker", editable = "apps/worker" },
+]
 
 [package.metadata.requires-dev]
 dev = [
@@ -94,7 +102,7 @@ wheels = [
 [[package]]
 name = "api"
 version = "0.1.0"
-source = { virtual = "apps/api" }
+source = { editable = "apps/api" }
 dependencies = [
     { name = "application" },
     { name = "fastapi" },
@@ -1334,7 +1342,7 @@ wheels = [
 [[package]]
 name = "worker"
 version = "0.1.0"
-source = { virtual = "apps/worker" }
+source = { editable = "apps/worker" }
 dependencies = [
     { name = "application" },
     { name = "dramatiq" },
