@@ -241,6 +241,42 @@ docker compose -f deploy/compose.yaml up --build
 
 **完成标准**：一次 readiness 请求可以在 API 日志、数据库 span 和响应头中用同一 trace 定位；诊断任务可从入队日志关联到 Worker 日志。
 
+**状态**：已于 2026-07-17 完成。
+
+实际交付：
+
+- API 中间件支持 W3C `traceparent`，并生成或校验 `X-Trace-ID`、`X-Request-ID`；
+  正常响应、错误响应和统一错误体使用同一 trace。
+- 新增进程级 JSON 日志配置和 ContextVar 关联上下文，统一输出时间、级别、服务、环境、
+  trace、request、task、事件和有限的操作元数据。
+- 新增集中脱敏过滤器，覆盖 Authorization、Cookie、API Key、密码、数据库 URL、prompt、
+  请求体和文档正文；异常日志默认只保留错误类型，不输出异常消息或正文。
+- 配置 OpenTelemetry SDK 与 OTLP/HTTP exporter；SQLAlchemy、Redis 和 HTTPX 使用官方
+  instrumentation，readiness 额外提供 PostgreSQL 与 Redis 依赖 span。
+- 诊断任务新增 producer/consumer span 和入队日志，消息中的 trace 在生产、消费、失败
+  回调及结构化日志间保持一致。
+- Collector 不可用时 exporter 异步降级，不阻塞 API/Worker 启动；未配置 endpoint 时
+  保留本地 tracing，不尝试外发。
+- 锁定并核验 PostgreSQL/pgvector、Redis 和 OTel Collector 的有效镜像 digest，修复
+  原摘要无法从 registry 解析的问题。
+- ModelGateway 尚未实现；HTTPX 自动插桩已在进程启动时启用，Step 5 Provider Adapter
+  将直接继承出站 trace，不在本步骤伪造模型调用。
+
+2026-07-17 验证记录：
+
+- 后端格式、lint、严格类型检查和 33 个单元测试通过；测试覆盖恶意/超长关联 ID、
+  错误体与响应头一致性、日志 schema、敏感信息脱敏及数据库/Worker trace 延续。
+- 使用不可达 OTLP endpoint 启动 smoke test，配置成功且进程正常退出，证明 Collector
+  故障不阻塞启动。
+- 隔离启动 PostgreSQL/pgvector、Redis 和 OTel Collector；一次真实 readiness 返回
+  `200/ready`，响应头和 API JSON 日志使用 trace
+  `1234567890abcdef1234567890abcdef`。
+- Collector 在同一 trace 下收到 HTTP server、`postgresql.ready`、SQLAlchemy
+  `connect/SELECT 1`、Redis `PING` 和 `redis.ping` span；未记录请求体或 SQL 参数。
+- 通过真实 Redis 执行诊断任务，enqueue、started、completed 日志共享同一 trace/task，
+  Collector 收到对应的 `diagnostic_task.enqueue` 与 `diagnostic_task.process` span。
+- 验证后删除隔离容器、网络和数据卷，未影响其他 Compose project。
+
 ### 步骤 5：ModelGateway 与测试替身
 
 **工作量：4-5 人日**

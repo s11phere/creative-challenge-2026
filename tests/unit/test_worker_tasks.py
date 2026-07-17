@@ -7,9 +7,15 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from pytest import MonkeyPatch
+from worker import tasks
 from worker.tasks import (
     diagnostic_task,
     diagnostic_task_permanently_failed,
+    enqueue_diagnostic_task,
     process_diagnostic_task,
 )
 
@@ -85,5 +91,45 @@ def test_permanent_failure_log_contains_only_control_metadata(
     record = caplog.records[-1]
     assert record.message == "diagnostic_task_permanently_failed"
     assert record.task_id == payload["task_id"]
-    assert record.trace_id == payload["trace_id"]
+    assert record.trace_id == payload["trace_id"].replace("-", "")
     assert record.retries == 3
+
+
+def test_diagnostic_consumer_span_continues_message_trace(monkeypatch: MonkeyPatch) -> None:
+    payload = diagnostic_payload()
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(tasks, "tracer", provider.get_tracer("test.worker"))
+
+    diagnostic_task.fn(**payload)
+
+    spans = exporter.get_finished_spans()
+    assert [span.name for span in spans] == ["diagnostic_task.process"]
+    assert format(spans[0].context.trace_id, "032x") == payload["trace_id"].replace("-", "")
+
+
+def test_enqueue_canonicalizes_trace_and_keeps_body_free(monkeypatch: MonkeyPatch) -> None:
+    payload = diagnostic_payload()
+    captured: dict[str, object] = {}
+
+    class FakeMessage:
+        message_id = "message-123"
+
+    def fake_send(**kwargs: object) -> FakeMessage:
+        captured.update(kwargs)
+        return FakeMessage()
+
+    monkeypatch.setattr(diagnostic_task, "send", fake_send)
+
+    message = enqueue_diagnostic_task(**payload)
+
+    assert message.message_id == "message-123"
+    assert captured["trace_id"] == payload["trace_id"].replace("-", "")
+    assert set(captured) == {
+        "task_id",
+        "trace_id",
+        "event_version",
+        "count",
+        "requested_at",
+    }

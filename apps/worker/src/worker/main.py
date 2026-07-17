@@ -5,6 +5,7 @@ import logging
 from dramatiq.cli import main as dramatiq_main
 from dramatiq.cli import make_argument_parser
 from infrastructure.config import settings
+from infrastructure.logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,12 @@ logger = logging.getLogger(__name__)
 def main() -> None:
     """Start a bounded Worker process with signal-aware graceful shutdown."""
     settings.validate_secrets()
+    configure_logging(
+        service="worker",
+        environment=settings.app_env,
+        level=settings.log_level,
+        log_format=settings.log_format,
+    )
     logger.info("worker_starting")
     args = make_argument_parser().parse_args(  # type: ignore[no-untyped-call]
         [
@@ -21,7 +28,8 @@ def main() -> None:
             str(settings.worker_threads),
             "--worker-shutdown-timeout",
             str(settings.worker_shutdown_timeout_ms),
-            "worker.tasks:broker",
+            "--skip-logging",
+            "worker.tasks:setup_worker",
         ]
     )
     exit_code = dramatiq_main(args)  # type: ignore[no-untyped-call]

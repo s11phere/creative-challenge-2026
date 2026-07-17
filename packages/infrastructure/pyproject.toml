@@ -12,6 +12,10 @@ dependencies = [
     "dramatiq",
     "opentelemetry-api",
     "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp-proto-http",
+    "opentelemetry-instrumentation-httpx",
+    "opentelemetry-instrumentation-redis",
+    "opentelemetry-instrumentation-sqlalchemy",
 ]
 
 [build-system]

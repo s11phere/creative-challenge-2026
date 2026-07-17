@@ -10,9 +10,13 @@ from typing import Any, Literal
 from fastapi import FastAPI, Response
 from infrastructure.config import settings
 from infrastructure.database import Database
+from infrastructure.telemetry import configure_observability
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
 
 from .errors import ErrorResponse, register_error_handlers
+from .observability import TraceMiddleware
 
 
 class LiveResponse(BaseModel):
@@ -50,10 +54,16 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         settings.validate_secrets()
+        observability = configure_observability(settings, service_name="api")
+        database.instrument()
         try:
             yield
         finally:
             await database.dispose()
+            await asyncio.to_thread(
+                observability.provider.force_flush,
+                int(settings.otel_export_timeout_seconds * 1000),
+            )
 
     app = FastAPI(
         title="Agent Knowledge Repository",
@@ -62,6 +72,7 @@ def create_app() -> FastAPI:
     )
     app.state.database = database
 
+    app.add_middleware(TraceMiddleware)
     register_error_handlers(app)
     _register_routes(app)
     return app
@@ -99,13 +110,19 @@ def _register_routes(app: FastAPI) -> None:
         async def _check_redis() -> DependencyCheck:
             import redis.asyncio as aioredis  # noqa: PLC0415
 
-            try:
-                r = aioredis.from_url(settings.redis_url, socket_timeout=3)
-                await r.ping()
-                await r.aclose()
-                return DependencyCheck(healthy=True, code="REDIS_OK")
-            except Exception:
-                return DependencyCheck(healthy=False, code="REDIS_UNREACHABLE")
+            tracer = trace.get_tracer("api.dependencies")
+            with tracer.start_as_current_span(
+                "redis.ping",
+                kind=SpanKind.CLIENT,
+                attributes={"db.system.name": "redis", "server.address": settings.redis_host},
+            ):
+                try:
+                    r = aioredis.from_url(settings.redis_url, socket_timeout=3)
+                    await r.ping()
+                    await r.aclose()
+                    return DependencyCheck(healthy=True, code="REDIS_OK")
+                except Exception:
+                    return DependencyCheck(healthy=False, code="REDIS_UNREACHABLE")
 
         pg_result, redis_result = await asyncio.gather(_check_postgres(), _check_redis())
 

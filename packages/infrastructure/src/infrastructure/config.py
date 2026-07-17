@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "json"
 
+    # --- OpenTelemetry ---
+    otlp_endpoint: str | None = None
+    otel_export_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+
     def validate_secrets(self) -> None:
         """Raise ValueError if required secrets are not set (production only)."""
         if self.app_env != "production":

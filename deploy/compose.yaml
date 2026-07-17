@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg16@sha256:011c0f8a1e199b6f0f96b637125b5b4971ffad0aee2bd5f4ecb6856219e0ed3b
+    image: pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-agent_knowledge}
       POSTGRES_USER: ${POSTGRES_USER:-app}
@@ -16,7 +16,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine@sha256:eff782af732aa34345ae3903510581a111ded08b9e1a59b295327a4ac8c57e2a
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     ports:
       - "${REDIS_PORT:-6379}:6379"
     healthcheck:
@@ -42,6 +42,8 @@ services:
       REDIS_PORT: 6379
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-json}
+      OTLP_ENDPOINT: ${OTLP_ENDPOINT:-}
+      OTEL_EXPORT_TIMEOUT_SECONDS: ${OTEL_EXPORT_TIMEOUT_SECONDS:-2}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -74,6 +76,8 @@ services:
       REDIS_PORT: 6379
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-json}
+      OTLP_ENDPOINT: ${OTLP_ENDPOINT:-}
+      OTEL_EXPORT_TIMEOUT_SECONDS: ${OTEL_EXPORT_TIMEOUT_SECONDS:-2}
     depends_on:
       postgres:
         condition: service_healthy
@@ -100,7 +104,7 @@ services:
   otel-collector:
     profiles:
       - otel
-    image: otel/opentelemetry-collector-contrib:0.121.0@sha256:611592f4e18acc8e1a1d2d9f99d80b8ea25c845e8a00913ad72469d6813d0c6f
+    image: otel/opentelemetry-collector-contrib:0.121.0@sha256:789689988e379c58ac12b07718dbcf4b23c2214bd804173c1c77af346d381c15
     ports:
       - "4317:4317"
       - "4318:4318"
