@@ -377,7 +377,7 @@ docker compose -f deploy/compose.yaml up --build
 
 **完成标准**：全新环境执行一次文档化命令即可启动；CI 从空缓存运行通过；停止后再次启动不会破坏数据库状态。
 
-**状态**：已于 2026-07-18 完成实现与本地验收；等待提交后的首次 GitHub Actions 运行确认。
+**状态**：已于 2026-07-18 完成实现与本地验收；GitHub Actions 由用户确认运行正常。
 
 实际交付：
 
@@ -407,8 +407,8 @@ docker compose -f deploy/compose.yaml up --build
 - Worker 成功消费并确认无正文诊断消息，Redis 中无诊断队列残留；非法版本消息完成有限重试
   后进入 `diagnostics.XQ`。本次 Docker 日志未重现 Step 3 已验证的 actor started/completed
   事件，因此该容器日志差异保留为后续排查项，不影响队列消费与健康验收结论。
-- GitHub Actions 文件尚未提交到远端，托管 runner 的首次实际运行只能在提交并推送后确认；
-  本地已逐项执行等价命令与冷构建。
+- 本地已逐项执行 CI 等价命令与冷构建；提交后的 GitHub Actions 由用户于 2026-07-18
+  确认运行正常。
 
 ### 步骤 8：验收、文档与移交
 
@@ -421,6 +421,31 @@ docker compose -f deploy/compose.yaml up --build
 - 检查日志、测试数据、构建产物和 Git diff 中是否存在密钥或私密正文。
 
 **完成标准**：未参与初始化的开发者能仅按文档启动系统并完成 smoke test。
+
+**状态**：已于 2026-07-18 完成实现与本地验收；GitHub Actions 由用户确认运行正常。
+
+实际交付：
+
+- 将根 README 从概念稿更新为当前能力、阶段边界、单命令 Compose 启动、smoke test、质量
+  门禁、迁移、OpenAPI、端口、停止与安全清理的统一入口。
+- 新增 `docs/troubleshooting.md`，记录环境变量、端口冲突、迁移、readiness 机器码、Web、
+  Worker、OTel、Windows pnpm、registry 和数据清理的恢复路径及已知限制。
+- 新增 `docs/stage-1-acceptance.md`，保存规范命令、本地结果、退出条件映射、外部确认和移交
+  结论；OpenAPI 继续由脚本确定性生成并由 CI 检查差异。
+- 明确项目状态为“阶段 1 工程实现与验收完成，等待阶段 0 数据门禁”，没有
+  宣称摄入、检索、问答、引用或 Skill 已实现。
+
+2026-07-18 验证记录：
+
+- 按 README 以独立 Compose project 从空卷启动，PostgreSQL、Redis、API、Worker 和 Web
+  均为 healthy，`migrate` 成功退出；live、ready、Web 页面和 nginx `/api` 代理通过。
+- 实时 OpenAPI 和提交文件均只包含 `/api/v1/health/live` 与 `/api/v1/health/ready`；数据库
+  只有 `alembic_version`，没有提前创建阶段 2 业务表。
+- 后端格式、lint、严格类型检查、59 个默认测试、3 个真实依赖集成测试、迁移降级/升级，
+  以及前端依赖冻结安装、lint、类型检查、6 个测试和生产构建全部通过。
+- 13 个 Markdown 文件的本地链接全部可解析；Step 8 差异、容器日志和仓库扫描未发现本地
+  验收值、私钥、真实连接凭据、私密正文或敏感 Provider 响应。
+- 当前环境无私有仓库 Actions 读取凭据；GitHub Actions 结果由用户于 2026-07-18 确认正常。
 
 ## 6. 工作量汇总
 

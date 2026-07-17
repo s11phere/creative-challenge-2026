@@ -23,11 +23,27 @@
 
 ## 2. 当前阶段与优先级
 
+截至 2026-07-18，阶段 1 Step 0-8 已完成实现与验收，GitHub Actions 已由用户确认运行
+正常。项目仍受阶段 0 数据门禁约束，状态为“阶段 1 工程完成，等待阶段 0 数据门禁”，
+不能据此宣称摄入、检索、问答、引用、Agent 或 Skill 业务已经可用。
+
+当前已落地的用户界面只展示真实健康状态；公开 OpenAPI 只包含
+`/api/v1/health/live` 和 `/api/v1/health/ready`。数据库只启用 pgvector 并维护
+`alembic_version`，尚无阶段 2 业务表。
+
+阶段 1 的移交与运行事实以以下文件为准：
+
+- `README.md`：当前能力、单命令启动、smoke test 和规范开发命令。
+- `docs/stage-1-acceptance.md`：验收结果、退出条件、外部确认和已知问题。
+- `docs/troubleshooting.md`：故障恢复、清理方式和当前功能限制。
+- `docs/architecture.md`：已实现组件、依赖方向和阶段状态。
+- `docs/development-environment.md`：工具版本、容器镜像和 Provider 数据边界。
+
 按以下顺序推进：
 
 1. 完成阶段 0 语料的授权复核、人工标注复核和版本冻结。
 2. 遵守已接受的 ADR-001 至 ADR-004，不重复讨论已固定基线。
-3. API、Worker、Web、PostgreSQL 和 CI 工程骨架。
+3. 保持已验收的 API、Worker、Web、PostgreSQL、Redis、Compose 和 CI 工程基线稳定。
 4. 核心数据模型与数据库迁移。
 5. 单个 Markdown 文件的幂等摄入闭环。
 6. 关键词、向量和混合检索基线及评测工具。
@@ -91,17 +107,42 @@
 
 ## 4. 技术基线
 
-默认技术方向：
+已验证的阶段 1 技术基线：
 
-- Python 3.12、FastAPI、Pydantic、SQLAlchemy、Alembic
+- Python 3.12、uv 0.11.x、FastAPI、Pydantic、SQLAlchemy、Alembic
 - PostgreSQL 16+ 与 pgvector；首期关键词检索使用 PostgreSQL FTS
 - Redis + Dramatiq
-- 自有 Agent Runtime 接口 + LangGraph Adapter
-- React、TypeScript、Vite、TanStack Query
+- 自有 Agent Runtime 接口；LangGraph Adapter 延后到实际 Agent 工作流阶段
+- Node 24、Corepack 管理的 pnpm 10.20.0、React、TypeScript、Vite、TanStack Query
 - OpenTelemetry + 结构化日志
 - pytest、vitest
+- Docker Engine 29+、Docker Compose 5+；基础镜像必须保留 tag + digest 锁定
 
 不要同时引入多个功能重叠的 Agent 框架、向量库、任务队列或前端状态库。
+
+### 4.1 已落地运行契约
+
+- Compose 通过一次性 `migrate` 服务执行 `alembic upgrade head`；API 和 Worker 必须等待
+  迁移成功，Web 必须等待 API healthy。
+- PostgreSQL 和 Redis 使用命名卷；Redis 启用 AOF。`docker compose down` 默认保留数据，
+  只有明确确认永久删除时才使用 `down --volumes`。
+- `APP_SECRET_KEY` 和 `POSTGRES_PASSWORD` 必须来自环境或被忽略的 `.env`，Compose 文件
+  不得添加密钥默认值。
+- Web 由 nginx 托管，并将同源 `/api` 代理到 API；不要在前端散布环境相关后端地址。
+- `live` 只检查 API 进程响应；`ready` 有界并发检查 PostgreSQL 和 Redis。模型状态单独
+  报告，不得因默认 fake、显式 disabled 或外部 Provider 故障阻断本地管理功能。
+- 模型默认使用确定性 fake。外部 Provider 仍需 endpoint、能力别名、凭据和
+  `MODEL_ALLOW_EXTERNAL` 策略共同允许。
+- API、Worker 和 Web 的基础镜像通过 AWS 公共只读缓存获取 Docker Official Images，且
+  digest 已与 Docker Hub 官方 API 核对；不要为绕过网络问题移除 digest。
+
+### 4.2 已知问题
+
+- Worker 容器已验证消息消费、有限重试和死信转移，但 actor 的
+  `diagnostic_task_started/completed` 事件未稳定出现在 `docker logs`。进入阶段 2 前应关闭
+  此差异或明确接受风险；排查时同时检查 Redis 队列，不能只凭缺少两条日志判断任务未执行。
+- 当前 Windows 沙箱可能无法写 `.pytest_cache`，产生的缓存警告不代表测试失败；不要为了
+  消除该警告放宽仓库文件权限或修改测试语义。
 
 ## 5. 安全与隐私
 
@@ -114,6 +155,44 @@
 - 对越权检索、恶意文档 prompt injection、危险工具调用和日志泄漏编写回归测试。
 
 ## 6. 工作方式
+
+### 6.1 规范命令
+
+后端：
+
+```text
+uv sync --frozen
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy apps packages
+uv run pytest
+```
+
+前端：
+
+```text
+corepack pnpm@10.20.0 --dir apps/web install --frozen-lockfile
+corepack pnpm@10.20.0 --dir apps/web lint
+corepack pnpm@10.20.0 --dir apps/web typecheck
+corepack pnpm@10.20.0 --dir apps/web test
+corepack pnpm@10.20.0 --dir apps/web build
+```
+
+Compose 与契约：
+
+```text
+docker compose -f deploy/compose.yaml up --build --detach --wait
+docker compose -f deploy/compose.yaml down
+uv run alembic upgrade head
+uv run python scripts/export_openapi.py
+git diff --exit-code -- docs/openapi.json
+```
+
+真实依赖集成测试必须使用隔离的 PostgreSQL/Redis，并显式设置 `RUN_INTEGRATION=1`；禁止
+把集成测试指向含业务数据的本地卷或共享环境。OpenAPI、迁移、Compose 或锁文件变化时，
+必须运行对应一致性检查；Compose 变更还要验证空卷启动、健康依赖和保留卷重启。
+
+### 6.2 开发流程
 
 开始实现前：
 
@@ -136,6 +215,10 @@
 3. 检查日志、错误响应和测试 fixture 是否泄漏隐私或密钥。
 4. 更新受影响文档、OpenAPI、Skill schema 或 ADR。
 5. 汇报实际运行的验证命令。
+
+阶段 1 后续变更还应检查 `docs/stage-1-acceptance.md` 和 `docs/troubleshooting.md` 是否需要
+同步。若新增公开 API，必须重新生成 `docs/openapi.json`；若新增业务表，必须先确认任务确属
+阶段 2、阶段 0 门禁已满足，并通过新的 Alembic revision 落地，禁止修改既有迁移伪造历史。
 
 ## 7. ADR 触发条件
 

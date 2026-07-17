@@ -25,18 +25,18 @@ the exact same digests as the Docker Hub API responses.
 
 ## Current Machine Check
 
-Checked on 2026-07-17:
+Checked on 2026-07-18:
 
 | Item | Result | Action |
 | --- | --- | --- |
-| Python 3.12 | Missing; Python 3.13 and 3.14 are installed | Install with uv before backend commands |
+| Python 3.12 | 3.12.13 managed environment available | Use `uv sync --frozen` |
 | uv | 0.11.1 installed | No installation needed |
 | Node.js | 24.11.0 installed | No installation needed |
 | pnpm | 10.20.0 installed | Invoke through `corepack pnpm@10.20.0`; do not call `pnpm.ps1` |
 | Docker CLI / Compose | 29.4.0 / 5.1.2 installed | Start Docker Desktop or another Docker Engine |
-| Docker daemon | Not running or not reachable | Start the engine and verify `docker version` shows a Server section |
-| PostgreSQL / pgvector | No local service is required yet | Step 7 supplies the Compose service |
-| Redis | No local service is required yet | Step 7 supplies the Compose service |
+| Docker daemon | Available during Step 7/8 Compose verification | Verify `docker version` before startup |
+| PostgreSQL / pgvector | Compose service verified | No host installation needed |
+| Redis | Compose service with AOF verified | No host installation needed |
 | Model endpoint | Not configured | Optional; fake is the default and external sending stays disabled |
 
 ## Windows Setup
@@ -52,7 +52,7 @@ uv python find 3.12
 The first command downloads Python and therefore needs network access. `uv python pin` is run from the
 repository root and creates `.python-version`; this repository file is added in step 1.
 
-Enable the pinned pnpm version after step 1 has added the `packageManager` field:
+Enable the pinned pnpm version declared by the repository:
 
 ```powershell
 corepack enable
@@ -97,8 +97,8 @@ Use `down --volumes` only when the local project data should be permanently remo
 ## Provider Configuration Boundary
 
 The default model implementation is a deterministic fake and needs no credentials. The first real
-adapter uses an OpenAI-compatible HTTP endpoint and is disabled until explicitly configured. Step 1
-will add non-secret variable names to `.env.example`; concrete endpoint URLs, model names, and API keys
+adapter uses an OpenAI-compatible HTTP endpoint and is disabled until explicitly configured. Non-secret
+variable names are listed in `.env.example`; concrete endpoint URLs, model names, and API keys
 belong only in an ignored local `.env` or the process environment.
 
 Private or restricted corpus content must not be sent to an external endpoint. Enabling an external

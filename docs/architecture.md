@@ -442,6 +442,9 @@ Docker Compose 编排，定义 5 个长期服务、1 个一次性迁移服务和
 | `development-environment.md` | 开发环境基线：工具版本、Windows 配置、Provider 边界 |
 | `project-implementation-plan.md` | 总实施计划 |
 | `stage-1-implementation-plan.md` | 阶段 1 详细实施计划与任务清单 |
+| `stage-1-acceptance.md` | 阶段 1 验收命令、结果、退出条件、外部确认和已知问题 |
+| `troubleshooting.md` | 本地运行故障恢复和已知限制 |
+| `openapi.json` | 由应用确定性导出的公开 HTTP schema |
 | `architecture.md` | **本文档** |
 
 ---
@@ -545,9 +548,10 @@ corepack pnpm --dir apps/web typecheck   # 类型检查
 ### Docker
 
 ```bash
-docker compose -f deploy/compose.yaml up --build      # 启动全部服务
-docker compose -f deploy/compose.yaml up --profile otel  # 含 OTel
-docker compose -f deploy/compose.yaml down -v         # 停止 + 清理卷
+docker compose -f deploy/compose.yaml up --build --detach --wait  # 启动并等待健康
+docker compose -f deploy/compose.yaml --profile otel up --detach  # 含 OTel
+docker compose -f deploy/compose.yaml down                         # 停止并保留数据
+docker compose -f deploy/compose.yaml down --volumes               # 永久删除项目数据
 ```
 
 ---
@@ -557,10 +561,10 @@ docker compose -f deploy/compose.yaml down -v         # 停止 + 清理卷
 | 阶段 | 状态 | 说明 |
 |------|------|------|
 | 阶段 0 | 🔶 进行中 | 语料授权复核、标注复核未完成 |
-| **阶段 1** | **🔶 进行中** | **Step 0-7 已实现；等待首次远端 CI 后进入验收** |
+| **阶段 1** | **🟡 条件完成** | **Step 0-8 验收完成；GitHub Actions 正常，等待阶段 0 数据门禁** |
 | 阶段 2 | ❌ 未开始 | 核心数据模型与业务逻辑 |
 | 阶段 3+ | ❌ 未开始 | 摄入、检索、引用、Skill 等工作 |
 
-阶段 1 已完成：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅
-阶段 1 已实现并待远端确认：Step 7（Compose/CI）
-阶段 1 待完成：Step 8（验收）
+阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
+
+GitHub Actions 已由用户确认运行正常。阶段 1 最终退出仍需阶段 0 数据授权、人工标注复核和版本冻结完成，或继续明确保持“工程完成、等待数据门禁”。

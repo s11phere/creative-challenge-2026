@@ -1,29 +1,125 @@
-## 作品名称
-- Agent 驱动的个人知识仓库
----
-## 技术关键词
-- Agent 框架
-- Skill 蒸馏
-- RAG 检索增强生成
-- 知识管理
-- Prompt 工程
-- 多 Agent 编排
----
-## 作品简介
-### 项目背景
-通班同学在日常学习、科研和项目开发中积累了大量的笔记、论文、课程资料和代码片段，但这些知识散落在不同格式的文件和平台中，缺乏统一的管理和高效检索手段。当需要回顾某一知识点时，往往需要翻找多处，效率低下。
+# Agent 驱动的个人知识仓库
 
-### 设计思路
-项目包含两层——底层是一个轻量的 Agent 框架，支持工具的注册与编排、多步任务规划、以及 Skill 的标准化封装；上层是基于该框架蒸馏的一个"个人知识管理 Skill"，将 RAG 检索、知识摄入、智能整理等工作流固化为稳定可复用的能力。两层分离的设计使得框架本身可复用于其他场景，而 Knowledge RAG Skill 则在垂直场景上做到深度优化。
+本项目面向个人学习、科研和开发资料，目标是构建一个本地优先、来源可追溯的知识工作台。
+规划中的完整闭环包括文档摄入、增量索引、混合检索、带引用问答和可版本化 Agent Skill。
 
-### 目标用户
-需要大量阅读论文、整理课堂笔记、管理科研资料的同学。
+## 当前状态
 
-### 技术路线
-底层 Agent 框架基于 LLM API + 工具调用机制自研轻量编排层，支持任务分解与 Skill 热加载；Knowledge RAG Skill 采用文档智能分块 → 双路检索（向量 + BM25）→ Reranker 精排 → Agent 组织回答的完整链路，知识存储使用本地向量数据库，支持增量更新。Skill 蒸馏过程通过结构化测试用例集和迭代调优来提升输出稳定性与准确性。
+阶段 1 的工程底座已经实现：FastAPI、Dramatiq Worker、React 工作台、PostgreSQL/pgvector、
+Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose 和 CI。
 
-### 应用场景
-1.课堂笔记与课后整理的统一检索与问答；2.论文阅读时的文献关联与观点追溯；3.代码片段与踩坑经验的快速查找；4.知识点的跨笔记整合与复习总结。
+当前 Web 只展示真实系统健康状态。仓库尚未实现文档摄入、搜索、会话、引用或问答，也不会用
+静态假数据伪装这些功能。阶段 0 的语料授权复核、人工标注复核和版本冻结仍未关闭，因此项目
+状态是“阶段 1 工程完成，等待阶段 0 数据门禁”，不能开始真实语料摄入。
 
-### 实际价值
-降低知识回溯成本，让积累的笔记和资料真正可被复用；项目框架本身可扩展至其他场景（如论文写作 Agent、课程答疑 Agent 等），具有持续迭代潜力。
+## 快速启动
+
+前置条件：Docker Engine 29+ 和 Docker Compose 5+。本机不需要单独安装 PostgreSQL 或 Redis。
+
+1. 创建本地环境文件，并修改其中的 `APP_SECRET_KEY` 和 `POSTGRES_PASSWORD`：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+2. 构建并启动完整本地栈：
+
+```powershell
+docker compose -f deploy/compose.yaml up --build --detach --wait
+```
+
+3. 打开工作台：<http://127.0.0.1:5173>
+
+首次构建需要下载锁定 digest 的基础镜像和依赖。Compose 会依次等待 PostgreSQL、迁移、Redis、
+API、Worker 和 Web 达到各自完成或健康条件。
+
+## Smoke Test
+
+```powershell
+curl.exe --fail http://127.0.0.1:8000/api/v1/health/live
+curl.exe --fail http://127.0.0.1:8000/api/v1/health/ready
+curl.exe --fail http://127.0.0.1:5173/api/v1/health/ready
+docker compose -f deploy/compose.yaml ps
+```
+
+预期 `live` 返回 `alive`，`ready` 返回 `ready`，PostgreSQL 和 Redis 分别报告
+`POSTGRESQL_OK`、`REDIS_OK`。默认确定性模型替身报告 `MODEL_FAKE_READY`。
+
+## 停止与清理
+
+停止容器但保留 PostgreSQL 和 Redis 数据：
+
+```powershell
+docker compose -f deploy/compose.yaml down
+```
+
+仅在确认要永久删除当前项目数据时执行：
+
+```powershell
+docker compose -f deploy/compose.yaml down --volumes --remove-orphans
+```
+
+## 开发命令
+
+后端基线为 Python 3.12 和 uv 0.11.x：
+
+```powershell
+uv sync --frozen
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy apps packages
+uv run pytest
+```
+
+前端基线为 Node 24 和 Corepack 管理的 pnpm 10.20.0：
+
+```powershell
+corepack pnpm@10.20.0 --dir apps/web install --frozen-lockfile
+corepack pnpm@10.20.0 --dir apps/web lint
+corepack pnpm@10.20.0 --dir apps/web typecheck
+corepack pnpm@10.20.0 --dir apps/web test
+corepack pnpm@10.20.0 --dir apps/web build
+```
+
+迁移与 OpenAPI：
+
+```powershell
+uv run alembic upgrade head
+uv run alembic current
+uv run python scripts/export_openapi.py
+git diff --exit-code -- docs/openapi.json
+```
+
+真实依赖集成测试由 CI 在隔离 PostgreSQL/Redis 中运行。手动运行前必须配置隔离依赖并设置
+`RUN_INTEGRATION=1`，不要指向包含业务数据的数据库。
+
+## 服务与端口
+
+| 服务 | 默认地址/端口 | 说明 |
+| --- | --- | --- |
+| Web | `http://127.0.0.1:5173` | nginx 静态托管并代理同源 `/api` |
+| API | `http://127.0.0.1:8000` | 公开接口前缀为 `/api/v1` |
+| PostgreSQL | `127.0.0.1:5432` | PostgreSQL 16 + pgvector |
+| Redis | `127.0.0.1:6379` | Dramatiq broker，启用 AOF |
+| OTel Collector | `4317`、`4318` | 仅 `--profile otel` 启动 |
+
+端口可通过 `.env` 中的 `WEB_PORT`、`API_PORT`、`POSTGRES_PORT` 和 `REDIS_PORT` 覆盖。
+
+## 文档
+
+- [架构概览](docs/architecture.md)
+- [开发环境与 Provider 边界](docs/development-environment.md)
+- [阶段 1 验收记录](docs/stage-1-acceptance.md)
+- [故障排查与已知限制](docs/troubleshooting.md)
+- [阶段 1 实施计划](docs/stage-1-implementation-plan.md)
+- [OpenAPI](docs/openapi.json)
+- [架构决策记录](docs/adr/README.md)
+
+## 安全与数据边界
+
+- 密钥只从环境变量或被 Git 忽略的 `.env` 读取，不得提交或写入日志。
+- 默认模型为确定性 fake；外部 Provider 必须显式配置并允许外发。
+- 只允许处理 `cases/evals/corpus/v0/manifest.yaml` 明确列出的来源，并在读取前校验 SHA-256。
+- 阶段 0 关闭前不得使用真实个人资料、私有笔记或未确认授权的语料。
+
+问题恢复步骤和当前限制见[故障排查文档](docs/troubleshooting.md)。
