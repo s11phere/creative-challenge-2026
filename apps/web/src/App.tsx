@@ -1,121 +1,306 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
+import { useQuery } from '@tanstack/react-query'
+import {
+  Activity,
+  Bot,
+  CheckCircle2,
+  CircleAlert,
+  Clock3,
+  Database,
+  HardDrive,
+  LibraryBig,
+  LoaderCircle,
+  RefreshCw,
+  Server,
+  ShieldCheck,
+  WifiOff,
+  type LucideIcon,
+} from 'lucide-react'
+import {
+  fetchHealthSnapshot,
+  healthApiLabel,
+  HealthApiError,
+  type DependencyCheck,
+  type HealthSnapshot,
+} from './health'
 import './App.css'
 
+type ServiceState = 'available' | 'unavailable' | 'checking'
+
+type ServiceRow = {
+  key: string
+  name: string
+  description: string
+  code: string
+  state: ServiceState
+  Icon: LucideIcon
+}
+
+const codeLabels: Record<string, string> = {
+  POSTGRESQL_OK: '可用',
+  POSTGRESQL_UNREACHABLE: '不可用',
+  REDIS_OK: '可用',
+  REDIS_UNREACHABLE: '不可用',
+  MODEL_FAKE_READY: '测试替身',
+  MODEL_PROVIDER_CONFIGURED: '已配置',
+  MODEL_DISABLED: '已禁用',
+  MODEL_CONFIGURATION_MISSING: '未配置',
+  MODEL_POLICY_DENIED: '策略阻止',
+}
+
+function dependencyState(check: DependencyCheck): ServiceState {
+  return check.healthy ? 'available' : 'unavailable'
+}
+
+function serviceRows(data: Awaited<ReturnType<typeof fetchHealthSnapshot>> | undefined): ServiceRow[] {
+  if (!data) {
+    return [
+      ['api', 'API 服务', 'FastAPI', Server],
+      ['postgresql', 'PostgreSQL', '数据与索引', Database],
+      ['redis', 'Redis', '任务投递', HardDrive],
+      ['model', '模型网关', 'Chat 与 Embedding', Bot],
+    ].map(([key, name, description, Icon]) => ({
+      key: key as string,
+      name: name as string,
+      description: description as string,
+      code: 'CHECKING',
+      state: 'checking' as const,
+      Icon: Icon as LucideIcon,
+    }))
+  }
+
+  const { checks } = data.ready
+  return [
+    {
+      key: 'api',
+      name: 'API 服务',
+      description: 'FastAPI',
+      code: 'API_OK',
+      state: 'available',
+      Icon: Server,
+    },
+    {
+      key: 'postgresql',
+      name: 'PostgreSQL',
+      description: '数据与索引',
+      code: checks.postgresql.code,
+      state: dependencyState(checks.postgresql),
+      Icon: Database,
+    },
+    {
+      key: 'redis',
+      name: 'Redis',
+      description: '任务投递',
+      code: checks.redis.code,
+      state: dependencyState(checks.redis),
+      Icon: HardDrive,
+    },
+    {
+      key: 'model',
+      name: '模型网关',
+      description: 'Chat 与 Embedding',
+      code: checks.model.code,
+      state: dependencyState(checks.model),
+      Icon: Bot,
+    },
+  ]
+}
+
+function statusText(row: ServiceRow): string {
+  if (row.state === 'checking') return '检查中'
+  return codeLabels[row.code] ?? (row.state === 'available' ? '可用' : '不可用')
+}
+
+function formatCheckTime(timestamp: number | undefined): string {
+  if (!timestamp) return '--:--:--'
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(timestamp)
+}
+
 function App() {
-  const [count, setCount] = useState(0)
+  const healthQuery = useQuery<HealthSnapshot, HealthApiError>({
+    queryKey: ['system-health'],
+    queryFn: ({ signal }) => fetchHealthSnapshot(signal),
+    retry: false,
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+  })
+
+  const rows = serviceRows(healthQuery.data)
+  const availableCount = rows.filter((row) => row.state === 'available').length
+  const isInitialLoading = healthQuery.isPending
+  const hasError = healthQuery.isError
+  const localReady = healthQuery.data?.ready.status === 'ready'
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
+    <div className="app-shell">
+      <aside className="sidebar" aria-label="主导航">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            <LibraryBig size={21} strokeWidth={1.8} />
+          </span>
+          <div>
+            <strong>知识工作台</strong>
+            <span>本地工作区</span>
+          </div>
         </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
 
-      <div className="ticks"></div>
+        <nav className="sidebar-nav">
+          <a href="#system-status" aria-current="page">
+            <Activity size={18} />
+            系统状态
+          </a>
+        </nav>
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+        <div className="local-mode">
+          <ShieldCheck size={17} />
+          <div>
+            <strong>本地模式</strong>
+            <span>默认不向外发送数据</span>
+          </div>
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+      </aside>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      <main className="workspace" id="system-status">
+        <header className="workspace-header">
+          <div>
+            <p className="eyebrow">运行概览</p>
+            <h1>系统状态</h1>
+          </div>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => void healthQuery.refetch()}
+            disabled={healthQuery.isFetching}
+            aria-label="重新检查系统状态"
+            title="重新检查"
+          >
+            <RefreshCw className={healthQuery.isFetching ? 'spin' : ''} size={19} />
+          </button>
+        </header>
+
+        <section className={`summary-band ${hasError ? 'summary-error' : ''}`} aria-live="polite">
+          <div className="summary-copy">
+            <span className="summary-icon" aria-hidden="true">
+              {hasError ? (
+                <WifiOff size={22} />
+              ) : isInitialLoading ? (
+                <LoaderCircle className="spin" size={22} />
+              ) : localReady ? (
+                <CheckCircle2 size={22} />
+              ) : (
+                <CircleAlert size={22} />
+              )}
+            </span>
+            <div>
+              <strong>
+                {hasError
+                  ? 'API 连接失败'
+                  : isInitialLoading
+                    ? '正在检查本地服务'
+                    : localReady
+                      ? '本地服务运行正常'
+                      : '部分本地服务不可用'}
+              </strong>
+              <span>
+                {hasError
+                  ? '状态暂时无法读取'
+                  : `${availableCount} / ${rows.length} 项当前可用`}
+              </span>
+            </div>
+          </div>
+          <div className="checked-time">
+            <Clock3 size={16} />
+            <span>更新于 {formatCheckTime(healthQuery.data?.checkedAt)}</span>
+          </div>
+        </section>
+
+        {hasError && (
+          <section className="error-panel" role="alert">
+            <CircleAlert size={20} aria-hidden="true" />
+            <div>
+              <h2>无法连接本地 API</h2>
+              <p>检查 API 进程和端口配置后重新尝试。</p>
+              <code>{healthQuery.error.code}</code>
+            </div>
+            <button
+              type="button"
+              className="retry-button"
+              onClick={() => void healthQuery.refetch()}
+              disabled={healthQuery.isFetching}
+            >
+              <RefreshCw size={17} />
+              重新检查
+            </button>
+          </section>
+        )}
+
+        <section className="status-panel" aria-labelledby="services-title">
+          <div className="panel-heading">
+            <div>
+              <h2 id="services-title">服务连接</h2>
+              <p>API 与本地依赖</p>
+            </div>
+            <span className="service-count">{availableCount}/{rows.length}</span>
+          </div>
+
+          <div className="service-list">
+            {rows.map((row) => (
+              <div className="service-row" key={row.key} data-state={row.state}>
+                <span className="service-icon" aria-hidden="true">
+                  <row.Icon size={19} />
+                </span>
+                <div className="service-name">
+                  <strong>{row.name}</strong>
+                  <span>{row.description}</span>
+                </div>
+                <div className="service-result">
+                  <span className="status-label">
+                    {row.state === 'available' ? (
+                      <CheckCircle2 size={16} />
+                    ) : row.state === 'unavailable' ? (
+                      <CircleAlert size={16} />
+                    ) : (
+                      <LoaderCircle className="spin" size={16} />
+                    )}
+                    {statusText(row)}
+                  </span>
+                  <code>{row.code}</code>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="runtime-section" aria-labelledby="runtime-title">
+          <div className="section-heading">
+            <h2 id="runtime-title">运行信息</h2>
+          </div>
+          <dl className="runtime-grid">
+            <div>
+              <dt>API 地址</dt>
+              <dd>{healthApiLabel()}</dd>
+            </div>
+            <div>
+              <dt>Trace ID</dt>
+              <dd title={healthQuery.data?.traceId ?? undefined}>
+                {healthQuery.data?.traceId ?? '等待检查'}
+              </dd>
+            </div>
+            <div>
+              <dt>Request ID</dt>
+              <dd title={healthQuery.data?.requestId ?? undefined}>
+                {healthQuery.data?.requestId ?? '等待检查'}
+              </dd>
+            </div>
+          </dl>
+        </section>
+      </main>
+    </div>
   )
 }
 

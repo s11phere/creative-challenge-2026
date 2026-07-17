@@ -339,6 +339,30 @@ docker compose -f deploy/compose.yaml up --build
 
 **完成标准**：桌面和移动宽度均无溢出或遮挡；API 不可用时有可恢复错误提示；前端构建与基础组件测试通过。
 
+**状态**：已于 2026-07-18 完成。
+
+实际交付：
+
+- 将默认 Vite 欢迎页替换为本地知识工作台的系统状态界面，包含工作台导航、运行摘要、
+  服务连接列表和请求关联信息；没有伪造文档、会话、证据或摄入数据。
+- 使用 TanStack Query 并行读取 `/api/v1/health/live` 和 `/api/v1/health/ready`，严格校验
+  响应结构，展示 API、PostgreSQL、Redis 和模型网关的检查中、可用或不可用状态。
+- 健康请求使用 8 秒超时、30 秒自动刷新和显式手动重试；API 不可达、超时及非法响应均会
+  退出 loading，并显示稳定错误码。
+- 开发服务器将同源 `/api` 代理到本地 FastAPI；也可通过 `VITE_API_BASE_URL` 指向其他
+  API 地址。
+- 使用文本、图标和机器码共同表达状态；刷新和重试控件支持键盘焦点，并完成窄屏重排。
+
+2026-07-18 验证记录：
+
+- 前端 lint、TypeScript 类型检查、6 个 Vitest 组件测试和生产构建通过。
+- 自动化覆盖健康、依赖降级、API 不可达后的手动重试、非法响应、8 秒请求超时和键盘焦点。
+- 使用真实本地 API、PostgreSQL/pgvector、Redis 和确定性模型 fake 联调，页面正确显示
+  `POSTGRESQL_OK`、`REDIS_OK` 和 `MODEL_FAKE_READY`，并展示响应 Trace/Request ID。
+- 在 1440 x 1000 桌面视口完成视觉检查；通过浏览器调试协议强制 390 x 844 移动视口，
+  `scrollWidth` 与 `clientWidth` 均为 390，页面无横向溢出或控件遮挡。
+- API 进程停止后页面在有限时间内进入 `API_UNREACHABLE` 可恢复错误态，重试入口保持可用。
+
 ### 步骤 7：Compose、本地运行与 CI
 
 **工作量：5-6 人日**

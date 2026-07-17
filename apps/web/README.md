@@ -1,32 +1,30 @@
-# React + TypeScript + Vite
+# Web 工作台
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+阶段 1 的 Web 应用是一个本地系统状态工作台，使用 React、TypeScript、Vite 和
+TanStack Query。当前只调用以下版本化接口，不展示伪造的文档、会话或摄入数据：
 
-Currently, two official plugins are available:
+- `GET /api/v1/health/live`
+- `GET /api/v1/health/ready`
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 本地运行
 
-## React Compiler
+先在仓库根目录启动 FastAPI（默认 `http://127.0.0.1:8000`），再启动前端：
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```powershell
+corepack pnpm@10.20.0 --dir apps/web dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Vite 开发服务器默认将 `/api` 代理到本地 FastAPI。若 API 位于其他地址，构建或启动前
+设置 `VITE_API_BASE_URL`，例如 `http://127.0.0.1:9000`。
+
+## 质量检查
+
+```powershell
+corepack pnpm@10.20.0 --dir apps/web lint
+corepack pnpm@10.20.0 --dir apps/web typecheck
+corepack pnpm@10.20.0 --dir apps/web test
+corepack pnpm@10.20.0 --dir apps/web build
+```
+
+健康请求有 8 秒上限，失败后显示稳定错误码和手动重试入口；页面每 30 秒自动刷新一次，
+切到后台时不会继续轮询。

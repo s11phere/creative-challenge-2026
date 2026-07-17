@@ -1,7 +1,7 @@
 # 项目架构概览
 
 > 本文档描述 "Agent 驱动的个人知识仓库" 项目的整体架构、各组件职责与协作关系。
-> 编写于阶段 1 部分完成时，对应提交 `e69ce8d`。
+> 更新于阶段 1 Step 6 完成时。
 
 ---
 
@@ -337,17 +337,21 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | 文件/目录 | 职责 |
 |-----------|------|
 | `package.json` | 依赖与命令定义，`engines: { "node": ">=24.0.0" }` |
-| `vite.config.ts` | Vite 构建配置 |
+| `vite.config.ts` | Vite 构建配置与开发环境 `/api` 反向代理 |
 | `vitest.config.ts` | vitest 测试配置（jsdom 环境） |
 | `tsconfig*.json` | TypeScript 编译配置 |
 | `index.html` | 入口 HTML |
 | `src/main.tsx` | React 挂载入口 |
-| `src/App.tsx` | 应用根组件 |
+| `src/App.tsx` | 系统状态工作台与 TanStack Query 状态编排 |
+| `src/health.ts` | 健康接口类型、响应校验、超时和错误分类 |
 | `src/App.css` | 根样式 |
-| `src/index.css` | 全局样式（Tailwind-like 设计 tokens） |
+| `src/index.css` | 全局样式与设计变量 |
 | `src/test/setup.ts` | 测试初始化（@testing-library/jest-dom matchers） |
 
-**当前状态**：Vite 脚手架 + 健康状态展示骨架。
+**当前状态**：阶段 1 系统状态工作台已实现。页面只读取版本化的 live/ready 接口，展示
+API、PostgreSQL、Redis 和模型网关的真实状态及 Trace/Request ID；包含 8 秒请求超时、
+30 秒自动刷新、手动重试、响应结构校验、键盘焦点和移动端布局。当前不展示任何虚构的
+文档、会话、证据或摄入状态。
 
 **后续将包含**：
 - 空间/会话导航
@@ -441,7 +445,7 @@ Docker Compose 编排，定义 5 个服务 + 1 个可选服务：
 
 ## 10. 测试 (`tests/`)
 
-### 当前测试（阶段 1）
+### 当前后端测试（阶段 1）
 
 ```
 tests/
@@ -462,7 +466,7 @@ tests/
     └── test_model_gateway_contract.py # fake/Adapter 共享契约（4 个）
 ```
 
-**共 59 个测试**，覆盖：
+**后端共 59 个测试**，覆盖：
 - 配置：空密钥在 production 下拒绝启动，development 下跳过
 - 错误：Pydantic model、404 统一格式、AppError 结构化响应、未知异常不泄露
 - 健康：live 返回 alive、ready 返回 degraded + 机器码 + 不泄露主机信息
@@ -472,6 +476,9 @@ tests/
 - Worker：消息无正文、输入校验、幂等执行、超时/重试、入队和 consumer trace
 - ModelGateway：共享 Chat/Embedding 契约、能力别名、确定性 fake、有限重试、结构解析、
   endpoint 策略、显式不可用状态及输入/输出不进入日志或 span
+
+前端另有 6 个 Vitest 组件测试，覆盖健康、依赖降级、API 不可达与手动重试、非法响应、
+有界超时和键盘焦点。
 
 ---
 
@@ -544,9 +551,9 @@ docker compose -f deploy/compose.yaml down -v         # 停止 + 清理卷
 | 阶段 | 状态 | 说明 |
 |------|------|------|
 | 阶段 0 | 🔶 进行中 | 语料授权复核、标注复核未完成 |
-| **阶段 1** | **🔶 进行中** | **Step 0-5 已完成；下一步为 Web 工作台外壳** |
+| **阶段 1** | **🔶 进行中** | **Step 0-6 已完成；下一步为 Compose、本地运行与 CI** |
 | 阶段 2 | ❌ 未开始 | 核心数据模型与业务逻辑 |
 | 阶段 3+ | ❌ 未开始 | 摄入、检索、引用、Skill 等工作 |
 
-阶段 1 已完成：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅
-阶段 1 待完成：Step 6（Web 工作台）、Step 7（Compose/CI）、Step 8（验收）
+阶段 1 已完成：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅
+阶段 1 待完成：Step 7（Compose/CI）、Step 8（验收）
