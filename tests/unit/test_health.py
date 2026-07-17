@@ -17,8 +17,19 @@ async def test_live_returns_alive() -> None:
     assert resp.json() == {"status": "alive"}
 
 
-async def test_ready_returns_degraded_without_dependencies() -> None:
+async def test_ready_returns_degraded_without_dependencies(monkeypatch: MonkeyPatch) -> None:
     """Without PostgreSQL/Redis, ready must return 503 with stable machine codes."""
+
+    async def unavailable_postgres(*, timeout_seconds: float) -> bool:
+        assert timeout_seconds == 3
+        return False
+
+    def unavailable_redis(*_args: Any, **_kwargs: Any) -> None:
+        raise ConnectionError("synthetic Redis failure")
+
+    monkeypatch.setattr(app.state.database, "is_available", unavailable_postgres)
+    monkeypatch.setattr(aioredis, "from_url", unavailable_redis)
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/api/v1/health/ready")

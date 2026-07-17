@@ -41,6 +41,9 @@ exclude = ["^cases/", "^.venv/"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 norecursedirs = ["cases", ".venv"]
+markers = [
+    "integration: requires explicitly configured local PostgreSQL and Redis services",
+]
 
 [tool.coverage.run]
 source = ["apps", "packages"]

@@ -18,8 +18,10 @@ step 1 will pin installable versions and lock transitive dependencies.
 | Queue broker | Redis with Dramatiq | ADR-009 and `deploy/compose.yaml` |
 
 The base image tags above are the selected stage 1 baseline. Their immutable digests, plus the
-PostgreSQL/pgvector and Redis service image versions, are locked after pull and compatibility
-verification when the Dockerfiles and Compose file are added in step 7.
+PostgreSQL/pgvector and Redis service image versions, are locked in the Dockerfiles and Compose file.
+The Dockerfiles use the AWS public read-only cache for Docker Official Images because Docker Hub's
+token endpoint is unavailable on the current network; the cached manifests were verified to have
+the exact same digests as the Docker Hub API responses.
 
 ## Current Machine Check
 
@@ -70,7 +72,27 @@ docker compose version
 ```
 
 `docker version` must include both `Client` and `Server`. PostgreSQL/pgvector and Redis should be run
-through the repository Compose file once step 7 creates it; separate host installations are unnecessary.
+through the repository Compose file; separate host installations are unnecessary.
+
+## Local Compose Stack
+
+Create an ignored local environment file and replace the two placeholder secrets before startup:
+
+```powershell
+Copy-Item .env.example .env
+docker compose -f deploy/compose.yaml up --build --detach --wait
+```
+
+The single Compose command builds and starts PostgreSQL/pgvector, Redis, the migration gate, API,
+Worker and Web. Open `http://127.0.0.1:5173`; nginx forwards same-origin `/api` requests to the API.
+
+Stop containers while keeping PostgreSQL and Redis data:
+
+```powershell
+docker compose -f deploy/compose.yaml down
+```
+
+Use `down --volumes` only when the local project data should be permanently removed.
 
 ## Provider Configuration Boundary
 

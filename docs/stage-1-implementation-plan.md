@@ -377,6 +377,39 @@ docker compose -f deploy/compose.yaml up --build
 
 **完成标准**：全新环境执行一次文档化命令即可启动；CI 从空缓存运行通过；停止后再次启动不会破坏数据库状态。
 
+**状态**：已于 2026-07-18 完成实现与本地验收；等待提交后的首次 GitHub Actions 运行确认。
+
+实际交付：
+
+- API、Worker 和 Web 使用多阶段构建；Python、Node 和 nginx 基础镜像以 tag + digest 锁定。
+  当前网络无法访问 Docker Hub token 服务，因此使用 AWS 的 Docker 官方镜像只读缓存；三个
+  manifest digest 已与 Docker Hub 官方 API 逐一核对一致。
+- 新增根 `.dockerignore`；生产镜像只安装目标 workspace 包，API 镜像包含 Alembic 配置和
+  migrations，Worker 不安装未使用的 HTTPX 目标库。
+- Compose 新增一次性 `migrate` 门禁、API/Worker/Web 健康检查、nginx 同源 `/api` 代理、
+  PostgreSQL 与 Redis 命名卷及 Redis AOF。`APP_SECRET_KEY` 和 `POSTGRES_PASSWORD` 必须从
+  环境或忽略的 `.env` 提供，Compose 文件不包含默认密钥。
+- 新增 3 个显式启用的真实依赖集成测试，覆盖 pgvector、单一 Alembic head、Redis 往返和
+  API readiness；默认测试入口不依赖宿主机服务。
+- 新增 OpenAPI 确定性导出脚本和提交产物，以及分离的后端质量、后端测试、迁移集成、
+  前端和 Compose smoke CI 作业；配置 uv/pnpm 缓存和并发取消。
+
+2026-07-18 验证记录：
+
+- `actionlint 1.7.12` 校验 CI workflow 通过；后端格式、lint、严格类型检查、59 个默认测试
+  通过，3 个真实依赖集成测试通过；前端 lint、类型检查、6 个测试和生产构建通过。
+- 使用独立 Compose project 和独立端口从空镜像缓存构建 API、Worker、Web，`migrate`
+  正常退出，PostgreSQL、Redis、API、Worker 和 Web 均达到 healthy。
+- 直连 API 与 nginx `/api` 代理均返回 ready；数据库检查为
+  `vector:328a3caa2960`，Redis `appendonly=yes`，无测试密钥进入容器日志。
+- 删除全部容器和网络但保留命名卷后重新启动，Redis 合成哨兵仍存在，pgvector 和 Alembic
+  head 保持不变，readiness 恢复为 ready。
+- Worker 成功消费并确认无正文诊断消息，Redis 中无诊断队列残留；非法版本消息完成有限重试
+  后进入 `diagnostics.XQ`。本次 Docker 日志未重现 Step 3 已验证的 actor started/completed
+  事件，因此该容器日志差异保留为后续排查项，不影响队列消费与健康验收结论。
+- GitHub Actions 文件尚未提交到远端，托管 runner 的首次实际运行只能在提交并推送后确认；
+  本地已逐项执行等价命令与冷构建。
+
 ### 步骤 8：验收、文档与移交
 
 **工作量：1-2 人日**

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from importlib.util import find_spec
 from threading import Lock
 
 from opentelemetry import trace
@@ -78,7 +79,8 @@ def configure_observability(settings: Settings, *, service_name: str) -> Observa
             )
         if not _clients_instrumented:
             RedisInstrumentor().instrument()
-            HTTPXClientInstrumentor().instrument()
+            if find_spec("httpx") is not None:
+                HTTPXClientInstrumentor().instrument()
             _clients_instrumented = True
     logger.info(
         "observability_configured",

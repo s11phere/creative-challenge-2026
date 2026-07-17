@@ -110,6 +110,7 @@ API / Worker → Application → Domain (纯类型)
 │   ├── Dockerfile.api              # API 容器构建
 │   ├── Dockerfile.worker           # Worker 容器构建
 │   ├── Dockerfile.web              # Web 容器构建
+│   ├── nginx.conf                   # Web 静态托管与同源 API 代理
 │   └── otel-collector.yaml         # OpenTelemetry 配置
 │
 ├── migrations/                     # 数据库迁移
@@ -376,22 +377,24 @@ corepack pnpm --dir apps/web typecheck    # 类型检查
 
 ### `compose.yaml`
 
-Docker Compose 编排，定义 5 个服务 + 1 个可选服务：
+Docker Compose 编排，定义 5 个长期服务、1 个一次性迁移服务和 1 个可选服务：
 
 | 服务 | 镜像 | 关键配置 | 健康检查 |
 |------|------|----------|---------|
 | **postgres** | `pgvector/pgvector:pg16` | 命名卷持久化数据 | `pg_isready` |
-| **redis** | `redis:7-alpine` | 默认端口 6379 | `redis-cli ping` |
-| **api** | 本地构建 | 依赖 postgres/redis 健康 | — |
-| **worker** | 本地构建 | 依赖 postgres/redis 健康 | — |
-| **web** | 本地构建 (nginx) | 依赖 api | — |
+| **redis** | `redis:7-alpine` | AOF + 命名卷 | `redis-cli ping` |
+| **migrate** | API 镜像 | PostgreSQL 健康后执行 `upgrade head` | 成功退出 |
+| **api** | 本地构建 | 依赖 migrate 成功、Redis 健康 | readiness |
+| **worker** | 本地构建 | 依赖 migrate 成功、Redis 健康 | 进程检查 |
+| **web** | 本地构建 (nginx) | 依赖 API 健康，同源代理 `/api` | `/healthz` |
 | **otel-collector** (可选) | `otel/opentelemetry-collector-contrib` | 需 `--profile otel` 启动 | — |
 
 ### `Dockerfile.api`
 
 多阶段构建：
 - **Builder 阶段**：安装 uv，复制 `pyproject.toml` + `uv.lock` + 源码，执行 `uv sync --frozen --no-dev`
-- **Runtime 阶段**：`python:3.12-slim-bookworm`，运行 `uvicorn api.main:app`
+- **Runtime 阶段**：digest 锁定的 `python:3.12-slim-bookworm`，包含 Alembic migration，
+  运行 `uvicorn api.main:app`
 
 ### `Dockerfile.worker`
 
@@ -399,8 +402,8 @@ Docker Compose 编排，定义 5 个服务 + 1 个可选服务：
 
 ### `Dockerfile.web`
 
-- Builder：Node 24 + pnpm，安装依赖并执行 `pnpm build`
-- Runtime：nginx:alpine，托管 `dist/` 目录
+- Builder：digest 锁定的 Node 24 + pnpm，安装依赖并执行 `pnpm build`
+- Runtime：digest 锁定的 nginx:alpine，托管 `dist/` 并代理 `/api`
 
 ### `otel-collector.yaml`
 
@@ -466,7 +469,7 @@ tests/
     └── test_model_gateway_contract.py # fake/Adapter 共享契约（4 个）
 ```
 
-**后端共 59 个测试**，覆盖：
+**默认后端共 59 个测试**，覆盖：
 - 配置：空密钥在 production 下拒绝启动，development 下跳过
 - 错误：Pydantic model、404 统一格式、AppError 结构化响应、未知异常不泄露
 - 健康：live 返回 alive、ready 返回 degraded + 机器码 + 不泄露主机信息
@@ -479,6 +482,9 @@ tests/
 
 前端另有 6 个 Vitest 组件测试，覆盖健康、依赖降级、API 不可达与手动重试、非法响应、
 有界超时和键盘焦点。
+
+另有 3 个需要 `RUN_INTEGRATION=1` 显式启用的真实依赖集成测试，覆盖 pgvector 与单一
+Alembic head、Redis 往返和 API readiness。CI 在独立 PostgreSQL/Redis 服务中运行这些测试。
 
 ---
 
@@ -551,9 +557,10 @@ docker compose -f deploy/compose.yaml down -v         # 停止 + 清理卷
 | 阶段 | 状态 | 说明 |
 |------|------|------|
 | 阶段 0 | 🔶 进行中 | 语料授权复核、标注复核未完成 |
-| **阶段 1** | **🔶 进行中** | **Step 0-6 已完成；下一步为 Compose、本地运行与 CI** |
+| **阶段 1** | **🔶 进行中** | **Step 0-7 已实现；等待首次远端 CI 后进入验收** |
 | 阶段 2 | ❌ 未开始 | 核心数据模型与业务逻辑 |
 | 阶段 3+ | ❌ 未开始 | 摄入、检索、引用、Skill 等工作 |
 
 阶段 1 已完成：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅
-阶段 1 待完成：Step 7（Compose/CI）、Step 8（验收）
+阶段 1 已实现并待远端确认：Step 7（Compose/CI）
+阶段 1 待完成：Step 8（验收）

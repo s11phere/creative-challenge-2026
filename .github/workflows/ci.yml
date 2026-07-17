@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.11.1"
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "24.11.0"
+  PNPM_VERSION: "10.20.0"
+
+jobs:
+  backend-quality:
+    name: Backend quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --frozen
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy apps packages
+      - name: Check committed OpenAPI schema
+        run: |
+          uv run python scripts/export_openapi.py
+          git diff --exit-code -- docs/openapi.json
+
+  backend-tests:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --frozen
+      - run: uv run pytest tests/unit tests/contract
+
+  migrations-integration:
+    name: Migrations and integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
+        env:
+          POSTGRES_DB: agent_knowledge
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: ci-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d agent_knowledge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_SECRET_KEY: ci-test-only
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: agent_knowledge
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ci-test-only
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: "6379"
+      MODEL_PROVIDER: fake
+      RUN_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --frozen
+      - name: Verify migration chain
+        run: |
+          test "$(uv run alembic heads | wc -l)" -eq 1
+          uv run alembic upgrade head
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+      - run: uv run pytest tests/integration
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: corepack enable
+      - run: corepack prepare pnpm@${PNPM_VERSION} --activate
+      - name: Locate pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('apps/web/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  compose-smoke:
+    name: Compose smoke
+    runs-on: ubuntu-latest
+    env:
+      APP_SECRET_KEY: ci-test-only
+      POSTGRES_PASSWORD: ci-test-only
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Validate Compose configuration
+        run: docker compose -f deploy/compose.yaml config --quiet
+      - name: Build and start the local stack
+        run: docker compose -f deploy/compose.yaml up --build --detach --wait --wait-timeout 240
+      - name: Verify API, Web proxy, migration and Worker
+        run: |
+          curl --fail --show-error http://127.0.0.1:8000/api/v1/health/ready
+          curl --fail --show-error http://127.0.0.1:5173/
+          curl --fail --show-error http://127.0.0.1:5173/api/v1/health/ready
+          test "$(docker compose -f deploy/compose.yaml exec -T postgres psql -U app -d agent_knowledge -Atc "SELECT count(*) FROM pg_extension WHERE extname = 'vector'")" -eq 1
+          docker compose -f deploy/compose.yaml exec -T worker python -c "from worker.tasks import enqueue_diagnostic_task; enqueue_diagnostic_task(task_id='11111111-1111-4111-8111-111111111111', trace_id='22222222-2222-4222-8222-222222222222', event_version=1, count=1, requested_at='2026-07-18T00:00:00+00:00')"
+          sleep 5
+          test -z "$(docker compose -f deploy/compose.yaml exec -T redis redis-cli --scan --pattern 'dramatiq:diagnostics*')"
+          ! docker compose -f deploy/compose.yaml logs --no-color | grep -F 'ci-test-only'
+          docker compose -f deploy/compose.yaml ps
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose -f deploy/compose.yaml logs --no-color
+      - name: Stop stack
+        if: always()
+        run: docker compose -f deploy/compose.yaml down --volumes --remove-orphans

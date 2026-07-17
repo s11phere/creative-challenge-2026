@@ -1,43 +1,67 @@
+x-api-image: &api-image
+  image: agent-knowledge-api:local
+
+x-database-environment: &database-environment
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: ${POSTGRES_DB:-agent_knowledge}
+  POSTGRES_USER: ${POSTGRES_USER:-app}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+
 services:
   postgres:
     image: pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-agent_knowledge}
       POSTGRES_USER: ${POSTGRES_USER:-app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app -d agent_knowledge"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports:
       - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  migrate:
+    <<: *api-image
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *database-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   api:
+    <<: *api-image
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
     environment:
       APP_ENV: ${APP_ENV:-development}
       APP_DEBUG: ${APP_DEBUG:-true}
-      APP_SECRET_KEY: ${APP_SECRET_KEY:-change-me-to-a-random-secret}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-agent_knowledge}
-      POSTGRES_USER: ${POSTGRES_USER:-app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?APP_SECRET_KEY must be set}
+      <<: *database-environment
       REDIS_HOST: redis
       REDIS_PORT: 6379
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -56,10 +80,24 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=5)",
+        ]
+      interval: 5s
+      timeout: 6s
+      retries: 10
+      start_period: 10s
+    init: true
+    restart: unless-stopped
     develop:
       watch:
         - path: ../apps
@@ -70,17 +108,15 @@ services:
           target: /app/packages
 
   worker:
+    image: agent-knowledge-worker:local
     build:
       context: ..
       dockerfile: deploy/Dockerfile.worker
     environment:
       APP_ENV: ${APP_ENV:-development}
       APP_DEBUG: ${APP_DEBUG:-true}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-agent_knowledge}
-      POSTGRES_USER: ${POSTGRES_USER:-app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?APP_SECRET_KEY must be set}
+      <<: *database-environment
       REDIS_HOST: redis
       REDIS_PORT: 6379
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -88,10 +124,18 @@ services:
       OTLP_ENDPOINT: ${OTLP_ENDPOINT:-}
       OTEL_EXPORT_TIMEOUT_SECONDS: ${OTEL_EXPORT_TIMEOUT_SECONDS:-2}
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "grep -aq 'worker' /proc/1/cmdline"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    init: true
+    restart: unless-stopped
     develop:
       watch:
         - path: ../apps
@@ -102,13 +146,22 @@ services:
           target: /app/packages
 
   web:
+    image: agent-knowledge-web:local
     build:
-      context: ../apps/web
-      dockerfile: ../../deploy/Dockerfile.web
+      context: ..
+      dockerfile: deploy/Dockerfile.web
     ports:
       - "${WEB_PORT:-5173}:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--output-document=/dev/null", "http://127.0.0.1/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
 
   otel-collector:
     profiles:
@@ -119,7 +172,8 @@ services:
       - "4318:4318"
       - "55679:55679"
     volumes:
-      - ./otel-collector.yaml:/etc/otelcol-contrib/config.yaml
+      - ./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
 
 volumes:
   pgdata:
+  redisdata:
