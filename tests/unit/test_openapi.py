@@ -21,7 +21,10 @@ async def test_openapi_includes_health_endpoints() -> None:
     schemas = schema["components"]["schemas"]
     assert "LiveResponse" in schemas
     assert "ReadyResponse" in schemas
+    assert "ReadinessChecks" in schemas
     assert "ErrorResponse" in schemas
+    assert "model" in schemas["ReadinessChecks"]["properties"]
+    assert "model" in schemas["ReadinessChecks"]["required"]
 
     live_responses = paths["/api/v1/health/live"]["get"]["responses"]
     assert live_responses["200"]["content"]["application/json"]["schema"] == {

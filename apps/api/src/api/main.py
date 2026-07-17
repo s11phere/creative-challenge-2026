@@ -11,6 +11,13 @@ from fastapi import FastAPI, Response
 from infrastructure.config import settings
 from infrastructure.database import Database
 from infrastructure.telemetry import configure_observability
+from model_gateway import (
+    GatewayConfig,
+    ModelGateway,
+    ModelProvider,
+    OpenAICompatibleGateway,
+    create_model_gateway,
+)
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
@@ -31,6 +38,7 @@ class DependencyCheck(BaseModel):
 class ReadinessChecks(BaseModel):
     postgresql: DependencyCheck
     redis: DependencyCheck
+    model: DependencyCheck
 
 
 class ReadyResponse(BaseModel):
@@ -46,10 +54,11 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
-def create_app() -> FastAPI:
+def create_app(model_gateway: ModelGateway | None = None) -> FastAPI:
     """Application factory. Call once at process start."""
 
     database = Database(settings.database_url)
+    gateway = model_gateway or _create_configured_model_gateway()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -60,6 +69,8 @@ def create_app() -> FastAPI:
             yield
         finally:
             await database.dispose()
+            if isinstance(gateway, OpenAICompatibleGateway):
+                await gateway.aclose()
             await asyncio.to_thread(
                 observability.provider.force_flush,
                 int(settings.otel_export_timeout_seconds * 1000),
@@ -71,6 +82,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.state.database = database
+    app.state.model_gateway = gateway
 
     app.add_middleware(TraceMiddleware)
     register_error_handlers(app)
@@ -125,6 +137,11 @@ def _register_routes(app: FastAPI) -> None:
                     return DependencyCheck(healthy=False, code="REDIS_UNREACHABLE")
 
         pg_result, redis_result = await asyncio.gather(_check_postgres(), _check_redis())
+        model_status = app.state.model_gateway.status
+        model_result = DependencyCheck(
+            healthy=model_status.available,
+            code=model_status.code,
+        )
 
         all_healthy = pg_result.healthy and redis_result.healthy
         if not all_healthy:
@@ -132,8 +149,29 @@ def _register_routes(app: FastAPI) -> None:
 
         return ReadyResponse(
             status="ready" if all_healthy else "degraded",
-            checks=ReadinessChecks(postgresql=pg_result, redis=redis_result),
+            checks=ReadinessChecks(
+                postgresql=pg_result,
+                redis=redis_result,
+                model=model_result,
+            ),
         )
+
+
+def _create_configured_model_gateway() -> ModelGateway:
+    api_key = settings.model_api_key.get_secret_value() if settings.model_api_key else None
+    return create_model_gateway(
+        GatewayConfig(
+            provider=ModelProvider(settings.model_provider),
+            endpoint=settings.model_endpoint,
+            api_key=api_key,
+            fast_chat_model=settings.fast_chat_model,
+            embedding_model=settings.embedding_model,
+            allow_external=settings.model_allow_external,
+            timeout_seconds=settings.model_timeout_seconds,
+            max_retries=settings.model_max_retries,
+            retry_backoff_seconds=settings.model_retry_backoff_seconds,
+        )
+    )
 
 
 app = create_app()

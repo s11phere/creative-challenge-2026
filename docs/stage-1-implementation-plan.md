@@ -292,6 +292,40 @@ docker compose -f deploy/compose.yaml up --build
 
 **完成标准**：fake 与 Provider Adapter 通过同一套契约测试；业务层只依赖 Port 和能力别名。
 
+**状态**：已于 2026-07-17 完成。
+
+实际交付：
+
+- 在 `model_gateway` 包内定义 Provider-neutral Chat/Embedding 数据契约、`ModelGateway`
+  Protocol、`fast_chat`/`embedding_zh` 能力别名、Token/耗时元数据和稳定错误分类。
+- 实现确定性 fake；正常 Chat/Embedding 输出可重复，并可配置模拟 timeout、rate limit、
+  invalid response 和 unavailable，不需要网络或密钥。
+- 实现 OpenAI-compatible HTTP Adapter，使用 `httpx.AsyncClient` 调用
+  `/chat/completions` 与 `/embeddings`，不向上层暴露 HTTP 或 Provider 类型。
+- Adapter 对 timeout、传输失败、429 和 5xx 执行指数退避的有限重试；认证、策略、4xx
+  和结构错误不重试。错误消息不包含 Provider 响应。
+- Chat 与 Embedding 响应使用结构化解析；拒绝缺失字段、非法 Token、重复/缺失向量
+  index、维度不一致以及 NaN/Infinity。
+- 所有模型调用创建 OTel span，只记录能力别名、Provider 类型、耗时、Token 和重试次数；
+  日志与 span 不记录输入、输出、API Key 或完整 Provider 响应。
+- 默认 `MODEL_PROVIDER=fake`。OpenAI-compatible 必须显式选择并配置 endpoint 和部署模型名；
+  本机/私网 endpoint 默认允许，公网 endpoint 必须额外设置 `MODEL_ALLOW_EXTERNAL=true`。
+  带 URL 凭据、query、fragment 或非 HTTP(S) endpoint 始终拒绝。
+- API readiness 增加非阻塞模型状态。模型禁用、配置缺失或策略拒绝会返回明确机器码，但
+  不会使 PostgreSQL/Redis 已就绪的本地 API 降级。
+- Reranker 未实现，仍属于后续阶段能力。
+
+2026-07-17 验证记录：
+
+- 后端格式、lint、严格类型检查和 59 个测试通过。
+- fake 与 HTTP Adapter 运行同一套 Chat/Embedding 契约测试；Provider 使用合成
+  `httpx.MockTransport`，没有真实模型或付费调用。
+- 覆盖 429 成功重试、timeout 有限重试、401 不重试、畸形响应、非法向量、配置缺失、
+  禁用状态、公网策略拒绝、API Key `SecretStr` 和模型状态非阻塞 readiness。
+- 使用本地临时 HTTP stub 完成显式 smoke test：Chat/Embedding URL、Authorization、
+  部署模型映射、Token 统计和向量维度均通过；进程结束后 stub 已停止。
+- 检查异常、日志和 span，合成的模型输入、输出和 Provider 响应均未进入记录。
+
 ### 步骤 6：Web 工作台外壳
 
 **工作量：3-4 人日**

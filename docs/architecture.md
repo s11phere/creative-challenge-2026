@@ -231,20 +231,25 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 
 **职责**：为上层提供统一模型调用接口，屏蔽具体 Provider 差异。
 
-- **`src/model_gateway/__init__.py`** — 包标记
+| 文件 | 职责 |
+|------|------|
+| `contracts.py` | Chat/Embedding 类型、能力别名、Protocol 与错误分类 |
+| `fake.py` | 确定性 fake 和失败场景 |
+| `factory.py` | Provider 选择、endpoint/data policy 校验 |
+| `openai_compatible.py` | OpenAI-compatible HTTP Adapter、重试和响应解析 |
+| `unavailable.py` | 禁用、配置缺失和策略拒绝实现 |
+| `__init__.py` | 稳定公开导出 |
 
 **设计要点**：
-- 通过**能力别名**（`fast_chat`、`embedding_zh`、`reranker`）引用模型，不散落具体模型名
+- 通过**能力别名**（`fast_chat`、`embedding_zh`）引用模型，不散落具体模型名
 - 默认使用**确定性 fake**，不需要 API key
 - Provider Adapter 封装 SDK/HTTP 类型，不向 application 或 domain 泄漏
+- 外部 endpoint 默认禁止，公网外发需要显式策略开关
+- 模型状态加入 readiness，但不是 API 启动或本地管理功能的硬依赖
 
-**依赖**：`httpx`
+**依赖**：`httpx`、`opentelemetry-api`
 
-**后续将包含**：
-- Chat / Embedding 能力 Port 定义
-- Fake 实现（支持正常、超时、限流、错误等场景）
-- OpenAI-compatible Provider Adapter
-- 契约测试
+本阶段不包含 Reranker，也不执行真实 Provider 调用。
 
 ---
 
@@ -443,19 +448,21 @@ tests/
 ├── __init__.py
 ├── unit/
 │   ├── __init__.py
-│   ├── test_config.py      # 配置校验测试（4 个）
+│   ├── test_config.py      # 配置与密钥校验测试（5 个）
 │   ├── test_database.py     # Engine、失败语义和数据库 span（3 个）
 │   ├── test_errors.py       # 错误协议测试（6 个）
-│   ├── test_health.py       # 健康检查测试（3 个）
+│   ├── test_health.py       # 本地依赖与模型状态测试（4 个）
+│   ├── test_model_gateway.py # Provider 策略、错误、重试和隐私（20 个）
 │   ├── test_observability.py # 上下文、日志 schema 和脱敏（4 个）
 │   ├── test_openapi.py      # OpenAPI schema 测试（1 个）
 │   ├── test_trace_middleware.py # API 关联头与错误 trace（3 个）
 │   └── test_worker_tasks.py # 诊断任务、重试、入队和 trace（9 个）
 ├── integration/__init__.py  # 集成测试（预留）
-└── contract/__init__.py     # 契约测试（预留）
+└── contract/
+    └── test_model_gateway_contract.py # fake/Adapter 共享契约（4 个）
 ```
 
-**共 33 个测试**，覆盖：
+**共 59 个测试**，覆盖：
 - 配置：空密钥在 production 下拒绝启动，development 下跳过
 - 错误：Pydantic model、404 统一格式、AppError 结构化响应、未知异常不泄露
 - 健康：live 返回 alive、ready 返回 degraded + 机器码 + 不泄露主机信息
@@ -463,6 +470,8 @@ tests/
 - 数据库：结构化 URL、Engine 延迟连接、不可用语义和父 trace 延续
 - 可观测性：关联 ID 校验、JSON schema、集中脱敏和错误体/响应头一致性
 - Worker：消息无正文、输入校验、幂等执行、超时/重试、入队和 consumer trace
+- ModelGateway：共享 Chat/Embedding 契约、能力别名、确定性 fake、有限重试、结构解析、
+  endpoint 策略、显式不可用状态及输入/输出不进入日志或 span
 
 ---
 
@@ -535,9 +544,9 @@ docker compose -f deploy/compose.yaml down -v         # 停止 + 清理卷
 | 阶段 | 状态 | 说明 |
 |------|------|------|
 | 阶段 0 | 🔶 进行中 | 语料授权复核、标注复核未完成 |
-| **阶段 1** | **🔶 进行中** | **Step 0-4 已完成；下一步为 ModelGateway** |
+| **阶段 1** | **🔶 进行中** | **Step 0-5 已完成；下一步为 Web 工作台外壳** |
 | 阶段 2 | ❌ 未开始 | 核心数据模型与业务逻辑 |
 | 阶段 3+ | ❌ 未开始 | 摄入、检索、引用、Skill 等工作 |
 
-阶段 1 已完成：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅
-阶段 1 待完成：Step 5（ModelGateway）、Step 6（Web 工作台）、Step 7（Compose/CI）、Step 8（验收）
+阶段 1 已完成：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅
+阶段 1 待完成：Step 6（Web 工作台）、Step 7（Compose/CI）、Step 8（验收）

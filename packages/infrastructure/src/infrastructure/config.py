@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import Field
+from typing import Literal
+
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -58,6 +60,17 @@ class Settings(BaseSettings):
     diagnostic_task_timeout_ms: int = Field(default=10_000, ge=1_000)
     diagnostic_task_max_retries: int = Field(default=3, ge=0)
     diagnostic_task_min_backoff_ms: int = Field(default=1_000, ge=100)
+
+    # --- Model Gateway ---
+    model_provider: Literal["fake", "openai-compatible", "disabled"] = "fake"
+    model_endpoint: str | None = None
+    model_api_key: SecretStr | None = None
+    fast_chat_model: str | None = None
+    embedding_model: str | None = None
+    model_allow_external: bool = False
+    model_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    model_max_retries: int = Field(default=2, ge=0, le=5)
+    model_retry_backoff_seconds: float = Field(default=0.1, ge=0, le=10)
 
     @property
     def redis_url(self) -> str:

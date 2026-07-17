@@ -81,3 +81,10 @@ belong only in an ignored local `.env` or the process environment.
 
 Private or restricted corpus content must not be sent to an external endpoint. Enabling an external
 endpoint requires an explicit deployment setting and a policy check in addition to credentials.
+
+Stage 1 defaults to `MODEL_PROVIDER=fake`. To use a local OpenAI-compatible endpoint, set
+`MODEL_PROVIDER=openai-compatible`, `MODEL_ENDPOINT`, `FAST_CHAT_MODEL`, and `EMBEDDING_MODEL`.
+`MODEL_API_KEY` is optional for local endpoints and is loaded as a secret value. Public endpoints are
+rejected unless `MODEL_ALLOW_EXTERNAL=true` is also set. URL-embedded credentials and endpoint query
+parameters are always rejected. Default tests use the fake or a synthetic local HTTP stub and never
+call a real or paid model.

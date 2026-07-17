@@ -23,18 +23,23 @@ _DATABASE_URL_SECRET = re.compile(r"(?i)(postgres(?:ql)?(?:\+asyncpg)?://[^:\s/]
 
 _LOG_RECORD_FIELDS = set(logging.makeLogRecord({}).__dict__)
 _SAFE_EXTRA_FIELDS = {
+    "capability",
     "count",
     "dependency",
     "duration_ms",
     "error_type",
     "event_version",
     "exporter_enabled",
+    "input_tokens",
     "max_retries",
     "message_id",
     "method",
     "operation",
+    "output_tokens",
     "path",
     "requested_at",
+    "provider",
+    "retry_count",
     "retries",
     "status_code",
 }

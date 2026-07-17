@@ -752,10 +752,14 @@ version = "0.1.0"
 source = { editable = "packages/model_gateway" }
 dependencies = [
     { name = "httpx" },
+    { name = "opentelemetry-api" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "httpx" }]
+requires-dist = [
+    { name = "httpx" },
+    { name = "opentelemetry-api" },
+]
 
 [[package]]
 name = "mypy"

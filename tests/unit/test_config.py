@@ -25,6 +25,15 @@ def test_config_secrets_skipped_in_development() -> None:
     s.validate_secrets()  # should not raise
 
 
+def test_model_api_key_uses_secret_type() -> None:
+    value = "synthetic-secret-api-key"
+    s = Settings(model_api_key=value)
+
+    assert s.model_api_key is not None
+    assert s.model_api_key.get_secret_value() == value
+    assert value not in repr(s)
+
+
 async def test_application_lifespan_rejects_missing_production_secrets(
     monkeypatch: MonkeyPatch,
 ) -> None:
