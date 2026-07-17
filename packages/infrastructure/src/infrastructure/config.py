@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import URL
 
 
 class Settings(BaseSettings):
@@ -36,15 +37,27 @@ class Settings(BaseSettings):
     postgres_password: str = Field(default="")
 
     @property
-    def database_url(self) -> str:
-        return (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+    def database_url(self) -> URL:
+        return URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.postgres_user,
+            password=self.postgres_password,
+            host=self.postgres_host,
+            port=self.postgres_port,
+            database=self.postgres_db,
         )
 
     # --- Redis ---
     redis_host: str = "localhost"
     redis_port: int = 6379
+
+    # --- Worker ---
+    worker_processes: int = Field(default=1, ge=1)
+    worker_threads: int = Field(default=4, ge=1)
+    worker_shutdown_timeout_ms: int = Field(default=30_000, ge=1_000)
+    diagnostic_task_timeout_ms: int = Field(default=10_000, ge=1_000)
+    diagnostic_task_max_retries: int = Field(default=3, ge=0)
+    diagnostic_task_min_backoff_ms: int = Field(default=1_000, ge=100)
 
     @property
     def redis_url(self) -> str:

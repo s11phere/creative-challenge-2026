@@ -3,7 +3,6 @@
 from typing import Any
 
 import redis.asyncio as aioredis
-from api import main
 from api.main import app
 from httpx import ASGITransport, AsyncClient
 from pytest import MonkeyPatch
@@ -41,10 +40,6 @@ async def test_ready_returns_degraded_without_dependencies() -> None:
 async def test_ready_returns_success_when_dependencies_are_available(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    class FakePostgresConnection:
-        async def close(self) -> None:
-            pass
-
     class FakeRedisConnection:
         async def ping(self) -> bool:
             return True
@@ -52,13 +47,13 @@ async def test_ready_returns_success_when_dependencies_are_available(
         async def aclose(self) -> None:
             pass
 
-    async def fake_postgres_connect(**_kwargs: Any) -> FakePostgresConnection:
-        return FakePostgresConnection()
+    async def fake_postgres_available(*, timeout_seconds: float) -> bool:
+        return timeout_seconds == 3
 
     def fake_redis_from_url(*_args: Any, **_kwargs: Any) -> FakeRedisConnection:
         return FakeRedisConnection()
 
-    monkeypatch.setattr(main.asyncpg, "connect", fake_postgres_connect)
+    monkeypatch.setattr(app.state.database, "is_available", fake_postgres_available)
     monkeypatch.setattr(aioredis, "from_url", fake_redis_from_url)
 
     transport = ASGITransport(app=app)

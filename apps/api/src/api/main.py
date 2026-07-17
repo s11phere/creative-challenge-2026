@@ -7,9 +7,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
-import asyncpg
 from fastapi import FastAPI, Response
 from infrastructure.config import settings
+from infrastructure.database import Database
 from pydantic import BaseModel
 
 from .errors import ErrorResponse, register_error_handlers
@@ -45,16 +45,22 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 def create_app() -> FastAPI:
     """Application factory. Call once at process start."""
 
+    database = Database(settings.database_url)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         settings.validate_secrets()
-        yield
+        try:
+            yield
+        finally:
+            await database.dispose()
 
     app = FastAPI(
         title="Agent Knowledge Repository",
         version="0.1.0",
         lifespan=lifespan,
     )
+    app.state.database = database
 
     register_error_handlers(app)
     _register_routes(app)
@@ -86,19 +92,9 @@ def _register_routes(app: FastAPI) -> None:
         """Readiness probe — concurrent dependency check with stable machine codes."""
 
         async def _check_postgres() -> DependencyCheck:
-            try:
-                conn = await asyncpg.connect(
-                    host=settings.postgres_host,
-                    port=settings.postgres_port,
-                    user=settings.postgres_user,
-                    password=settings.postgres_password,
-                    database=settings.postgres_db,
-                    timeout=3,
-                )
-                await conn.close()
+            if await app.state.database.is_available(timeout_seconds=3):
                 return DependencyCheck(healthy=True, code="POSTGRESQL_OK")
-            except Exception:
-                return DependencyCheck(healthy=False, code="POSTGRESQL_UNREACHABLE")
+            return DependencyCheck(healthy=False, code="POSTGRESQL_UNREACHABLE")
 
         async def _check_redis() -> DependencyCheck:
             import redis.asyncio as aioredis  # noqa: PLC0415

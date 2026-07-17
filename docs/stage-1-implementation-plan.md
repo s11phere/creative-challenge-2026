@@ -198,6 +198,36 @@ docker compose -f deploy/compose.yaml up --build
 
 **完成标准**：空数据库可升级到 `head`；当前迁移可降级再升级；API 与 Worker 可独立启动；诊断任务能关联请求/任务 ID。
 
+**状态**：已于 2026-07-17 完成。
+
+实际交付：
+
+- 新增异步 SQLAlchemy Engine、会话工厂、事务边界和有界连接检查；API readiness
+  复用该数据库基础设施。
+- Alembic 与应用统一从 `Settings` 构造数据库 URL；初始迁移仅维护
+  `alembic_version` 并启用 `vector`，没有提前创建阶段 2 业务表。
+- 新增 RedisBroker、独立 Dramatiq Worker 入口和无正文诊断任务。消息只包含
+  `task_id`、`trace_id`、`event_version`、计数和请求时间。
+- 诊断任务配置了任务超时、最多 3 次重试、优雅停止和永久失败回调；超过重试上限的
+  消息进入 Dramatiq 死信队列，单个坏任务不会终止 Worker。
+- 修正 Compose `develop.watch` 的同步目标，使 Compose 配置能够通过校验。
+
+2026-07-17 验证记录：
+
+- 隔离启动 PostgreSQL/pgvector 与 Redis，两个容器健康检查均通过；验证后使用独立
+  Compose project 执行 `down -v`，未影响其他数据。
+- 在空数据库完成 `upgrade head -> downgrade base -> upgrade head`，再次执行
+  `upgrade head` 无重复副作用；`vector` 扩展随迁移正确创建和删除。
+- 数据库中只有 `alembic_version`，确认未提前创建 Space、Document、Chunk 等业务表。
+- 在 Worker 未启动时先向 Redis 投递诊断消息，Worker 启动后成功消费并记录开始、完成
+  事件，证明 API 与 Worker 无需同时在线。
+- 使用不支持的 `event_version=99` 验证异常路径：达到 3 次重试上限后执行永久失败
+  回调、消息进入死信队列，Worker 保持运行。
+- Dramatiq 未配置 Results middleware 的提示符合 ADR-009：Redis/Dramatiq 只负责
+  投递，持久任务状态不存放在结果后端。
+- 后端格式、lint、严格类型检查和 23 个单元测试通过；迁移正反向离线 SQL 与 Compose
+  配置校验通过。
+
 ### 步骤 4：可观测性基线
 
 **工作量：3-4 人日**

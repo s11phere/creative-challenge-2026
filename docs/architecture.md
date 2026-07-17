@@ -154,12 +154,14 @@ Python 项目中央配置。包含：
 - `APP_ENV` / `APP_DEBUG` / `APP_SECRET_KEY`：应用配置
 - `POSTGRES_*`：数据库连接
 - `REDIS_*`：Redis 连接
+- `WORKER_*` / `DIAGNOSTIC_TASK_*`：Worker 并发、优雅停止、任务超时与重试上限
 - `MODEL_*`：模型端点（默认注释，使用 deterministic fake）
 - `OTLP_ENDPOINT`：OpenTelemetry 端点（可选）
 - `LOG_LEVEL` / `LOG_FORMAT`：日志配置
 
 ### `alembic.ini`
-数据库迁移配置文件。指定迁移脚本位置（`migrations/`）和数据库连接串。
+数据库迁移配置文件。指定迁移脚本位置（`migrations/`）；实际连接 URL 由
+`infrastructure.config.Settings` 从环境变量构造，避免迁移与应用使用两套配置。
 
 ### `AGENTS.md`
 AI 开发代理的全局行为指南。定义了项目目标、优先级、架构不变量、技术基线、工作方式和 ADR 触发条件。
@@ -203,6 +205,8 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 |------|------|
 | `src/infrastructure/__init__.py` | 包标记 |
 | `src/infrastructure/config.py` | Pydantic Settings 配置加载 |
+| `src/infrastructure/database.py` | 异步 Engine、会话工厂、事务边界和有界连接检查 |
+| `src/infrastructure/queue.py` | RedisBroker 延迟构造 |
 
 **`config.py` 详解**：
 
@@ -216,8 +220,6 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 全局实例 `settings = Settings()` 可在各模块中直接导入。
 
 **后续将包含**：
-- SQLAlchemy Engine 与异步会话工厂
-- Redis/Dramatiq 队列适配器
 - OpenTelemetry 日志/追踪适配器
 - 配置校验与密钥管理
 
@@ -300,14 +302,18 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 
 | 文件 | 职责 |
 |------|------|
-| `src/worker/main.py` | Worker 入口，启动日志 |
+| `src/worker/main.py` | 独立 Worker CLI 入口与优雅停止参数 |
 | `src/worker/__main__.py` | 支持 `python -m worker` 启动 |
+| `src/worker/tasks.py` | 无正文诊断任务、有限重试和永久失败回调 |
 
-**当前状态**：入口骨架，后续实现：
+**当前状态**：已实现 Redis/Dramatiq Worker 基线。诊断消息仅包含 `task_id`、
+`trace_id`、`event_version`、计数和请求时间；任务有明确超时、有限重试、优雅停止和
+永久失败日志，重复执行不写入业务状态。
+
+后续阶段实现：
 - 文档解析、分块、Embedding、索引等长任务
 - 任务状态跟踪（DB 持久化，Redis 只负责投递）
-- 重试、超时、死信队列
-- OpenTelemetry trace 传播
+- OpenTelemetry span 与结构化日志关联
 
 **依赖**：`dramatiq`、`infrastructure`、`application`
 
@@ -433,19 +439,23 @@ tests/
 ├── __init__.py
 ├── unit/
 │   ├── __init__.py
-│   ├── test_config.py      # 配置校验测试（3 个）
-│   ├── test_errors.py       # 错误协议测试（5 个）
+│   ├── test_config.py      # 配置校验测试（4 个）
+│   ├── test_database.py     # Engine URL、延迟连接和失败语义（2 个）
+│   ├── test_errors.py       # 错误协议测试（6 个）
 │   ├── test_health.py       # 健康检查测试（3 个）
-│   └── test_openapi.py      # OpenAPI schema 测试（1 个）
+│   ├── test_openapi.py      # OpenAPI schema 测试（1 个）
+│   └── test_worker_tasks.py # 诊断任务、消息字段、重试配置和幂等性（7 个）
 ├── integration/__init__.py  # 集成测试（预留）
 └── contract/__init__.py     # 契约测试（预留）
 ```
 
-**共 12 个测试**，覆盖：
+**共 23 个测试**，覆盖：
 - 配置：空密钥在 production 下拒绝启动，development 下跳过
 - 错误：Pydantic model、404 统一格式、AppError 结构化响应、未知异常不泄露
 - 健康：live 返回 alive、ready 返回 degraded + 机器码 + 不泄露主机信息
 - OpenAPI：路径存在、schema 组件完整
+- 数据库：结构化 URL、Engine 延迟连接和不可用语义
+- Worker：消息无正文、输入校验、幂等执行、超时/重试/永久失败配置
 
 ---
 
@@ -488,6 +498,7 @@ uv run mypy apps packages           # 类型检查
 uv run pytest                       # 运行测试
 uv run pytest -q --tb=short         # 精简输出
 uv run uvicorn api.main:app         # 启动 API 服务
+uv run python -m worker             # 启动独立 Dramatiq Worker
 uv run alembic upgrade --sql head   # 脱机生成迁移 SQL
 ```
 
@@ -517,9 +528,9 @@ docker compose -f deploy/compose.yaml down -v         # 停止 + 清理卷
 | 阶段 | 状态 | 说明 |
 |------|------|------|
 | 阶段 0 | 🔶 进行中 | 语料授权复核、标注复核未完成 |
-| **阶段 1** | **🔶 进行中** | **工程骨架：API/配置/错误协议/健康检查 ✅** |
+| **阶段 1** | **🔶 进行中** | **Step 0-3 已完成；下一步为可观测性基线** |
 | 阶段 2 | ❌ 未开始 | 核心数据模型与业务逻辑 |
 | 阶段 3+ | ❌ 未开始 | 摄入、检索、引用、Skill 等工作 |
 
-阶段 1 已完成：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅
-阶段 1 待完成：Step 3（DB 迁移与 Worker）、Step 4（可观测性）、Step 5（ModelGateway）、Step 6（Web 工作台）、Step 7（Compose/CI）、Step 8（验收）
+阶段 1 已完成：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅
+阶段 1 待完成：Step 4（可观测性）、Step 5（ModelGateway）、Step 6（Web 工作台）、Step 7（Compose/CI）、Step 8（验收）

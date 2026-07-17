@@ -1,4 +1,4 @@
-"""Allow `python -m apps.worker` to start the worker."""
+"""Allow ``python -m worker`` to start the Worker."""
 
 from .main import main
 
