@@ -1,2 +1,48 @@
-.claude/
+# Third-party / course materials
+cases/
+
+# Environment
+.env
+.env.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / pnpm
+node_modules/
+apps/web/node_modules/
+.pnpm-store/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build output
+dist/
+build/
+*.egg-info/
+
+# Docker
+deploy/data/
+deploy/.env/
+
+# Temporary
+tmp/
+
+# Codex
 .agents/
+
+# Claude Code
+.claude/

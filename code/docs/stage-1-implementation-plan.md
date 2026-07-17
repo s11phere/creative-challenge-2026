@@ -48,22 +48,22 @@
 - ADR-003：自有 Agent Runtime Port，LangGraph Adapter 延后。
 - ADR-004：本地优先，外部模型显式选择，CI 只使用确定性 fake。
 
-开始新增 ADR 前，应先确定 `../cases/docs/adr/` 与本仓库 `docs/adr/` 的单一权威位置，并一次性更新引用，避免两个目录长期分叉。
+ADR-001 至 ADR-004 已迁入本仓库 `docs/adr/`，该目录是后续 ADR 的唯一权威位置。`../cases/docs/adr/` 中的原文件仅作为阶段 0 历史来源，不再继续维护。
 
-### 2.3 阶段 1 必须关闭的决策
+### 2.3 阶段 1 已关闭的决策
 
-以下决策尚未固定，必须在编码早期完成：
+以下决策已于 2026-07-17 固定：
 
-| 决策 | 推荐基线 | 完成方式 |
+| 决策 | 固定基线 | 唯一来源 |
 | --- | --- | --- |
-| Python 包与锁定工具 | Python 3.12 + `uv`，后端使用单个 workspace/锁文件 | 在首个代码变更中验证 Windows 和 CI；记录在贡献文档 |
-| 前端包管理 | Node LTS + `pnpm`，提交锁文件 | 用 Corepack 固定版本；记录在贡献文档 |
-| 后台队列 | Redis + Dramatiq | 新增队列 ADR；若取消、结果后端或运维能力证明 Celery 更合适，再调整结论 |
-| 模型实现 | 确定性 fake + 一个可配置 Provider Adapter | 默认关闭外部发送；只通过能力别名暴露 Chat/Embedding |
+| Python 包与锁定工具 | Python 3.12 + `uv`，后端使用单个 workspace/锁文件 | `docs/development-environment.md`；步骤 1 写入 `.python-version` 和 `uv.lock` |
+| 前端包管理 | Node 24 LTS + Corepack 管理的 `pnpm` 10.20.0 | `docs/development-environment.md`；步骤 1 写入 `packageManager` 和锁文件 |
+| 后台队列 | Redis + Dramatiq；PostgreSQL 保存持久任务状态，Redis 只负责投递 | ADR-009 |
+| 模型实现 | 确定性 fake + 默认关闭外发的 OpenAI-compatible HTTP Adapter，优先连接本地端点 | ADR-004 与 `docs/development-environment.md` |
 | 类型检查 | `mypy` 作为后端门禁，TypeScript `tsc --noEmit` 作为前端门禁 | CI 与本地使用相同配置 |
 | 可观测输出 | OpenTelemetry trace + JSON 结构化日志 | 开发环境可接本地 Collector；正文采集默认关闭 |
 
-以上工具建议是本计划的估算前提，不属于已接受 ADR。若改用 Celery、npm、Poetry 或其他同类工具，需要在实施前更新工作量和命令设计；不要同时引入功能重叠的工具。
+若改用 Celery、npm、Poetry 或其他同类工具，需要先更新相应 ADR 或计划、工作量和命令设计；不要同时引入功能重叠的工具。
 
 ## 3. 范围
 
@@ -124,17 +124,18 @@ API / Worker -> Application -> Domain Ports
 
 ## 5. 分步实施
 
-### 步骤 0：关闭启动决策和阶段门禁
+### 步骤 0：关闭启动决策
 
 **工作量：1-2 人日**
 
-- 确认阶段 0 收尾负责人、状态和预计完成日期。
 - 统一 ADR 权威目录和编号规则，保留已接受 ADR-001 至 ADR-004 的历史。
 - 形成队列选型 ADR，明确任务状态存数据库、队列只负责投递的边界。
-- 固定 Python、Node、包管理器、基础镜像和本地支持版本。
+- 固定 Python、Node、包管理器、本地支持版本和基础镜像标签；镜像首次落地时锁定 digest。
 - 确认首个 Provider Adapter 是本地端点还是显式启用的外部端点，并记录数据边界。
 
 **完成标准**：不存在会改变仓库结构、队列语义或数据外发边界的未决问题；所有工具版本都有唯一来源。
+
+**状态**：已于 2026-07-17 完成。
 
 ### 步骤 1：初始化仓库与统一命令
 
@@ -268,7 +269,7 @@ docker compose -f deploy/compose.yaml up --build
 
 | 工作包 | 人日 | 主要依赖 | 可并行性 |
 | --- | ---: | --- | --- |
-| 启动决策与门禁 | 1-2 | 无 | 关键路径 |
+| 启动决策 | 1-2 | 无 | 关键路径 |
 | 仓库与工具链 | 2-3 | 决策完成 | 关键路径 |
 | API、配置、错误协议 | 3-4 | 工具链 | 可与 Web 并行 |
 | DB 迁移与 Worker | 5-6 | 工具链、队列决策 | 可部分并行 |
@@ -351,7 +352,7 @@ docker compose -f deploy/compose.yaml up --build
 
 | ID | 任务 | 验收结果 |
 | --- | --- | --- |
-| S1-01 | 阶段门禁与 ADR 权威位置 | 阶段状态、ADR 位置和队列决策明确 |
+| S1-01 | 启动决策与 ADR 权威位置 | ADR 位置、工具版本、队列和 Provider 决策明确 |
 | S1-02 | Python workspace 与后端质量工具 | 锁文件和规范命令可运行 |
 | S1-03 | Web workspace 与前端质量工具 | 锁文件、测试和构建可运行 |
 | S1-04 | FastAPI 工厂、配置和错误协议 | OpenAPI 与错误测试通过 |
