@@ -16,7 +16,9 @@ from domain.models import (
     Source,
     SourceType,
     Space,
+    TaskOperation,
     TaskStage,
+    TaskStatus,
 )
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -102,6 +104,7 @@ def _document_to_domain(row: DocumentModel) -> Document:
         source_id=row.source_id,
         stable_key=row.stable_key,
         current_version_id=row.current_version_id,
+        deleted_at=row.deleted_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -113,6 +116,7 @@ def _document_from_domain(doc: Document) -> DocumentModel:
         source_id=doc.source_id,
         stable_key=doc.stable_key,
         current_version_id=doc.current_version_id,
+        deleted_at=doc.deleted_at,
         created_at=doc.created_at,
         updated_at=doc.updated_at,
     )
@@ -122,8 +126,14 @@ def _version_to_domain(row: DocumentVersionModel) -> DocumentVersion:
     return DocumentVersion(
         id=row.id,
         document_id=row.document_id,
+        blob_hash=row.blob_hash,
         content_hash=row.content_hash,
         parser_version=row.parser_version,
+        normalizer_version=row.normalizer_version,
+        chunker_version=row.chunker_version,
+        embedding_version=row.embedding_version,
+        processing_config_hash=row.processing_config_hash,
+        processing_config=dict(row.processing_config or {}),
         status=DocumentStatus(row.status),
         file_path=row.file_path,
         created_at=row.created_at,
@@ -134,8 +144,14 @@ def _version_from_domain(version: DocumentVersion) -> DocumentVersionModel:
     return DocumentVersionModel(
         id=version.id,
         document_id=version.document_id,
+        blob_hash=version.blob_hash,
         content_hash=version.content_hash,
         parser_version=version.parser_version,
+        normalizer_version=version.normalizer_version,
+        chunker_version=version.chunker_version,
+        embedding_version=version.embedding_version,
+        processing_config_hash=version.processing_config_hash,
+        processing_config=dict(version.processing_config),
         status=version.status.value,
         file_path=version.file_path,
         created_at=version.created_at,
@@ -150,6 +166,7 @@ def _chunk_to_domain(row: ChunkModel) -> Chunk:
         id=row.id,
         version_id=row.version_id,
         ordinal=row.ordinal,
+        chunk_hash=row.chunk_hash,
         text=row.text,
         meta=dict(row.meta or {}),
         embedding=embedding,
@@ -162,6 +179,7 @@ def _chunk_from_domain(chunk: Chunk) -> ChunkModel:
         id=chunk.id,
         version_id=chunk.version_id,
         ordinal=chunk.ordinal,
+        chunk_hash=chunk.chunk_hash,
         text=chunk.text,
         meta=dict(chunk.meta),
         embedding=chunk.embedding,
@@ -173,9 +191,19 @@ def _task_to_domain(row: IngestionTaskModel) -> IngestionTask:
     return IngestionTask(
         id=row.id,
         source_id=row.source_id,
+        operation=TaskOperation(row.operation),
+        status=TaskStatus(row.status),
         stage=TaskStage(row.stage),
+        target_version_id=row.target_version_id,
+        idempotency_key=row.idempotency_key,
         progress=row.progress,
         retry_count=row.retry_count,
+        max_retries=row.max_retries,
+        cancel_requested_at=row.cancel_requested_at,
+        enqueued_at=row.enqueued_at,
+        heartbeat_at=row.heartbeat_at,
+        lease_expires_at=row.lease_expires_at,
+        error_code=row.error_code,
         error=row.error,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -186,9 +214,19 @@ def _task_from_domain(task: IngestionTask) -> IngestionTaskModel:
     return IngestionTaskModel(
         id=task.id,
         source_id=task.source_id,
+        operation=task.operation.value,
+        status=task.status.value,
         stage=task.stage.value,
+        target_version_id=task.target_version_id,
+        idempotency_key=task.idempotency_key,
         progress=task.progress,
         retry_count=task.retry_count,
+        max_retries=task.max_retries,
+        cancel_requested_at=task.cancel_requested_at,
+        enqueued_at=task.enqueued_at,
+        heartbeat_at=task.heartbeat_at,
+        lease_expires_at=task.lease_expires_at,
+        error_code=task.error_code,
         error=task.error,
         created_at=task.created_at,
         updated_at=task.updated_at,
@@ -311,9 +349,12 @@ class DocumentRepository:
         )
         return [_document_to_domain(row) for row in result.scalars()]
 
-    async def get_by_stable_key(self, stable_key: str) -> Document | None:
+    async def get_by_stable_key(self, source_id: uuid.UUID, stable_key: str) -> Document | None:
         result = await self._session.execute(
-            select(DocumentModel).where(DocumentModel.stable_key == stable_key)
+            select(DocumentModel).where(
+                DocumentModel.source_id == source_id,
+                DocumentModel.stable_key == stable_key,
+            )
         )
         row = result.scalar_one_or_none()
         return _document_to_domain(row) if row else None
@@ -322,6 +363,7 @@ class DocumentRepository:
         values: dict[str, Any] = {
             "stable_key": document.stable_key,
             "current_version_id": document.current_version_id,
+            "deleted_at": document.deleted_at,
             "updated_at": datetime.now(UTC),
         }
         await self._session.execute(
@@ -425,9 +467,19 @@ class IngestionTaskRepository:
 
     async def update(self, task: IngestionTask) -> IngestionTask:
         values: dict[str, Any] = {
+            "operation": task.operation.value,
+            "status": task.status.value,
             "stage": task.stage.value,
+            "target_version_id": task.target_version_id,
+            "idempotency_key": task.idempotency_key,
             "progress": task.progress,
             "retry_count": task.retry_count,
+            "max_retries": task.max_retries,
+            "cancel_requested_at": task.cancel_requested_at,
+            "enqueued_at": task.enqueued_at,
+            "heartbeat_at": task.heartbeat_at,
+            "lease_expires_at": task.lease_expires_at,
+            "error_code": task.error_code,
             "error": task.error,
             "updated_at": datetime.now(UTC),
         }

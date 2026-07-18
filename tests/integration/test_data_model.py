@@ -19,7 +19,9 @@ from domain.models import (
     Source,
     SourceType,
     Space,
+    TaskOperation,
     TaskStage,
+    TaskStatus,
 )
 from infrastructure.config import settings
 from infrastructure.orm import Base
@@ -31,6 +33,7 @@ from infrastructure.repositories import (
     SourceRepository,
     SpaceRepository,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 pytestmark = [
@@ -55,8 +58,6 @@ async def session() -> AsyncSession:
     )
     async with maker() as sess:
         yield sess
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
 
 
@@ -178,7 +179,9 @@ class TestDocumentChain:
         version = await ver_repo.create(
             DocumentVersion(
                 document_id=doc.id,
+                blob_hash="a" * 64,
                 content_hash="sha256-abc",
+                processing_config_hash="b" * 64,
                 status=DocumentStatus.PARSED,
                 file_path="/tmp/doc.md",
             )
@@ -199,8 +202,20 @@ class TestDocumentChain:
         chunk_repo = ChunkRepository(session)
         chunks = await chunk_repo.create_batch(
             [
-                Chunk(version_id=version.id, ordinal=0, text="# Intro", meta={"page": "1"}),
-                Chunk(version_id=version.id, ordinal=1, text="Content body", meta={"page": "1"}),
+                Chunk(
+                    version_id=version.id,
+                    ordinal=0,
+                    chunk_hash="c" * 64,
+                    text="# Intro",
+                    meta={"page": "1"},
+                ),
+                Chunk(
+                    version_id=version.id,
+                    ordinal=1,
+                    chunk_hash="d" * 64,
+                    text="Content body",
+                    meta={"page": "1"},
+                ),
             ]
         )
         assert len(chunks) == 2
@@ -229,11 +244,11 @@ class TestDocumentChain:
         doc_repo = DocumentRepository(session)
         doc = await doc_repo.create(Document(source_id=source.id, stable_key="unique-key"))
 
-        fetched = await doc_repo.get_by_stable_key("unique-key")
+        fetched = await doc_repo.get_by_stable_key(source.id, "unique-key")
         assert fetched is not None
         assert fetched.id == doc.id
 
-        missing = await doc_repo.get_by_stable_key("nonexistent")
+        missing = await doc_repo.get_by_stable_key(source.id, "nonexistent")
         assert missing is None
 
     async def test_latest_version(self, session: AsyncSession) -> None:
@@ -266,7 +281,17 @@ class TestIngestionTaskRepository:
         source = await SourceRepository(session).create(Source(space_id=space.id, uri="task.md"))
 
         repo = IngestionTaskRepository(session)
-        task = await repo.create(IngestionTask(source_id=source.id, stage=TaskStage.DISCOVER))
+        task = await repo.create(
+            IngestionTask(
+                source_id=source.id,
+                operation=TaskOperation.INGEST,
+                status=TaskStatus.QUEUED,
+                stage=TaskStage.DISCOVER,
+                idempotency_key="ingest:task.md:v1",
+            )
+        )
+        assert task.operation == TaskOperation.INGEST
+        assert task.status == TaskStatus.QUEUED
         assert task.stage == TaskStage.DISCOVER
         assert task.progress == 0.0
 
@@ -274,13 +299,18 @@ class TestIngestionTaskRepository:
         updated = IngestionTask(
             id=task.id,
             source_id=task.source_id,
+            operation=task.operation,
+            status=TaskStatus.RUNNING,
             stage=TaskStage.PARSE,
+            idempotency_key=task.idempotency_key,
             progress=0.5,
             retry_count=task.retry_count,
+            max_retries=task.max_retries,
             created_at=task.created_at,
         )
         result = await repo.update(updated)
         assert result.stage == TaskStage.PARSE
+        assert result.status == TaskStatus.RUNNING
         assert result.progress == 0.5
 
     async def test_get_by_source(self, session: AsyncSession) -> None:
@@ -299,3 +329,86 @@ class TestIngestionTaskRepository:
         repo = IngestionTaskRepository(session)
         result = await repo.get(UUID("00000000-0000-4000-8000-000000000001"))
         assert result is None
+
+
+class TestRetrySafeConstraints:
+    async def test_stable_key_is_unique_per_source(self, session: AsyncSession) -> None:
+        space = await SpaceRepository(session).create(Space(name="Scoped identity"))
+        first_source = await SourceRepository(session).create(
+            Source(space_id=space.id, uri="first")
+        )
+        second_source = await SourceRepository(session).create(
+            Source(space_id=space.id, uri="second")
+        )
+        repo = DocumentRepository(session)
+        await repo.create(Document(source_id=first_source.id, stable_key="same.md"))
+        await repo.create(Document(source_id=second_source.id, stable_key="same.md"))
+
+        with pytest.raises(IntegrityError):
+            async with session.begin_nested():
+                await repo.create(Document(source_id=first_source.id, stable_key="same.md"))
+
+    async def test_processing_identity_is_unique(self, session: AsyncSession) -> None:
+        space = await SpaceRepository(session).create(Space(name="Version identity"))
+        source = await SourceRepository(session).create(Source(space_id=space.id, uri="v.md"))
+        document = await DocumentRepository(session).create(
+            Document(source_id=source.id, stable_key="v.md")
+        )
+        version = DocumentVersion(
+            document_id=document.id,
+            blob_hash="a" * 64,
+            content_hash="b" * 64,
+            processing_config_hash="c" * 64,
+        )
+        repo = DocumentVersionRepository(session)
+        await repo.create(version)
+
+        with pytest.raises(IntegrityError):
+            async with session.begin_nested():
+                await repo.create(
+                    DocumentVersion(
+                        document_id=document.id,
+                        blob_hash="d" * 64,
+                        content_hash=version.content_hash,
+                        parser_version=version.parser_version,
+                        normalizer_version=version.normalizer_version,
+                        chunker_version=version.chunker_version,
+                        embedding_version=version.embedding_version,
+                        processing_config_hash=version.processing_config_hash,
+                    )
+                )
+
+    async def test_chunk_ordinal_is_unique_per_version(self, session: AsyncSession) -> None:
+        space = await SpaceRepository(session).create(Space(name="Chunk identity"))
+        source = await SourceRepository(session).create(Source(space_id=space.id, uri="c.md"))
+        document = await DocumentRepository(session).create(
+            Document(source_id=source.id, stable_key="c.md")
+        )
+        version = await DocumentVersionRepository(session).create(
+            DocumentVersion(
+                document_id=document.id,
+                blob_hash="a" * 64,
+                content_hash="b" * 64,
+                processing_config_hash="c" * 64,
+            )
+        )
+        repo = ChunkRepository(session)
+        await repo.create_batch(
+            [Chunk(version_id=version.id, ordinal=0, chunk_hash="d" * 64, text="first")]
+        )
+
+        with pytest.raises(IntegrityError):
+            async with session.begin_nested():
+                await repo.create_batch(
+                    [Chunk(version_id=version.id, ordinal=0, chunk_hash="e" * 64, text="second")]
+                )
+
+    async def test_task_idempotency_key_is_unique_per_source(self, session: AsyncSession) -> None:
+        space = await SpaceRepository(session).create(Space(name="Task identity"))
+        source = await SourceRepository(session).create(Source(space_id=space.id, uri="task.md"))
+        repo = IngestionTaskRepository(session)
+        await repo.create(IngestionTask(source_id=source.id, idempotency_key="ingest:v1"))
+
+        with pytest.raises(IntegrityError):
+            async with session.begin_nested():
+                await repo.create(IngestionTask(source_id=source.id, idempotency_key="ingest:v1"))

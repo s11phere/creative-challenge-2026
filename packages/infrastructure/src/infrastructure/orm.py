@@ -11,6 +11,7 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -26,6 +28,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 # Null UUID sentinel for unsafe ``default=`` in legacy patterns.
 # Not used in this module — kept for reference.
 _NULL_UUID = uuid.UUID(int=0)
+EMBEDDING_DIMENSIONS = 768
 
 
 def _utcnow() -> datetime:
@@ -101,7 +104,17 @@ class DocumentModel(Base):
         nullable=False,
     )
     stable_key: Mapped[str] = mapped_column(String(255), default="")
-    current_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    current_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "document_versions.id",
+            name="fk_documents_current_version_id",
+            ondelete="SET NULL",
+            use_alter=True,
+        ),
+        nullable=True,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
@@ -112,11 +125,12 @@ class DocumentModel(Base):
         "DocumentVersionModel",
         back_populates="document",
         cascade="all, delete-orphan",
+        foreign_keys="DocumentVersionModel.document_id",
     )
 
     __table_args__ = (
         Index("idx_documents_source_id", "source_id"),
-        Index("idx_documents_stable_key", "stable_key"),
+        UniqueConstraint("source_id", "stable_key", name="uq_documents_source_stable_key"),
     )
 
 
@@ -134,13 +148,21 @@ class DocumentVersionModel(Base):
         ForeignKey("documents.id", ondelete="CASCADE"),
         nullable=False,
     )
+    blob_hash: Mapped[str] = mapped_column(String(64), default="")
     content_hash: Mapped[str] = mapped_column(String(64), default="")
     parser_version: Mapped[str] = mapped_column(String(50), default="1.0")
+    normalizer_version: Mapped[str] = mapped_column(String(50), default="1.0")
+    chunker_version: Mapped[str] = mapped_column(String(50), default="1.0")
+    embedding_version: Mapped[str] = mapped_column(String(100), default="1.0")
+    processing_config_hash: Mapped[str] = mapped_column(String(64), default="")
+    processing_config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
-    document: Mapped[DocumentModel] = relationship("DocumentModel", back_populates="versions")
+    document: Mapped[DocumentModel] = relationship(
+        "DocumentModel", back_populates="versions", foreign_keys=[document_id]
+    )
     chunks: Mapped[list[ChunkModel]] = relationship(
         "ChunkModel", back_populates="version", cascade="all, delete-orphan"
     )
@@ -148,6 +170,17 @@ class DocumentVersionModel(Base):
     __table_args__ = (
         Index("idx_document_versions_document_id", "document_id"),
         Index("idx_document_versions_content_hash", "content_hash"),
+        Index("idx_document_versions_blob_hash", "blob_hash"),
+        UniqueConstraint(
+            "document_id",
+            "content_hash",
+            "parser_version",
+            "normalizer_version",
+            "chunker_version",
+            "embedding_version",
+            "processing_config_hash",
+            name="uq_document_versions_processing_identity",
+        ),
     )
 
 
@@ -166,9 +199,12 @@ class ChunkModel(Base):
         nullable=False,
     )
     ordinal: Mapped[int] = mapped_column(Integer, default=0)
+    chunk_hash: Mapped[str] = mapped_column(String(64), default="")
     text: Mapped[str] = mapped_column(Text, default="")
     meta: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(EMBEDDING_DIMENSIONS), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     version: Mapped[DocumentVersionModel] = relationship(
@@ -177,11 +213,14 @@ class ChunkModel(Base):
 
     __table_args__ = (
         Index("idx_chunks_version_id", "version_id"),
+        Index("idx_chunks_chunk_hash", "chunk_hash"),
+        UniqueConstraint("version_id", "ordinal", name="uq_chunks_version_ordinal"),
         Index(
             "idx_chunks_embedding",
             embedding,
             postgresql_using="ivfflat",
             postgresql_with={"lists": 100},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
     )
 
@@ -200,13 +239,40 @@ class IngestionTaskModel(Base):
         ForeignKey("sources.id", ondelete="CASCADE"),
         nullable=False,
     )
+    operation: Mapped[str] = mapped_column(String(20), default="ingest")
+    status: Mapped[str] = mapped_column(String(20), default="queued")
     stage: Mapped[str] = mapped_column(String(20), default="discover")
+    target_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("document_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(255), default=lambda: uuid.uuid4().hex)
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_retries: Mapped[int] = mapped_column(Integer, default=3)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
 
-    __table_args__ = (Index("idx_ingestion_tasks_source_id", "source_id"),)
+    __table_args__ = (
+        Index("idx_ingestion_tasks_source_id", "source_id"),
+        Index("idx_ingestion_tasks_status_lease", "status", "lease_expires_at"),
+        UniqueConstraint(
+            "source_id", "idempotency_key", name="uq_ingestion_tasks_source_idempotency"
+        ),
+        CheckConstraint("progress >= 0.0 AND progress <= 1.0", name="ck_ingestion_tasks_progress"),
+        CheckConstraint("retry_count >= 0", name="ck_ingestion_tasks_retry_count"),
+        CheckConstraint("max_retries >= 0", name="ck_ingestion_tasks_max_retries"),
+    )

@@ -24,8 +24,9 @@
 ## 2. 当前阶段与优先级
 
 截至 2026-07-18，阶段 1 Step 0-8 已完成实现与验收，GitHub Actions 已由用户确认运行
-正常。阶段 2 Step 1（数据模型基础）已完成：Space、Source、Document、DocumentVersion、
-Chunk（pgvector）、IngestionTask 的领域实体、ORM 模型、仓库实现、Alembic 迁移及测试。
+正常。阶段 2 Step 0/1 已完成：ADR-005 已固定摄入身份、版本、发布、任务和删除语义；
+Space、Source、Document、DocumentVersion、Chunk（pgvector）、IngestionTask 的领域实体、
+ORM 模型、仓库实现、Alembic 迁移及测试已完成，R2-01 至 R2-03 已关闭。
 项目仍受阶段 0 数据门禁约束，不能据此宣称摄入、检索、问答、引用、Agent 或 Skill 业务
 已经可用。
 
@@ -45,7 +46,7 @@ Chunk（pgvector）、IngestionTask 的领域实体、ORM 模型、仓库实现�
 按以下顺序推进：
 
 1. 完成阶段 0 语料的授权复核、人工标注复核和版本冻结。
-2. 遵守已接受的 ADR-001 至 ADR-004，不重复讨论已固定基线。
+2. 遵守已接受的 ADR-001 至 ADR-005 及 ADR-009，不重复讨论已固定基线。
 3. 保持已验收的 API、Worker、Web、PostgreSQL、Redis、Compose 和 CI 工程基线稳定。
 4. 核心数据模型与数据库迁移。 ✅
 5. 单个 Markdown 文件的幂等摄入闭环。

@@ -10,7 +10,9 @@ from .models import (
     Source,
     SourceType,
     Space,
+    TaskOperation,
     TaskStage,
+    TaskStatus,
 )
 from .repositories import (
     ChunkRepository,
@@ -37,5 +39,7 @@ __all__ = [
     "SourceType",
     "Space",
     "SpaceRepository",
+    "TaskOperation",
     "TaskStage",
+    "TaskStatus",
 ]

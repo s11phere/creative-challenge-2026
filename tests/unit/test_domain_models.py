@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -16,7 +16,9 @@ from domain.models import (
     Source,
     SourceType,
     Space,
+    TaskOperation,
     TaskStage,
+    TaskStatus,
 )
 
 
@@ -99,6 +101,7 @@ class TestDocument:
         assert isinstance(doc.source_id, UUID)
         assert doc.stable_key == ""
         assert doc.current_version_id is None
+        assert doc.deleted_at is None
 
     def test_with_version(self) -> None:
         version_id = UUID("00000000-0000-4000-8000-000000000001")
@@ -112,8 +115,14 @@ class TestDocumentVersion:
         version = DocumentVersion()
         assert isinstance(version.id, UUID)
         assert isinstance(version.document_id, UUID)
+        assert version.blob_hash == ""
         assert version.content_hash == ""
         assert version.parser_version == "1.0"
+        assert version.normalizer_version == "1.0"
+        assert version.chunker_version == "1.0"
+        assert version.embedding_version == "1.0"
+        assert version.processing_config_hash == ""
+        assert version.processing_config == {}
         assert version.status == DocumentStatus.PENDING
         assert version.file_path is None
 
@@ -133,6 +142,7 @@ class TestChunk:
         assert isinstance(chunk.id, UUID)
         assert isinstance(chunk.version_id, UUID)
         assert chunk.ordinal == 0
+        assert chunk.chunk_hash == ""
         assert chunk.text == ""
         assert chunk.meta == {}
         assert chunk.embedding is None
@@ -140,11 +150,13 @@ class TestChunk:
     def test_with_embedding(self) -> None:
         chunk = Chunk(
             ordinal=1,
+            chunk_hash="a" * 64,
             text="Hello world",
             meta={"page": "1"},
             embedding=[0.1, 0.2, 0.3],
         )
         assert chunk.ordinal == 1
+        assert chunk.chunk_hash == "a" * 64
         assert chunk.text == "Hello world"
         assert chunk.meta == {"page": "1"}
         assert chunk.embedding == [0.1, 0.2, 0.3]
@@ -165,13 +177,24 @@ class TestIngestionTask:
         task = IngestionTask()
         assert isinstance(task.id, UUID)
         assert isinstance(task.source_id, UUID)
+        assert task.operation == TaskOperation.INGEST
+        assert task.status == TaskStatus.QUEUED
         assert task.stage == TaskStage.DISCOVER
+        assert task.target_version_id is None
+        assert task.idempotency_key
         assert task.progress == 0.0
         assert task.retry_count == 0
+        assert task.max_retries == 3
+        assert task.cancel_requested_at is None
+        assert task.enqueued_at is None
+        assert task.heartbeat_at is None
+        assert task.lease_expires_at is None
+        assert task.error_code is None
         assert task.error is None
 
     def test_progress_update_requires_new_instance(self) -> None:
         task = IngestionTask(
+            status=TaskStatus.RUNNING,
             stage=TaskStage.PARSE,
             progress=0.5,
         )
@@ -181,7 +204,10 @@ class TestIngestionTask:
         task2 = IngestionTask(
             id=task.id,
             source_id=task.source_id,
+            operation=task.operation,
+            status=task.status,
             stage=TaskStage.CHUNK,
+            idempotency_key=task.idempotency_key,
             progress=0.8,
             retry_count=task.retry_count,
         )
@@ -189,11 +215,31 @@ class TestIngestionTask:
 
     def test_failed_task(self) -> None:
         task = IngestionTask(
-            stage=TaskStage.FAILED,
+            status=TaskStatus.FAILED,
+            stage=TaskStage.PARSE,
+            error_code="parser_unsupported",
             error="ParserError: unsupported format",
         )
-        assert task.stage == TaskStage.FAILED
+        assert task.status == TaskStatus.FAILED
+        assert task.stage == TaskStage.PARSE
+        assert task.error_code == "parser_unsupported"
         assert task.error == "ParserError: unsupported format"
+
+    def test_recovery_fields(self) -> None:
+        now = datetime.now(UTC)
+        version_id = UUID("00000000-0000-4000-8000-000000000002")
+        task = IngestionTask(
+            operation=TaskOperation.REBUILD,
+            status=TaskStatus.RUNNING,
+            target_version_id=version_id,
+            idempotency_key="rebuild:v2",
+            enqueued_at=now,
+            heartbeat_at=now,
+            lease_expires_at=now,
+        )
+        assert task.operation == TaskOperation.REBUILD
+        assert task.target_version_id == version_id
+        assert task.lease_expires_at == now
 
 
 class TestEnums:
@@ -211,10 +257,21 @@ class TestEnums:
         stages = list(TaskStage)
         assert stages == [
             TaskStage.DISCOVER,
+            TaskStage.FINGERPRINT,
             TaskStage.PARSE,
+            TaskStage.NORMALIZE,
+            TaskStage.ENRICH,
             TaskStage.CHUNK,
             TaskStage.EMBED,
             TaskStage.INDEX,
-            TaskStage.COMPLETE,
-            TaskStage.FAILED,
+            TaskStage.VALIDATE,
+            TaskStage.PUBLISH,
+            TaskStage.CLEANUP,
         ]
+
+    def test_task_operation_and_status_values(self) -> None:
+        assert TaskOperation.INGEST.value == "ingest"
+        assert TaskOperation.REBUILD.value == "rebuild"
+        assert TaskOperation.DELETE.value == "delete"
+        assert TaskStatus.QUEUED.value == "queued"
+        assert TaskStatus.DEAD_LETTER.value == "dead_letter"

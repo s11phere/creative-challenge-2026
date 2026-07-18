@@ -34,6 +34,10 @@ def test_model_api_key_uses_secret_type() -> None:
     assert value not in repr(s)
 
 
+def test_embedding_dimensions_are_not_runtime_configurable() -> None:
+    assert "embedding_dimensions" not in Settings.model_fields
+
+
 async def test_application_lifespan_rejects_missing_production_secrets(
     monkeypatch: MonkeyPatch,
 ) -> None:

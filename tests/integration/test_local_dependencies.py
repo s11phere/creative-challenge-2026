@@ -7,11 +7,17 @@ from uuid import uuid4
 
 import pytest
 import redis.asyncio as aioredis
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from api.main import app
 from httpx import ASGITransport, AsyncClient
 from infrastructure.config import settings
+from infrastructure.orm import Base
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
+
+_ALEMBIC_CFG = Config("alembic.ini")
+_EXPECTED_HEADS = ScriptDirectory.from_config(_ALEMBIC_CFG).get_heads()
 
 pytestmark = [
     pytest.mark.integration,
@@ -38,7 +44,34 @@ async def test_migrated_postgresql_has_pgvector_and_single_head() -> None:
         await engine.dispose()
 
     assert vector_version
-    assert migration_heads == ["328a3caa2960"]
+    assert set(migration_heads) == set(_EXPECTED_HEADS)
+
+
+async def test_orm_metadata_creates_cosine_vector_index_in_isolated_schema() -> None:
+    engine = create_async_engine(settings.database_url)
+    schema_name = f"orm_metadata_{uuid4().hex}"
+    quoted_schema = engine.dialect.identifier_preparer.quote(schema_name)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text(f"CREATE SCHEMA {quoted_schema}"))
+            translated = await connection.execution_options(
+                schema_translate_map={None: schema_name}
+            )
+            await translated.run_sync(Base.metadata.create_all)
+            index_definition = await translated.scalar(
+                text(
+                    "SELECT indexdef FROM pg_indexes "
+                    "WHERE schemaname = :schema_name AND indexname = 'idx_chunks_embedding'"
+                ),
+                {"schema_name": schema_name},
+            )
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(text(f"DROP SCHEMA IF EXISTS {quoted_schema} CASCADE"))
+        await engine.dispose()
+
+    assert index_definition is not None
+    assert "vector_cosine_ops" in index_definition
 
 
 async def test_redis_round_trip_uses_ephemeral_control_metadata() -> None:

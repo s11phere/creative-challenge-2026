@@ -39,7 +39,7 @@ class FakeModelGateway:
         self,
         *,
         scenario: FakeScenario = FakeScenario.NORMAL,
-        embedding_dimensions: int = 8,
+        embedding_dimensions: int = 768,
     ) -> None:
         if embedding_dimensions < 1:
             raise ValueError("Embedding dimensions must be positive")

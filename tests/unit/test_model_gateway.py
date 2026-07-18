@@ -67,6 +67,10 @@ async def test_fake_outputs_are_deterministic() -> None:
     assert first_embedding == second_embedding
 
 
+def test_fake_default_embedding_matches_initial_vector_schema() -> None:
+    assert FakeModelGateway().embedding_dimensions == 768
+
+
 async def test_provider_retries_rate_limit_then_succeeds() -> None:
     calls = 0
 

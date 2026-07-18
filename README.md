@@ -12,7 +12,7 @@
 | 层级 | 内容 |
 |------|------|
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
-| 阶段 2 ✅ 数据模型 | Space、Source、Document、DocumentVersion、Chunk（pgvector）、IngestionTask 6 张表 + ORM + 仓库层 + 迁移 |
+| 阶段 2 ✅ Step 0/1 | ADR-005 + 6 张数据模型表 + ORM/仓库 + 身份、版本、任务约束迁移；R2-01～03 已关闭 |
 | 阶段 2 ⏳ 进行中 | 解析器、分块器、嵌入、摄入 API/Worker、Web 数据源页面 |
 
 当前 Web 只展示真实系统健康状态，尚未实现文档摄入、搜索、会话、引用或问答功能。
