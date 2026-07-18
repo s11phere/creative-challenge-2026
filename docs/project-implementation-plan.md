@@ -496,7 +496,7 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 
 **任务**：
 
-- 实现 Space、Source、Document、Version、Chunk、Task 数据模型。
+- ~~实现 Space、Source、Document、Version、Chunk、Task 数据模型。~~ ✅ **已完成（2026-07-18）**
 - 实现 Markdown/TXT/PDF parser 和统一 ParsedDocument schema。
 - 实现结构感知分块、内容指纹、Embedding 和索引发布。
 - 实现异步状态、进度、重试、取消和失败原因展示。
@@ -506,6 +506,18 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 **交付物**：数据源页面、摄入 API/Worker、可检索索引、解析质量报告。
 
 **退出条件**：样例语料导入成功率达到约定阈值（建议 >= 95%）；重复导入不新增重复块；失败任务可定位和重试。
+
+**已完成的子步骤**：
+
+| 工程 | 内容 |
+|------|------|
+| 领域实体 | Space、Source、Document、DocumentVersion、Chunk、IngestionTask 及枚举、RetrievalProfile 值对象 |
+| 仓库接口 | 6 个 Protocol：CRUD + get_by_source/get_by_stable_key/get_latest/create_batch/delete_by_version |
+| ORM 模型 | 6 个 SQLAlchemy 2.0 Mapped 模型，含外键、JSONB、pgvector Vector(768)、IVFFlat 索引 |
+| 仓库实现 | 6 个实现类，纯异步，含 domain↔ORM 映射器 |
+| 迁移 | 迁移 `a1b2c3d4e5f6` 创建 6 张表 + 向量索引，可降级/升级 |
+| 配置 | Settings 新增 `embedding_dimensions` |
+| 测试 | 21 个域实体单元测试 + 18 个 ORM 映射测试 + 11 个集成 CRUD 测试 |
 
 ### 阶段 3：混合检索与评测基线（第 4-5 周）
 
@@ -760,8 +772,8 @@ P0 未达到退出条件时，不应投入 P2。
 1. 准备脱敏真实语料与 30 个带证据问题。
 2. 明确 MVP 指标阈值和演示设备/网络限制。
 3. 完成 ADR-001 至 ADR-004。
-4. 初始化 API、Worker、Web、PostgreSQL 和 CI。
-5. 定义核心数据模型与迁移。
+4. 初始化 API、Worker、Web、PostgreSQL 和 CI。 ✅
+5. 定义核心数据模型与迁移。 ✅ **（2026-07-18）**
 6. 打通一个 Markdown 文件的幂等摄入。
 7. 建立向量/关键词检索基线与评测命令。
 8. 完成引用协议和原文定位，再接入回答生成。

@@ -5,12 +5,18 @@
 
 ## 当前状态
 
-阶段 1 的工程底座已经实现：FastAPI、Dramatiq Worker、React 工作台、PostgreSQL/pgvector、
-Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose 和 CI。
+**阶段 2 进行中：数据模型基础已完成。**
 
-当前 Web 只展示真实系统健康状态。仓库尚未实现文档摄入、搜索、会话、引用或问答，也不会用
-静态假数据伪装这些功能。阶段 0 的语料授权复核、人工标注复核和版本冻结仍未关闭，因此项目
-状态是“阶段 1 工程完成，等待阶段 0 数据门禁”，不能开始真实语料摄入。
+已交付的核心能力：
+
+| 层级 | 内容 |
+|------|------|
+| 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
+| 阶段 2 ✅ 数据模型 | Space、Source、Document、DocumentVersion、Chunk（pgvector）、IngestionTask 6 张表 + ORM + 仓库层 + 迁移 |
+| 阶段 2 ⏳ 进行中 | 解析器、分块器、嵌入、摄入 API/Worker、Web 数据源页面 |
+
+当前 Web 只展示真实系统健康状态，尚未实现文档摄入、搜索、会话、引用或问答功能。
+阶段 0 的语料授权复核、人工标注复核和版本冻结仍未关闭，项目状态为”工程进行中，等待阶段 0 数据门禁”。
 
 ## 快速启动
 

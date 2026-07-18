@@ -1,7 +1,7 @@
 # 项目架构概览
 
 > 本文档描述 "Agent 驱动的个人知识仓库" 项目的整体架构、各组件职责与协作关系。
-> 更新于阶段 1 Step 6 完成时。
+> 更新于阶段 2 Step 1（数据模型基础）完成时。
 
 ---
 
@@ -173,14 +173,21 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 
 ### `packages/domain/` — 领域层
 
-**职责**：最内层，包含纯领域实体、值对象和 Port（接口定义）。
+**职责**：最内层，包含纯领域实体、值对象和 Port（接口定义）。零外部依赖。
 
-- **`src/domain/__init__.py`** — 包标记
+**文件**：
+
+| 文件 | 职责 |
+|------|------|
+| `src/domain/__init__.py` | 稳定公开导出 |
+| `src/domain/models.py` | 核心实体：`Space`、`Source`、`Document`、`DocumentVersion`、`Chunk`、`IngestionTask` 及其枚举、`RetrievalProfile` 值对象 |
+| `src/domain/repositories.py` | 仓库接口定义（Protocol）：`SpaceRepository`、`SourceRepository`、`DocumentRepository`、`DocumentVersionRepository`、`ChunkRepository`、`IngestionTaskRepository` |
 
 **约束**：
 - 零外部依赖（不依赖 FastAPI、SQLAlchemy、任何 SDK）
 - 所有跨层接口（Port）在此定义
 - 业务逻辑不包含基础设施细节
+- 实体使用 `@dataclass(frozen=True)` 保证不可变性
 
 ---
 
@@ -204,13 +211,15 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 
 | 文件 | 职责 |
 |------|------|
-| `src/infrastructure/__init__.py` | 包标记 |
-| `src/infrastructure/config.py` | Pydantic Settings 配置加载 |
+| `src/infrastructure/__init__.py` | 稳定公开导出 |
+| `src/infrastructure/config.py` | Pydantic Settings 配置加载（含 `embedding_dimensions`） |
 | `src/infrastructure/database.py` | 异步 Engine、会话工厂、事务边界和有界连接检查 |
 | `src/infrastructure/logging_config.py` | JSON 日志 schema 与集中脱敏 |
 | `src/infrastructure/queue.py` | RedisBroker 延迟构造 |
 | `src/infrastructure/telemetry.py` | OTel Provider、OTLP exporter 与客户端自动插桩 |
 | `src/infrastructure/telemetry_context.py` | trace/request/task 上下文绑定与 ID 校验 |
+| `src/infrastructure/orm.py` | SQLAlchemy ORM 模型：`SpaceModel`、`SourceModel`、`DocumentModel`、`DocumentVersionModel`、`ChunkModel`（含 pgvector `Vector(768)`）、`IngestionTaskModel` |
+| `src/infrastructure/repositories.py` | 仓库实现：6 个 repository 类的完整 CRUD，含 domain ↔ ORM 映射 |
 
 **`config.py` 详解**：
 
@@ -415,11 +424,10 @@ Docker Compose 编排，定义 5 个长期服务、1 个一次性迁移服务和
 
 | 文件 | 职责 |
 |------|------|
-| `env.py` | Alembic 异步运行环境，使用 `create_async_engine` 连接 PostgreSQL |
+| `env.py` | Alembic 异步运行环境，使用 `create_async_engine` 连接 PostgreSQL；`target_metadata` 指向 ORM 的 `Base.metadata`，支持 autogenerate |
 | `script.py.mako` | 迁移脚本生成模板 |
 | `versions/328a3caa2960_enable_pgvector.py` | **初始迁移**：启用 `vector` 扩展 |
-
-**后续迁移**将创建业务表：`User`、`Space`、`Source`、`Document`、`DocumentVersion`、`Chunk`、`IngestionTask` 等。
+| `versions/a1b2c3d4e5f6_create_core_tables.py` | **阶段 2 迁移**：创建 `spaces`、`sources`、`documents`、`document_versions`、`chunks`（含 IVFFlat 向量索引）、`ingestion_tasks` 6 张表 |
 
 ---
 
@@ -451,28 +459,33 @@ Docker Compose 编排，定义 5 个长期服务、1 个一次性迁移服务和
 
 ## 10. 测试 (`tests/`)
 
-### 当前后端测试（阶段 1）
+### 当前后端测试
 
 ```
 tests/
 ├── __init__.py
 ├── unit/
 │   ├── __init__.py
-│   ├── test_config.py      # 配置与密钥校验测试（5 个）
-│   ├── test_database.py     # Engine、失败语义和数据库 span（3 个）
-│   ├── test_errors.py       # 错误协议测试（6 个）
-│   ├── test_health.py       # 本地依赖与模型状态测试（4 个）
-│   ├── test_model_gateway.py # Provider 策略、错误、重试和隐私（20 个）
-│   ├── test_observability.py # 上下文、日志 schema 和脱敏（4 个）
-│   ├── test_openapi.py      # OpenAPI schema 测试（1 个）
-│   ├── test_trace_middleware.py # API 关联头与错误 trace（3 个）
-│   └── test_worker_tasks.py # 诊断任务、重试、入队和 trace（9 个）
-├── integration/__init__.py  # 集成测试（预留）
+│   ├── test_config.py              # 配置与密钥校验测试（5 个）
+│   ├── test_database.py            # Engine、失败语义和数据库 span（3 个）
+│   ├── test_domain_models.py       # 领域实体与值对象（21 个）
+│   ├── test_errors.py              # 错误协议测试（6 个）
+│   ├── test_health.py              # 本地依赖与模型状态测试（4 个）
+│   ├── test_model_gateway.py       # Provider 策略、错误、重试和隐私（20 个）
+│   ├── test_observability.py       # 上下文、日志 schema 和脱敏（4 个）
+│   ├── test_openapi.py             # OpenAPI schema 测试（1 个）
+│   ├── test_orm_models.py          # ORM 模型与 domain↔ORM 映射（18 个）
+│   ├── test_trace_middleware.py    # API 关联头与错误 trace（3 个）
+│   └── test_worker_tasks.py        # 诊断任务、重试、入队和 trace（9 个）
+├── integration/
+│   ├── __init__.py
+│   ├── test_data_model.py          # 完整 CRUD 集成测试（11 个，需 RUN_INTEGRATION=1）
+│   └── test_local_dependencies.py  # pgvector/Alembic/Redis/readiness 验证（3 个，需 RUN_INTEGRATION=1）
 └── contract/
-    └── test_model_gateway_contract.py # fake/Adapter 共享契约（4 个）
+    └── test_model_gateway_contract.py  # fake/Adapter 共享契约（4 个）
 ```
 
-**默认后端共 59 个测试**，覆盖：
+**默认后端共 59 个阶段 1 测试 + 39 个阶段 2 域/ORM 测试 = 98 个运行，14 个集成测试需显式启用**，覆盖：
 - 配置：空密钥在 production 下拒绝启动，development 下跳过
 - 错误：Pydantic model、404 统一格式、AppError 结构化响应、未知异常不泄露
 - 健康：live 返回 alive、ready 返回 degraded + 机器码 + 不泄露主机信息
@@ -561,10 +574,12 @@ docker compose -f deploy/compose.yaml down --volumes               # 永久删�
 | 阶段 | 状态 | 说明 |
 |------|------|------|
 | 阶段 0 | 🔶 进行中 | 语料授权复核、标注复核未完成 |
-| **阶段 1** | **🟡 条件完成** | **Step 0-8 验收完成；GitHub Actions 正常，等待阶段 0 数据门禁** |
-| 阶段 2 | ❌ 未开始 | 核心数据模型与业务逻辑 |
-| 阶段 3+ | ❌ 未开始 | 摄入、检索、引用、Skill 等工作 |
+| **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
+| **阶段 2** | **🟡 进行中** | **Step 1 数据模型基础已完成（6 表 + ORM + 仓库 + 迁移）** |
+| 阶段 3+ | ❌ 未开始 | 解析器、检索、引用、Skill 等工作 |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 
-GitHub Actions 已由用户确认运行正常。阶段 1 最终退出仍需阶段 0 数据授权、人工标注复核和版本冻结完成，或继续明确保持“工程完成、等待数据门禁”。
+阶段 2 Step 1（数据模型基础）已完成：Space、Source、Document、DocumentVersion、Chunk、IngestionTask 的领域实体、ORM 模型、仓库实现、Alembic 迁移及测试。
+
+GitHub Actions 已由用户确认运行正常。阶段 0 数据授权、人工标注复核和版本冻结仍为等待状态。

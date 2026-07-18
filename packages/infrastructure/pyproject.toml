@@ -8,6 +8,7 @@ dependencies = [
     "pydantic-settings",
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg",
+    "pgvector",
     "redis",
     "dramatiq",
     "opentelemetry-api",

@@ -24,12 +24,15 @@
 ## 2. 当前阶段与优先级
 
 截至 2026-07-18，阶段 1 Step 0-8 已完成实现与验收，GitHub Actions 已由用户确认运行
-正常。项目仍受阶段 0 数据门禁约束，状态为“阶段 1 工程完成，等待阶段 0 数据门禁”，
-不能据此宣称摄入、检索、问答、引用、Agent 或 Skill 业务已经可用。
+正常。阶段 2 Step 1（数据模型基础）已完成：Space、Source、Document、DocumentVersion、
+Chunk（pgvector）、IngestionTask 的领域实体、ORM 模型、仓库实现、Alembic 迁移及测试。
+项目仍受阶段 0 数据门禁约束，不能据此宣称摄入、检索、问答、引用、Agent 或 Skill 业务
+已经可用。
 
 当前已落地的用户界面只展示真实健康状态；公开 OpenAPI 只包含
-`/api/v1/health/live` 和 `/api/v1/health/ready`。数据库只启用 pgvector 并维护
-`alembic_version`，尚无阶段 2 业务表。
+`/api/v1/health/live` 和 `/api/v1/health/ready`。数据库已有 `spaces`、`sources`、
+`documents`、`document_versions`、`chunks`（含 pgvector 列和 IVFFlat 索引）和
+`ingestion_tasks` 共 6 张业务表（阶段 2 数据模型）。
 
 阶段 1 的移交与运行事实以以下文件为准：
 
@@ -44,7 +47,7 @@
 1. 完成阶段 0 语料的授权复核、人工标注复核和版本冻结。
 2. 遵守已接受的 ADR-001 至 ADR-004，不重复讨论已固定基线。
 3. 保持已验收的 API、Worker、Web、PostgreSQL、Redis、Compose 和 CI 工程基线稳定。
-4. 核心数据模型与数据库迁移。
+4. 核心数据模型与数据库迁移。 ✅
 5. 单个 Markdown 文件的幂等摄入闭环。
 6. 关键词、向量和混合检索基线及评测工具。
 7. 引用协议、原文定位和带引用回答。

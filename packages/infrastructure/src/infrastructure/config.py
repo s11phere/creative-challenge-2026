@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "json"
 
+    # --- Embedding ---
+    embedding_dimensions: int = Field(default=768, ge=64, le=4096)
+
     # --- OpenTelemetry ---
     otlp_endpoint: str | None = None
     otel_export_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
