@@ -55,10 +55,14 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
-def create_app(model_gateway: ModelGateway | None = None) -> FastAPI:
+def create_app(
+    model_gateway: ModelGateway | None = None,
+    *,
+    database: Database | None = None,
+) -> FastAPI:
     """Application factory. Call once at process start."""
 
-    database = Database(settings.database_url)
+    database = database or Database(settings.database_url)
     gateway = model_gateway or _create_configured_model_gateway()
 
     @asynccontextmanager

@@ -6,10 +6,12 @@ Requires ``RUN_INTEGRATION=1`` and isolated PostgreSQL and Redis services.
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from api.main import app
+from api.main import create_app
 from domain.models import (
     IngestionTask,
     Source,
@@ -20,13 +22,14 @@ from domain.models import (
 )
 from httpx import ASGITransport, AsyncClient
 from infrastructure.config import settings
+from infrastructure.database import Database
 from infrastructure.orm import Base
 from infrastructure.repositories import (
     IngestionTaskRepository,
     SourceRepository,
     SpaceRepository,
 )
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = [
     pytest.mark.integration,
@@ -38,25 +41,34 @@ pytestmark = [
 
 
 @pytest.fixture
-async def session() -> AsyncSession:
-    """Create a clean schema for each test and tear it down afterwards."""
-    engine = create_async_engine(settings.database_url)
-    async with engine.begin() as conn:
+async def api_database() -> AsyncIterator[Database]:
+    """Own one database engine within the current test event loop."""
+    database = Database(settings.database_url)
+    async with database.engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    maker = async_sessionmaker(
-        engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
-    async with maker() as sess:
-        yield sess
-    await engine.dispose()
+    try:
+        yield database
+    finally:
+        await database.dispose()
 
 
 @pytest.fixture
-async def app_client() -> AsyncClient:
-    """Return an ASGI client for the FastAPI app."""
-    transport = ASGITransport(app=app)
+async def session(api_database: Database) -> AsyncIterator[AsyncSession]:
+    """Yield a session backed by the per-test API database."""
+    async with api_database.session() as sess:
+        yield sess
+
+
+@pytest.fixture
+async def app_client(
+    api_database: Database,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> AsyncIterator[AsyncClient]:
+    """Return an ASGI client isolated to the current test event loop."""
+    monkeypatch.setattr(settings, "blob_store_path", str(tmp_path / "blobs"))
+    test_app = create_app(database=api_database)
+    transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
@@ -151,7 +163,11 @@ class TestRedisEnqueueResilience:
     database rather than leaving it permanently stuck in QUEUED."""
 
     @pytest.mark.asyncio
-    async def test_enqueue_failure_marks_task_failed(self, session: AsyncSession) -> None:
+    async def test_enqueue_failure_marks_task_failed(
+        self,
+        session: AsyncSession,
+        api_database: Database,
+    ) -> None:
         """Mock Dramatiq actor to raise, then verify task transitions to FAILED."""
         from unittest.mock import patch
 
@@ -176,10 +192,11 @@ class TestRedisEnqueueResilience:
             "worker.ingestion_tasks.enqueue_ingestion_task",
             side_effect=ConnectionError("Redis is down"),
         ):
-            await _enqueue_ingestion_task(task.id, app.state.database)
+            await _enqueue_ingestion_task(task.id, api_database)
 
         # Task must be FAILED, not stuck in QUEUED (the fix for P1-6)
-        updated = await task_repo.get(task.id)
+        async with api_database.session() as verification_session:
+            updated = await IngestionTaskRepository(verification_session).get(task.id)
         assert updated is not None
         assert updated.status == TaskStatus.FAILED, (
             f"Expected FAILED after enqueue error, got {updated.status}"
