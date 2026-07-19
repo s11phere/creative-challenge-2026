@@ -1,7 +1,7 @@
 # 项目架构概览
 
 > 本文档描述 "Agent 驱动的个人知识仓库" 项目的整体架构、各组件职责与协作关系。
-> 更新于阶段 2 Step 1（数据模型基础）完成时。
+> 更新于阶段 2 Step 1 和阶段 5 通用 Runtime/Registry 实现审查完成时（2026-07-19）。
 
 ---
 
@@ -49,10 +49,10 @@
 ├─────────────────────────────────────────────────────┤
 │               apps/worker                            │  ← 后台任务层
 │                Dramatiq + Redis                      │     (解析、Embedding、索引)
-├──────────────────────┬──────────────────────────────┤
-│ packages/application │ packages/infrastructure       │  ← 应用/基础设施层
-│  (用例编排)          │  (DB/Redis/日志/配置/OTel)    │
-├──────────────────────┴──────────────────────────────┤
+├──────────────────┬──────────────────┬────────────────┤
+│ application      │ agent_runtime    │ infrastructure │  ← 应用/Runtime/基础设施层
+│ (用例编排)       │ (离线通用基础)   │ (DB/队列/OTel) │
+├──────────────────┴──────────────────┴────────────────┤
 │ packages/model_gateway                               │  ← 模型网关层
 │     (Chat/Embedding/Reranker Provider 适配)          │
 ├─────────────────────────────────────────────────────┤
@@ -71,12 +71,13 @@
 ```
 API / Worker → Application → Domain (纯类型)
               ← Infrastructure (DB/队列/配置等适配器)
-              ← ModelGateway (LLM 模型适配器)
+Agent Runtime → Domain + ModelGateway
 ```
 
 关键约束：
 - `domain` 不依赖 FastAPI、SQLAlchemy、Redis、Dramatiq、OpenTelemetry 或具体模型 SDK
 - `application` 编排用例，不承载供应商实现细节
+- `agent_runtime` 实现声明式、确定性的通用执行与 Registry；当前尚未接入 API/Application
 - 传输层 (`api`) 只做协议、校验和响应映射，不直接实现领域规则
 
 ---
@@ -102,8 +103,12 @@ API / Worker → Application → Domain (纯类型)
 ├── packages/
 │   ├── domain/                     # 纯类型与接口
 │   ├── application/                # 用例编排
+│   ├── agent_runtime/              # Tool/Skill Registry 与确定性执行器
 │   ├── infrastructure/             # 基础设施适配器
 │   └── model_gateway/             # 模型网关
+│
+├── skills/
+│   └── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
 │
 ├── deploy/                         # Docker 部署配置
 │   ├── compose.yaml                # 服务编排
@@ -136,7 +141,7 @@ API / Worker → Application → Domain (纯类型)
 ### `pyproject.toml`
 Python 项目中央配置。包含：
 - **uv workspace**：定义工作空间成员（`packages/*`、`apps/api`、`apps/worker`）
-- **根项目依赖**：依赖 `api` 和 `worker`，确保 `uv sync --frozen` 安装全部 workspace 包
+- **根项目依赖**：依赖 `agent-runtime`、`api` 和 `worker`，确保 `uv sync --frozen` 安装当前已实现的 workspace 包
 - **构建系统**：各子包均使用 `setuptools` + `src/` 布局
 - **质量工具配置**：
   - `ruff`：代码格式 + lint（选用规则：E、F、I、N、W、UP、B、SIM、ARG）
@@ -181,6 +186,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 |------|------|
 | `src/domain/__init__.py` | 稳定公开导出 |
 | `src/domain/models.py` | 核心实体：`Space`、`Source`、`Document`、`DocumentVersion`、`Chunk`、`IngestionTask` 及其枚举、`RetrievalProfile` 值对象 |
+| `src/domain/agent_runtime.py` | AgentRun 状态/步骤、预算、权限、调用记录、检查点、恢复校验及 Runtime/Registry/审批 Port |
 | `src/domain/repositories.py` | 仓库接口定义（Protocol）：`SpaceRepository`、`SourceRepository`、`DocumentRepository`、`DocumentVersionRepository`、`ChunkRepository`、`IngestionTaskRepository` |
 
 **约束**：
@@ -260,6 +266,28 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 **依赖**：`httpx`、`opentelemetry-api`
 
 本阶段不包含 Reranker，也不执行真实 Provider 调用。
+
+---
+
+### `packages/agent_runtime/` — Agent Runtime 通用基础
+
+**职责**：实现 ADR-003/ADR-006 固定的单 Agent、声明式、有限状态 Runtime 与版本化 Registry。
+
+| 文件 | 职责 |
+| --- | --- |
+| `tools.py` | Tool 定义、JSON Schema、显式 handler、权限/Space/预算/审批校验和脱敏调用记录 |
+| `skills.py` | 受信目录 Skill manifest、包摘要、版本固定、事务式 reload、原子激活/回滚和恢复兼容检查 |
+| `executor.py` | 声明式 workflow、状态迁移、预算预留、有限重试、取消/超时和审计事件 v1 |
+| `__init__.py` | 稳定公开导出 |
+
+**信任边界**：只读取配置的受信根目录；拒绝远程 schema、路径逃逸、symlink/junction 和
+可执行 entrypoint；manifest 只能引用应用启动时注册的 handler。完整包、workflow、schema 和
+prompt 摘要在运行开始时固定。
+
+**当前边界**：该包只完成离线通用工程基础和 fake 契约。没有 AgentRun/Checkpoint ORM、
+Runtime API、Web 入口或 `knowledge_qa` 等业务 Skill；活动版本和生命周期事件当前只在进程内。
+
+**依赖**：`domain`、`model-gateway`、`jsonschema`、`packaging`、`pyyaml`
 
 ---
 
@@ -443,6 +471,7 @@ Docker Compose 编排，定义 5 个长期服务、1 个一次性迁移服务和
 | 003 | Agent Runtime Boundary | 自有 Agent Runtime Port，LangGraph Adapter 延后 |
 | 004 | Local-First Data Boundary | 本地优先，外部模型显式选择 |
 | 005 | Ingestion Identity, Versioning, Publication, And Deletion | 固定摄入身份、双哈希、处理版本、原子发布、任务可靠性和删除语义 |
+| 006 | Skill Manifest Versioning And Trust Model | 固定 Skill manifest、摘要、受信目录、权限、恢复和回滚语义 |
 | 009 | Redis / Dramatiq Task Delivery | 队列选型 Redis + Dramatiq，状态存 DB |
 
 ### 其他文档
@@ -453,6 +482,8 @@ Docker Compose 编排，定义 5 个长期服务、1 个一次性迁移服务和
 | `project-implementation-plan.md` | 总实施计划 |
 | `stage-1-implementation-plan.md` | 阶段 1 详细实施计划与任务清单 |
 | `stage-1-acceptance.md` | 阶段 1 验收命令、结果、退出条件、外部确认和已知问题 |
+| `stage-5-implementation-plan.md` | 阶段 5 依赖门禁、分步计划、完成与暂缓状态 |
+| `stage-5-implementation-review.md` | 阶段 5 通用基础审查证据、未完成范围和审查决定 |
 | `troubleshooting.md` | 本地运行故障恢复和已知限制 |
 | `openapi.json` | 由应用确定性导出的公开 HTTP schema |
 | `architecture.md` | **本文档** |
@@ -471,12 +502,16 @@ tests/
 │   ├── test_config.py              # 配置、密钥与固定向量 schema 边界（6 个）
 │   ├── test_database.py            # Engine、失败语义和数据库 span（3 个）
 │   ├── test_domain_models.py       # 领域实体、值对象与任务状态（23 个）
+│   ├── test_agent_runtime_domain.py # Runtime 状态、预算、取消、超时和恢复（7 个）
 │   ├── test_errors.py              # 错误协议测试（6 个）
 │   ├── test_health.py              # 本地依赖与模型状态测试（4 个）
 │   ├── test_model_gateway.py       # Provider 策略、错误、重试、维度和隐私（21 个）
 │   ├── test_observability.py       # 上下文、日志 schema 和脱敏（4 个）
 │   ├── test_openapi.py             # OpenAPI schema 测试（1 个）
 │   ├── test_orm_models.py          # ORM 映射、向量索引与唯一约束（20 个）
+│   ├── test_runtime_executor.py    # 确定性 workflow、权限、预算、故障和审计（12 个）
+│   ├── test_skill_registry.py      # manifest、信任路径、摘要、兼容和固定（16 个）
+│   ├── test_skill_lifecycle.py     # reload、升级、回滚、恢复兼容和并发（6 个）
 │   ├── test_trace_middleware.py    # API 关联头与错误 trace（3 个）
 │   └── test_worker_tasks.py        # 诊断任务、重试、入队和 trace（9 个）
 ├── integration/
@@ -484,10 +519,13 @@ tests/
 │   ├── test_data_model.py          # CRUD 与重试安全约束（17 个，需 RUN_INTEGRATION=1）
 │   └── test_local_dependencies.py  # pgvector/Alembic/ORM 索引/Redis/readiness（4 个，需 RUN_INTEGRATION=1）
 └── contract/
-    └── test_model_gateway_contract.py  # fake/Adapter 共享契约（4 个）
+    ├── test_model_gateway_contract.py  # fake/Adapter 共享契约（4 个）
+    └── test_tool_registry_contract.py  # Tool schema、权限、预算和审批契约（14 个）
 ```
 
-**默认后端共 104 个测试运行，21 个真实依赖集成测试需显式启用**，覆盖：
+**当前后端共收集 180 个测试；默认结果为 158 passed、22 skipped**。其中 21 个真实依赖
+集成测试需显式设置 `RUN_INTEGRATION=1`，另 1 个符号链接测试在当前 Windows 无创建权限时跳过。
+测试覆盖：
 - 配置：空密钥在 production 下拒绝启动，development 下跳过
 - 错误：Pydantic model、404 统一格式、AppError 结构化响应、未知异常不泄露
 - 健康：live 返回 alive、ready 返回 degraded + 机器码 + 不泄露主机信息
@@ -497,6 +535,8 @@ tests/
 - Worker：消息无正文、输入校验、幂等执行、超时/重试、入队和 consumer trace
 - ModelGateway：共享 Chat/Embedding 契约、能力别名、确定性 fake、有限重试、结构解析、
   endpoint 策略、显式不可用状态及输入/输出不进入日志或 span
+- Agent Runtime：状态/步骤分离、终态、预算、Tool/Skill schema、受信路径、版本固定、
+  声明式执行、权限、有限重试、取消/超时、审计脱敏和原子 reload/回滚
 
 前端另有 6 个 Vitest 组件测试，覆盖健康、依赖降级、API 不可达与手动重试、非法响应、
 有界超时和键盘焦点。
@@ -518,7 +558,13 @@ api ──┬── application ──→ domain
 worker ──┬── application ──→ domain
          └── infrastructure ──→ domain
                             ──→ application
+
+tests / future composition root ──→ agent-runtime ──┬──→ domain
+                                                     └──→ model-gateway
 ```
+
+`agent-runtime` 尚未被 API、Worker 或 Application 业务用例引用；该接线等待阶段 2～4 正式
+Application Port 和阶段 5 Step 5～7。
 
 依赖来源（通过各包的 `pyproject.toml`）：
 
@@ -529,6 +575,7 @@ worker ──┬── application ──→ domain
 | `application` | `domain` |
 | `infrastructure` | `domain`、`application`、`pydantic-settings`、`sqlalchemy`、`asyncpg`、`redis`、`dramatiq`、`opentelemetry-api`、`opentelemetry-sdk` |
 | `model-gateway` | `httpx` |
+| `agent-runtime` | `domain`、`model-gateway`、`jsonschema`、`packaging`、`pyyaml` |
 | `domain` | （无外部依赖） |
 
 ---
@@ -579,10 +626,14 @@ docker compose -f deploy/compose.yaml down --volumes               # 永久删�
 | 阶段 0 | 🔶 进行中 | 语料授权复核、标注复核未完成 |
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
 | **阶段 2** | **🟡 进行中** | **Step 0/1 已完成（ADR-005 + 6 表 + ORM + 仓库 + 两个数据模型迁移）** |
-| 阶段 3+ | ❌ 未开始 | 解析器、检索、引用、Skill 等工作 |
+| 阶段 3/4 | ❌ 未开始 | 检索、引用问答、Conversation/AgentRun/Evidence 和 SSE 协议尚未落地 |
+| **阶段 5** | **🟡 通用基础已审查** | **Step 0～4 和 Step 9 通用部分通过；业务 Skill/API/持久化/验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 
 阶段 2 Step 0/1 已完成：ADR-005 固定身份、版本、发布、任务和删除语义；Space、Source、Document、DocumentVersion、Chunk、IngestionTask 的领域实体、ORM 模型、仓库实现及迁移已完成，R2-01～03 已关闭。
+
+阶段 5 通用基础审查见 `docs/stage-5-implementation-review.md`。该并行实现不改变主推进顺序：
+仍应先完成阶段 2 摄入、阶段 3 检索和阶段 4 引用问答，再接入阶段 5 业务 Skill。
 
 GitHub Actions 已由用户确认运行正常。阶段 0 数据授权、人工标注复核和版本冻结仍为等待状态。

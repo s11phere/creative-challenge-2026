@@ -23,12 +23,18 @@
 
 ## 2. 当前阶段与优先级
 
-截至 2026-07-18，阶段 1 Step 0-8 已完成实现与验收，GitHub Actions 已由用户确认运行
+截至 2026-07-19，阶段 1 Step 0-8 已完成实现与验收，GitHub Actions 已由用户确认运行
 正常。阶段 2 Step 0/1 已完成：ADR-005 已固定摄入身份、版本、发布、任务和删除语义；
 Space、Source、Document、DocumentVersion、Chunk（pgvector）、IngestionTask 的领域实体、
 ORM 模型、仓库实现、Alembic 迁移及测试已完成，R2-01 至 R2-03 已关闭。
 项目仍受阶段 0 数据门禁约束，不能据此宣称摄入、检索、问答、引用、Agent 或 Skill 业务
 已经可用。
+
+阶段 5 的通用工程基础已于 2026-07-19 完成审查：ADR-006、Agent Runtime 领域契约、
+Tool/Skill Registry、确定性执行器、预算/权限/审计、受信包版本固定、事务式 reload/回滚及
+Skill 模板已落地。该实现只使用合成输入和 fake，未包含 AgentRun/Checkpoint 持久化、
+`knowledge_qa`、Runtime API/Web 或三个业务 Skill；阶段 5 整体仍未达到退出条件，详见
+`docs/stage-5-implementation-review.md`。
 
 当前已落地的用户界面只展示真实健康状态；公开 OpenAPI 只包含
 `/api/v1/health/live` 和 `/api/v1/health/ready`。数据库已有 `spaces`、`sources`、

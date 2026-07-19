@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-**阶段 2 进行中：数据模型基础已完成。**
+**阶段 2 进行中；阶段 5 通用 Agent Runtime/Skill 基础已并行完成审查。**
 
 已交付的核心能力：
 
@@ -14,8 +14,11 @@
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ Step 0/1 | ADR-005 + 6 张数据模型表 + ORM/仓库 + 身份、版本、任务约束迁移；R2-01～03 已关闭 |
 | 阶段 2 ⏳ 进行中 | 解析器、分块器、嵌入、摄入 API/Worker、Web 数据源页面 |
+| 阶段 5 🟡 通用基础 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、版本固定、预算/权限/审计、事务式 reload/回滚和 Skill 模板已通过审查 |
 
 当前 Web 只展示真实系统健康状态，尚未实现文档摄入、搜索、会话、引用或问答功能。
+阶段 5 当前只有离线通用 Runtime/Registry 和合成 fake 契约；没有业务 Skill、Runtime API、
+运行/检查点持久化或 Web Skill 入口，不能据此宣称 `knowledge_qa` 可用或阶段 5 整体完成。
 阶段 0 的语料授权复核、人工标注复核和版本冻结仍未关闭，项目状态为”工程进行中，等待阶段 0 数据门禁”。
 
 ## 快速启动
@@ -118,6 +121,8 @@ git diff --exit-code -- docs/openapi.json
 - [阶段 1 验收记录](docs/stage-1-acceptance.md)
 - [故障排查与已知限制](docs/troubleshooting.md)
 - [阶段 1 实施计划](docs/stage-1-implementation-plan.md)
+- [阶段 5 实施计划](docs/stage-5-implementation-plan.md)
+- [阶段 5 实现审查记录](docs/stage-5-implementation-review.md)
 - [OpenAPI](docs/openapi.json)
 - [架构决策记录](docs/adr/README.md)
 

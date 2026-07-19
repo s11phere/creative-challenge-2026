@@ -1,12 +1,18 @@
 # 阶段 5 实施计划：Agent Runtime 与 Skill 标准化
 
-> 文档状态：Draft v1
+> 文档状态：通用基础实现已审查；阶段整体未验收
 >
 > 适用范围：`docs/project-implementation-plan.md` 中的阶段 5
 >
 > 计划基线日期：2026-07-19
+>
+> 最近审查：2026-07-19，见 `docs/stage-5-implementation-review.md`
 
 ## 1. 结论摘要
+
+截至 2026-07-19，Step 0～4 和 Step 9 的通用可执行部分已通过实现审查；Step 5～8、
+Step 9 持久化引用清理和 Step 10 仍受前序阶段与数据门禁阻塞。这里的“完成”只表示
+Runtime/Registry 离线工程基础完成，不表示业务 Skill、API、Web 或阶段退出条件完成。
 
 阶段 5 的目标是把阶段 2 至阶段 4 已验证的摄入、检索、引用和问答能力封装为稳定、
 可版本化、可审计、可恢复的 Skill，并确保同一个 Skill 通过 Web、HTTP API 和测试入口
