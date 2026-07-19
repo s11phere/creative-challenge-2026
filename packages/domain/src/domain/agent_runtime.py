@@ -223,6 +223,7 @@ class AgentRunContext:
     skill_content_sha256: str
     trace_id: str
     caller_id: str
+    granted_permissions: frozenset[ToolPermission] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
         if not all(
@@ -235,6 +236,10 @@ class AgentRunContext:
             )
         ):
             raise ValueError("run context requires caller, trace, and fixed Skill identity")
+        if any(
+            not isinstance(permission, ToolPermission) for permission in self.granted_permissions
+        ):
+            raise ValueError("run context contains an invalid permission")
 
 
 @dataclass(frozen=True)

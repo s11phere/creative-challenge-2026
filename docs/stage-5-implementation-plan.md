@@ -326,6 +326,26 @@ schema、prompt 及完整包摘要；激活和恢复前重新读取磁盘内容�
 **完成标准**：相同输入、相同固定版本和相同 fake 场景产生相同状态序列和结构化结果；
 任何失败都落入明确终态并保留安全、可定位的错误信息。
 
+**完成情况（2026-07-19）**：已完成通用有限状态执行器、预算和审计契约。新增
+`DeterministicWorkflowExecutor`，每次执行都从重新校验的固定 Skill 包读取声明式 workflow，
+不接受调用方构造的替代节点或动态代码。workflow schema 固定节点 ID、业务步骤、已注册
+handler、静态后继、权限、有限重试和 Tool/Token 预算预留；执行前校验 Skill/摘要、调用者
+权限、能力、Tool 版本、运行预算、取消和总超时，执行后校验实际使用量不超过节点预留。
+Provider 可重试错误按节点 `max_retries` 有界执行，并在每次重试后重新累计总耗时。
+
+新增 `RuntimeAuditEvent` v1 和可注入审计 Port；状态迁移、节点开始/完成、有限重试、拒答、
+取消、失败和超时事件只记录 run/trace、固定 Skill、状态、节点、计数和稳定错误码，不包含
+输入、prompt、模型原始响应或正文。证据不足通过 `NodeOutcome.REFUSE` 映射为正常完成的结构化
+拒答；Provider 超时进入 `TIMED_OUT`，限流、非法响应、权限、预算、Tool/handler 缺失等进入
+稳定失败终态。`AgentRunContext` 增加服务端调用者授权快照，Skill 自声明不能扩大权限。
+
+新增 12 个执行器测试，使用合成 Skill、fake Tool 和 `FakeModelGateway` 覆盖确定性成功、
+正常拒答、超时、限流、非法响应、有界重试、预算耗尽、取消、总超时、未注册 handler、
+调用者/Skill 权限、Tool 缺失和审计脱敏。模板 workflow 已更新为有效的声明式四步骨架。
+验证结果：`uv sync --frozen`、`uv lock --check`、Ruff format/check、mypy
+`apps packages` 均通过；pytest `152 passed, 22 skipped`，其中 21 个为未启用真实依赖的
+集成测试，1 个为当前 Windows 环境不允许创建符号链接。
+
 ### 步骤 5：AgentRun、检查点与持久化恢复
 
 - 首先检查阶段 4 已有 Conversation、AgentRun 和 Evidence 模型，复用其身份和归属语义。
@@ -436,7 +456,7 @@ schema、prompt 及完整包摘要；激活和恢复前重新读取磁盘内容�
 | 1. Runtime 领域契约 | 步骤 0 的状态、预算、权限和版本语义确定 | 已完成 |
 | 2. Tool Registry | 步骤 1；阶段 3/4 Port 可先用 fake | 通用契约与 Registry 已完成；真实 Tool 待阶段 3/4 |
 | 3. Skill Registry | 步骤 0/1；受信目录和摘要规则确定 | 已完成 |
-| 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 待办，可先行 |
+| 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 已完成 |
 | 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | 等待阶段 4 模型，接口可先行 |
 | 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | 等待前序阶段 |
 | 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 等待前序阶段 |

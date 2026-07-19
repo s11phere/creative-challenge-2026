@@ -1,3 +1,43 @@
 workflow_version: "1"
-nodes: []
-transitions: []
+start: plan
+nodes:
+  - id: plan
+    step: planning
+    handler: template_plan
+    next: retrieve
+    max_retries: 0
+    required_permissions: []
+    reserve:
+      tool_calls: 0
+      input_tokens: 0
+      output_tokens: 0
+  - id: retrieve
+    step: retrieving
+    handler: template_retrieve
+    next: execute
+    max_retries: 0
+    required_permissions: []
+    reserve:
+      tool_calls: 0
+      input_tokens: 0
+      output_tokens: 0
+  - id: execute
+    step: executing
+    handler: template_execute
+    next: verify
+    max_retries: 0
+    required_permissions: []
+    reserve:
+      tool_calls: 0
+      input_tokens: 0
+      output_tokens: 0
+  - id: verify
+    step: verifying
+    handler: template_verify
+    next: null
+    max_retries: 0
+    required_permissions: []
+    reserve:
+      tool_calls: 0
+      input_tokens: 0
+      output_tokens: 0

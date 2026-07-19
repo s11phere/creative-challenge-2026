@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
     "domain",
     "jsonschema>=4.23,<5",
+    "model-gateway",
     "packaging>=24,<27",
     "pyyaml>=6,<7",
 ]
