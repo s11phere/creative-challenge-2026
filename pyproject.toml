@@ -2,7 +2,11 @@
 name = "agent-knowledge-repo"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["api", "worker"]
+dependencies = [
+    "api",
+    "python-multipart>=0.0.32",
+    "worker",
+]
 
 [tool.uv.workspace]
 members = [

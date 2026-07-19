@@ -420,3 +420,21 @@ def _classify_error(exc: Exception) -> str:
     if isinstance(exc, TimeoutError):
         return "TIMEOUT"
     return "UNKNOWN_ERROR"
+
+
+def enqueue_ingestion_task(*, task_id: str, trace_id: str) -> dramatiq.Message[None]:
+    """Enqueue an ingestion task and record a producer-side event."""
+    canonical_trace_id = normalize_trace_id(trace_id)
+    if canonical_trace_id is None:
+        raise ValueError("Invalid trace ID")
+
+    message = ingestion_task.send(task_id=task_id, trace_id=canonical_trace_id)
+    logger.info(
+        "ingestion_task_enqueued",
+        extra={
+            "message_id": message.message_id,
+            "task_id": task_id,
+            "trace_id": canonical_trace_id,
+        },
+    )
+    return message

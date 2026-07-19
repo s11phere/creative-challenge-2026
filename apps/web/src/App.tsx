@@ -22,6 +22,7 @@ import {
   type DependencyCheck,
   type HealthSnapshot,
 } from './health'
+import { SourcesPanel } from './SourcesPanel'
 import './App.css'
 
 type ServiceState = 'available' | 'unavailable' | 'checking'
@@ -299,6 +300,8 @@ function App() {
             </div>
           </dl>
         </section>
+
+        <SourcesPanel />
       </main>
     </div>
   )

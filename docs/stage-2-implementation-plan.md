@@ -1,6 +1,6 @@
 # 阶段 2 实施计划：知识摄入 MVP
 
-> 文档状态：Draft v7 — Step 7 已完成 (2026-07-19)
+> 文档状态：Draft v8 — Step 8 已完成 (2026-07-19)
 >
 > 适用范围：`docs/project-implementation-plan.md` 中的阶段 2
 >
@@ -339,6 +339,28 @@ cases/
 
 **完成标准**：可从页面完成登记→摄入→查看状态→重试/取消闭环；所有长任务状态可见；不展示伪造数据。
 
+**状态**：已于 2026-07-19 完成。
+
+实际交付：
+
+- 新增 `apps/api/src/api/routers/sources.py`：FastAPI 路由器，包含 8 个端点：
+  - `POST /spaces/{id}/sources` — 创建来源
+  - `GET /spaces/{id}/sources` — 列举来源
+  - `GET /spaces/{id}/sources/{id}/detail` — 来源详情（含文档列表）
+  - `POST /spaces/{id}/sources/{id}/upload` — 上传文件 + 自动登记 + 自动触发摄入
+  - `POST /spaces/{id}/sources/{id}/ingest` — 手动触发摄入
+  - `GET /tasks/{id}` — 任务状态查询
+  - `POST /tasks/{id}/cancel` — 取消任务
+  - `POST /tasks/{id}/retry` — 重试失败任务
+  - 所有端点使用 `SourceRegistrationService` 和 `IngestionTaskRepository`，文件大小限制、类型校验、Dramatiq 异步投递。
+- `apps/api/src/api/main.py`：注册 `sources.router`。
+- 新增 `apps/web/src/sources.ts`：API 客户端（TypeScript），含 `fetchSources`、`uploadFile`、`triggerIngestion`、`fetchTaskStatus`、`cancelTask`、`retryTask`。
+- 新增 `apps/web/src/SourcesPanel.tsx`：React 组件，展示来源列表、文档状态、摄入任务进度、上传/取消/重试交互。
+- `apps/web/src/App.tsx`：集成 `SourcesPanel`。
+- `apps/web/src/App.css`：新增来源面板、任务行、上传表单、文档列表样式。
+- 依赖：`python-multipart` 用于文件上传支持。
+- `openapi.json` 未导出（待 Phase 验收时统一执行 `export_openapi.py`）。
+
 ### 步骤 9：测试、解析质量报告与验收
 
 - parser fixture：为每种 P0 格式准备 manifest 已批准并冻结的 fixture，读取前校验 SHA-256，校验结构与 1-based 定位。
@@ -364,7 +386,7 @@ cases/
 | 5. Embedding 与发布 | 分块契约、向量维度和发布语义确定 | 已完成 |
 | 6. Worker 与状态机 | 单进程 Markdown 管道通过；任务字段迁移完成 | 已完成 |
 | 7. 增量与删除 | Worker 重入、发布和 tombstone 语义通过 | 已完成 |
-| 8. API 与数据源页面 | Application 摄入用例和 Space 隔离完成 | 待办 |
+| 8. API 与数据源页面 | Application 摄入用例和 Space 隔离完成 | 已完成 |
 | 9. 质量报告与验收 | 阶段 0 门禁关闭；P0 合规语料冻结 | 待办 |
 
 执行时先完成 Markdown 垂直链路，再接入 TXT 和 PDF；每一步只有在其完成标准和受影响测试通过后才进入下一个依赖步骤。

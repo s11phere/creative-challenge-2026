@@ -17,6 +17,9 @@ function mockHealthyFetch(model = { healthy: true, code: 'MODEL_FAKE_READY' }) {
     if (url.endsWith('/health/live')) {
       return Promise.resolve(jsonResponse({ status: 'alive' }))
     }
+    if (url.includes('/sources')) {
+      return Promise.resolve(jsonResponse({ sources: [] }))
+    }
     return Promise.resolve(
       jsonResponse(
         {
@@ -62,7 +65,7 @@ describe('system status workspace', () => {
     expect(screen.getByText('4 / 4 项当前可用')).toBeInTheDocument()
     expect(screen.getByText('测试替身')).toBeInTheDocument()
     expect(screen.getByText('trace-123')).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   it('shows degraded dependency state without treating the API as offline', async () => {
@@ -104,7 +107,7 @@ describe('system status workspace', () => {
     expect(screen.getByText('API_UNREACHABLE')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '重新检查' }))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5))
   })
 
   it('replaces the loading state when the API response schema is invalid', async () => {
