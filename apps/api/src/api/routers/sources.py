@@ -176,11 +176,11 @@ async def list_sources(space_id: UUID, request: Request) -> SourceListResponse:
 
 
 @router.get(
-    "/spaces/{_space_id}/sources/{source_id}/detail",
+    "/spaces/{space_id}/sources/{source_id}/detail",
     response_model=SourceDetailResponse,
 )
 async def get_source_detail(
-    _space_id: UUID,
+    space_id: UUID,
     source_id: UUID,
     request: Request,
 ) -> SourceDetailResponse:
@@ -193,6 +193,8 @@ async def get_source_detail(
 
         source = await source_repo.get(source_id)
         if source is None:
+            raise HTTPException(status_code=404, detail="Source not found")
+        if source.space_id != space_id:
             raise HTTPException(status_code=404, detail="Source not found")
 
         docs = await doc_repo.get_by_source(source_id)
@@ -219,11 +221,11 @@ async def get_source_detail(
 
 
 @router.post(
-    "/spaces/{_space_id}/sources/{source_id}/upload",
+    "/spaces/{space_id}/sources/{source_id}/upload",
     response_model=UploadResponse,
 )
 async def upload_file(
-    _space_id: UUID,
+    space_id: UUID,
     source_id: UUID,
     request: Request,
     file: UploadFile = File(...),  # noqa: B008
@@ -246,6 +248,8 @@ async def upload_file(
         source = await source_repo.get(source_id)
         if source is None:
             raise HTTPException(status_code=404, detail="Source not found")
+        if source.space_id != space_id:
+            raise HTTPException(status_code=404, detail="Source not found")
 
         registration = SourceRegistrationService(
             source_repo=source_repo,
@@ -260,11 +264,12 @@ async def upload_file(
             file_path=file.filename,
         )
 
-        # Create and enqueue ingestion task
+        # Create and enqueue ingestion task, pinned to the resolved version
         task_repo = IngestionTaskRepository(session)
         task = IngestionTask(
             source_id=source_id,
             operation=TaskOperation.INGEST,
+            target_version_id=result.version_id,
         )
         task = await task_repo.create(task)
         await session.commit()
@@ -282,11 +287,11 @@ async def upload_file(
 
 
 @router.post(
-    "/spaces/{_space_id}/sources/{source_id}/ingest",
+    "/spaces/{space_id}/sources/{source_id}/ingest",
     response_model=IngestResponse,
 )
 async def trigger_ingestion(
-    _space_id: UUID,
+    space_id: UUID,
     source_id: UUID,
     request: Request,
 ) -> IngestResponse:
@@ -294,8 +299,16 @@ async def trigger_ingestion(
     db = _db(request)
 
     async with db.session() as session:
+        source_repo = SourceRepository(session)
         doc_repo = DocumentRepository(session)
+        version_repo = DocumentVersionRepository(session)
         task_repo = IngestionTaskRepository(session)
+
+        source = await source_repo.get(source_id)
+        if source is None:
+            raise HTTPException(status_code=404, detail="Source not found")
+        if source.space_id != space_id:
+            raise HTTPException(status_code=404, detail="Source not found")
 
         docs = await doc_repo.get_by_source(source_id)
         if not docs:
@@ -304,9 +317,13 @@ async def trigger_ingestion(
                 detail="No document found for this source. Upload a file first.",
             )
 
+        # Pin task to the latest version of the first document
+        latest_version = await version_repo.get_latest(docs[0].id)
+
         task = IngestionTask(
             source_id=source_id,
             operation=TaskOperation.INGEST,
+            target_version_id=latest_version.id if latest_version else None,
         )
         task = await task_repo.create(task)
         await session.commit()
@@ -425,6 +442,7 @@ async def retry_task_endpoint(
         new_task = IngestionTask(
             source_id=old.source_id,
             operation=old.operation,
+            target_version_id=old.target_version_id,
         )
         new_task = await task_repo.create(new_task)
         await session.commit()

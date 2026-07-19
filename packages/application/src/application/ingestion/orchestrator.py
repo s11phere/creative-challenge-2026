@@ -185,12 +185,21 @@ class IngestionOrchestrator:
         if source is None:
             raise RuntimeError(f"Source {task.source_id} not found for task {task.id}")
 
-        docs = await self._document_repo.get_by_source(source.id)
-        if not docs:
-            raise RuntimeError(f"No document found for source {source.id}")
-        document = docs[0]
+        # Resolve version first (via target_version_id or fallback).
+        version = await self._determine_version(task)
+        if version is None:
+            raise RuntimeError(
+                f"Could not determine target version for task {task.id} "
+                f"(target_version_id={task.target_version_id!r})"
+            )
 
-        version = await self._determine_version(task, document)
+        # Get the owning document from the version record.
+        document = await self._document_repo.get(version.document_id)
+        if document is None:
+            raise RuntimeError(
+                f"Document {version.document_id} not found for version {version.id} "
+                f"(task {task.id})"
+            )
 
         storage_key = compute_storage_key(source.id, version.blob_hash)
         raw_bytes = await self._blob_store.retrieve(storage_key)
@@ -472,21 +481,26 @@ class IngestionOrchestrator:
     async def _determine_version(
         self,
         task: IngestionTask,
-        document: Document,
+        document: Document | None = None,
     ) -> DocumentVersion:
-        """Return the target version for *task*, creating one if needed.
+        """Return the target version for *task*.
 
         Resolution order
         -----------------
-        1. ``task.target_version_id`` (pinned by a previous pipeline run).
-        2. ``document.current_version_id`` (set by source registration).
+        1. ``task.target_version_id`` (pinned by the caller — the primary
+           path; every newly-created task sets this).
+        2. ``document.current_version_id`` (set by a previous PUBLISH).
         3. ``get_latest`` — the most-recent version that is still in a
            processable state (PENDING / PARSING / PARSED / EMBEDDED).
 
-        Unlike the old fallback that created a version with an empty
-        ``blob_hash`` (which caused ``compute_storage_key`` to return a
-        directory path → ``IsADirectoryError``), this method raises a
-        clear ``RuntimeError`` when no usable version can be found.
+        *document* is only needed for fallback paths 2 and 3.  When task
+        creation always provides ``target_version_id`` (the post-P0-fix
+        contract), *document* can be ``None``.
+
+        Raises
+        ------
+        RuntimeError
+            If no usable version can be found.
         """
         # 1) Task-pinned version
         if task.target_version_id is not None:
@@ -498,8 +512,14 @@ class IngestionOrchestrator:
                     )
                 return version
 
-        # 2) Document-pinned version (set by register_file or a previous
-        #    pipeline run that completed PUBLISH).
+        # If no target_version_id and no document, we cannot fall back.
+        if document is None:
+            raise RuntimeError(
+                f"Task {task.id} has no target_version_id and no document "
+                "was provided for fallback — cannot determine version."
+            )
+
+        # 2) Document-pinned version (set by a previous PUBLISH).
         if document.current_version_id is not None:
             version = await self._version_repo.get(document.current_version_id)
             if version is not None and version.blob_hash:

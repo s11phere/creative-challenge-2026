@@ -59,6 +59,10 @@ class RegistrationResult:
     existing_version:
         If a ``DocumentVersion`` with the same ``blob_hash`` already exists,
         this is that version — downstream stages can short‑circuit.
+    version_id:
+        The version ID to bind the ingestion task to.  Either a newly
+        created ``DocumentVersion`` (for new content) or the matching
+        *existing_version* (for unchanged content).
     """
 
     source: Source = field(default_factory=lambda: Source())
@@ -67,6 +71,7 @@ class RegistrationResult:
     blob_hash: str = ""
     storage_key: str = ""
     existing_version: DocumentVersion | None = None
+    version_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -195,26 +200,22 @@ class SourceRegistrationService:
 
         # --- Step 6: fingerprint — find or create version with same blob_hash ---
         existing_version = await self._find_version_by_blob_hash(source.id, blob_hash)
+        resolved_version_id: UUID | None = None
 
         if existing_version is None:
             # Create a DocumentVersion so the ingestion pipeline finds a
             # version with the correct blob_hash (instead of an empty-hash
-            # placeholder).
+            # placeholder).  current_version_id is NOT set here — only the
+            # PUBLISH stage (in EmbeddingService) makes a version current,
+            # preserving ADR-005's atomic‑publish constraint.
             version = DocumentVersion(
                 document_id=document.id,
                 blob_hash=blob_hash,
             )
             version = await self._version_repo.create(version)
-            document = Document(
-                id=document.id,
-                source_id=document.source_id,
-                stable_key=document.stable_key,
-                current_version_id=version.id,
-                deleted_at=document.deleted_at,
-                created_at=document.created_at,
-                updated_at=document.updated_at,
-            )
-            document = await self._document_repo.update(document)
+            resolved_version_id = version.id
+        else:
+            resolved_version_id = existing_version.id
 
         return RegistrationResult(
             source=source,
@@ -223,6 +224,7 @@ class SourceRegistrationService:
             blob_hash=blob_hash,
             storage_key=storage_key,
             existing_version=existing_version,
+            version_id=resolved_version_id,
         )
 
     # ------------------------------------------------------------------

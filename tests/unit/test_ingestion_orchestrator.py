@@ -356,7 +356,7 @@ class TestIngestionPipeline:
         source, doc, version = _seed_source_doc_version(fakes)
 
         # Manually create a task with the version hash
-        task = _make_task(source.id, stage=TaskStage.DISCOVER)
+        task = _make_task(source.id, stage=TaskStage.DISCOVER, target_version_id=version.id)
 
         # Seed the blob
         blob_data = b"test content"
@@ -382,7 +382,7 @@ class TestIngestionPipeline:
         source, doc, version = _seed_source_doc_version(fakes)
 
         # Task already completed up to CHUNK
-        task = _make_task(source.id, stage=TaskStage.CHUNK)
+        task = _make_task(source.id, stage=TaskStage.CHUNK, target_version_id=version.id)
 
         blob_data = b"test content"
         storage_key = compute_storage_key(source.id, version.blob_hash)
@@ -410,7 +410,7 @@ class TestIngestionPipeline:
         """A task with cancel_requested_at raises CancelledError."""
         orch, fakes = _make_orchestrator()
         source, doc, version = _seed_source_doc_version(fakes)
-        task = _make_task(source.id, stage=TaskStage.DISCOVER)
+        task = _make_task(source.id, stage=TaskStage.DISCOVER, target_version_id=version.id)
 
         # Seed blob so DISCOVER/FINGERPRINT can proceed
         blob_data = b"test content"
@@ -445,7 +445,7 @@ class TestIngestionPipeline:
         """A parse failure raises ValueError."""
         orch, fakes = _make_orchestrator(parser=_FakeParser(fail=True))
         source, doc, version = _seed_source_doc_version(fakes)
-        task = _make_task(source.id, stage=TaskStage.DISCOVER)
+        task = _make_task(source.id, stage=TaskStage.DISCOVER, target_version_id=version.id)
 
         blob_data = b"bad content"
         storage_key = compute_storage_key(source.id, version.blob_hash)
@@ -458,7 +458,7 @@ class TestIngestionPipeline:
         """A chunker failure raises ValueError."""
         orch, fakes = _make_orchestrator(chunker=_FakeChunker(fail=True))
         source, doc, version = _seed_source_doc_version(fakes)
-        task = _make_task(source.id, stage=TaskStage.DISCOVER)
+        task = _make_task(source.id, stage=TaskStage.DISCOVER, target_version_id=version.id)
 
         blob_data = b"test content"
         storage_key = compute_storage_key(source.id, version.blob_hash)
@@ -479,10 +479,10 @@ class TestIngestionPipeline:
         """A task whose blob was deleted raises RuntimeError."""
         orch, fakes = _make_orchestrator()
         source, doc, version = _seed_source_doc_version(fakes)
-        task = _make_task(source.id, stage=TaskStage.DISCOVER)
+        task = _make_task(source.id, stage=TaskStage.DISCOVER, target_version_id=version.id)
 
         # Don't store the blob
-        with pytest.raises(RuntimeError, match="Blob not found"):
+        with pytest.raises(RuntimeError, match="Blob not found at key"):
             await orch.run_pipeline(task)
 
 
