@@ -24,6 +24,14 @@ from .agent_runtime import (
     transition_run,
     validate_recovery,
 )
+from .chunking import (
+    Chunker,
+    ChunkerConfig,
+    ChunkingResult,
+    ChunkOutput,
+    compute_chunk_hash,
+    compute_chunker_config_hash,
+)
 from .models import (
     Chunk,
     Document,
@@ -37,6 +45,18 @@ from .models import (
     TaskOperation,
     TaskStage,
     TaskStatus,
+)
+from .parsing import (
+    ParsedDocument,
+    ParseError,
+    ParseErrorCode,
+    ParseMetadata,
+    Parser,
+    ParseResult,
+    ParseSuccess,
+    StructNode,
+    StructNodeType,
+    compute_blob_hash,
 )
 from .repositories import (
     ChunkRepository,
@@ -57,6 +77,10 @@ __all__ = [
     "Chunk",
     "ChunkRepository",
     "CheckpointStore",
+    "Chunker",
+    "ChunkerConfig",
+    "ChunkingResult",
+    "ChunkOutput",
     "Document",
     "DocumentRepository",
     "DocumentStatus",
@@ -65,6 +89,13 @@ __all__ = [
     "IngestionTask",
     "IngestionTaskRepository",
     "InvalidRunTransitionError",
+    "ParseError",
+    "ParseErrorCode",
+    "ParseMetadata",
+    "ParseResult",
+    "ParseSuccess",
+    "ParsedDocument",
+    "Parser",
     "RetrievalProfile",
     "RecoveryRejectedError",
     "RunBudget",
@@ -79,6 +110,8 @@ __all__ = [
     "SourceType",
     "Space",
     "SpaceRepository",
+    "StructNode",
+    "StructNodeType",
     "TaskOperation",
     "TaskStage",
     "TaskStatus",
@@ -88,4 +121,7 @@ __all__ = [
     "ToolRegistry",
     "transition_run",
     "validate_recovery",
+    "compute_blob_hash",
+    "compute_chunk_hash",
+    "compute_chunker_config_hash",
 ]

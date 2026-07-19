@@ -499,15 +499,16 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 **任务**：
 
 - ~~实现 Space、Source、Document、Version、Chunk、Task 数据模型。~~ ✅ **已完成（2026-07-18，Step 0/1；R2-01~03 已关闭）**
-- 实现 Markdown/TXT/PDF parser 和统一 ParsedDocument schema。
-- 实现结构感知分块、内容指纹、Embedding 和索引发布。
-- 实现异步状态、进度、重试、取消和失败原因展示。
-- 实现同文件重复导入、内容修改、删除与重建流程。
-- 编写 parser fixture、幂等测试和故障注入测试。
+- ~~实现 Markdown/TXT/PDF parser 和统一 ParsedDocument schema。~~ ✅ **已完成（2026-07-19，Step 2）**
+- ~~实现内容指纹（stable_key/blob_hash/content_hash）、BlobStore 和来源登记。~~ ✅ **已完成（2026-07-19，Step 3）**
+- ~~实现结构感知分块、Embedding 和索引发布。~~ ✅ **已完成（2026-07-19，Step 4-5）**
+- ~~实现异步状态、进度、重试、取消和失败原因展示。~~ ✅ **已完成（2026-07-19，Step 6-8）**
+- ~~实现同文件重复导入、内容修改、删除与重建流程。~~ ✅ **已完成（2026-07-19，Step 7）**
+- ~~编写 parser fixture、幂等测试和故障注入测试。~~ ✅ **已完成（2026-07-19，Step 2-6）**
 
-**交付物**：数据源页面、摄入 API/Worker、可检索索引、解析质量报告。
+**交付物**：数据源页面、摄入 API/Worker、可检索索引、解析质量报告。✅ **已完成**
 
-**退出条件**：样例语料导入成功率达到约定阈值（建议 >= 95%）；重复导入不新增重复块；失败任务可定位和重试。
+**退出条件**：样例语料导入成功率达到约定阈值（建议 >= 95%）；重复导入不新增重复块；失败任务可定位和重试。✅ **Compose smoke test 验证通过**
 
 **已完成的子步骤**：
 
@@ -520,6 +521,13 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 | 迁移 | `a1b2c3d4e5f6` 创建 6 张表；`b2c3d4e5f6a7` 补齐身份、版本、任务字段与约束，可降级/升级 |
 | 配置 | ADR-005 固定 pgvector 维度为 768；维度变化必须通过 ADR、迁移和全量重建 |
 | 测试 | 50 个相关领域/ORM/配置/ModelGateway 单元测试 + 21 个数据模型/本地依赖集成测试 |
+| 解析器（Step 2） | `ParsedDocument` schema（`StructNode`含标题层级/代码块/列表/行号/页码 + `Parser` Protocol）、MarkdownParser（`markdown-it-py`）、TxtParser（编码回退）、PdfParser（`pypdf`，扫描件返回 `scanned_pdf`）+ `ParserFactory`（扩展名/MIME 校验 + 大小限制）、7+1 类错误码；32 个单元测试 |
+| 内容指纹与 BlobStore（Step 3） | `normalize_stable_key` / `compute_content_hash` / `compute_storage_key` 指纹函数、`BlobStore` Port（`store_and_verify` SHA-256 校验）、`LocalFileBlobStore`（路径遍历防护）、`SourceRegistrationService`（创建 Source、`(source_id, stable_key)` 查重、FINGERPRINT 阶段 `blob_hash` 匹配）；78 个新增单元测试 |
+| 结构感知分块（Step 4） | `StructureChunker`（按 StructNode 层级分块，含最小/最大块大小约束、标题路径传播、块偏移定位）+ `Chunker` Port + 统一 `ChunkOutput` schema；41 个测试 |
+| Embedding 与索引发布（Step 5） | `EmbeddingService` 流水线（INDEX→VALIDATE→原子 PUBLISH）+ `default_publish_versions` 用例 + `ModelGateway` 适配 + 9 个测试 |
+| 摄入状态机（Step 6） | `IngestionOrchestrator`（`discover→parse→chunk→embed→publish` 五阶段）+ Dramatiq actor + 幂等重入 + 取消 + 死信处理 + 进度上报；34 个测试 |
+| 增量维护（Step 7） | `is_content_unchanged`（blob_hash 跳过）/ `delete_document`（tombstone + 级联取消任务）/ `update_document_path` / `run_cleanup`（回收孤立的 Blob 文件和版本）；9 个测试 |
+| 摄入 API 与前端（Step 8） | 8 个 REST 端点（创建/列举来源、上传、触发摄入、状态查询、取消、重试）+ Web 数据源页面（来源列表、任务进度条、上传/重试/取消按钮） |
 
 ### 阶段 3：混合检索与评测基线（第 4-5 周）
 

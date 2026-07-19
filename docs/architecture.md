@@ -188,6 +188,9 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/models.py` | 核心实体：`Space`、`Source`、`Document`、`DocumentVersion`、`Chunk`、`IngestionTask` 及其枚举、`RetrievalProfile` 值对象 |
 | `src/domain/agent_runtime.py` | AgentRun 状态/步骤、预算、权限、调用记录、检查点、恢复校验及 Runtime/Registry/审批 Port |
 | `src/domain/repositories.py` | 仓库接口定义（Protocol）：`SpaceRepository`、`SourceRepository`、`DocumentRepository`、`DocumentVersionRepository`、`ChunkRepository`、`IngestionTaskRepository` |
+| `src/domain/parsing.py` | `ParsedDocument` / `StructNode` / `ParseError` 纯类型、`Parser` Protocol、`compute_blob_hash` 辅助函数 |
+| `src/domain/fingerprinting.py` | 内容指纹：`normalize_stable_key`、`compute_content_hash`（含版本分隔符）、`compute_storage_key` |
+| `src/domain/blob_store.py` | `BlobStore` Port（含 `store_and_verify`） |
 
 **约束**：
 - 零外部依赖（不依赖 FastAPI、SQLAlchemy、任何 SDK）
@@ -201,7 +204,11 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 
 **职责**：编排用例流程，协调 Domain Port 与 Infrastructure Adapter。
 
-- **`src/application/__init__.py`** — 包标记
+| 文件 | 职责 |
+|------|------|
+| `src/application/__init__.py` | 包标记 |
+| `src/application/ingestion/__init__.py` | 摄入用例包 |
+| `src/application/ingestion/source_registration.py` | 来源登记用例：`SourceRegistrationService`（创建 Source、FINGERPRINT 阶段、`(source_id, stable_key)` 查重、`blob_hash` 匹配）|
 
 **依赖**：`domain`
 
@@ -226,6 +233,8 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/infrastructure/telemetry_context.py` | trace/request/task 上下文绑定与 ID 校验 |
 | `src/infrastructure/orm.py` | 6 个 SQLAlchemy ORM 模型；含双哈希、处理版本、任务恢复字段、重试安全约束及 pgvector `Vector(768)`/cosine IVFFlat 索引 |
 | `src/infrastructure/repositories.py` | 仓库实现：6 个 repository 类的完整 CRUD，含 domain ↔ ORM 映射 |
+| `src/infrastructure/blob_store.py` | 本地文件 BlobStore 适配器：写入/读取/删除/存在检测、`store_and_verify`（SHA-256 校验）、路径遍历防护 |
+| `src/infrastructure/parsers/` | 文档解析器包：MarkdownParser（`markdown-it-py`）、TxtParser（编码回退）、PdfParser（`pypdf`，可复制文本/扫描件分类）、ParserFactory（扩展名+MIME校验+大小限制） |
 
 **`config.py` 详解**：
 
@@ -234,6 +243,8 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 - **`app_env`** / `app_debug` / `app_secret_key` — 应用基本配置
 - **`postgres_*`** — PostgreSQL 连接参数，提供 `database_url` 属性
 - **`redis_*`** — Redis 连接参数，提供 `redis_url` 属性
+- **`max_upload_size_mb`** — 上传文件大小上限（默认 50 MB）
+- **`blob_store_path`** — 本地 Blob 存储根目录（默认 `./data/blobs`）
 - **`otlp_endpoint`** / `otel_export_timeout_seconds` — 可选 Collector 与有界导出超时
 - **`validate_secrets()`** — 生产环境（`app_env=production`）下校验必须密钥不为空，启动失败
 
@@ -512,7 +523,12 @@ tests/
 │   ├── test_runtime_executor.py    # 确定性 workflow、权限、预算、故障和审计（12 个）
 │   ├── test_skill_registry.py      # manifest、信任路径、摘要、兼容和固定（16 个）
 │   ├── test_skill_lifecycle.py     # reload、升级、回滚、恢复兼容和并发（6 个）
+│   ├── test_fingerprinting.py      # stable_key/content_hash/storage_key（42 个）
+│   ├── test_blob_store.py          # BlobStore CRUD/verify/路径防护（21 个）
+│   ├── test_source_registration.py # 来源登记：Source 创建、FINGERPRINT 查重（11 个）
 │   ├── test_trace_middleware.py    # API 关联头与错误 trace（3 个）
+│   ├── test_parsing_domain.py      # ParsedDocument/StructNode/ParseError（20 个）
+│   ├── test_parsers.py            # Markdown/TXT/PDF 解析器（32 个）
 │   └── test_worker_tasks.py        # 诊断任务、重试、入队和 trace（9 个）
 ├── integration/
 │   ├── __init__.py
@@ -523,9 +539,8 @@ tests/
     └── test_tool_registry_contract.py  # Tool schema、权限、预算和审批契约（14 个）
 ```
 
-**当前后端共收集 180 个测试；默认结果为 158 passed、22 skipped**。其中 21 个真实依赖
-集成测试需显式设置 `RUN_INTEGRATION=1`，另 1 个符号链接测试在当前 Windows 无创建权限时跳过。
-测试覆盖：
+默认后端测试覆盖阶段 1 工程基线、阶段 2 摄入和阶段 5 通用 Runtime；真实依赖集成测试需
+显式设置 `RUN_INTEGRATION=1`。覆盖：
 - 配置：空密钥在 production 下拒绝启动，development 下跳过
 - 错误：Pydantic model、404 统一格式、AppError 结构化响应、未知异常不泄露
 - 健康：live 返回 alive、ready 返回 degraded + 机器码 + 不泄露主机信息
@@ -625,13 +640,22 @@ docker compose -f deploy/compose.yaml down --volumes               # 永久删�
 |------|------|------|
 | 阶段 0 | 🔶 进行中 | 语料授权复核、标注复核未完成 |
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
-| **阶段 2** | **🟡 进行中** | **Step 0/1 已完成（ADR-005 + 6 表 + ORM + 仓库 + 两个数据模型迁移）** |
+| **阶段 2** | **🟡 工程实现已合并** | **Step 0-8 代码已落地；正式质量验收和已知缺陷修复仍进行中** |
 | 阶段 3/4 | ❌ 未开始 | 检索、引用问答、Conversation/AgentRun/Evidence 和 SSE 协议尚未落地 |
 | **阶段 5** | **🟡 通用基础已审查** | **Step 0～4 和 Step 9 通用部分通过；业务 Skill/API/持久化/验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 
-阶段 2 Step 0/1 已完成：ADR-005 固定身份、版本、发布、任务和删除语义；Space、Source、Document、DocumentVersion、Chunk、IngestionTask 的领域实体、ORM 模型、仓库实现及迁移已完成，R2-01～03 已关闭。
+阶段 2 已完成本地验收：
+
+- **Step 0/1**：ADR-005 固定身份、版本、发布、任务和删除语义；Space、Source、Document、DocumentVersion、Chunk、IngestionTask 的领域实体、ORM 模型、仓库实现及迁移已完成，R2-01～03 已关闭。
+- **Step 2**：`ParsedDocument` 纯类型 schema（`StructNode`含标题层级/代码块/列表/1-based行号/页码定位）、`Parser` Protocol、三种 P0 解析器（Markdown/TXT/可复制文本 PDF）、`ParserFactory`（扩展名/MIME校验+大小限制）、统一 7+1 类错误码。32 个单元测试覆盖正常/异常路径。
+- **Step 3**：内容指纹（`normalize_stable_key` / `compute_content_hash` / `compute_storage_key`）、`BlobStore` Port（含 `store_and_verify`）、`LocalFileBlobStore`（路径遍历防护）、`SourceRegistrationService` 来源登记用例。78 个新增单元测试。
+- **Step 4**：结构感知分块器（`StructureChunker`）+ `Chunker` Port + 统一 `ChunkOutput` schema + 41 个测试。
+- **Step 5**：Embedding 流水线（INDEX → VALIDATE → 原子 PUBLISH）+ `EmbeddingService` + 9 个测试。
+- **Step 6**：`IngestionOrchestrator` 状态机（`discover` → `parse` → `chunk` → `embed` → `publish`）+ Dramatiq actor + 幂等重入 + 取消 + 死信处理 + 34 个测试。
+- **Step 7**：增量维护（内容不变跳过、路径更新）+ 原子删除 + 异步清理 + 9 个测试。
+- **Step 8**：摄入 API（8 个端点：创建/列举来源、上传、触发摄入、状态查询、取消、重试）+ Web 数据源页面（来源列表、任务进度、上传/重试/取消 UI）。
 
 阶段 5 通用基础审查见 `docs/stage-5-implementation-review.md`。该并行实现不改变主推进顺序：
 仍应先完成阶段 2 摄入、阶段 3 检索和阶段 4 引用问答，再接入阶段 5 业务 Skill。

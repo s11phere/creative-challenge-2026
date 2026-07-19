@@ -407,6 +407,28 @@ class DocumentVersionRepository:
         row = result.scalar_one_or_none()
         return _version_to_domain(row) if row else None
 
+    async def update(self, version: DocumentVersion) -> DocumentVersion:
+        values: dict[str, Any] = {
+            "blob_hash": version.blob_hash,
+            "content_hash": version.content_hash,
+            "status": version.status.value,
+            "parser_version": version.parser_version,
+            "normalizer_version": version.normalizer_version,
+            "chunker_version": version.chunker_version,
+            "embedding_version": version.embedding_version,
+            "processing_config_hash": version.processing_config_hash,
+            "processing_config": dict(version.processing_config),
+        }
+        await self._session.execute(
+            update(DocumentVersionModel)
+            .where(DocumentVersionModel.id == version.id)
+            .values(**values)
+        )
+        await self._session.flush()
+        result = await self._session.get(DocumentVersionModel, version.id)
+        assert result is not None
+        return _version_to_domain(result)
+
 
 class ChunkRepository:
     """Postgres-backed chunk repository."""
@@ -464,6 +486,11 @@ class IngestionTaskRepository:
             select(IngestionTaskModel).where(IngestionTaskModel.source_id == source_id)
         )
         return [_task_to_domain(row) for row in result.scalars()]
+
+    async def checkpoint(self) -> None:
+        """Commit the current transaction — persists stage progress and
+        releases row locks so external cancel requests can proceed."""
+        await self._session.commit()
 
     async def update(self, task: IngestionTask) -> IngestionTask:
         values: dict[str, Any] = {

@@ -20,6 +20,8 @@ class DocumentStatus(StrEnum):
     PENDING = "pending"
     PARSING = "parsing"
     PARSED = "parsed"
+    EMBEDDED = "embedded"
+    PUBLISHED = "published"
     FAILED = "failed"
 
 

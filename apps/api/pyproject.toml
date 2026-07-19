@@ -8,7 +8,9 @@ dependencies = [
     "infrastructure",
     "model-gateway",
     "fastapi",
+    "python-multipart>=0.0.32",
     "uvicorn[standard]",
+    "worker",
 ]
 
 [build-system]

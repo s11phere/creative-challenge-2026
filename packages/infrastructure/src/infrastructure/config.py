@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     diagnostic_task_max_retries: int = Field(default=3, ge=0)
     diagnostic_task_min_backoff_ms: int = Field(default=1_000, ge=100)
 
+    # --- Ingestion ---
+    max_upload_size_mb: int = Field(default=50, ge=1, le=500)
+    blob_store_path: str = Field(
+        default="./data/blobs", description="Root directory for raw file storage"
+    )
+    ingestion_task_timeout_ms: int = Field(default=600_000, ge=10_000)
+    ingestion_task_max_retries: int = Field(default=3, ge=0)
+    ingestion_task_min_backoff_ms: int = Field(default=5_000, ge=1_000)
+    ingestion_task_heartbeat_interval_s: int = Field(default=30, ge=5)
+    ingestion_task_lease_seconds: int = Field(default=120, ge=30)
+
     # --- Model Gateway ---
     model_provider: Literal["fake", "openai-compatible", "disabled"] = "fake"
     model_endpoint: str | None = None

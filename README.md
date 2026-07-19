@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-**阶段 2 进行中；阶段 5 通用 Agent Runtime/Skill 基础已并行完成审查。**
+**阶段 2 摄入工程实现已合并，质量验收与已知缺陷修复进行中；阶段 5 通用 Agent Runtime/Skill 基础已并行完成审查。**
 
 已交付的核心能力：
 
@@ -13,10 +13,16 @@
 |------|------|
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ Step 0/1 | ADR-005 + 6 张数据模型表 + ORM/仓库 + 身份、版本、任务约束迁移；R2-01～03 已关闭 |
-| 阶段 2 ⏳ 进行中 | 解析器、分块器、嵌入、摄入 API/Worker、Web 数据源页面 |
+| 阶段 2 ✅ Step 2 | Markdown/TXT/PDF 解析器 + `ParsedDocument` schema + Parser Port + `ParserFactory` + 统一错误分类 |
+| 阶段 2 ✅ Step 3 | 内容指纹（`stable_key`、`blob_hash`、`content_hash`）+ `BlobStore` Port + `LocalFileBlobStore` + 来源登记用例 |
+| 阶段 2 ✅ Step 4 | 结构感知分块器（`StructureChunker`）+ `Chunker` Port + 统一 `ChunkOutput` schema + 41 个测试 |
+| 阶段 2 ✅ Step 5 | Embedding + INDEX + VALIDATE + 原子 PUBLISH + `EmbeddingService` 流水线 + 9 个测试 |
+| 阶段 2 ✅ Step 6 | `IngestionOrchestrator` 状态机 + Dramatiq actor + 幂等重入 + 取消 + 死信处理 + 34 个测试 |
+| 阶段 2 ✅ Step 7 | 增量维护（内容不变跳过、路径更新）+ 原子删除 + 异步清理 + `is_content_unchanged` / `delete_document` / `update_document_path` / `run_cleanup` + 9 个测试 |
+| 阶段 2 ✅ Step 8 | 摄入 API（创建/列举来源、上传、触发摄入、状态查询、取消/重试）+ Web 数据源页面（来源列表、任务进度、上传/重试/取消 UI） |
 | 阶段 5 🟡 通用基础 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、版本固定、预算/权限/审计、事务式 reload/回滚和 Skill 模板已通过审查 |
 
-当前 Web 只展示真实系统健康状态，尚未实现文档摄入、搜索、会话、引用或问答功能。
+当前 Web 展示系统健康状态和数据来源管理，尚未实现搜索、会话、引用或问答功能。
 阶段 5 当前只有离线通用 Runtime/Registry 和合成 fake 契约；没有业务 Skill、Runtime API、
 运行/检查点持久化或 Web Skill 入口，不能据此宣称 `knowledge_qa` 可用或阶段 5 整体完成。
 阶段 0 的语料授权复核、人工标注复核和版本冻结仍未关闭，项目状态为”工程进行中，等待阶段 0 数据门禁”。

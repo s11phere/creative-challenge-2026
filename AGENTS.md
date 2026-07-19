@@ -27,6 +27,13 @@
 正常。阶段 2 Step 0/1 已完成：ADR-005 已固定摄入身份、版本、发布、任务和删除语义；
 Space、Source、Document、DocumentVersion、Chunk（pgvector）、IngestionTask 的领域实体、
 ORM 模型、仓库实现、Alembic 迁移及测试已完成，R2-01 至 R2-03 已关闭。
+阶段 2 Step 2 已完成：Markdown/TXT/可复制文本 PDF 三种解析器 + `ParsedDocument` 纯类型
+schema + Parser Port + `ParserFactory` + 统一错误分类，单元测试 32 个覆盖正常路径和全部分类
+错误码。
+阶段 2 Step 3 已完成：`normalize_stable_key`/`compute_content_hash`/`compute_storage_key`
+内容指纹函数、`BlobStore` Port（含 `store_and_verify`）、`LocalFileBlobStore` 本地文件适配器
+（含路径遍历防护）、`SourceRegistrationService` 来源登记用例（创建 Source、按 `(source_id, stable_key)`
+查重、FINGERPRINT 阶段 `blob_hash` 匹配），共 78 个新增单元测试。
 项目仍受阶段 0 数据门禁约束，不能据此宣称摄入、检索、问答、引用、Agent 或 Skill 业务
 已经可用。
 
@@ -36,10 +43,11 @@ Skill 模板已落地。该实现只使用合成输入和 fake，未包含 Agent
 `knowledge_qa`、Runtime API/Web 或三个业务 Skill；阶段 5 整体仍未达到退出条件，详见
 `docs/stage-5-implementation-review.md`。
 
-当前已落地的用户界面只展示真实健康状态；公开 OpenAPI 只包含
-`/api/v1/health/live` 和 `/api/v1/health/ready`。数据库已有 `spaces`、`sources`、
+当前已落地的用户界面展示真实系统健康状态和数据来源/摄入任务；公开 OpenAPI 包含健康、
+来源上传和任务状态相关端点。数据库已有 `spaces`、`sources`、
 `documents`、`document_versions`、`chunks`（含 pgvector 列和 IVFFlat 索引）和
 `ingestion_tasks` 共 6 张业务表（阶段 2 数据模型）。
+`infrastructure/parsers/` 包已实现 MarkdownParser、TxtParser、PdfParser 和 ParserFactory。
 
 阶段 1 的移交与运行事实以以下文件为准：
 

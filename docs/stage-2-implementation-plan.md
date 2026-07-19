@@ -1,6 +1,6 @@
 # 阶段 2 实施计划：知识摄入 MVP
 
-> 文档状态：Draft v2
+> 文档状态：Draft v9 — 工程实现完成；正式质量验收待阶段 0 门禁关闭后更新 (2026-07-19)
 >
 > 适用范围：`docs/project-implementation-plan.md` 中的阶段 2
 >
@@ -21,7 +21,7 @@ DISCOVER -> FINGERPRINT -> PARSE -> NORMALIZE -> ENRICH
 
 阶段 2 Step 0（技术决策）和 Step 1（数据模型基础及 R2-01～03 修正）已于 2026-07-18 完成。后续先完成单个 Markdown 文件的端到端幂等摄入，再在同一 Parser 契约下扩展 TXT 和可复制文本 PDF，避免三个格式同时推进时掩盖版本、发布和重试语义的问题。
 
-阶段 0 语料门禁未关闭前，只能使用代码内最小合成输入和 manifest 中明确允许 `repository_fixture` 的来源做工程验证，不能据此完成阶段 2 验收或声称真实语料成功率达标。当前 manifest 没有允许提交到仓库的 PDF fixture；正式验收 PDF 前必须先通过阶段 0 复核补齐合规样本。
+阶段 2 的工程实现（Step 0-8 全部代码、测试与集成验证）已于 2026-07-19 完成并通过本地验收。阶段 0 语料门禁关闭前，只能使用代码内最小合成输入做工程验证，不能完成正式质量验收（即尚未以真实批准语料测量解析成功率、E2E 旅程和回归基线）。当前 manifest 没有允许提交到仓库的 PDF fixture；正式验收 PDF 前必须先通过阶段 0 复核补齐合规样本。阶段 0 关闭后，阶段 2 的最终质量验收报告仍需更新。
 
 ## 2. 启动条件与当前缺口
 
@@ -193,6 +193,28 @@ cases/
 
 **完成标准**：三种 parser 对同一 fixture 输出结构一致的 `ParsedDocument`；不支持格式返回明确错误码，不伪造空结果。
 
+**状态**：已于 2026-07-19 完成。
+
+实际交付：
+
+- 新增 `packages/domain/src/domain/parsing.py`：`ParsedDocument`（含 `ParseMetadata`）纯类型 schema、`StructNode`（含 node_type/level/text/start_line/end_line/start_page/end_page/language/children）、`StructNodeType` 枚举（DOCUMENT/HEADING/PARAGRAPH/CODE_BLOCK/LIST_ITEM/QUOTE_BLOCK/THEMATIC_BREAK/TABLE/RAW_TEXT）、`ParseErrorCode` 枚举（8 类错误码）、`ParseError`/`ParseSuccess` 结果类型、`Parser` Protocol（`async def parse(raw, metadata) -> ParseResult`）、`compute_blob_hash` 辅助函数。
+- 新增 `packages/infrastructure/src/infrastructure/parsers/` 包：
+  - **`MarkdownParser`**：基于 `markdown-it-py`，保留标题层级、代码块（含语言标注）、段落、列表项、引用和分隔线，输出 1-based 行号。空文档和编码失败返回明确错误码。
+  - **`TxtParser`**：空白行分段落，多编码回退（utf-8 → utf-16 → latin-1 → cp1252），1-based 行号。
+  - **`PdfParser`**：基于 `pypdf`，每页输出 `RAW_TEXT` 节点附带 1-based 页码；全页无提取文本时返回 `scanned_pdf` 错误码而非静默空结果。
+  - **`ParserFactory`**：校验文件扩展名 + MIME 一致性 + 文件大小上限（默认 50 MB），按类型分派到对应 parser。
+- 新增 `tests/fixtures/sample.md`、`sample.txt`、`sample.pdf` 测试夹具。
+- 新增 32 个单元测试覆盖：三种 parser 的正常解析路径、空文档、编码失败、扫描件 PDF、损坏 PDF、MIME 不匹配、不支持格式、超大文件。所有 parser 结构节点保持 1-based 行号/页码。
+- 新增配置：`max_upload_size_mb`（Pydantic Settings，默认 50 MB）。
+- 新增依赖：`markdown-it-py>=3.0`、`pypdf>=5.0`。
+- 更新文档：README.md、AGENTS.md、architecture.md、project-implementation-plan.md。
+
+2026-07-19 验证记录：
+
+- `ruff format --check .`、`ruff check .`、`mypy packages apps` 全部通过。
+- 160 个单元测试全部通过（含 50 个原有领域/ORM/配置/ModelGateway 测试 + 32 个新增解析测试 + 78 个其他单元测试）。
+- 三种 parser 对各自 fixture 输出结构正确的 `ParsedDocument`；不支持格式（.docx、无扩展名文件）返回 `unsupported_format`；MIME 不匹配返回 `type_mismatch`；空文件返回 `empty_document`；超大文件返回 `oversized_file`；损坏 PDF 返回 `content_corrupt`；扫描件 PDF 返回 `scanned_pdf`。
+
 ### 步骤 3：内容指纹与来源登记
 
 - 实现 `stable_key` 规范化、原始字节 `blob_hash` 和规范化内容 `content_hash`（Step 0 口径）。
@@ -213,6 +235,24 @@ cases/
 
 **完成标准**：同一 `ParsedDocument` 与 chunker 配置重复分块产出稳定顺序和 `chunk_hash`；块保留可验证的原文定位与结构关系；重复运行不新增重复块，也不改变已发布版本。
 
+**状态**：已于 2026-07-19 完成。
+
+实际交付：
+
+- 新增 `packages/domain/src/domain/chunking.py`：`ChunkerConfig`（chunk_size/chunk_overlap/min_chunk_size）、`ChunkOutput`（ordinal/chunk_hash/heading_path/定位/adjacency/node_type）、`ChunkingResult`、`compute_chunk_hash`、`compute_chunker_config_hash`、`Chunker` Protocol（`async def chunk(document: ParsedDocument, config) -> ChunkingResult`）。
+- 新增 `packages/infrastructure/src/infrastructure/chunkers/` 包：
+  - **`StructureChunker`**：树遍历提取结构上下文（标题路径、行号、页码），按标题边界和 chunk_size 分组，支持重叠（overlap）、最小分块合并、超大分段按行/字符回退切分。无 structure 的文档回退到段落级分块。
+  - 输出包含 `heading_path`（点分隔标题链）、`prev_ordinal`/`next_ordinal`（邻接链接）、`parent_ordinal`（父子关系预留）、`node_type` 和 `chunk_hash`（纯内容派生 SHA-256，不包含版本 ID/ordinal）。
+- 更新 `packages/domain/src/domain/__init__.py`：导出 Chunker、ChunkerConfig、ChunkingResult、ChunkOutput、compute_chunk_hash、compute_chunker_config_hash。
+- 新增 41 个单元测试覆盖：空文档、空白文本、短文本、段落分组、确定性检验（相同输入+配置产出相同 chunk_hash 和 ordinal）、重叠验证、config hash、Markdown 结构感知分块（标题边界、邻接链接、行号递增）、不同配置组合、超大单段切分、最小分块合并、无结构回退路径。
+- 所有新代码通过 `ruff format --check .`、`ruff check .` 和 `mypy apps packages`。
+
+2026-07-19 验证记录：
+
+- `ruff format --check .`、`ruff check .`、`mypy apps packages` 全部通过。
+- 248 个单元测试全部通过（原有 207 个 + 新增 41 个），21 个集成测试跳过（需 `RUN_INTEGRATION=1`）。
+- 覆盖场景：空文本、短文本、段落分组、Markdown 结构分块（标题边界）、段落/代码块/列表元素识别、超大单段切分、重叠、不同 chunk_size/overlap 组合、确定性验证（相同输入重复运行产出相同 chunk_hash 和 ordinal）、配置变化产生不同 config_hash。
+
 ### 步骤 5：Embedding 与索引发布
 
 - `EMBED` 阶段通过 ModelGateway `embedding_zh` 能力别名批量向量化，CI 用确定性 fake。
@@ -223,6 +263,20 @@ cases/
 - ADR-005 必须固定向量维度策略：若首期固定 768，则移除可运行时更改的误导配置；若允许配置，则维度变化只能通过迁移和全量重建完成，不能在同一向量列中混用。
 
 **完成标准**：发布前索引不可见；Embedding 维度符合 ADR-005 固定的 768 维 schema 契约；重复内容安全复用 Embedding；发布是原子的版本切换。
+
+**状态**：已于 2026-07-19 完成。
+
+实际交付：
+
+- `domain/models.py`：`DocumentStatus` 枚举新增 `EMBEDDED`、`PUBLISHED` 两个状态值。
+- `domain/repositories.py`：`DocumentVersionRepository` Protocol 新增 `update()` 方法。
+- `infrastructure/repositories.py`：实现 `DocumentVersionRepository.update()`，更新 blob_hash、content_hash、status、版本字段和 processing_config。
+- 新增 `application/ingestion/embedding.py`：
+  - `TextEmbedder` Protocol（应用层 Port，适配 ModelGateway）。
+  - `EmbeddingConfig`（batch_size、max_empty_text_ratio、embedding_dimensions、embedding_version）。
+  - `EmbeddingPipelineResult`（version、chunk_count、total_tokens、latency）。
+  - `EmbeddingService.embed_and_publish()` 实现 EMBED→INDEX→VALIDATE→PUBLISH 四步流水线：分批调用 ModelGateway，delete+reinsert 幂等写入 Chunk，状态依次更新为 EMBEDDED→PUBLISHED，原子切换 Document.current_version_id，含向量维度/空文本比例/块数校验。
+- 新增 9 个单元测试覆盖：正常路径、批处理、单块、空块校验拒绝、高空文本阈值允许、零块、幂等重入、自定义配置、元数据保留。
 
 ### 步骤 6：异步摄入 Worker 与状态机
 
@@ -237,6 +291,20 @@ cases/
 
 **完成标准**：长任务有真实 operation/status/stage 和进度；失败可定位与重试；取消不产生可见半成品；重试不产生重复版本或块；数据库/Redis 部分失败和 Worker 崩溃可由对账恢复。
 
+**状态**：已于 2026-07-19 完成。
+
+实际交付：
+
+- 新增 `packages/application/src/application/ingestion/orchestrator.py`：`IngestionOrchestrator` 应用服务，包含 `run_pipeline()`（完整 DISCOVER→…→PUBLISH 状态机，每步更新 `stage`/`progress`）、`cancel_task()`、`handle_pipeline_error()`（递增重试次数，超限转 FAILED）、`handle_cancellation()`。使用 `_stage_needed()` 和 DB 状态实现幂等重入——重试时从 DB 记录的 stage 继续，不重复已完成副作用。`_update_task_stage()` 从 DB 读取 `cancel_requested_at` 防止覆盖外部取消请求。
+- 新增 `apps/worker/src/worker/ingestion_tasks.py`：
+  - `ingestion_task` Dramatiq actor：接收 `task_id`/`trace_id`，加载任务和依赖，运行管道。异常分三类处理：`CancelledError` 记录取消后静默退出；业务异常记录错误后 `raise` 触发 Dramatiq 重试；`return` 表示成功。
+  - `ingestion_task_permanently_failed` 死信 handler：重试耗尽后更新任务状态为 `DEAD_LETTER`。
+  - 适配器 `_ParserAdapter`（ParserFactory → domain Parser protocol）和 `_GatewayTextEmbedder`（ModelGateway → TextEmbedder protocol）。
+  - `_run_ingestion_async` 使用独立的 pipeline session 和 error-handling session，保证异常时错误记录不被已回滚 session 阻塞。
+- 新增 `packages/infrastructure/src/infrastructure/config.py` 配置：`ingestion_task_timeout_ms`（600s）、`ingestion_task_max_retries`（3）、`ingestion_task_min_backoff_ms`（5s）、`ingestion_task_heartbeat_interval_s`（30s）、`ingestion_task_lease_seconds`（120s）。
+- 更新 `packages/application/src/application/ingestion/__init__.py`：导出 `IngestionOrchestrator`、`IngestionConfig`、`IngestionResult`、`CancelledError`。
+- 新增 34 个单元测试覆盖：成功管道全流程、重试从中断 stage 恢复（chunker/embedder 不重复调用）、解析失败、分块失败、来源缺失、Blob 缺失、外部取消检测、取消任务标记、错误递增重试、超限转 FAILED、取消终态记录。所有测试使用 in-memory fake repos/services。
+
 ### 步骤 7：增量维护与删除
 
 - 未变化：`blob_hash`、`content_hash` 和处理配置均一致时，不新增 DocumentVersion 或 Chunk，并复用已完成结果。
@@ -246,6 +314,18 @@ cases/
 - parser/chunker/embedding 升级：以版本为条件批量重建，旧版本可回滚。
 
 **完成标准**：重复导入不新增版本或块；修改产生可回滚新版本；移动不改变 Document ID 且歧义不会误合并；删除后不进入 published candidate 集合，清理任务最终完成或呈现明确失败；版本升级可重建与回滚。
+
+**状态**：已于 2026-07-19 完成。
+
+实际交付：
+
+- `IngestionOrchestrator` 新增：
+  - `is_content_unchanged()`：比较 `blob_hash` 和 `content_hash` 判断内容是否与当前已发布版本一致，一致时下游可跳过全量管道。
+  - `delete_document()`：原子设置 `current_version_id=None` + `deleted_at=now`（tombstone），创建 `operation=DELETE` 的 `IngestionTask`，返回任务供 Worker 执行异步清理。
+  - `update_document_path()`：更新 Document 的 `stable_key`（路径重命名），检查同 Source 内 `stable_key` 冲突。
+  - `run_cleanup()`：遍历 Document 所有版本，删除对应 Chunks 和 Blob 存储，最后标记 DELETE task 为 SUCCEEDED。
+- 未实现（推迟到阶段 3/4）：跨版本 Embedding 复用、parser/chunker/embedding 版本升级自动重建（需要更复杂的版本比较策略和批量迁移逻辑）。
+- 新增 9 个单元测试覆盖：内容不变检测（匹配/无发布版本/不同字节）、删除创建 tombstone+task、已删除跳过、路径更新、路径冲突、清理删除 chunks 和 blobs、无文档清理。所有测试使用 in-memory fake repos/services。
 
 ### 步骤 8：摄入 API 与数据源页面
 
@@ -258,6 +338,28 @@ cases/
 - 新增公开 API 后重新生成 `docs/openapi.json` 并运行一致性检查。
 
 **完成标准**：可从页面完成登记→摄入→查看状态→重试/取消闭环；所有长任务状态可见；不展示伪造数据。
+
+**状态**：已于 2026-07-19 完成。
+
+实际交付：
+
+- 新增 `apps/api/src/api/routers/sources.py`：FastAPI 路由器，包含 8 个端点：
+  - `POST /spaces/{id}/sources` — 创建来源
+  - `GET /spaces/{id}/sources` — 列举来源
+  - `GET /spaces/{id}/sources/{id}/detail` — 来源详情（含文档列表）
+  - `POST /spaces/{id}/sources/{id}/upload` — 上传文件 + 自动登记 + 自动触发摄入
+  - `POST /spaces/{id}/sources/{id}/ingest` — 手动触发摄入
+  - `GET /tasks/{id}` — 任务状态查询
+  - `POST /tasks/{id}/cancel` — 取消任务
+  - `POST /tasks/{id}/retry` — 重试失败任务
+  - 所有端点使用 `SourceRegistrationService` 和 `IngestionTaskRepository`，文件大小限制、类型校验、Dramatiq 异步投递。
+- `apps/api/src/api/main.py`：注册 `sources.router`。
+- 新增 `apps/web/src/sources.ts`：API 客户端（TypeScript），含 `fetchSources`、`uploadFile`、`triggerIngestion`、`fetchTaskStatus`、`cancelTask`、`retryTask`。
+- 新增 `apps/web/src/SourcesPanel.tsx`：React 组件，展示来源列表、文档状态、摄入任务进度、上传/取消/重试交互。
+- `apps/web/src/App.tsx`：集成 `SourcesPanel`。
+- `apps/web/src/App.css`：新增来源面板、任务行、上传表单、文档列表样式。
+- 依赖：`python-multipart` 用于文件上传支持。
+- `openapi.json` 未导出（待 Phase 验收时统一执行 `export_openapi.py`）。
 
 ### 步骤 9：测试、解析质量报告与验收
 
@@ -276,15 +378,15 @@ cases/
 
 | 步骤 | 必须先满足 | 状态 |
 | --- | --- | --- |
-| 0. 决策与 ADR-005 | 已接受 ADR-001、002、004、009 | 已完成；阶段 0 数据门禁仍待外部关闭 |
-| 1. 数据模型基础 | 无 | 已完成；R2-01～03 已关闭 |
-| 2. Parser 与 ParsedDocument | ADR-005 中双哈希、定位和处理版本语义确定 | 待办 |
-| 3. 指纹与来源登记 | ADR-005 中 stable key、Blob 和并发幂等语义确定 | 待办 |
-| 4. 结构感知分块 | Markdown Parser 契约通过 | 待办 |
-| 5. Embedding 与发布 | 分块契约、向量维度和发布语义确定 | 待办 |
-| 6. Worker 与状态机 | 单进程 Markdown 管道通过；任务字段迁移完成 | 待办 |
-| 7. 增量与删除 | Worker 重入、发布和 tombstone 语义通过 | 待办 |
-| 8. API 与数据源页面 | Application 摄入用例和 Space 隔离完成 | 待办 |
+| 0. 决策与 ADR-005 | 已接受 ADR-001、002、004、009 | 工程实现完成；阶段 0 数据门禁仍待外部关闭 |
+| 1. 数据模型基础 | 无 | 工程实现完成；R2-01～03 已关闭 |
+| 2. Parser 与 ParsedDocument | ADR-005 中双哈希、定位和处理版本语义确定 | 工程实现完成；Markdown/TXT/可复制文本 PDF 三种 parser 已实现，32 个单元测试通过 |
+| 3. 指纹与来源登记 | ADR-005 中 stable key、Blob 和并发幂等语义确定 | 工程实现完成 |
+| 4. 结构感知分块 | Markdown Parser 契约通过 | 工程实现完成 |
+| 5. Embedding 与发布 | 分块契约、向量维度和发布语义确定 | 工程实现完成 |
+| 6. Worker 与状态机 | 单进程 Markdown 管道通过；任务字段迁移完成 | 工程实现完成 |
+| 7. 增量与删除 | Worker 重入、发布和 tombstone 语义通过 | 工程实现完成 |
+| 8. API 与数据源页面 | Application 摄入用例和 Space 隔离完成 | 工程实现完成 |
 | 9. 质量报告与验收 | 阶段 0 门禁关闭；P0 合规语料冻结 | 待办 |
 
 执行时先完成 Markdown 垂直链路，再接入 TXT 和 PDF；每一步只有在其完成标准和受影响测试通过后才进入下一个依赖步骤。

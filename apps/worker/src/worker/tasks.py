@@ -9,7 +9,6 @@ from uuid import UUID
 
 import dramatiq
 from infrastructure.config import settings
-from infrastructure.queue import create_redis_broker
 from infrastructure.telemetry import configure_observability
 from infrastructure.telemetry_context import (
     bind_observability_context,
@@ -20,16 +19,17 @@ from infrastructure.telemetry_context import (
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 
+from worker.broker import broker
+
 logger = logging.getLogger(__name__)
 
-broker = create_redis_broker(settings.redis_url)
-dramatiq.set_broker(broker)
 tracer = trace.get_tracer("worker.tasks")
 
 
 def setup_worker() -> None:
     """Configure process-local observability when Dramatiq imports the broker."""
     configure_observability(settings, service_name="worker")
+    import worker.ingestion_tasks  # noqa: F401 — register ingestion actors
 
 
 class DiagnosticResult(TypedDict):
