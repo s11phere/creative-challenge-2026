@@ -1,6 +1,6 @@
 # 阶段 2 实施计划：知识摄入 MVP
 
-> 文档状态：Draft v4 — Step 4 已完成 (2026-07-19)
+> 文档状态：Draft v5 — Step 5 已完成 (2026-07-19)
 >
 > 适用范围：`docs/project-implementation-plan.md` 中的阶段 2
 >
@@ -264,6 +264,20 @@ cases/
 
 **完成标准**：发布前索引不可见；Embedding 维度符合 ADR-005 固定的 768 维 schema 契约；重复内容安全复用 Embedding；发布是原子的版本切换。
 
+**状态**：已于 2026-07-19 完成。
+
+实际交付：
+
+- `domain/models.py`：`DocumentStatus` 枚举新增 `EMBEDDED`、`PUBLISHED` 两个状态值。
+- `domain/repositories.py`：`DocumentVersionRepository` Protocol 新增 `update()` 方法。
+- `infrastructure/repositories.py`：实现 `DocumentVersionRepository.update()`，更新 blob_hash、content_hash、status、版本字段和 processing_config。
+- 新增 `application/ingestion/embedding.py`：
+  - `TextEmbedder` Protocol（应用层 Port，适配 ModelGateway）。
+  - `EmbeddingConfig`（batch_size、max_empty_text_ratio、embedding_dimensions、embedding_version）。
+  - `EmbeddingPipelineResult`（version、chunk_count、total_tokens、latency）。
+  - `EmbeddingService.embed_and_publish()` 实现 EMBED→INDEX→VALIDATE→PUBLISH 四步流水线：分批调用 ModelGateway，delete+reinsert 幂等写入 Chunk，状态依次更新为 EMBEDDED→PUBLISHED，原子切换 Document.current_version_id，含向量维度/空文本比例/块数校验。
+- 新增 9 个单元测试覆盖：正常路径、批处理、单块、空块校验拒绝、高空文本阈值允许、零块、幂等重入、自定义配置、元数据保留。
+
 ### 步骤 6：异步摄入 Worker 与状态机
 
 - 实现摄入 Dramatiq actor，串联 DISCOVER→…→PUBLISH，每步更新 `ingestion_tasks` 的 `stage` 和 `progress`。
@@ -321,7 +335,7 @@ cases/
 | 2. Parser 与 ParsedDocument | ADR-005 中双哈希、定位和处理版本语义确定 | 已完成；Markdown/TXT/可复制文本 PDF 三种 parser 已实现，32 个单元测试通过 |
 | 3. 指纹与来源登记 | ADR-005 中 stable key、Blob 和并发幂等语义确定 | 已完成 |
 | 4. 结构感知分块 | Markdown Parser 契约通过 | 已完成 |
-| 5. Embedding 与发布 | 分块契约、向量维度和发布语义确定 | 待办 |
+| 5. Embedding 与发布 | 分块契约、向量维度和发布语义确定 | 已完成 |
 | 6. Worker 与状态机 | 单进程 Markdown 管道通过；任务字段迁移完成 | 待办 |
 | 7. 增量与删除 | Worker 重入、发布和 tombstone 语义通过 | 待办 |
 | 8. API 与数据源页面 | Application 摄入用例和 Space 隔离完成 | 待办 |

@@ -251,6 +251,8 @@ class TestEnums:
         assert DocumentStatus.PENDING.value == "pending"
         assert DocumentStatus.PARSING.value == "parsing"
         assert DocumentStatus.PARSED.value == "parsed"
+        assert DocumentStatus.EMBEDDED.value == "embedded"
+        assert DocumentStatus.PUBLISHED.value == "published"
         assert DocumentStatus.FAILED.value == "failed"
 
     def test_task_stage_order(self) -> None:
