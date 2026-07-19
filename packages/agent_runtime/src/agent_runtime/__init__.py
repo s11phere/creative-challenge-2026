@@ -23,6 +23,8 @@ from .skills import (
     SkillPackage,
     SkillRegistryError,
     SkillRegistryErrorCode,
+    SkillRegistryEvent,
+    SkillRegistryEventType,
 )
 from .tools import (
     InMemoryToolRegistry,
@@ -55,6 +57,8 @@ __all__ = [
     "SkillCompatibility",
     "SkillManifest",
     "SkillPackage",
+    "SkillRegistryEvent",
+    "SkillRegistryEventType",
     "SkillRegistryError",
     "SkillRegistryErrorCode",
     "ToolDefinition",

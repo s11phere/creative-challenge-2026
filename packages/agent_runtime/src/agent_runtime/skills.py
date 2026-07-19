@@ -8,11 +8,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
+from threading import RLock
 from typing import Any, cast
 from urllib.parse import urlsplit
 
 import yaml
-from domain.agent_runtime import RunBudget, ToolPermission
+from domain.agent_runtime import RunBudget, RunCheckpoint, ToolPermission, ToolRegistry
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
@@ -141,12 +142,30 @@ class SkillRegistryErrorCode(StrEnum):
     ACTIVE_VERSION_MISSING = "SKILL_ACTIVE_VERSION_MISSING"
     INCOMPATIBLE = "SKILL_INCOMPATIBLE"
     DIGEST_MISMATCH = "SKILL_DIGEST_MISMATCH"
+    CHECKPOINT_INCOMPATIBLE = "SKILL_CHECKPOINT_INCOMPATIBLE"
+    TOOL_INCOMPATIBLE = "SKILL_TOOL_INCOMPATIBLE"
 
 
 class SkillRegistryError(Exception):
     def __init__(self, code: SkillRegistryErrorCode, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+class SkillRegistryEventType(StrEnum):
+    INSTALLED = "installed"
+    ACTIVATED = "activated"
+    ROLLED_BACK = "rolled_back"
+
+
+@dataclass(frozen=True)
+class SkillRegistryEvent:
+    event_version: int
+    event_type: SkillRegistryEventType
+    name: str
+    version: str
+    content_sha256: str
+    previous_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -220,6 +239,8 @@ class FileSystemSkillRegistry:
         self._checkpoint_schema_version = checkpoint_schema_version
         self._packages: dict[tuple[str, str], SkillPackage] = {}
         self._active_versions: dict[str, str] = {}
+        self._events: list[SkillRegistryEvent] = []
+        self._lock = RLock()
 
     def load(self, relative_path: str | Path) -> SkillPackage:
         package_root = self._resolve_package_root(relative_path)
@@ -257,58 +278,89 @@ class FileSystemSkillRegistry:
         )
 
     def register(self, package: SkillPackage) -> SkillPackage:
-        package = self._revalidate_package(package)
-        key = (package.manifest.name, package.manifest.version)
-        existing = self._packages.get(key)
-        if existing is not None and existing.content_sha256 != package.content_sha256:
-            raise SkillRegistryError(
-                SkillRegistryErrorCode.VERSION_CONFLICT,
-                "Skill name and version already exist with another content digest.",
-            )
-        if existing is None:
-            self._packages[key] = package
-        return self._packages[key]
+        with self._lock:
+            package = self._revalidate_package(package)
+            key = (package.manifest.name, package.manifest.version)
+            existing = self._packages.get(key)
+            if existing is not None and existing.content_sha256 != package.content_sha256:
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.VERSION_CONFLICT,
+                    "Skill name and version already exist with another content digest.",
+                )
+            if existing is None:
+                self._packages[key] = package
+                self._events.append(self._event(SkillRegistryEventType.INSTALLED, package))
+            return self._packages[key]
 
     def load_all(self) -> tuple[SkillPackage, ...]:
-        loaded: list[SkillPackage] = []
-        for child in sorted(self._trusted_root.iterdir(), key=lambda path: path.name):
-            if child.name.startswith("_"):
-                continue
-            self._reject_link(child)
-            if child.is_dir():
-                loaded.append(self.register(self.load(child.name)))
-        return tuple(loaded)
+        return self.reload()
+
+    def reload(self) -> tuple[SkillPackage, ...]:
+        """Validate a complete scan before atomically publishing any new versions."""
+        with self._lock:
+            candidates: list[SkillPackage] = []
+            for child in sorted(self._trusted_root.iterdir(), key=lambda path: path.name):
+                if child.name.startswith("_"):
+                    continue
+                self._reject_link(child)
+                if child.is_dir():
+                    candidates.append(self._revalidate_package(self.load(child.name)))
+
+            staged = dict(self._packages)
+            newly_installed: list[SkillPackage] = []
+            for package in candidates:
+                key = (package.manifest.name, package.manifest.version)
+                existing = staged.get(key)
+                if existing is not None and existing.content_sha256 != package.content_sha256:
+                    raise SkillRegistryError(
+                        SkillRegistryErrorCode.VERSION_CONFLICT,
+                        "Skill reload found a conflicting immutable version.",
+                    )
+                if existing is None:
+                    staged[key] = package
+                    newly_installed.append(package)
+
+            self._packages = staged
+            self._events.extend(
+                self._event(SkillRegistryEventType.INSTALLED, package)
+                for package in newly_installed
+            )
+            return tuple(candidates)
 
     def activate(self, name: str, version: str) -> SkillPackage:
-        package = self._revalidate_package(self.get(name, version))
-        self._active_versions[name] = version
-        return package
+        return self._set_active(name, version, SkillRegistryEventType.ACTIVATED)
+
+    def rollback(self, name: str, version: str) -> SkillPackage:
+        return self._set_active(name, version, SkillRegistryEventType.ROLLED_BACK)
 
     def get(self, name: str, version: str | None = None) -> SkillPackage:
-        selected_version = version
-        if selected_version is None:
+        with self._lock:
+            selected_version = version
+            if selected_version is None:
+                try:
+                    selected_version = self._active_versions[name]
+                except KeyError as exc:
+                    raise SkillRegistryError(
+                        SkillRegistryErrorCode.ACTIVE_VERSION_MISSING,
+                        "Skill has no active version.",
+                    ) from exc
             try:
-                selected_version = self._active_versions[name]
+                return self._packages[(name, selected_version)]
             except KeyError as exc:
                 raise SkillRegistryError(
-                    SkillRegistryErrorCode.ACTIVE_VERSION_MISSING,
-                    "Skill has no active version.",
+                    SkillRegistryErrorCode.NOT_FOUND,
+                    "Requested Skill version is not installed.",
                 ) from exc
-        try:
-            return self._packages[(name, selected_version)]
-        except KeyError as exc:
-            raise SkillRegistryError(
-                SkillRegistryErrorCode.NOT_FOUND,
-                "Requested Skill version is not installed.",
-            ) from exc
 
     def is_available(self, name: str, version: str, content_sha256: str) -> bool:
-        package = self._packages.get((name, version))
-        return package is not None and package.content_sha256 == content_sha256
+        with self._lock:
+            package = self._packages.get((name, version))
+            return package is not None and package.content_sha256 == content_sha256
 
     def pin(self, name: str, version: str | None = None) -> PinnedSkill:
-        package = self._revalidate_package(self.get(name, version))
-        return self._pin_package(package)
+        with self._lock:
+            package = self._revalidate_package(self.get(name, version))
+            return self._pin_package(package)
 
     def _pin_package(self, package: SkillPackage) -> PinnedSkill:
         digests = dict(package.file_digests)
@@ -326,18 +378,100 @@ class FileSystemSkillRegistry:
         )
 
     def validate_pin(self, pin: PinnedSkill) -> SkillPackage:
-        package = self.get(pin.name, pin.version)
-        fresh_package = self._revalidate_package(package)
-        if self._pin_package(fresh_package) != pin:
-            raise SkillRegistryError(
-                SkillRegistryErrorCode.DIGEST_MISMATCH,
-                "Installed Skill does not match the fixed run version.",
-            )
-        return package
+        with self._lock:
+            package = self.get(pin.name, pin.version)
+            fresh_package = self._revalidate_package(package)
+            if self._pin_package(fresh_package) != pin:
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.DIGEST_MISMATCH,
+                    "Installed Skill does not match the fixed run version.",
+                )
+            return package
+
+    def validate_checkpoint_compatibility(
+        self,
+        pin: PinnedSkill,
+        checkpoint: RunCheckpoint,
+        *,
+        tool_registry: ToolRegistry | None = None,
+    ) -> SkillPackage:
+        with self._lock:
+            package = self.validate_pin(pin)
+            if not checkpoint.verified or (
+                checkpoint.skill_name,
+                checkpoint.skill_version,
+                checkpoint.skill_content_sha256,
+            ) != (pin.name, pin.version, pin.content_sha256):
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.CHECKPOINT_INCOMPATIBLE,
+                    "Checkpoint does not match the fixed Skill version.",
+                )
+            if checkpoint.schema_version not in pin.compatibility.checkpoint_schema_versions:
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.CHECKPOINT_INCOMPATIBLE,
+                    "Checkpoint schema is outside the Skill compatibility range.",
+                )
+            if package.manifest.required_tools and tool_registry is None:
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.TOOL_INCOMPATIBLE,
+                    "Recovery requires a Tool Registry.",
+                )
+            if tool_registry is not None and any(
+                not tool_registry.is_available(tool.name, tool.version)
+                for tool in package.manifest.required_tools
+            ):
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.TOOL_INCOMPATIBLE,
+                    "A Tool version required for recovery is unavailable.",
+                )
+            return package
 
     def versions(self, name: str) -> tuple[str, ...]:
-        versions = [version for package_name, version in self._packages if package_name == name]
-        return tuple(sorted(versions, key=Version))
+        with self._lock:
+            versions = [version for package_name, version in self._packages if package_name == name]
+            return tuple(sorted(versions, key=Version))
+
+    def active_version(self, name: str) -> str:
+        with self._lock:
+            try:
+                return self._active_versions[name]
+            except KeyError as exc:
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.ACTIVE_VERSION_MISSING,
+                    "Skill has no active version.",
+                ) from exc
+
+    @property
+    def events(self) -> tuple[SkillRegistryEvent, ...]:
+        with self._lock:
+            return tuple(self._events)
+
+    def _set_active(
+        self, name: str, version: str, event_type: SkillRegistryEventType
+    ) -> SkillPackage:
+        with self._lock:
+            package = self._revalidate_package(self.get(name, version))
+            previous = self._active_versions.get(name)
+            if previous == version:
+                return package
+            self._active_versions[name] = version
+            self._events.append(self._event(event_type, package, previous))
+            return package
+
+    @staticmethod
+    def _event(
+        event_type: SkillRegistryEventType,
+        package: SkillPackage,
+        previous_version: str | None = None,
+    ) -> SkillRegistryEvent:
+        return SkillRegistryEvent(
+            event_version=1,
+            event_type=event_type,
+            name=package.manifest.name,
+            version=package.manifest.version,
+            content_sha256=package.content_sha256,
+            previous_version=previous_version,
+        )
 
     def _resolve_package_root(self, relative_path: str | Path) -> Path:
         relative = Path(relative_path)
