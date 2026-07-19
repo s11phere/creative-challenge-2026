@@ -193,8 +193,28 @@ class SourceRegistrationService:
         else:
             document = existing_doc
 
-        # --- Step 6: fingerprint — find existing version with same blob_hash ---
+        # --- Step 6: fingerprint — find or create version with same blob_hash ---
         existing_version = await self._find_version_by_blob_hash(source.id, blob_hash)
+
+        if existing_version is None:
+            # Create a DocumentVersion so the ingestion pipeline finds a
+            # version with the correct blob_hash (instead of an empty-hash
+            # placeholder).
+            version = DocumentVersion(
+                document_id=document.id,
+                blob_hash=blob_hash,
+            )
+            version = await self._version_repo.create(version)
+            document = Document(
+                id=document.id,
+                source_id=document.source_id,
+                stable_key=document.stable_key,
+                current_version_id=version.id,
+                deleted_at=document.deleted_at,
+                created_at=document.created_at,
+                updated_at=document.updated_at,
+            )
+            document = await self._document_repo.update(document)
 
         return RegistrationResult(
             source=source,

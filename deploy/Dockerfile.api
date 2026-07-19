@@ -7,7 +7,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY packages/ packages/
 COPY apps/api/ apps/api/
-COPY apps/worker/pyproject.toml apps/worker/pyproject.toml
+COPY apps/worker/ apps/worker/
 COPY alembic.ini ./
 COPY migrations/ migrations/
 

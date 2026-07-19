@@ -6,6 +6,7 @@ dependencies = [
     "application",
     "infrastructure",
     "dramatiq",
+    "model-gateway",
 ]
 
 [build-system]

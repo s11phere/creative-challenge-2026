@@ -111,7 +111,9 @@ dependencies = [
     { name = "fastapi" },
     { name = "infrastructure" },
     { name = "model-gateway" },
+    { name = "python-multipart" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "worker" },
 ]
 
 [package.metadata]
@@ -121,7 +123,9 @@ requires-dist = [
     { name = "fastapi" },
     { name = "infrastructure", editable = "packages/infrastructure" },
     { name = "model-gateway", editable = "packages/model_gateway" },
+    { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "uvicorn", extras = ["standard"] },
+    { name = "worker", editable = "apps/worker" },
 ]
 
 [[package]]
@@ -1642,6 +1646,7 @@ dependencies = [
     { name = "application" },
     { name = "dramatiq" },
     { name = "infrastructure" },
+    { name = "model-gateway" },
 ]
 
 [package.metadata]
@@ -1649,6 +1654,7 @@ requires-dist = [
     { name = "application", editable = "packages/application" },
     { name = "dramatiq" },
     { name = "infrastructure", editable = "packages/infrastructure" },
+    { name = "model-gateway", editable = "packages/model_gateway" },
 ]
 
 [[package]]

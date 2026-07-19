@@ -213,11 +213,10 @@ class IngestionOrchestrator:
         # Always parse (idempotent); only update task stage if this stage
         # hasn't been completed yet.
         await self._check_cancelled(task)
-        source_type_str = source.source_type.value if source.source_type else "upload"
         parse_meta = ParseMetadata(
             file_name=document.stable_key,
             file_size=len(raw_bytes),
-            mime_type=_guess_mime(source_type_str),
+            mime_type="",
             encoding="utf-8",
         )
         parse_result = await self._parser.parse(raw=raw_bytes, metadata=parse_meta)
@@ -754,14 +753,3 @@ def _classify_error(exc: Exception) -> str:
     if isinstance(exc, TimeoutError):
         return "TIMEOUT"
     return "UNKNOWN_ERROR"
-
-
-def _guess_mime(source_type: str) -> str:
-    """Map a source type string to a MIME type hint for the parser."""
-    mime_map = {
-        "upload": "application/octet-stream",
-        "markdown": "text/markdown",
-        "text": "text/plain",
-        "pdf": "application/pdf",
-    }
-    return mime_map.get(source_type, "application/octet-stream")

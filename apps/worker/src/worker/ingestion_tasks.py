@@ -25,7 +25,6 @@ from infrastructure.chunkers import StructureChunker
 from infrastructure.config import settings
 from infrastructure.database import Database
 from infrastructure.parsers import ParserFactory
-from infrastructure.queue import create_redis_broker
 from infrastructure.repositories import (
     ChunkRepository,
     DocumentRepository,
@@ -50,6 +49,8 @@ from model_gateway import (
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from worker.broker import broker
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,6 @@ def _create_gateway() -> ModelGateway:
 # Shared infrastructure
 # ---------------------------------------------------------------------------
 
-broker = create_redis_broker(settings.redis_url)
 tracer = trace.get_tracer("worker.ingestion")
 database = Database(settings.database_url)
 gateway = _create_gateway()
