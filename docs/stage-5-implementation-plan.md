@@ -238,6 +238,17 @@ active -> TIMED_OUT
 **完成标准**：纯领域包不依赖框架；非法迁移、终态保护、预算单调性、取消、超时和恢复前置
 校验均有单元测试。
 
+**完成情况（2026-07-19）**：已完成。新增 `domain.agent_runtime` 纯领域模块，定义
+`RunStatus`、`RunStep`、`RunEvent`、`RunBudget`、`BudgetUsage`、`ToolPermission`、
+`ToolCallRecord`、`RunCheckpoint`、`RunError`、`AgentRunContext` 和 `AgentRun`；定义
+`AgentRuntime`、`CheckpointStore`、`ToolRegistry`、`SkillRegistry` 和 `ApprovalPort`。
+生命周期状态与当前业务步骤分离，显式转移表覆盖主路径、等待审批、取消、失败和超时，
+并禁止终态重新打开。预算使用量只能增加且在工作开始前拒绝超限；恢复校验调用者、Space、
+固定 Skill、检查点完整性、终态和预算回退。新增 7 个单元测试覆盖上述不变量。
+完整后端验证结果：Ruff format/check 通过，mypy 对 `apps packages` 检查通过，pytest
+`111 passed, 21 skipped`；跳过项为未启用真实依赖的集成测试，另有已知 `.pytest_cache`
+写权限警告，不影响测试结果。
+
 ### 步骤 2：Tool 契约与 Registry
 
 - 定义 Tool 唯一名称、语义版本、输入/输出 JSON Schema、权限、超时、重试、幂等声明和
@@ -392,8 +403,8 @@ active -> TIMED_OUT
 
 | 步骤 | 必须先满足 | 当前状态 |
 | --- | --- | --- |
-| 0. ADR-006 与跨阶段契约 | ADR-001～005、ADR-009；阶段 4 接口草案可核对 | 可先行，待办 |
-| 1. Runtime 领域契约 | 步骤 0 的状态、预算、权限和版本语义确定 | 待办 |
+| 0. ADR-006 与跨阶段契约 | ADR-001～005、ADR-009；阶段 4 接口草案可核对 | 已完成可执行部分；阶段 3/4 接口待交接 |
+| 1. Runtime 领域契约 | 步骤 0 的状态、预算、权限和版本语义确定 | 已完成 |
 | 2. Tool Registry | 步骤 1；阶段 3/4 Port 可先用 fake | 待办，可先行实现通用部分 |
 | 3. Skill Registry | 步骤 0/1；受信目录和摘要规则确定 | 待办，可先行 |
 | 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 待办，可先行 |
