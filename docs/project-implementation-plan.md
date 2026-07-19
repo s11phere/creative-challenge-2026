@@ -559,6 +559,9 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 
 **目标**：将已经验证的知识能力封装为稳定、可复用的 Skill。
 
+详细决策门禁、前序依赖、分步执行方案和验收矩阵见
+[《阶段 5 实施计划：Agent Runtime 与 Skill 标准化》](stage-5-implementation-plan.md)。
+
 **任务**：
 
 - 实现 Tool/Skill manifest、schema 校验、注册和版本固定。
