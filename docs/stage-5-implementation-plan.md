@@ -294,6 +294,22 @@ Schema、权限、超时、重试、幂等、能力依赖、handler 白名单和
 **完成标准**：manifest 校验、包摘要、重复注册、版本冲突、路径边界、兼容性和版本固定均有
 单元/契约测试；Registry 不执行未审核代码。
 
+**完成情况（2026-07-19）**：已完成。新增 `FileSystemSkillRegistry`、版本化
+`SkillManifest`、`SkillPackage` 和 `PinnedSkill`，严格校验 ADR-006 规定的 manifest 字段及
+未知字段策略。Registry 只接收配置的受信根目录下相对路径，递归拒绝 symlink/junction、
+绝对路径、父目录逃逸、远程 schema 引用、非 UTF-8/超限文件和 YAML alias；entrypoint 仅允许
+声明式 YAML/JSON，不导入或执行包内代码。输入输出 schema 使用 JSON Schema Draft 2020-12
+校验，包内 `$ref` 按当前 schema 目录递归解析并保持在包边界内。
+包摘要基于排序后的 POSIX 相对路径与规范化 UTF-8/LF 内容；同名同版本同摘要注册幂等，
+不同摘要拒绝覆盖。已安装版本与活动版本分离，新运行固定 manifest、workflow、输入输出
+schema、prompt 及完整包摘要；激活和恢复前重新读取磁盘内容，摘要变化会拒绝固定或恢复。
+新增 `skills/_template`，包含 manifest、workflow、prompt、schemas、eval 和 README，批量扫描
+会跳过下划线模板目录。新增 16 个测试：15 个通过，符号链接真实创建测试因当前 Windows
+环境无权限跳过；非特权路径逃逸、模板、版本冲突、兼容性、递归 schema 和磁盘篡改均通过。
+完整验证结果：`uv sync --frozen`、`uv lock --check`、Ruff format/check、mypy
+`apps packages` 均通过；pytest `140 passed, 22 skipped`，其中 21 个为未启用真实依赖的
+集成测试，1 个为上述符号链接环境限制。
+
 ### 步骤 4：有限状态执行器、预算与审计
 
 - 实现确定性 workflow 执行器；节点和转移来自受支持的声明式定义或仓库内注册的 workflow。
@@ -419,7 +435,7 @@ Schema、权限、超时、重试、幂等、能力依赖、handler 白名单和
 | 0. ADR-006 与跨阶段契约 | ADR-001～005、ADR-009；阶段 4 接口草案可核对 | 已完成可执行部分；阶段 3/4 接口待交接 |
 | 1. Runtime 领域契约 | 步骤 0 的状态、预算、权限和版本语义确定 | 已完成 |
 | 2. Tool Registry | 步骤 1；阶段 3/4 Port 可先用 fake | 通用契约与 Registry 已完成；真实 Tool 待阶段 3/4 |
-| 3. Skill Registry | 步骤 0/1；受信目录和摘要规则确定 | 待办，可先行 |
+| 3. Skill Registry | 步骤 0/1；受信目录和摘要规则确定 | 已完成 |
 | 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 待办，可先行 |
 | 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | 等待阶段 4 模型，接口可先行 |
 | 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | 等待前序阶段 |

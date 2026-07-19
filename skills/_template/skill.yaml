@@ -1,0 +1,23 @@
+manifest_version: "1"
+name: skill_template
+version: 0.1.0
+description: Minimal declaration-only Skill package template.
+input_schema: schemas/input.json
+output_schema: schemas/output.json
+required_tools: []
+required_capabilities: []
+permissions: []
+budgets:
+  max_steps: 4
+  max_tool_calls: 2
+  max_input_tokens: 2048
+  max_output_tokens: 1024
+  timeout_seconds: 30
+entrypoint: workflow.yaml
+compatibility:
+  runtime: ">=0.1.0,<1.0.0"
+  checkpoint_schema_versions: [1]
+prompts:
+  - prompts/system.md
+evals:
+  - evals/cases.jsonl

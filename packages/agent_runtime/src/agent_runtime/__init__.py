@@ -1,5 +1,14 @@
 """Bounded Agent Runtime implementations."""
 
+from .skills import (
+    FileSystemSkillRegistry,
+    PinnedSkill,
+    SkillCompatibility,
+    SkillManifest,
+    SkillPackage,
+    SkillRegistryError,
+    SkillRegistryErrorCode,
+)
 from .tools import (
     InMemoryToolRegistry,
     JSONValue,
@@ -14,8 +23,15 @@ from .tools import (
 )
 
 __all__ = [
+    "FileSystemSkillRegistry",
     "JSONValue",
     "InMemoryToolRegistry",
+    "PinnedSkill",
+    "SkillCompatibility",
+    "SkillManifest",
+    "SkillPackage",
+    "SkillRegistryError",
+    "SkillRegistryErrorCode",
     "ToolDefinition",
     "ToolExecutionContext",
     "ToolHandler",
