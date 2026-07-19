@@ -1,6 +1,6 @@
 # 阶段 2 实施计划：知识摄入 MVP
 
-> 文档状态：Draft v2
+> 文档状态：Draft v3 — Step 2 已完成 (2026-07-19)
 >
 > 适用范围：`docs/project-implementation-plan.md` 中的阶段 2
 >
@@ -193,6 +193,28 @@ cases/
 
 **完成标准**：三种 parser 对同一 fixture 输出结构一致的 `ParsedDocument`；不支持格式返回明确错误码，不伪造空结果。
 
+**状态**：已于 2026-07-19 完成。
+
+实际交付：
+
+- 新增 `packages/domain/src/domain/parsing.py`：`ParsedDocument`（含 `ParseMetadata`）纯类型 schema、`StructNode`（含 node_type/level/text/start_line/end_line/start_page/end_page/language/children）、`StructNodeType` 枚举（DOCUMENT/HEADING/PARAGRAPH/CODE_BLOCK/LIST_ITEM/QUOTE_BLOCK/THEMATIC_BREAK/TABLE/RAW_TEXT）、`ParseErrorCode` 枚举（8 类错误码）、`ParseError`/`ParseSuccess` 结果类型、`Parser` Protocol（`async def parse(raw, metadata) -> ParseResult`）、`compute_blob_hash` 辅助函数。
+- 新增 `packages/infrastructure/src/infrastructure/parsers/` 包：
+  - **`MarkdownParser`**：基于 `markdown-it-py`，保留标题层级、代码块（含语言标注）、段落、列表项、引用和分隔线，输出 1-based 行号。空文档和编码失败返回明确错误码。
+  - **`TxtParser`**：空白行分段落，多编码回退（utf-8 → utf-16 → latin-1 → cp1252），1-based 行号。
+  - **`PdfParser`**：基于 `pypdf`，每页输出 `RAW_TEXT` 节点附带 1-based 页码；全页无提取文本时返回 `scanned_pdf` 错误码而非静默空结果。
+  - **`ParserFactory`**：校验文件扩展名 + MIME 一致性 + 文件大小上限（默认 50 MB），按类型分派到对应 parser。
+- 新增 `tests/fixtures/sample.md`、`sample.txt`、`sample.pdf` 测试夹具。
+- 新增 32 个单元测试覆盖：三种 parser 的正常解析路径、空文档、编码失败、扫描件 PDF、损坏 PDF、MIME 不匹配、不支持格式、超大文件。所有 parser 结构节点保持 1-based 行号/页码。
+- 新增配置：`max_upload_size_mb`（Pydantic Settings，默认 50 MB）。
+- 新增依赖：`markdown-it-py>=3.0`、`pypdf>=5.0`。
+- 更新文档：README.md、AGENTS.md、architecture.md、project-implementation-plan.md。
+
+2026-07-19 验证记录：
+
+- `ruff format --check .`、`ruff check .`、`mypy packages apps` 全部通过。
+- 160 个单元测试全部通过（含 50 个原有领域/ORM/配置/ModelGateway 测试 + 32 个新增解析测试 + 78 个其他单元测试）。
+- 三种 parser 对各自 fixture 输出结构正确的 `ParsedDocument`；不支持格式（.docx、无扩展名文件）返回 `unsupported_format`；MIME 不匹配返回 `type_mismatch`；空文件返回 `empty_document`；超大文件返回 `oversized_file`；损坏 PDF 返回 `content_corrupt`；扫描件 PDF 返回 `scanned_pdf`。
+
 ### 步骤 3：内容指纹与来源登记
 
 - 实现 `stable_key` 规范化、原始字节 `blob_hash` 和规范化内容 `content_hash`（Step 0 口径）。
@@ -278,7 +300,7 @@ cases/
 | --- | --- | --- |
 | 0. 决策与 ADR-005 | 已接受 ADR-001、002、004、009 | 已完成；阶段 0 数据门禁仍待外部关闭 |
 | 1. 数据模型基础 | 无 | 已完成；R2-01～03 已关闭 |
-| 2. Parser 与 ParsedDocument | ADR-005 中双哈希、定位和处理版本语义确定 | 待办 |
+| 2. Parser 与 ParsedDocument | ADR-005 中双哈希、定位和处理版本语义确定 | 已完成；Markdown/TXT/可复制文本 PDF 三种 parser 已实现，32 个单元测试通过 |
 | 3. 指纹与来源登记 | ADR-005 中 stable key、Blob 和并发幂等语义确定 | 待办 |
 | 4. 结构感知分块 | Markdown Parser 契约通过 | 待办 |
 | 5. Embedding 与发布 | 分块契约、向量维度和发布语义确定 | 待办 |

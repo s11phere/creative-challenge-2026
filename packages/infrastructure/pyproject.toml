@@ -17,6 +17,8 @@ dependencies = [
     "opentelemetry-instrumentation-httpx",
     "opentelemetry-instrumentation-redis",
     "opentelemetry-instrumentation-sqlalchemy",
+    "markdown-it-py>=3.0",
+    "pypdf>=5.0",
 ]
 
 [build-system]

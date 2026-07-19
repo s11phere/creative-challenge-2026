@@ -499,7 +499,7 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 **任务**：
 
 - ~~实现 Space、Source、Document、Version、Chunk、Task 数据模型。~~ ✅ **已完成（2026-07-18，Step 0/1；R2-01~03 已关闭）**
-- 实现 Markdown/TXT/PDF parser 和统一 ParsedDocument schema。
+- ~~实现 Markdown/TXT/PDF parser 和统一 ParsedDocument schema。~~ ✅ **已完成（2026-07-19，Step 2）**
 - 实现结构感知分块、内容指纹、Embedding 和索引发布。
 - 实现异步状态、进度、重试、取消和失败原因展示。
 - 实现同文件重复导入、内容修改、删除与重建流程。
@@ -520,6 +520,7 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 | 迁移 | `a1b2c3d4e5f6` 创建 6 张表；`b2c3d4e5f6a7` 补齐身份、版本、任务字段与约束，可降级/升级 |
 | 配置 | ADR-005 固定 pgvector 维度为 768；维度变化必须通过 ADR、迁移和全量重建 |
 | 测试 | 50 个相关领域/ORM/配置/ModelGateway 单元测试 + 21 个数据模型/本地依赖集成测试 |
+| 解析器（Step 2） | `ParsedDocument` schema（`StructNode`含标题层级/代码块/列表/行号/页码 + `Parser` Protocol）、MarkdownParser（`markdown-it-py`）、TxtParser（编码回退）、PdfParser（`pypdf`，扫描件返回 `scanned_pdf` + `ParserFactory`（扩展名/MIME 校验 + 大小限制）、7+1 类错误码；32 个单元测试 |
 
 ### 阶段 3：混合检索与评测基线（第 4-5 周）
 

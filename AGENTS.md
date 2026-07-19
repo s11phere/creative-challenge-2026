@@ -23,17 +23,21 @@
 
 ## 2. 当前阶段与优先级
 
-截至 2026-07-18，阶段 1 Step 0-8 已完成实现与验收，GitHub Actions 已由用户确认运行
+截至 2026-07-19，阶段 1 Step 0-8 已完成实现与验收，GitHub Actions 已由用户确认运行
 正常。阶段 2 Step 0/1 已完成：ADR-005 已固定摄入身份、版本、发布、任务和删除语义；
 Space、Source、Document、DocumentVersion、Chunk（pgvector）、IngestionTask 的领域实体、
 ORM 模型、仓库实现、Alembic 迁移及测试已完成，R2-01 至 R2-03 已关闭。
+阶段 2 Step 2 已完成：Markdown/TXT/可复制文本 PDF 三种解析器 + `ParsedDocument` 纯类型
+schema + Parser Port + `ParserFactory` + 统一错误分类，单元测试 32 个覆盖正常路径和全部分类
+错误码。
 项目仍受阶段 0 数据门禁约束，不能据此宣称摄入、检索、问答、引用、Agent 或 Skill 业务
 已经可用。
 
-当前已落地的用户界面只展示真实健康状态；公开 OpenAPI 只包含
+当前已落地的用户界面只展示真实系统健康状态；公开 OpenAPI 只包含
 `/api/v1/health/live` 和 `/api/v1/health/ready`。数据库已有 `spaces`、`sources`、
 `documents`、`document_versions`、`chunks`（含 pgvector 列和 IVFFlat 索引）和
 `ingestion_tasks` 共 6 张业务表（阶段 2 数据模型）。
+`infrastructure/parsers/` 包已实现 MarkdownParser、TxtParser、PdfParser 和 ParserFactory。
 
 阶段 1 的移交与运行事实以以下文件为准：
 

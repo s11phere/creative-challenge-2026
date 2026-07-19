@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     diagnostic_task_max_retries: int = Field(default=3, ge=0)
     diagnostic_task_min_backoff_ms: int = Field(default=1_000, ge=100)
 
+    # --- Ingestion ---
+    max_upload_size_mb: int = Field(default=50, ge=1, le=500)
+
     # --- Model Gateway ---
     model_provider: Literal["fake", "openai-compatible", "disabled"] = "fake"
     model_endpoint: str | None = None

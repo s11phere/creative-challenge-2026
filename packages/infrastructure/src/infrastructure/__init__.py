@@ -1,4 +1,4 @@
-"""Infrastructure: config, database, ORM, queue, logging, and tracing adapters."""
+"""Infrastructure: config, database, ORM, queue, logging, tracing, and parsers."""
 
 from .orm import (
     Base,
@@ -8,6 +8,13 @@ from .orm import (
     IngestionTaskModel,
     SourceModel,
     SpaceModel,
+)
+from .parsers import (
+    MarkdownParser,
+    ParserFactory,
+    PdfParser,
+    TxtParser,
+    get_parser,
 )
 from .repositories import (
     ChunkRepository,
@@ -28,8 +35,13 @@ __all__ = [
     "DocumentVersionRepository",
     "IngestionTaskModel",
     "IngestionTaskRepository",
+    "MarkdownParser",
+    "ParserFactory",
+    "PdfParser",
     "SourceModel",
     "SourceRepository",
     "SpaceModel",
     "SpaceRepository",
+    "TxtParser",
+    "get_parser",
 ]

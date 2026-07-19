@@ -220,6 +220,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/infrastructure/telemetry_context.py` | trace/request/task 上下文绑定与 ID 校验 |
 | `src/infrastructure/orm.py` | 6 个 SQLAlchemy ORM 模型；含双哈希、处理版本、任务恢复字段、重试安全约束及 pgvector `Vector(768)`/cosine IVFFlat 索引 |
 | `src/infrastructure/repositories.py` | 仓库实现：6 个 repository 类的完整 CRUD，含 domain ↔ ORM 映射 |
+| `src/infrastructure/parsers/` | 文档解析器包：MarkdownParser（`markdown-it-py`）、TxtParser（编码回退）、PdfParser（`pypdf`，可复制文本/扫描件分类）、ParserFactory（扩展名+MIME校验+大小限制） |
 
 **`config.py` 详解**：
 
@@ -228,6 +229,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 - **`app_env`** / `app_debug` / `app_secret_key` — 应用基本配置
 - **`postgres_*`** — PostgreSQL 连接参数，提供 `database_url` 属性
 - **`redis_*`** — Redis 连接参数，提供 `redis_url` 属性
+- **`max_upload_size_mb`** — 上传文件大小上限（默认 50 MB）
 - **`otlp_endpoint`** / `otel_export_timeout_seconds` — 可选 Collector 与有界导出超时
 - **`validate_secrets()`** — 生产环境（`app_env=production`）下校验必须密钥不为空，启动失败
 
@@ -578,11 +580,12 @@ docker compose -f deploy/compose.yaml down --volumes               # 永久删�
 |------|------|------|
 | 阶段 0 | 🔶 进行中 | 语料授权复核、标注复核未完成 |
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
-| **阶段 2** | **🟡 进行中** | **Step 0/1 已完成（ADR-005 + 6 表 + ORM + 仓库 + 两个数据模型迁移）** |
-| 阶段 3+ | ❌ 未开始 | 解析器、检索、引用、Skill 等工作 |
+| **阶段 2** | **🟡 进行中** | **Step 0/1 已完成（ADR-005 + 6 表 + ORM + 仓库 + 两个数据模型迁移）；Step 2 已完成（Markdown/TXT/PDF 解析器 + ParsedDocument schema + Parser Port + 统一错误分类）** |
+| 阶段 3+ | ❌ 未开始 | 检索、引用、Skill 等工作 |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 
 阶段 2 Step 0/1 已完成：ADR-005 固定身份、版本、发布、任务和删除语义；Space、Source、Document、DocumentVersion、Chunk、IngestionTask 的领域实体、ORM 模型、仓库实现及迁移已完成，R2-01～03 已关闭。
+阶段 2 Step 2 已完成：`ParsedDocument` 纯类型 schema（`StructNode`含标题层级/代码块/列表/1-based行号/页码定位）、`Parser` Protocol、三种 P0 解析器（Markdown/TXT/可复制文本 PDF）、`ParserFactory`（扩展名/MIME校验+大小限制）、统一 7+1 类错误码。32 个单元测试覆盖正常/异常路径。
 
 GitHub Actions 已由用户确认运行正常。阶段 0 数据授权、人工标注复核和版本冻结仍为等待状态。

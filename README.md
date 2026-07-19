@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-**阶段 2 进行中：数据模型基础已完成。**
+**阶段 2 进行中：解析器基础已完成。**
 
 已交付的核心能力：
 
@@ -13,7 +13,8 @@
 |------|------|
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ Step 0/1 | ADR-005 + 6 张数据模型表 + ORM/仓库 + 身份、版本、任务约束迁移；R2-01～03 已关闭 |
-| 阶段 2 ⏳ 进行中 | 解析器、分块器、嵌入、摄入 API/Worker、Web 数据源页面 |
+| 阶段 2 ✅ Step 2 | Markdown/TXT/PDF 解析器 + `ParsedDocument` schema + Parser Port + `ParserFactory` + 统一错误分类 |
+| 阶段 2 ⏳ 进行中 | 分块器、嵌入、摄入 API/Worker、Web 数据源页面 |
 
 当前 Web 只展示真实系统健康状态，尚未实现文档摄入、搜索、会话、引用或问答功能。
 阶段 0 的语料授权复核、人工标注复核和版本冻结仍未关闭，项目状态为”工程进行中，等待阶段 0 数据门禁”。
