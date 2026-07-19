@@ -1,6 +1,6 @@
 # 阶段 2 实施计划：知识摄入 MVP
 
-> 文档状态：Draft v3 — Step 3 已完成 (2026-07-19)
+> 文档状态：Draft v4 — Step 4 已完成 (2026-07-19)
 >
 > 适用范围：`docs/project-implementation-plan.md` 中的阶段 2
 >
@@ -235,6 +235,24 @@ cases/
 
 **完成标准**：同一 `ParsedDocument` 与 chunker 配置重复分块产出稳定顺序和 `chunk_hash`；块保留可验证的原文定位与结构关系；重复运行不新增重复块，也不改变已发布版本。
 
+**状态**：已于 2026-07-19 完成。
+
+实际交付：
+
+- 新增 `packages/domain/src/domain/chunking.py`：`ChunkerConfig`（chunk_size/chunk_overlap/min_chunk_size）、`ChunkOutput`（ordinal/chunk_hash/heading_path/定位/adjacency/node_type）、`ChunkingResult`、`compute_chunk_hash`、`compute_chunker_config_hash`、`Chunker` Protocol（`async def chunk(document: ParsedDocument, config) -> ChunkingResult`）。
+- 新增 `packages/infrastructure/src/infrastructure/chunkers/` 包：
+  - **`StructureChunker`**：树遍历提取结构上下文（标题路径、行号、页码），按标题边界和 chunk_size 分组，支持重叠（overlap）、最小分块合并、超大分段按行/字符回退切分。无 structure 的文档回退到段落级分块。
+  - 输出包含 `heading_path`（点分隔标题链）、`prev_ordinal`/`next_ordinal`（邻接链接）、`parent_ordinal`（父子关系预留）、`node_type` 和 `chunk_hash`（纯内容派生 SHA-256，不包含版本 ID/ordinal）。
+- 更新 `packages/domain/src/domain/__init__.py`：导出 Chunker、ChunkerConfig、ChunkingResult、ChunkOutput、compute_chunk_hash、compute_chunker_config_hash。
+- 新增 41 个单元测试覆盖：空文档、空白文本、短文本、段落分组、确定性检验（相同输入+配置产出相同 chunk_hash 和 ordinal）、重叠验证、config hash、Markdown 结构感知分块（标题边界、邻接链接、行号递增）、不同配置组合、超大单段切分、最小分块合并、无结构回退路径。
+- 所有新代码通过 `ruff format --check .`、`ruff check .` 和 `mypy apps packages`。
+
+2026-07-19 验证记录：
+
+- `ruff format --check .`、`ruff check .`、`mypy apps packages` 全部通过。
+- 248 个单元测试全部通过（原有 207 个 + 新增 41 个），21 个集成测试跳过（需 `RUN_INTEGRATION=1`）。
+- 覆盖场景：空文本、短文本、段落分组、Markdown 结构分块（标题边界）、段落/代码块/列表元素识别、超大单段切分、重叠、不同 chunk_size/overlap 组合、确定性验证（相同输入重复运行产出相同 chunk_hash 和 ordinal）、配置变化产生不同 config_hash。
+
 ### 步骤 5：Embedding 与索引发布
 
 - `EMBED` 阶段通过 ModelGateway `embedding_zh` 能力别名批量向量化，CI 用确定性 fake。
@@ -302,7 +320,7 @@ cases/
 | 1. 数据模型基础 | 无 | 已完成；R2-01～03 已关闭 |
 | 2. Parser 与 ParsedDocument | ADR-005 中双哈希、定位和处理版本语义确定 | 已完成；Markdown/TXT/可复制文本 PDF 三种 parser 已实现，32 个单元测试通过 |
 | 3. 指纹与来源登记 | ADR-005 中 stable key、Blob 和并发幂等语义确定 | 已完成 |
-| 4. 结构感知分块 | Markdown Parser 契约通过 | 待办 |
+| 4. 结构感知分块 | Markdown Parser 契约通过 | 已完成 |
 | 5. Embedding 与发布 | 分块契约、向量维度和发布语义确定 | 待办 |
 | 6. Worker 与状态机 | 单进程 Markdown 管道通过；任务字段迁移完成 | 待办 |
 | 7. 增量与删除 | Worker 重入、发布和 tombstone 语义通过 | 待办 |

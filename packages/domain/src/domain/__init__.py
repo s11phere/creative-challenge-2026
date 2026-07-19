@@ -1,5 +1,13 @@
 """Domain layer: pure types and ports."""
 
+from .chunking import (
+    Chunker,
+    ChunkerConfig,
+    ChunkingResult,
+    ChunkOutput,
+    compute_chunk_hash,
+    compute_chunker_config_hash,
+)
 from .models import (
     Chunk,
     Document,
@@ -38,6 +46,10 @@ from .repositories import (
 __all__ = [
     "Chunk",
     "ChunkRepository",
+    "Chunker",
+    "ChunkerConfig",
+    "ChunkingResult",
+    "ChunkOutput",
     "Document",
     "DocumentRepository",
     "DocumentStatus",
@@ -64,4 +76,6 @@ __all__ = [
     "TaskStage",
     "TaskStatus",
     "compute_blob_hash",
+    "compute_chunk_hash",
+    "compute_chunker_config_hash",
 ]
