@@ -2,7 +2,7 @@
 name = "agent-knowledge-repo"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["api", "worker"]
+dependencies = ["agent-runtime", "api", "worker"]
 
 [tool.uv.workspace]
 members = [
@@ -14,6 +14,7 @@ members = [
 [tool.uv.sources]
 domain = { workspace = true }
 application = { workspace = true }
+agent-runtime = { workspace = true }
 model-gateway = { workspace = true }
 infrastructure = { workspace = true }
 api = { workspace = true }

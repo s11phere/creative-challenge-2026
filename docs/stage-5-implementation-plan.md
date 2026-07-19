@@ -264,6 +264,19 @@ active -> TIMED_OUT
 **完成标准**：未知 Tool、版本不匹配、非法 schema、越权调用、预算不足、跨 Space 访问和
 未确认写入都在副作用发生前被拒绝；Tool 契约测试可使用确定性 fake 独立运行。
 
+**完成情况（2026-07-19）**：已完成通用 Tool 契约与 Registry。新增独立
+`agent-runtime` workspace 包及 `tools` 模块，定义 Tool 名称/语义版本、输入输出 JSON
+Schema、权限、超时、重试、幂等、能力依赖、handler 白名单和脱敏审计契约；使用
+`jsonschema` Draft 2020-12 校验 schema 与调用数据，并拒绝远程/本地 `$ref`。Registry
+支持幂等注册和同版本冲突拒绝，调用前校验 Skill allowlist、权限、预算、Space、输入、
+重试范围及写入审批，调用后校验输出并记录摘要、耗时和稳定错误码。写 Tool 必须声明幂等，
+并通过注入的 `ApprovalPort` 验证已有持久化审批；Registry 不生成伪审批或动态加载代码。
+新增 14 个契约测试，覆盖未知/版本不匹配 Tool、非法 schema、未注册 handler、能力缺失、
+注册冲突、越权、预算不足、跨 Space、输入/输出错误、超时、脱敏摘要和未批准写入。
+阶段 3/4 的真实只读 Tool 尚不可用，本步骤仅以确定性 handler/fake 验证通用契约。
+验证结果：`uv sync --frozen` 和 `uv lock --check` 通过；Ruff format/check、mypy
+`apps packages` 通过；pytest `125 passed, 21 skipped`，跳过项为未启用真实依赖的集成测试。
+
 ### 步骤 3：Skill manifest 与 Registry
 
 - 定义版本化 `skill.yaml` schema，至少包含：
@@ -405,7 +418,7 @@ active -> TIMED_OUT
 | --- | --- | --- |
 | 0. ADR-006 与跨阶段契约 | ADR-001～005、ADR-009；阶段 4 接口草案可核对 | 已完成可执行部分；阶段 3/4 接口待交接 |
 | 1. Runtime 领域契约 | 步骤 0 的状态、预算、权限和版本语义确定 | 已完成 |
-| 2. Tool Registry | 步骤 1；阶段 3/4 Port 可先用 fake | 待办，可先行实现通用部分 |
+| 2. Tool Registry | 步骤 1；阶段 3/4 Port 可先用 fake | 通用契约与 Registry 已完成；真实 Tool 待阶段 3/4 |
 | 3. Skill Registry | 步骤 0/1；受信目录和摘要规则确定 | 待办，可先行 |
 | 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 待办，可先行 |
 | 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | 等待阶段 4 模型，接口可先行 |

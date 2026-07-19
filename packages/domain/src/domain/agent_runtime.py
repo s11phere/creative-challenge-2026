@@ -160,7 +160,7 @@ class BudgetUsage:
 class ToolCallRecord:
     tool_name: str
     tool_version: str
-    permission: ToolPermission
+    permissions: frozenset[ToolPermission]
     idempotency_key: str
     input_summary: str = ""
     output_summary: str = ""
@@ -172,6 +172,8 @@ class ToolCallRecord:
     def __post_init__(self) -> None:
         if not self.tool_name or not self.tool_version or not self.idempotency_key:
             raise ValueError("tool name, version, and idempotency key are required")
+        if not self.permissions:
+            raise ValueError("tool call record requires at least one permission")
         if self.retry_count < 0 or self.duration_ms < 0:
             raise ValueError("tool retry count and duration cannot be negative")
 
