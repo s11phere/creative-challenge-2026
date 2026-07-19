@@ -196,6 +196,15 @@ Skill workflow 不直接依赖 FastAPI、SQLAlchemy、Redis、Dramatiq 或具体
 **完成标准**：ADR-006 被接受；跨阶段接口有唯一权威来源；信任、版本、权限、恢复和失败
 语义不存在需要实现者自行猜测的空白。
 
+**完成情况（2026-07-19）**：已完成本步骤的可执行部分。新增并接受
+`docs/adr/006-skill-manifest-versioning-and-trust.md`，固定 Skill manifest、内容摘要、
+版本与兼容性、受信目录、权限与审批、错误码、`event_version`、检查点恢复和审计脱敏语义；
+新增 `docs/stage-5-contract-audit.md`，逐项记录阶段 2～4 可复用接口及当前缺失项。
+当前仓库尚未提供阶段 3/4 的 RetrievalStore、GroundedAnswer、Citation、Conversation、
+AgentRun、Evidence、SSE 和取消 Application 契约，因此真实 `knowledge_qa` 链路及其 API/Web
+接入按计划跳过，后续契约测试只能使用确定性 fake。已运行 `git diff --check`、ADR 必填字段、
+文档链接和文件存在性检查，均通过；未修改迁移或运行时代码。
+
 ### 步骤 1：Agent Runtime 领域契约
 
 - 定义 `RunStatus`、`RunStep`、`RunBudget`、`BudgetUsage`、`ToolPermission`、
