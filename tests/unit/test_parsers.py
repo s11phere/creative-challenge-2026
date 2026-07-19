@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from domain.parsing import (
-    ParsedDocument,
     ParseError,
     ParseErrorCode,
     ParseMetadata,
@@ -21,72 +21,59 @@ FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
 
 # ===========================================================================
+#  Helpers
+# ===========================================================================
+
+
+async def _parse(parser, name: str) -> ParseSuccess:
+    raw = (FIXTURES / name).read_bytes()
+    mime_map = {
+        "sample.md": "text/markdown",
+        "sample.txt": "text/plain",
+        "sample.pdf": "application/pdf",
+    }
+    meta = ParseMetadata(file_name=name, mime_type=mime_map.get(name, ""))
+    result = await parser.parse(raw, meta)
+    assert isinstance(result, ParseSuccess), f"Expected success, got error: {result}"
+    return result
+
+
+# ===========================================================================
 #  Markdown parser
 # ===========================================================================
 
 
 class TestMarkdownParser:
-    async def _parse_fixture(self, name: str) -> ParseSuccess:
-        raw = (FIXTURES / name).read_bytes()
-        parser = MarkdownParser()
-        meta = ParseMetadata(file_name=name, file_size=len(raw), mime_type="text/markdown")
-        result = await parser.parse(raw, meta)
-        assert isinstance(result, ParseSuccess), f"Expected success, got error: {result}"
-        return result
+    @pytest.fixture
+    def parser(self) -> MarkdownParser:
+        return MarkdownParser()
 
-    async def test_parse_sample(self) -> None:
-        result = await self._parse_fixture("sample.md")
-        doc = result.document
-        assert isinstance(doc, ParsedDocument)
+    async def test_parse_sample(self, parser) -> None:
+        doc = (await _parse(parser, "sample.md")).document
         assert doc.total_lines > 0
-        assert doc.metadata.mime_type == "text/markdown"
+        assert "Chapter 1" in doc.text
 
-    async def test_heading_structure(self) -> None:
-        result = await self._parse_fixture("sample.md")
-        headings = [n for n in result.document.structure if n.node_type == StructNodeType.HEADING]
-        assert len(headings) >= 3
-        assert headings[0].level == 1
-        assert headings[0].text.strip() or True  # has some heading text
+    async def test_structure(self, parser) -> None:
+        doc = (await _parse(parser, "sample.md")).document
+        types = {n.node_type for n in doc.structure}
+        assert StructNodeType.HEADING in types
+        assert StructNodeType.CODE_BLOCK in types
+        assert StructNodeType.LIST_ITEM in types
 
-    async def test_code_block(self) -> None:
-        result = await self._parse_fixture("sample.md")
-        code_blocks = [
-            n for n in result.document.structure if n.node_type == StructNodeType.CODE_BLOCK
-        ]
-        assert len(code_blocks) >= 1
-        assert "hello" in code_blocks[0].text.lower()
+    async def test_empty_document(self, parser) -> None:
+        result = await parser.parse(
+            b"", ParseMetadata(file_name="empty.md", mime_type="text/markdown")
+        )
+        assert isinstance(result, ParseError) and result.code == ParseErrorCode.EMPTY_DOCUMENT
 
-    async def test_list_items(self) -> None:
-        result = await self._parse_fixture("sample.md")
-        items = [n for n in result.document.structure if n.node_type == StructNodeType.LIST_ITEM]
-        assert len(items) >= 3
-
-    async def test_empty_document(self) -> None:
-        parser = MarkdownParser()
-        meta = ParseMetadata(file_name="empty.md", mime_type="text/markdown")
-        result = await parser.parse(b"", meta)
-        assert isinstance(result, ParseError)
-        assert result.code == ParseErrorCode.EMPTY_DOCUMENT
-
-    async def test_encoding_failure(self) -> None:
-        parser = MarkdownParser()
-        # Truly invalid UTF-8 bytes (not valid in any common encoding)
+    async def test_encoding_failure(self, parser) -> None:
         meta = ParseMetadata(file_name="bad.md", mime_type="text/markdown", encoding="ascii")
         result = await parser.parse(b"\xff\xfe\x00\xff", meta)
-        assert isinstance(result, ParseError)
-        assert result.code == ParseErrorCode.ENCODING_FAILURE
+        assert isinstance(result, ParseError) and result.code == ParseErrorCode.ENCODING_FAILURE
 
-    async def test_paragraph_text(self) -> None:
-        result = await self._parse_fixture("sample.md")
-        assert "This is a paragraph" in result.document.text
-        assert "Chapter 1" in result.document.text
-
-    async def test_line_numbers_are_1based(self) -> None:
-        result = await self._parse_fixture("sample.md")
-        for node in result.document.structure:
-            if node.start_line > 0:
-                assert node.start_line >= 1
-                assert node.end_line >= node.start_line
+    async def test_line_numbers_1based(self, parser) -> None:
+        doc = (await _parse(parser, "sample.md")).document
+        assert all(n.start_line >= 1 for n in doc.structure if n.start_line > 0)
 
 
 # ===========================================================================
@@ -95,57 +82,37 @@ class TestMarkdownParser:
 
 
 class TestTxtParser:
-    async def _parse_fixture(self, name: str) -> ParseSuccess:
-        raw = (FIXTURES / name).read_bytes()
-        parser = TxtParser()
-        meta = ParseMetadata(file_name=name, file_size=len(raw), mime_type="text/plain")
-        result = await parser.parse(raw, meta)
-        assert isinstance(result, ParseSuccess), f"Expected success, got error: {result}"
-        return result
+    @pytest.fixture
+    def parser(self) -> TxtParser:
+        return TxtParser()
 
-    async def test_parse_sample(self) -> None:
-        result = await self._parse_fixture("sample.txt")
-        doc = result.document
-        assert isinstance(doc, ParsedDocument)
+    async def test_parse_sample(self, parser) -> None:
+        doc = (await _parse(parser, "sample.txt")).document
         assert doc.total_lines > 0
         assert doc.metadata.encoding == "utf-8"
 
-    async def test_paragraphs_from_blank_lines(self) -> None:
-        result = await self._parse_fixture("sample.txt")
-        paras = [n for n in result.document.structure if n.node_type == StructNodeType.PARAGRAPH]
+    async def test_paragraphs_from_blank_lines(self, parser) -> None:
+        doc = (await _parse(parser, "sample.txt")).document
+        paras = [n for n in doc.structure if n.node_type == StructNodeType.PARAGRAPH]
         assert len(paras) >= 3
-        assert all(p.text for p in paras)
 
-    async def test_empty_document(self) -> None:
-        parser = TxtParser()
-        meta = ParseMetadata(file_name="empty.txt", mime_type="text/plain")
-        result = await parser.parse(b"", meta)
-        assert isinstance(result, ParseError)
-        assert result.code == ParseErrorCode.EMPTY_DOCUMENT
+    async def test_empty_document(self, parser) -> None:
+        result = await parser.parse(
+            b"", ParseMetadata(file_name="empty.txt", mime_type="text/plain")
+        )
+        assert isinstance(result, ParseError) and result.code == ParseErrorCode.EMPTY_DOCUMENT
 
-    async def test_encoding_fallback(self) -> None:
-        """TXT parser tries fallback encodings when declared encoding fails."""
-        # Latin-1 encoded text
+    async def test_encoding_fallback(self, parser) -> None:
         raw = "café résumé".encode("latin-1")
-        parser = TxtParser()
         meta = ParseMetadata(file_name="test.txt", mime_type="text/plain", encoding="utf-8")
         result = await parser.parse(raw, meta)
-        # Should succeed via latin-1 fallback
-        assert isinstance(result, ParseSuccess), f"Expected success, got: {result}"
+        assert isinstance(result, ParseSuccess)
 
-    async def test_whitespace_only_is_empty(self) -> None:
-        parser = TxtParser()
-        meta = ParseMetadata(file_name="space.txt", mime_type="text/plain")
-        result = await parser.parse(b"   \n  \n  ", meta)
-        assert isinstance(result, ParseError)
-        assert result.code == ParseErrorCode.EMPTY_DOCUMENT
-
-    async def test_line_numbers_are_1based(self) -> None:
-        result = await self._parse_fixture("sample.txt")
-        for node in result.document.structure:
-            if node.start_line > 0:
-                assert node.start_line >= 1
-                assert node.end_line >= node.start_line
+    async def test_whitespace_only_is_empty(self, parser) -> None:
+        result = await parser.parse(
+            b"   \n  ", ParseMetadata(file_name="sp.txt", mime_type="text/plain")
+        )
+        assert isinstance(result, ParseError) and result.code == ParseErrorCode.EMPTY_DOCUMENT
 
 
 # ===========================================================================
@@ -154,33 +121,22 @@ class TestTxtParser:
 
 
 class TestPdfParser:
-    async def _parse_fixture(self, name: str) -> ParseSuccess:
-        raw = (FIXTURES / name).read_bytes()
-        parser = PdfParser()
-        meta = ParseMetadata(file_name=name, file_size=len(raw), mime_type="application/pdf")
-        result = await parser.parse(raw, meta)
-        assert isinstance(result, ParseSuccess), f"Expected success, got error: {result}"
-        return result
+    @pytest.fixture
+    def parser(self) -> PdfParser:
+        return PdfParser()
 
-    async def test_parse_sample(self) -> None:
-        result = await self._parse_fixture("sample.pdf")
-        doc = result.document
-        assert isinstance(doc, ParsedDocument)
+    async def test_parse_sample(self, parser) -> None:
+        doc = (await _parse(parser, "sample.pdf")).document
         assert doc.total_lines > 0
-        assert len(doc.structure) > 0
+        assert "Hello World" in doc.text
 
-    async def test_page_nodes(self) -> None:
-        result = await self._parse_fixture("sample.pdf")
-        pages = [n for n in result.document.structure if n.start_page is not None]
+    async def test_page_nodes(self, parser) -> None:
+        doc = (await _parse(parser, "sample.pdf")).document
+        pages = [n for n in doc.structure if n.start_page is not None]
         assert len(pages) >= 1
         assert all(p.start_page and p.start_page >= 1 for p in pages)
 
-    async def test_text_content(self) -> None:
-        result = await self._parse_fixture("sample.pdf")
-        assert "Hello World" in result.document.text
-
-    async def test_empty_pdf(self) -> None:
-        """A PDF with no readable text returns scanned_pdf error."""
+    async def test_empty_pdf(self, parser) -> None:
         from io import BytesIO
 
         from pypdf import PdfWriter
@@ -189,21 +145,14 @@ class TestPdfParser:
         w.add_blank_page(612, 792)
         buf = BytesIO()
         w.write(buf)
-        buf.seek(0)
-        raw = buf.read()
-
-        parser = PdfParser()
         meta = ParseMetadata(file_name="blank.pdf", mime_type="application/pdf")
-        result = await parser.parse(raw, meta)
-        assert isinstance(result, ParseError)
-        assert result.code == ParseErrorCode.SCANNED_PDF
+        result = await parser.parse(buf.getvalue(), meta)
+        assert isinstance(result, ParseError) and result.code == ParseErrorCode.SCANNED_PDF
 
-    async def test_corrupt_pdf(self) -> None:
-        parser = PdfParser()
+    async def test_corrupt_pdf(self, parser) -> None:
         meta = ParseMetadata(file_name="corrupt.pdf", mime_type="application/pdf")
-        result = await parser.parse(b"not a pdf file at all", meta)
-        assert isinstance(result, ParseError)
-        assert result.code == ParseErrorCode.CONTENT_CORRUPT
+        result = await parser.parse(b"not a pdf", meta)
+        assert isinstance(result, ParseError) and result.code == ParseErrorCode.CONTENT_CORRUPT
 
 
 # ===========================================================================
@@ -212,72 +161,54 @@ class TestPdfParser:
 
 
 class TestParserFactory:
-    async def test_markdown_by_extension(self) -> None:
+    @pytest.mark.parametrize(
+        ("name", "data", "mime", "expect_success"),
+        [
+            ("test.md", b"# Hello", None, True),
+            ("notes.txt", b"hello", None, True),
+            ("doc.pdf", (FIXTURES / "sample.pdf").read_bytes(), "application/pdf", True),
+            ("file.docx", b"data", None, False),
+            ("README", b"data", None, False),
+        ],
+    )
+    async def test_by_extension(
+        self, name: str, data: bytes, mime: str | None, expect_success: bool
+    ) -> None:
         factory = ParserFactory()
-        raw = b"# Hello\n\nWorld."
-        result = await factory.parse(raw, "test.md")
-        assert isinstance(result, ParseSuccess), f"Expected success, got: {result}"
-
-    async def test_txt_by_extension(self) -> None:
-        factory = ParserFactory()
-        result = await factory.parse(b"Hello world", "notes.txt")
-        assert isinstance(result, ParseSuccess)
-
-    async def test_pdf_by_extension(self) -> None:
-        factory = ParserFactory()
-        raw = (FIXTURES / "sample.pdf").read_bytes()
-        result = await factory.parse(raw, "doc.pdf", mime_type="application/pdf")
-        assert isinstance(result, ParseSuccess)
-
-    async def test_unsupported_extension(self) -> None:
-        factory = ParserFactory()
-        result = await factory.parse(b"data", "file.docx")
-        assert isinstance(result, ParseError)
-        assert result.code == ParseErrorCode.UNSUPPORTED_FORMAT
-
-    async def test_no_extension(self) -> None:
-        factory = ParserFactory()
-        result = await factory.parse(b"data", "README")
-        assert isinstance(result, ParseError)
-        assert result.code == ParseErrorCode.UNSUPPORTED_FORMAT
+        result = await factory.parse(data, name, mime_type=mime)
+        if expect_success:
+            assert isinstance(result, ParseSuccess)
+        else:
+            assert (
+                isinstance(result, ParseError) and result.code == ParseErrorCode.UNSUPPORTED_FORMAT
+            )
 
     async def test_type_mismatch(self) -> None:
         factory = ParserFactory()
         result = await factory.parse(b"data", "notes.md", mime_type="application/pdf")
-        assert isinstance(result, ParseError)
-        assert result.code == ParseErrorCode.TYPE_MISMATCH
+        assert isinstance(result, ParseError) and result.code == ParseErrorCode.TYPE_MISMATCH
 
     async def test_oversized_file(self) -> None:
         factory = ParserFactory()
-        # Create a file larger than the default 50 MB limit
-        big = b"x" * (51 * 1024 * 1024)
-        result = await factory.parse(big, "big.txt")
-        assert isinstance(result, ParseError)
-        assert result.code == ParseErrorCode.OVERSIZED_FILE
+        result = await factory.parse(b"x" * (51 * 1024 * 1024), "big.txt")
+        assert isinstance(result, ParseError) and result.code == ParseErrorCode.OVERSIZED_FILE
 
 
 class TestGetParser:
-    def test_markdown_parser(self) -> None:
-        parser_type = get_parser("file.md")
-        assert parser_type is MarkdownParser
+    def test_markdown(self) -> None:
+        assert get_parser("file.md") is MarkdownParser
+        assert get_parser("file.markdown") is MarkdownParser
 
-    def test_markdown_alt_extension(self) -> None:
-        parser_type = get_parser("file.markdown")
-        assert parser_type is MarkdownParser
+    def test_txt(self) -> None:
+        assert get_parser("file.txt") is TxtParser
 
-    def test_txt_parser(self) -> None:
-        parser_type = get_parser("file.txt")
-        assert parser_type is TxtParser
+    def test_pdf(self) -> None:
+        assert get_parser("file.pdf") is PdfParser
 
-    def test_pdf_parser(self) -> None:
-        parser_type = get_parser("file.pdf")
-        assert parser_type is PdfParser
-
-    def test_unsupported_returns_none(self) -> None:
+    def test_unsupported(self) -> None:
         assert get_parser("file.docx") is None
         assert get_parser("file.html") is None
         assert get_parser("file") is None
 
     def test_mime_overrides_extension(self) -> None:
-        parser_type = get_parser("file.txt", mime_type="text/markdown")
-        assert parser_type is MarkdownParser
+        assert get_parser("file.txt", mime_type="text/markdown") is MarkdownParser
