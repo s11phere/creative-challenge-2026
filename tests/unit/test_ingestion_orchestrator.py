@@ -793,3 +793,152 @@ class TestRunCleanup:
 
         result = await orch.run_cleanup(task)
         assert result.status == TaskStatus.SUCCEEDED
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for PR review scenarios
+# ---------------------------------------------------------------------------
+
+
+class TestMultiDocIngestion:
+    """Scenario: two documents under one source each get their own pipeline run."""
+
+    async def test_two_docs_same_source_separate_tasks(self) -> None:
+        """Each task pinned to its own target_version_id processes the correct doc."""
+        orch, fakes = _make_orchestrator()
+        source = Source(space_id=uuid4(), source_type=SourceType.UPLOAD)
+        source = fakes["source_repo"]._sources.setdefault(source.id, source)
+
+        # Document 1 + Version 1 + blob
+        doc1 = Document(source_id=source.id, stable_key="file1.md")
+        doc1 = fakes["doc_repo"]._documents.setdefault(doc1.id, doc1)
+        fakes["doc_repo"]._by_source_key[(doc1.source_id, doc1.stable_key)] = doc1
+        v1 = DocumentVersion(
+            document_id=doc1.id,
+            blob_hash=hashlib.sha256(b"content1").hexdigest(),
+        )
+        v1 = fakes["version_repo"]._versions.setdefault(v1.id, v1)
+        fakes["version_repo"]._by_document.setdefault(v1.document_id, []).append(v1.id)
+
+        # Document 2 + Version 2 + blob
+        doc2 = Document(source_id=source.id, stable_key="file2.md")
+        doc2 = fakes["doc_repo"]._documents.setdefault(doc2.id, doc2)
+        fakes["doc_repo"]._by_source_key[(doc2.source_id, doc2.stable_key)] = doc2
+        v2 = DocumentVersion(
+            document_id=doc2.id,
+            blob_hash=hashlib.sha256(b"content2").hexdigest(),
+        )
+        v2 = fakes["version_repo"]._versions.setdefault(v2.id, v2)
+        fakes["version_repo"]._by_document.setdefault(v2.document_id, []).append(v2.id)
+
+        # Store blobs
+        await fakes["blob_store"].store(compute_storage_key(source.id, v1.blob_hash), b"content1")
+        await fakes["blob_store"].store(compute_storage_key(source.id, v2.blob_hash), b"content2")
+
+        # Task 1 → version 1, Task 2 → version 2
+        task1 = _make_task(source.id, stage=TaskStage.DISCOVER, target_version_id=v1.id)
+        task2 = _make_task(source.id, stage=TaskStage.DISCOVER, target_version_id=v2.id)
+
+        result1 = await orch.run_pipeline(task1)
+        assert result1.status == TaskStatus.SUCCEEDED
+
+        result2 = await orch.run_pipeline(task2)
+        assert result2.status == TaskStatus.SUCCEEDED
+
+        # Each task record is pinned to its respective version
+        updated1 = await fakes["task_repo"].get(task1.id)
+        assert updated1 is not None
+        assert updated1.target_version_id == v1.id
+
+        updated2 = await fakes["task_repo"].get(task2.id)
+        assert updated2 is not None
+        assert updated2.target_version_id == v2.id
+
+        # Parser was called for both documents
+        assert fakes["parser"].call_count == 2
+
+
+class TestPublishedVersionConstraints:
+    """ADR-005: version is published only after a successful pipeline run."""
+
+    async def test_parse_failure_does_not_publish_version(self) -> None:
+        """After a parse failure, the document's current_version_id remains unset."""
+        orch, fakes = _make_orchestrator(parser=_FakeParser(fail=True))
+        source, doc, version = _seed_source_doc_version(fakes)
+        assert doc.current_version_id is None  # ADR-005: not published at registration
+
+        task = _make_task(source.id, stage=TaskStage.DISCOVER, target_version_id=version.id)
+        blob_data = b"bad content"
+        storage_key = compute_storage_key(source.id, version.blob_hash)
+        await fakes["blob_store"].store(storage_key, blob_data)
+
+        with pytest.raises(ValueError, match="Parse failed"):
+            await orch.run_pipeline(task)
+
+        # Document must still have no published version
+        updated_doc = await fakes["doc_repo"].get(doc.id)
+        assert updated_doc is not None
+        assert updated_doc.current_version_id is None
+
+    async def test_processing_config_hash_written_to_version(self) -> None:
+        """Processing config hash is written to the version during the pipeline."""
+        orch, fakes = _make_orchestrator()
+        source, doc, version = _seed_source_doc_version(fakes)
+
+        # Initial state: processing_config_hash is empty
+        assert version.processing_config_hash == ""
+
+        task = _make_task(source.id, stage=TaskStage.DISCOVER, target_version_id=version.id)
+        blob_data = b"test content"
+        storage_key = compute_storage_key(source.id, version.blob_hash)
+        await fakes["blob_store"].store(storage_key, blob_data)
+
+        result = await orch.run_pipeline(task)
+        assert result.status == TaskStatus.SUCCEEDED
+
+        # _FakeChunker returns config_hash="cfg_v1" — must be written back
+        updated_version = await fakes["version_repo"].get(version.id)
+        assert updated_version is not None
+        assert updated_version.processing_config_hash == "cfg_v1"
+
+
+class TestCancellationBetweenStages:
+    """Cancellation requested mid-pipeline is detected at the next stage boundary."""
+
+    async def test_cancellation_between_checkpoints(self) -> None:
+        """Setting cancel_requested_at after a checkpoint raises CancelledError."""
+        orch, fakes = _make_orchestrator()
+        source, doc, version = _seed_source_doc_version(fakes)
+        task = _make_task(source.id, stage=TaskStage.DISCOVER, target_version_id=version.id)
+
+        blob_data = b"test content"
+        storage_key = compute_storage_key(source.id, version.blob_hash)
+        await fakes["blob_store"].store(storage_key, blob_data)
+
+        # Store task in repo so _update_task_stage / _check_cancelled can find it
+        await fakes["task_repo"].create(task)
+
+        # Patch checkpoint to trigger cancellation after the first call
+        # (which happens after the NORMALIZE stage). The next _check_cancelled
+        # at ENRICH must detect it.
+        original_checkpoint = fakes["task_repo"].checkpoint
+        call_count = 0
+
+        async def cancelling_checkpoint() -> None:  # noqa: RUF029
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                stored = fakes["task_repo"]._tasks[task.id]
+                await orch.cancel_task(stored)
+            await original_checkpoint()
+
+        fakes["task_repo"].checkpoint = cancelling_checkpoint
+
+        with pytest.raises(CancelledError):
+            await orch.run_pipeline(task)
+
+        # Verify cancellation was recorded
+        updated = await fakes["task_repo"].get(task.id)
+        assert updated is not None
+        assert updated.status == TaskStatus.CANCEL_REQUESTED
+        assert updated.cancel_requested_at is not None
