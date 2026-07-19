@@ -9,9 +9,9 @@ source file for ingestion.  Responsibilities:
 - Normalise a caller-supplied URI into a ``stable_key``.
 - Look up an existing ``Document`` by ``(source_id, stable_key)``.
 - If none exists, create a new ``Document``.
-- Check whether an existing ``DocumentVersion`` with the same ``blob_hash``
-  already exists (the FINGERPRINT stage) so that identical-byte inputs can
-  skip re-processing.
+- Check whether the target ``Document`` already has a ``DocumentVersion``
+  with the same ``blob_hash`` (the FINGERPRINT stage) so repeated imports of
+  that document can skip re-processing.
 """
 
 from __future__ import annotations
@@ -171,8 +171,8 @@ class SourceRegistrationService:
         3. Derive a ``stable_key`` from *file_stable_key* (or *file_path*).
         4. Look up an existing ``Document`` under ``(source.id, stable_key)``.
         5. If none exists, create a new ``Document``.
-        6. Look up an existing ``DocumentVersion`` with the same
-           ``blob_hash`` — if found, downstream stages can short‑circuit.
+        6. Look up an existing version of that document with the same
+           ``blob_hash`` — if found, downstream stages can short-circuit.
         """
         # --- Step 1: hash raw bytes ---
         blob_hash = compute_blob_hash(raw_bytes)
@@ -199,7 +199,7 @@ class SourceRegistrationService:
             document = existing_doc
 
         # --- Step 6: fingerprint — find or create version with same blob_hash ---
-        existing_version = await self._find_version_by_blob_hash(source.id, blob_hash)
+        existing_version = await self._find_version_by_blob_hash(document.id, blob_hash)
         resolved_version_id: UUID | None = None
 
         if existing_version is None:
@@ -247,25 +247,18 @@ class SourceRegistrationService:
 
     async def _find_version_by_blob_hash(
         self,
-        source_id: UUID,
+        document_id: UUID,
         blob_hash: str,
     ) -> DocumentVersion | None:
         """Search for an existing ``DocumentVersion`` with the same *blob_hash*.
 
-        Scans all documents under *source_id* and checks whether any of
-        their versions share the given hash.
-
-        .. note::
-            A full scan is acceptable at this stage because the number of
-            versions per source is expected to be modest.  If this becomes a
-            bottleneck, a dedicated index on ``document_versions.blob_hash``
-            (already present as ``idx_document_versions_blob_hash``) can be
-            queried directly.
+        ``blob_hash`` is source-scoped for BlobStore reuse, but a
+        ``DocumentVersion`` belongs to exactly one logical document. Reusing
+        another document's version would bind the ingestion task to the wrong
+        owner and violate the ADR-005 processing identity.
         """
-        docs = await self._document_repo.get_by_source(source_id)
-        for doc in docs:
-            versions = await self._version_repo.get_by_document(doc.id)
-            for v in versions:
-                if v.blob_hash == blob_hash:
-                    return v
+        versions = await self._version_repo.get_by_document(document_id)
+        for version in versions:
+            if version.blob_hash == blob_hash:
+                return version
         return None

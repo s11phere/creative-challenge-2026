@@ -8,11 +8,14 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from api.main import create_app
 from domain.models import (
+    Document,
+    DocumentStatus,
+    DocumentVersion,
     IngestionTask,
     Source,
     SourceType,
@@ -25,6 +28,8 @@ from infrastructure.config import settings
 from infrastructure.database import Database
 from infrastructure.orm import Base
 from infrastructure.repositories import (
+    DocumentRepository,
+    DocumentVersionRepository,
     IngestionTaskRepository,
     SourceRepository,
     SpaceRepository,
@@ -231,3 +236,77 @@ class TestRedisEnqueueResilience:
         assert updated.status == TaskStatus.QUEUED, (
             f"Expected QUEUED after successful enqueue, got {updated.status}"
         )
+
+    @pytest.mark.asyncio
+    async def test_unchanged_published_upload_skips_new_task(
+        self,
+        session: AsyncSession,
+        app_client: AsyncClient,
+    ) -> None:
+        """Re-uploading current published bytes must not enqueue duplicate work."""
+        space_repo = SpaceRepository(session)
+        source_repo = SourceRepository(session)
+        task_repo = IngestionTaskRepository(session)
+        document_repo = DocumentRepository(session)
+        version_repo = DocumentVersionRepository(session)
+
+        space = await space_repo.create(Space(name="Idempotent Upload Test"))
+        source = await source_repo.create(
+            Source(space_id=space.id, source_type=SourceType.UPLOAD, uri="same.md")
+        )
+        await session.commit()
+
+        first = await app_client.post(
+            f"/api/v1/spaces/{space.id}/sources/{source.id}/upload",
+            files={"file": ("same.md", b"same bytes")},
+        )
+        assert first.status_code == 200
+        first_task_id = first.json()["task_id"]
+        assert first_task_id is not None
+
+        # The integration test does not run a worker, so mark the candidate and
+        # document as published to model completed prior ingestion.
+        task = await task_repo.get(UUID(first_task_id))
+        assert task is not None
+        assert task.target_version_id is not None
+        version = await version_repo.get(task.target_version_id)
+        assert version is not None
+        await version_repo.update(
+            DocumentVersion(
+                id=version.id,
+                document_id=version.document_id,
+                blob_hash=version.blob_hash,
+                content_hash=version.content_hash,
+                parser_version=version.parser_version,
+                normalizer_version=version.normalizer_version,
+                chunker_version=version.chunker_version,
+                embedding_version=version.embedding_version,
+                processing_config_hash=version.processing_config_hash,
+                processing_config=version.processing_config,
+                status=DocumentStatus.PUBLISHED,
+                file_path=version.file_path,
+                created_at=version.created_at,
+            )
+        )
+        document = await document_repo.get(version.document_id)
+        assert document is not None
+        await document_repo.update(
+            Document(
+                id=document.id,
+                source_id=document.source_id,
+                stable_key=document.stable_key,
+                current_version_id=version.id,
+                deleted_at=document.deleted_at,
+                created_at=document.created_at,
+                updated_at=document.updated_at,
+            )
+        )
+        await session.commit()
+
+        second = await app_client.post(
+            f"/api/v1/spaces/{space.id}/sources/{source.id}/upload",
+            files={"file": ("same.md", b"same bytes")},
+        )
+        assert second.status_code == 200
+        assert second.json()["is_unchanged"] is True
+        assert second.json()["task_id"] is None

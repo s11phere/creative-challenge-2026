@@ -377,7 +377,7 @@ class TestIngestionPipeline:
         assert updated.progress == 1.0
 
     async def test_retry_resumes_from_stage(self) -> None:
-        """A task that failed at CHUNK skips chunking and re-uses existing chunks."""
+        """A task at CHUNK reruns deterministic chunking and completes publish."""
         orch, fakes = _make_orchestrator()
         source, doc, version = _seed_source_doc_version(fakes)
 
@@ -397,14 +397,18 @@ class TestIngestionPipeline:
 
         result = await orch.run_pipeline(task)
 
-        # Pipeline succeeds but without new chunking the embed step produces 0 chunks
-        # (the orchestrator skips chunker and embedder since chunk_outputs is empty)
         assert result.status == TaskStatus.SUCCEEDED
+        assert result.chunk_count == 2
 
-        # Parser and chunker should not have been called again
-        assert fakes["parser"].call_count == 1  # always parses (idempotent)
-        assert fakes["chunker"].call_count == 0  # skipped because stage is past CHUNK
-        assert fakes["embedder"].call_count == 0  # skipped because no new chunks
+        # CHUNK outputs are not durably stored at its checkpoint, so retrying
+        # the deterministic stage is required before embedding and publishing.
+        assert fakes["parser"].call_count == 1
+        assert fakes["chunker"].call_count == 1
+        assert fakes["embedder"].call_count == 1
+
+        published_doc = await fakes["doc_repo"].get(doc.id)
+        assert published_doc is not None
+        assert published_doc.current_version_id == version.id
 
     async def test_cancellation_raises(self) -> None:
         """A task with cancel_requested_at raises CancelledError."""
@@ -685,6 +689,15 @@ class TestDeleteDocument:
         assert updated_doc.deleted_at is not None
         assert updated_doc.current_version_id is None
 
+    async def test_delete_unpublished_document_targets_latest_version(self) -> None:
+        orch, fakes = _make_orchestrator()
+        source, doc, version = _seed_source_doc_version(fakes)
+
+        result = await orch.delete_document(doc)
+
+        assert result is not None
+        assert result.target_version_id == version.id
+
     async def test_delete_skips_already_deleted(self) -> None:
         orch, fakes = _make_orchestrator()
         source = Source(space_id=uuid4(), source_type=SourceType.UPLOAD)
@@ -793,6 +806,82 @@ class TestRunCleanup:
 
         result = await orch.run_cleanup(task)
         assert result.status == TaskStatus.SUCCEEDED
+
+    async def test_cleanup_targets_document_bound_to_task_version(self) -> None:
+        orch, fakes = _make_orchestrator()
+        source, first_doc, first_version = _seed_source_doc_version(
+            fakes,
+            stable_key="first.md",
+            blob_data=b"first",
+        )
+        second_doc = Document(source_id=source.id, stable_key="second.md")
+        second_doc = fakes["doc_repo"]._documents.setdefault(second_doc.id, second_doc)
+        fakes["doc_repo"]._by_source_key[(second_doc.source_id, second_doc.stable_key)] = second_doc
+        second_version = DocumentVersion(
+            document_id=second_doc.id,
+            blob_hash=hashlib.sha256(b"second").hexdigest(),
+        )
+        second_version = fakes["version_repo"]._versions.setdefault(
+            second_version.id, second_version
+        )
+        fakes["version_repo"]._by_document.setdefault(second_doc.id, []).append(second_version.id)
+
+        fakes["doc_repo"]._documents[second_doc.id] = Document(
+            id=second_doc.id,
+            source_id=second_doc.source_id,
+            stable_key=second_doc.stable_key,
+            deleted_at=datetime.now(UTC),
+        )
+        first_key = compute_storage_key(source.id, first_version.blob_hash)
+        second_key = compute_storage_key(source.id, second_version.blob_hash)
+        await fakes["blob_store"].store(first_key, b"first")
+        await fakes["blob_store"].store(second_key, b"second")
+        await fakes["chunk_repo"].create_batch(
+            [
+                Chunk(version_id=first_version.id, ordinal=0, chunk_hash="h1", text="first"),
+                Chunk(version_id=second_version.id, ordinal=0, chunk_hash="h2", text="second"),
+            ]
+        )
+
+        task = IngestionTask(
+            source_id=source.id,
+            operation=TaskOperation.DELETE,
+            target_version_id=second_version.id,
+        )
+        await orch.run_cleanup(task)
+
+        assert await fakes["blob_store"].retrieve(first_key) == b"first"
+        assert await fakes["blob_store"].retrieve(second_key) is None
+        assert len(await fakes["chunk_repo"].get_by_version(first_version.id)) == 1
+        assert await fakes["chunk_repo"].get_by_version(second_version.id) == []
+
+    async def test_cleanup_preserves_blob_referenced_by_active_document(self) -> None:
+        orch, fakes = _make_orchestrator()
+        source, deleted_doc, deleted_version = _seed_source_doc_version(fakes)
+        shared_hash = deleted_version.blob_hash
+
+        active_doc = Document(source_id=source.id, stable_key="active.md")
+        active_doc = await fakes["doc_repo"].create(active_doc)
+        active_version = DocumentVersion(document_id=active_doc.id, blob_hash=shared_hash)
+        await fakes["version_repo"].create(active_version)
+
+        fakes["doc_repo"]._documents[deleted_doc.id] = Document(
+            id=deleted_doc.id,
+            source_id=deleted_doc.source_id,
+            stable_key=deleted_doc.stable_key,
+            deleted_at=datetime.now(UTC),
+        )
+        storage_key = compute_storage_key(source.id, shared_hash)
+        await fakes["blob_store"].store(storage_key, b"test content")
+
+        task = IngestionTask(
+            source_id=source.id,
+            operation=TaskOperation.DELETE,
+            target_version_id=deleted_version.id,
+        )
+        await orch.run_cleanup(task)
+
+        assert await fakes["blob_store"].retrieve(storage_key) == b"test content"
 
 
 # ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from application.ingestion.source_registration import SourceRegistrationService
-from domain.models import IngestionTask, SourceType, TaskOperation, TaskStatus
+from domain.models import DocumentStatus, IngestionTask, SourceType, TaskOperation, TaskStatus
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from infrastructure.blob_store import LocalFileBlobStore
 from infrastructure.config import settings
@@ -264,17 +264,29 @@ async def upload_file(
             file_path=file.filename,
         )
 
-        # Create and enqueue ingestion task, pinned to the resolved version
-        task_repo = IngestionTaskRepository(session)
-        task = IngestionTask(
-            source_id=source_id,
-            operation=TaskOperation.INGEST,
-            target_version_id=result.version_id,
+        # A published version that is still current already represents these
+        # bytes. Avoid creating a duplicate task; failed or non-current
+        # candidates still need a retryable task.
+        unchanged_published = (
+            result.existing_version is not None
+            and result.existing_version.status == DocumentStatus.PUBLISHED
+            and result.document.current_version_id == result.existing_version.id
         )
-        task = await task_repo.create(task)
+        task_id: UUID | None = None
+        if not unchanged_published:
+            task_repo = IngestionTaskRepository(session)
+            task = await task_repo.create(
+                IngestionTask(
+                    source_id=source_id,
+                    operation=TaskOperation.INGEST,
+                    target_version_id=result.version_id,
+                )
+            )
+            task_id = task.id
         await session.commit()
 
-    await _enqueue_ingestion_task(task.id, db)
+    if task_id is not None:
+        await _enqueue_ingestion_task(task_id, db)
 
     return UploadResponse(
         source_id=str(result.source.id),
@@ -282,7 +294,7 @@ async def upload_file(
         blob_hash=result.blob_hash,
         is_new_document=result.is_new_document,
         is_unchanged=result.existing_version is not None,
-        task_id=str(task.id),
+        task_id=str(task_id) if task_id is not None else None,
     )
 
 

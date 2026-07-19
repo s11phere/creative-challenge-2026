@@ -286,6 +286,7 @@ class TestRegisterFile:
         self,
         service: SourceRegistrationService,
         source_repo: _FakeSourceRepo,
+        version_repo: _FakeVersionRepo,
         blob_store: _FakeBlobStore,
         space_id: UUID,
     ) -> None:
@@ -297,12 +298,20 @@ class TestRegisterFile:
         doc2 = await service.register_file(source, raw, blob_store, file_stable_key="file2.md")
 
         assert doc1.document.id != doc2.document.id
+        assert doc1.version_id != doc2.version_id
+        assert doc1.version_id is not None
+        assert doc2.version_id is not None
+        version1 = await version_repo.get(doc1.version_id)
+        version2 = await version_repo.get(doc2.version_id)
+        assert version1 is not None
+        assert version2 is not None
+        assert version1.document_id == doc1.document.id
+        assert version2.document_id == doc2.document.id
 
     async def test_finds_existing_version_by_blob_hash(
         self,
         service: SourceRegistrationService,
         source_repo: _FakeSourceRepo,
-        version_repo: _FakeVersionRepo,
         blob_store: _FakeBlobStore,
         space_id: UUID,
     ) -> None:
@@ -311,19 +320,13 @@ class TestRegisterFile:
         raw = b"some content"
         blob_hash = compute_blob_hash(raw)
 
-        # First registration creates document + we manually create a version
+        # Re-registering the same logical document finds its existing version.
         first = await service.register_file(source, raw, blob_store, file_stable_key="test.md")
-        version = DocumentVersion(
-            document_id=first.document.id,
-            blob_hash=blob_hash,
-            content_hash="",
-        )
-        await version_repo.create(version)
-
-        # Second registration with different stable key should find the version
-        result = await service.register_file(source, raw, blob_store, file_stable_key="other.md")
+        result = await service.register_file(source, raw, blob_store, file_stable_key="test.md")
         assert result.existing_version is not None
         assert result.existing_version.blob_hash == blob_hash
+        assert result.existing_version.document_id == first.document.id
+        assert result.version_id == first.version_id
 
     async def test_uses_file_path_when_no_stable_key(
         self,

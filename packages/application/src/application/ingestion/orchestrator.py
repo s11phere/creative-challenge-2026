@@ -270,7 +270,9 @@ class IngestionOrchestrator:
         # --- CHUNK ---
         await self._check_cancelled(task)
         chunking_result: ChunkingResult
-        if self._stage_needed(task, TaskStage.CHUNK):
+        advance_to_chunk = self._stage_needed(task, TaskStage.CHUNK)
+        retry_from_chunk = task.stage == TaskStage.CHUNK
+        if advance_to_chunk or retry_from_chunk:
             chunker_config = ChunkerConfig(
                 chunk_size=cfg.chunk_size,
                 chunk_overlap=cfg.chunk_overlap,
@@ -296,10 +298,12 @@ class IngestionOrchestrator:
                     created_at=version.created_at,
                 )
             )
-            task = await self._update_task_stage(task, TaskStage.CHUNK, 0.50)
-            await self._task_repo.checkpoint()
+            if advance_to_chunk:
+                task = await self._update_task_stage(task, TaskStage.CHUNK, 0.50)
+                await self._task_repo.checkpoint()
         else:
-            # On retry past CHUNK, load existing chunks from the DB
+            # EmbeddingService publishes before the task advances past CHUNK.
+            # Later checkpoints therefore only need validation below.
             existing_chunks = await self._chunk_repo.get_by_version(version.id)
             chunking_result = ChunkingResult(
                 chunks=(),
@@ -310,7 +314,7 @@ class IngestionOrchestrator:
 
         # --- EMBED / INDEX / VALIDATE / PUBLISH ---
         await self._check_cancelled(task)
-        if chunking_result.chunks:
+        if _STAGE_INDEX.get(task.stage, 0) <= _STAGE_INDEX[TaskStage.CHUNK]:
             embed_config = EmbeddingConfig(
                 batch_size=cfg.embedding_batch_size,
                 embedding_version=cfg.embedding_version,
@@ -337,7 +341,16 @@ class IngestionOrchestrator:
                 task = await self._update_task_stage(task, TaskStage.PUBLISH, 1.0)
                 await self._task_repo.checkpoint()
         else:
-            chunk_count = 0
+            existing_chunks = await self._chunk_repo.get_by_version(version.id)
+            if (
+                version.status != DocumentStatus.PUBLISHED
+                or document.current_version_id != version.id
+            ):
+                raise RuntimeError(
+                    f"Task {task.id} is past CHUNK but version {version.id} "
+                    "is not atomically published"
+                )
+            chunk_count = len(existing_chunks)
 
         # ------------------------------------------------------------------
         # Mark task SUCCEEDED
@@ -678,6 +691,11 @@ class IngestionOrchestrator:
             logger.info("Document %s already deleted, skipping", document.id)
             return None
 
+        cleanup_version_id = document.current_version_id
+        if cleanup_version_id is None:
+            latest_version = await self._version_repo.get_latest(document.id)
+            cleanup_version_id = latest_version.id if latest_version is not None else None
+
         # --- Tombstone: unpublish the document ---
         tombstone_doc = Document(
             id=document.id,
@@ -696,7 +714,7 @@ class IngestionOrchestrator:
             operation=TaskOperation.DELETE,
             status=TaskStatus.QUEUED,
             stage=TaskStage.DISCOVER,
-            target_version_id=document.current_version_id,
+            target_version_id=cleanup_version_id,
             idempotency_key=idempotency_key or uuid4().hex,
         )
         created = await self._task_repo.create(delete_task)
@@ -754,36 +772,60 @@ class IngestionOrchestrator:
         if source is None:
             raise RuntimeError(f"Source {task.source_id} not found for cleanup task {task.id}")
 
-        docs = await self._document_repo.get_by_source(source.id)
-        if not docs:
-            # Document already gone — nothing to clean up
+        if task.target_version_id is None:
+            # A document without any versions has no derived artifacts.
             return await self._mark_cleanup_succeeded(task)
 
-        document = docs[0]
+        target_version = await self._version_repo.get(task.target_version_id)
+        if target_version is None:
+            # The version and its cascade-owned chunks are already gone.
+            return await self._mark_cleanup_succeeded(task)
 
-        # Get all versions for this document
+        document = await self._document_repo.get(target_version.document_id)
+        if document is None:
+            return await self._mark_cleanup_succeeded(task)
+        if document.source_id != source.id:
+            raise RuntimeError(
+                f"Target version {target_version.id} does not belong to source {source.id}"
+            )
+        if document.deleted_at is None:
+            raise RuntimeError(
+                f"Refusing cleanup for active document {document.id} in task {task.id}"
+            )
+
+        # Get all versions for this document and remove their chunks first.
         versions = await self._version_repo.get_by_document(document.id)
-
         for version in versions:
-            # Delete chunks
             await self._chunk_repo.delete_by_version(version.id)
 
-            # Delete blob
-            if version.blob_hash:
-                key = compute_storage_key(source.id, version.blob_hash)
-                await self._blob_store.delete(key)
-
-            # Mark version with a deleted status (using FAILED as proxy
-            # since there's no DELETED status in DocumentStatus yet)
-            # For now, we just leave the version record in the DB.
-            pass
-
-        # Also clean up the document reference for fully deleted docs
-        if document.deleted_at is not None:
-            # Document has tombstone — we're done
-            pass
+        # Blob keys are shared by same-byte documents within a source. Keep a
+        # blob while any other active document still references it.
+        for blob_hash in {version.blob_hash for version in versions if version.blob_hash}:
+            if not await self._active_document_references_blob(
+                source.id,
+                excluding_document_id=document.id,
+                blob_hash=blob_hash,
+            ):
+                await self._blob_store.delete(compute_storage_key(source.id, blob_hash))
 
         return await self._mark_cleanup_succeeded(task)
+
+    async def _active_document_references_blob(
+        self,
+        source_id: UUID,
+        *,
+        excluding_document_id: UUID,
+        blob_hash: str,
+    ) -> bool:
+        """Return whether an active document still references a source blob."""
+        documents = await self._document_repo.get_by_source(source_id)
+        for document in documents:
+            if document.id == excluding_document_id or document.deleted_at is not None:
+                continue
+            versions = await self._version_repo.get_by_document(document.id)
+            if any(version.blob_hash == blob_hash for version in versions):
+                return True
+        return False
 
     async def _mark_cleanup_succeeded(self, task: IngestionTask) -> IngestionResult:
         """Mark a cleanup task as SUCCEEDED."""
