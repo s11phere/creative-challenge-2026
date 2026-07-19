@@ -178,12 +178,11 @@ def ingestion_task_permanently_failed(
         # Record dead-letter status in the DB
         import asyncio  # noqa: PLC0415
 
+        loop = asyncio.new_event_loop()  # noqa: RUF006
         try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()  # noqa: RUF006
-
-        loop.run_until_complete(_record_dead_letter(task_id))
+            loop.run_until_complete(_record_dead_letter(task_id))
+        finally:
+            loop.close()
 
 
 async def _record_dead_letter(task_id: str) -> None:
@@ -279,13 +278,12 @@ def _run_ingestion_sync(task_id: str, canonical_trace_id: str) -> None:
     """Synchronous wrapper that manages the async event loop for Dramatiq."""
     import asyncio  # noqa: PLC0415
 
+    loop = asyncio.new_event_loop()  # noqa: RUF006
+    asyncio.set_event_loop(loop)
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()  # noqa: RUF006
-        asyncio.set_event_loop(loop)
-
-    loop.run_until_complete(_run_ingestion_async(task_id, canonical_trace_id))
+        loop.run_until_complete(_run_ingestion_async(task_id, canonical_trace_id))
+    finally:
+        loop.close()
 
 
 async def _run_ingestion_async(task_id: str, _canonical_trace_id: str) -> None:

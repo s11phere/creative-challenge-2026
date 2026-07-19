@@ -1,6 +1,6 @@
 /** API client for sources, ingestion, and tasks. */
 
-import { healthApiLabel } from './health'
+import { apiBaseUrl } from './health'
 
 export type SourceInfo = {
   id: string
@@ -72,8 +72,7 @@ async function apiFetch<T>(
   path: string,
   options?: { method?: string; body?: FormData | object },
 ): Promise<T> {
-  const base = healthApiLabel()
-  const url = `${base}${path}`
+  const url = `${apiBaseUrl}${path}`
 
   const headers: Record<string, string> = {}
   let body: BodyInit | undefined

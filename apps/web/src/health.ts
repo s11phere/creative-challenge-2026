@@ -28,7 +28,7 @@ export class HealthApiError extends Error {
   }
 }
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+export const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
 function isDependencyCheck(value: unknown): value is DependencyCheck {
   if (typeof value !== 'object' || value === null) return false

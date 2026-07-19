@@ -18,6 +18,7 @@ import {
   fetchSources,
   fetchTaskStatus,
   retryTask,
+  SourcesApiError,
   triggerIngestion,
   uploadFile,
   type SourceInfo,
@@ -208,6 +209,13 @@ function SourceCard({ source }: { source: SourceInfo }) {
             <div className="upload-result">
               文件已登记，哈希 {uploadMut.data.blob_hash.slice(0, 12)}…
               {uploadMut.data.is_unchanged && '（内容未变化）'}
+            </div>
+          )}
+          {uploadMut.isError && (
+            <div className="upload-error">
+              上传失败：{uploadMut.error instanceof SourcesApiError
+                ? `${uploadMut.error.code}: ${uploadMut.error.message}`
+                : String(uploadMut.error ?? '未知错误')}
             </div>
           )}
 
