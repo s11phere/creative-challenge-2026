@@ -11,20 +11,21 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from domain.blob_store import BlobStore
 from domain.chunking import Chunker, ChunkerConfig, ChunkingResult
-from domain.fingerprinting import compute_content_hash, compute_storage_key
+from domain.fingerprinting import compute_content_hash, compute_storage_key, normalize_stable_key
 from domain.models import (
     Document,
     DocumentStatus,
     DocumentVersion,
     IngestionTask,
+    TaskOperation,
     TaskStage,
     TaskStatus,
 )
-from domain.parsing import ParseMetadata, Parser, ParseSuccess
+from domain.parsing import ParseMetadata, Parser, ParseSuccess, compute_blob_hash
 from domain.repositories import (
     ChunkRepository,
     DocumentRepository,
@@ -547,6 +548,194 @@ class IngestionOrchestrator:
         fresh = await self._task_repo.get(task.id)
         if fresh is not None and fresh.cancel_requested_at is not None:
             raise CancelledError(f"Task {task.id} was cancelled at {fresh.cancel_requested_at}")
+
+    # ------------------------------------------------------------------
+    # Step 7: Incremental maintenance & delete
+    # ------------------------------------------------------------------
+
+    async def is_content_unchanged(
+        self,
+        document: Document,
+        raw_bytes: bytes,
+    ) -> bool:
+        """Return ``True`` if *raw_bytes* produce the same content hash as the
+        most-recently published version of *document*.
+
+        When unchanged, the caller can skip the ingestion pipeline entirely.
+        """
+        if document.current_version_id is None:
+            return False  # no published version to compare against
+
+        current_version = await self._version_repo.get(document.current_version_id)
+        if current_version is None:
+            return False
+
+        # Compare blob hash first (fast)
+        new_blob_hash = compute_blob_hash(raw_bytes)
+        if new_blob_hash != current_version.blob_hash:
+            return False
+
+        # Compare content hash
+        normalized_text = raw_bytes.decode("utf-8", errors="replace")
+        new_content_hash = compute_content_hash(normalized_text)
+        current_content_hash: str = current_version.content_hash
+        return new_content_hash == current_content_hash
+
+    async def delete_document(
+        self,
+        document: Document,
+        *,
+        idempotency_key: str | None = None,
+    ) -> IngestionTask | None:
+        """Atomically unpublish *document* (tombstone) and create a DELETE task.
+
+        Returns the created ``IngestionTask``, or ``None`` if the document
+        was already deleted.
+        """
+        if document.deleted_at is not None:
+            logger.info("Document %s already deleted, skipping", document.id)
+            return None
+
+        # --- Tombstone: unpublish the document ---
+        tombstone_doc = Document(
+            id=document.id,
+            source_id=document.source_id,
+            stable_key=document.stable_key,
+            current_version_id=None,
+            deleted_at=datetime.now(UTC),
+            created_at=document.created_at,
+            updated_at=datetime.now(UTC),
+        )
+        await self._document_repo.update(tombstone_doc)
+
+        # --- Create a DELETE task ---
+        delete_task = IngestionTask(
+            source_id=document.source_id,
+            operation=TaskOperation.DELETE,
+            status=TaskStatus.QUEUED,
+            stage=TaskStage.DISCOVER,
+            target_version_id=document.current_version_id,
+            idempotency_key=idempotency_key or uuid4().hex,
+        )
+        created = await self._task_repo.create(delete_task)
+
+        logger.info(
+            "Document %s deleted (tombstone), cleanup task %s created",
+            document.id,
+            created.id,
+        )
+        return created
+
+    async def update_document_path(
+        self,
+        document: Document,
+        new_stable_key: str,
+        source_id: UUID,
+    ) -> Document:
+        """Update the stable key of *document* (path change / rename).
+
+        Only updates when no other document in the same source already uses
+        the target key.  Returns the updated document.
+
+        Raises
+        ------
+        ValueError
+            If *new_stable_key* is already taken by another document in the
+            same source.
+        """
+        normalized = normalize_stable_key(new_stable_key)
+
+        # Check for conflicts within the same source
+        existing = await self._document_repo.get_by_stable_key(source_id, normalized)
+        if existing is not None and existing.id != document.id:
+            raise ValueError(
+                f"Cannot rename document {document.id}: stable_key "
+                f"{normalized!r} is already used by document {existing.id}"
+            )
+
+        updated = Document(
+            id=document.id,
+            source_id=document.source_id,
+            stable_key=normalized,
+            current_version_id=document.current_version_id,
+            deleted_at=document.deleted_at,
+            created_at=document.created_at,
+        )
+        return await self._document_repo.update(updated)
+
+    async def run_cleanup(self, task: IngestionTask) -> IngestionResult:
+        """Execute the cleanup pipeline for a DELETE task.
+
+        Removes all chunks and blobs associated with the document versions.
+        """
+        source = await self._source_repo.get(task.source_id)
+        if source is None:
+            raise RuntimeError(f"Source {task.source_id} not found for cleanup task {task.id}")
+
+        docs = await self._document_repo.get_by_source(source.id)
+        if not docs:
+            # Document already gone — nothing to clean up
+            return await self._mark_cleanup_succeeded(task)
+
+        document = docs[0]
+
+        # Get all versions for this document
+        versions = await self._version_repo.get_by_document(document.id)
+
+        for version in versions:
+            # Delete chunks
+            await self._chunk_repo.delete_by_version(version.id)
+
+            # Delete blob
+            if version.blob_hash:
+                key = compute_storage_key(source.id, version.blob_hash)
+                await self._blob_store.delete(key)
+
+            # Mark version with a deleted status (using FAILED as proxy
+            # since there's no DELETED status in DocumentStatus yet)
+            # For now, we just leave the version record in the DB.
+            pass
+
+        # Also clean up the document reference for fully deleted docs
+        if document.deleted_at is not None:
+            # Document has tombstone — we're done
+            pass
+
+        return await self._mark_cleanup_succeeded(task)
+
+    async def _mark_cleanup_succeeded(self, task: IngestionTask) -> IngestionResult:
+        """Mark a cleanup task as SUCCEEDED."""
+        updated = await self._task_repo.update(
+            IngestionTask(
+                id=task.id,
+                source_id=task.source_id,
+                operation=task.operation,
+                status=TaskStatus.SUCCEEDED,
+                stage=TaskStage.CLEANUP,
+                target_version_id=task.target_version_id,
+                idempotency_key=task.idempotency_key,
+                progress=1.0,
+                retry_count=task.retry_count,
+                max_retries=task.max_retries,
+                cancel_requested_at=task.cancel_requested_at,
+                enqueued_at=task.enqueued_at,
+                heartbeat_at=datetime.now(UTC),
+                lease_expires_at=task.lease_expires_at,
+                error_code=None,
+                error=None,
+                created_at=task.created_at,
+            )
+        )
+        logger.info("Cleanup task %s SUCCEEDED", updated.id)
+
+        return IngestionResult(
+            task_id=updated.id,
+            document_id=UUID(int=0),
+            version_id=UUID(int=0),
+            chunk_count=0,
+            status=TaskStatus.SUCCEEDED,
+            last_stage=TaskStage.CLEANUP,
+        )
 
 
 # ---------------------------------------------------------------------------

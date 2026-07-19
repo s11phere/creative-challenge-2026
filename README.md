@@ -18,7 +18,8 @@
 | 阶段 2 ✅ Step 4 | 结构感知分块器（`StructureChunker`）+ `Chunker` Port + 统一 `ChunkOutput` schema + 41 个测试 |
 | 阶段 2 ✅ Step 5 | Embedding + INDEX + VALIDATE + 原子 PUBLISH + `EmbeddingService` 流水线 + 9 个测试 |
 | 阶段 2 ✅ Step 6 | `IngestionOrchestrator` 状态机 + Dramatiq actor + 幂等重入 + 取消 + 死信处理 + 34 个测试 |
-| 阶段 2 ⏳ 进行中 | 增量维护、删除、摄入 API、Web 数据源页面 |
+| 阶段 2 ✅ Step 7 | 增量维护（内容不变跳过、路径更新）+ 原子删除 + 异步清理 + `is_content_unchanged` / `delete_document` / `update_document_path` / `run_cleanup` + 9 个测试 |
+| 阶段 2 ⏳ 进行中 | 摄入 API、Web 数据源页面 |
 
 当前 Web 只展示真实系统健康状态，尚未实现文档摄入、搜索、会话、引用或问答功能。
 阶段 0 的语料授权复核、人工标注复核和版本冻结仍未关闭，项目状态为”工程进行中，等待阶段 0 数据门禁”。

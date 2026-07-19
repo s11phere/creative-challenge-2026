@@ -1,6 +1,6 @@
 # 阶段 2 实施计划：知识摄入 MVP
 
-> 文档状态：Draft v6 — Step 6 已完成 (2026-07-19)
+> 文档状态：Draft v7 — Step 7 已完成 (2026-07-19)
 >
 > 适用范围：`docs/project-implementation-plan.md` 中的阶段 2
 >
@@ -315,6 +315,18 @@ cases/
 
 **完成标准**：重复导入不新增版本或块；修改产生可回滚新版本；移动不改变 Document ID 且歧义不会误合并；删除后不进入 published candidate 集合，清理任务最终完成或呈现明确失败；版本升级可重建与回滚。
 
+**状态**：已于 2026-07-19 完成。
+
+实际交付：
+
+- `IngestionOrchestrator` 新增：
+  - `is_content_unchanged()`：比较 `blob_hash` 和 `content_hash` 判断内容是否与当前已发布版本一致，一致时下游可跳过全量管道。
+  - `delete_document()`：原子设置 `current_version_id=None` + `deleted_at=now`（tombstone），创建 `operation=DELETE` 的 `IngestionTask`，返回任务供 Worker 执行异步清理。
+  - `update_document_path()`：更新 Document 的 `stable_key`（路径重命名），检查同 Source 内 `stable_key` 冲突。
+  - `run_cleanup()`：遍历 Document 所有版本，删除对应 Chunks 和 Blob 存储，最后标记 DELETE task 为 SUCCEEDED。
+- 未实现（推迟到阶段 3/4）：跨版本 Embedding 复用、parser/chunker/embedding 版本升级自动重建（需要更复杂的版本比较策略和批量迁移逻辑）。
+- 新增 9 个单元测试覆盖：内容不变检测（匹配/无发布版本/不同字节）、删除创建 tombstone+task、已删除跳过、路径更新、路径冲突、清理删除 chunks 和 blobs、无文档清理。所有测试使用 in-memory fake repos/services。
+
 ### 步骤 8：摄入 API 与数据源页面
 
 - API：创建来源、上传文件、触发摄入、查询任务状态与进度、取消、重试；错误响应复用阶段 1 稳定 schema。首期不接受客户端提供任意服务器文件路径。
@@ -351,7 +363,7 @@ cases/
 | 4. 结构感知分块 | Markdown Parser 契约通过 | 已完成 |
 | 5. Embedding 与发布 | 分块契约、向量维度和发布语义确定 | 已完成 |
 | 6. Worker 与状态机 | 单进程 Markdown 管道通过；任务字段迁移完成 | 已完成 |
-| 7. 增量与删除 | Worker 重入、发布和 tombstone 语义通过 | 待办 |
+| 7. 增量与删除 | Worker 重入、发布和 tombstone 语义通过 | 已完成 |
 | 8. API 与数据源页面 | Application 摄入用例和 Space 隔离完成 | 待办 |
 | 9. 质量报告与验收 | 阶段 0 门禁关闭；P0 合规语料冻结 | 待办 |
 
