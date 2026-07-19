@@ -1,6 +1,6 @@
 # 阶段 2 实施计划：知识摄入 MVP
 
-> 文档状态：Draft v5 — Step 5 已完成 (2026-07-19)
+> 文档状态：Draft v6 — Step 6 已完成 (2026-07-19)
 >
 > 适用范围：`docs/project-implementation-plan.md` 中的阶段 2
 >
@@ -291,6 +291,20 @@ cases/
 
 **完成标准**：长任务有真实 operation/status/stage 和进度；失败可定位与重试；取消不产生可见半成品；重试不产生重复版本或块；数据库/Redis 部分失败和 Worker 崩溃可由对账恢复。
 
+**状态**：已于 2026-07-19 完成。
+
+实际交付：
+
+- 新增 `packages/application/src/application/ingestion/orchestrator.py`：`IngestionOrchestrator` 应用服务，包含 `run_pipeline()`（完整 DISCOVER→…→PUBLISH 状态机，每步更新 `stage`/`progress`）、`cancel_task()`、`handle_pipeline_error()`（递增重试次数，超限转 FAILED）、`handle_cancellation()`。使用 `_stage_needed()` 和 DB 状态实现幂等重入——重试时从 DB 记录的 stage 继续，不重复已完成副作用。`_update_task_stage()` 从 DB 读取 `cancel_requested_at` 防止覆盖外部取消请求。
+- 新增 `apps/worker/src/worker/ingestion_tasks.py`：
+  - `ingestion_task` Dramatiq actor：接收 `task_id`/`trace_id`，加载任务和依赖，运行管道。异常分三类处理：`CancelledError` 记录取消后静默退出；业务异常记录错误后 `raise` 触发 Dramatiq 重试；`return` 表示成功。
+  - `ingestion_task_permanently_failed` 死信 handler：重试耗尽后更新任务状态为 `DEAD_LETTER`。
+  - 适配器 `_ParserAdapter`（ParserFactory → domain Parser protocol）和 `_GatewayTextEmbedder`（ModelGateway → TextEmbedder protocol）。
+  - `_run_ingestion_async` 使用独立的 pipeline session 和 error-handling session，保证异常时错误记录不被已回滚 session 阻塞。
+- 新增 `packages/infrastructure/src/infrastructure/config.py` 配置：`ingestion_task_timeout_ms`（600s）、`ingestion_task_max_retries`（3）、`ingestion_task_min_backoff_ms`（5s）、`ingestion_task_heartbeat_interval_s`（30s）、`ingestion_task_lease_seconds`（120s）。
+- 更新 `packages/application/src/application/ingestion/__init__.py`：导出 `IngestionOrchestrator`、`IngestionConfig`、`IngestionResult`、`CancelledError`。
+- 新增 34 个单元测试覆盖：成功管道全流程、重试从中断 stage 恢复（chunker/embedder 不重复调用）、解析失败、分块失败、来源缺失、Blob 缺失、外部取消检测、取消任务标记、错误递增重试、超限转 FAILED、取消终态记录。所有测试使用 in-memory fake repos/services。
+
 ### 步骤 7：增量维护与删除
 
 - 未变化：`blob_hash`、`content_hash` 和处理配置均一致时，不新增 DocumentVersion 或 Chunk，并复用已完成结果。
@@ -336,7 +350,7 @@ cases/
 | 3. 指纹与来源登记 | ADR-005 中 stable key、Blob 和并发幂等语义确定 | 已完成 |
 | 4. 结构感知分块 | Markdown Parser 契约通过 | 已完成 |
 | 5. Embedding 与发布 | 分块契约、向量维度和发布语义确定 | 已完成 |
-| 6. Worker 与状态机 | 单进程 Markdown 管道通过；任务字段迁移完成 | 待办 |
+| 6. Worker 与状态机 | 单进程 Markdown 管道通过；任务字段迁移完成 | 已完成 |
 | 7. 增量与删除 | Worker 重入、发布和 tombstone 语义通过 | 待办 |
 | 8. API 与数据源页面 | Application 摄入用例和 Space 隔离完成 | 待办 |
 | 9. 质量报告与验收 | 阶段 0 门禁关闭；P0 合规语料冻结 | 待办 |
