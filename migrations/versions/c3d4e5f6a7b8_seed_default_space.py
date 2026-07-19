@@ -15,6 +15,8 @@ Create Date: 2026-07-19 20:00:00.000000
 
 from __future__ import annotations
 
+import uuid
+
 import sqlalchemy as sa
 from alembic import op
 
@@ -31,10 +33,10 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             "INSERT INTO spaces (id, name, owner_id, retrieval_profile) "
-            "VALUES (:id, :name, :owner_id, :retrieval_profile) "
+            "VALUES (:id, :name, :owner_id, CAST(:retrieval_profile AS jsonb)) "
             "ON CONFLICT (id) DO NOTHING"
         ).bindparams(
-            id=DEFAULT_SPACE_ID,
+            id=uuid.UUID(DEFAULT_SPACE_ID),
             name="Default Space",
             owner_id="system",
             retrieval_profile="{}",
