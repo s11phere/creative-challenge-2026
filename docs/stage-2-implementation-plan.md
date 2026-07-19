@@ -1,6 +1,6 @@
 # 阶段 2 实施计划：知识摄入 MVP
 
-> 文档状态：Draft v3 — Step 2 已完成 (2026-07-19)
+> 文档状态：Draft v3 — Step 3 已完成 (2026-07-19)
 >
 > 适用范围：`docs/project-implementation-plan.md` 中的阶段 2
 >
@@ -301,7 +301,7 @@ cases/
 | 0. 决策与 ADR-005 | 已接受 ADR-001、002、004、009 | 已完成；阶段 0 数据门禁仍待外部关闭 |
 | 1. 数据模型基础 | 无 | 已完成；R2-01～03 已关闭 |
 | 2. Parser 与 ParsedDocument | ADR-005 中双哈希、定位和处理版本语义确定 | 已完成；Markdown/TXT/可复制文本 PDF 三种 parser 已实现，32 个单元测试通过 |
-| 3. 指纹与来源登记 | ADR-005 中 stable key、Blob 和并发幂等语义确定 | 待办 |
+| 3. 指纹与来源登记 | ADR-005 中 stable key、Blob 和并发幂等语义确定 | 已完成 |
 | 4. 结构感知分块 | Markdown Parser 契约通过 | 待办 |
 | 5. Embedding 与发布 | 分块契约、向量维度和发布语义确定 | 待办 |
 | 6. Worker 与状态机 | 单进程 Markdown 管道通过；任务字段迁移完成 | 待办 |

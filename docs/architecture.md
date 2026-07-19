@@ -182,6 +182,9 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/__init__.py` | 稳定公开导出 |
 | `src/domain/models.py` | 核心实体：`Space`、`Source`、`Document`、`DocumentVersion`、`Chunk`、`IngestionTask` 及其枚举、`RetrievalProfile` 值对象 |
 | `src/domain/repositories.py` | 仓库接口定义（Protocol）：`SpaceRepository`、`SourceRepository`、`DocumentRepository`、`DocumentVersionRepository`、`ChunkRepository`、`IngestionTaskRepository` |
+| `src/domain/parsing.py` | `ParsedDocument` / `StructNode` / `ParseError` 纯类型、`Parser` Protocol、`compute_blob_hash` 辅助函数 |
+| `src/domain/fingerprinting.py` | 内容指纹：`normalize_stable_key`、`compute_content_hash`（含版本分隔符）、`compute_storage_key` |
+| `src/domain/blob_store.py` | `BlobStore` Port（含 `store_and_verify`） |
 
 **约束**：
 - 零外部依赖（不依赖 FastAPI、SQLAlchemy、任何 SDK）
@@ -195,7 +198,11 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 
 **职责**：编排用例流程，协调 Domain Port 与 Infrastructure Adapter。
 
-- **`src/application/__init__.py`** — 包标记
+| 文件 | 职责 |
+|------|------|
+| `src/application/__init__.py` | 包标记 |
+| `src/application/ingestion/__init__.py` | 摄入用例包 |
+| `src/application/ingestion/source_registration.py` | 来源登记用例：`SourceRegistrationService`（创建 Source、FINGERPRINT 阶段、`(source_id, stable_key)` 查重、`blob_hash` 匹配）|
 
 **依赖**：`domain`
 
@@ -220,6 +227,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/infrastructure/telemetry_context.py` | trace/request/task 上下文绑定与 ID 校验 |
 | `src/infrastructure/orm.py` | 6 个 SQLAlchemy ORM 模型；含双哈希、处理版本、任务恢复字段、重试安全约束及 pgvector `Vector(768)`/cosine IVFFlat 索引 |
 | `src/infrastructure/repositories.py` | 仓库实现：6 个 repository 类的完整 CRUD，含 domain ↔ ORM 映射 |
+| `src/infrastructure/blob_store.py` | 本地文件 BlobStore 适配器：写入/读取/删除/存在检测、`store_and_verify`（SHA-256 校验）、路径遍历防护 |
 | `src/infrastructure/parsers/` | 文档解析器包：MarkdownParser（`markdown-it-py`）、TxtParser（编码回退）、PdfParser（`pypdf`，可复制文本/扫描件分类）、ParserFactory（扩展名+MIME校验+大小限制） |
 
 **`config.py` 详解**：
@@ -230,6 +238,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 - **`postgres_*`** — PostgreSQL 连接参数，提供 `database_url` 属性
 - **`redis_*`** — Redis 连接参数，提供 `redis_url` 属性
 - **`max_upload_size_mb`** — 上传文件大小上限（默认 50 MB）
+- **`blob_store_path`** — 本地 Blob 存储根目录（默认 `./data/blobs`）
 - **`otlp_endpoint`** / `otel_export_timeout_seconds` — 可选 Collector 与有界导出超时
 - **`validate_secrets()`** — 生产环境（`app_env=production`）下校验必须密钥不为空，启动失败
 
@@ -479,7 +488,12 @@ tests/
 │   ├── test_observability.py       # 上下文、日志 schema 和脱敏（4 个）
 │   ├── test_openapi.py             # OpenAPI schema 测试（1 个）
 │   ├── test_orm_models.py          # ORM 映射、向量索引与唯一约束（20 个）
+│   ├── test_fingerprinting.py      # stable_key/content_hash/storage_key（42 个）
+│   ├── test_blob_store.py          # BlobStore CRUD/verify/路径防护（21 个）
+│   ├── test_source_registration.py # 来源登记：Source 创建、FINGERPRINT 查重（11 个）
 │   ├── test_trace_middleware.py    # API 关联头与错误 trace（3 个）
+│   ├── test_parsing_domain.py      # ParsedDocument/StructNode/ParseError（20 个）
+│   ├── test_parsers.py            # Markdown/TXT/PDF 解析器（32 个）
 │   └── test_worker_tasks.py        # 诊断任务、重试、入队和 trace（9 个）
 ├── integration/
 │   ├── __init__.py
@@ -489,7 +503,7 @@ tests/
     └── test_model_gateway_contract.py  # fake/Adapter 共享契约（4 个）
 ```
 
-**默认后端共 104 个测试运行，21 个真实依赖集成测试需显式启用**，覆盖：
+**默认后端共 238 个测试运行，21 个真实依赖集成测试需显式启用**，覆盖：
 - 配置：空密钥在 production 下拒绝启动，development 下跳过
 - 错误：Pydantic model、404 统一格式、AppError 结构化响应、未知异常不泄露
 - 健康：live 返回 alive、ready 返回 degraded + 机器码 + 不泄露主机信息

@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-**阶段 2 进行中：解析器基础已完成。**
+**阶段 2 进行中：内容指纹与来源登记已完成。**
 
 已交付的核心能力：
 
@@ -14,6 +14,7 @@
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ Step 0/1 | ADR-005 + 6 张数据模型表 + ORM/仓库 + 身份、版本、任务约束迁移；R2-01～03 已关闭 |
 | 阶段 2 ✅ Step 2 | Markdown/TXT/PDF 解析器 + `ParsedDocument` schema + Parser Port + `ParserFactory` + 统一错误分类 |
+| 阶段 2 ✅ Step 3 | 内容指纹（`stable_key`、`blob_hash`、`content_hash`）+ `BlobStore` Port + `LocalFileBlobStore` + 来源登记用例 + 78 个相关测试 |
 | 阶段 2 ⏳ 进行中 | 分块器、嵌入、摄入 API/Worker、Web 数据源页面 |
 
 当前 Web 只展示真实系统健康状态，尚未实现文档摄入、搜索、会话、引用或问答功能。

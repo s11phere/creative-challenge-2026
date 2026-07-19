@@ -500,7 +500,8 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 
 - ~~实现 Space、Source、Document、Version、Chunk、Task 数据模型。~~ ✅ **已完成（2026-07-18，Step 0/1；R2-01~03 已关闭）**
 - ~~实现 Markdown/TXT/PDF parser 和统一 ParsedDocument schema。~~ ✅ **已完成（2026-07-19，Step 2）**
-- 实现结构感知分块、内容指纹、Embedding 和索引发布。
+- ~~实现内容指纹（stable_key/blob_hash/content_hash）、BlobStore 和来源登记。~~ ✅ **已完成（2026-07-19，Step 3）**
+- 实现结构感知分块、Embedding 和索引发布。
 - 实现异步状态、进度、重试、取消和失败原因展示。
 - 实现同文件重复导入、内容修改、删除与重建流程。
 - 编写 parser fixture、幂等测试和故障注入测试。

@@ -63,6 +63,9 @@ class Settings(BaseSettings):
 
     # --- Ingestion ---
     max_upload_size_mb: int = Field(default=50, ge=1, le=500)
+    blob_store_path: str = Field(
+        default="./data/blobs", description="Root directory for raw file storage"
+    )
 
     # --- Model Gateway ---
     model_provider: Literal["fake", "openai-compatible", "disabled"] = "fake"

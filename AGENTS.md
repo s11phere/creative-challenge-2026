@@ -30,6 +30,10 @@ ORM 模型、仓库实现、Alembic 迁移及测试已完成，R2-01 至 R2-03 �
 阶段 2 Step 2 已完成：Markdown/TXT/可复制文本 PDF 三种解析器 + `ParsedDocument` 纯类型
 schema + Parser Port + `ParserFactory` + 统一错误分类，单元测试 32 个覆盖正常路径和全部分类
 错误码。
+阶段 2 Step 3 已完成：`normalize_stable_key`/`compute_content_hash`/`compute_storage_key`
+内容指纹函数、`BlobStore` Port（含 `store_and_verify`）、`LocalFileBlobStore` 本地文件适配器
+（含路径遍历防护）、`SourceRegistrationService` 来源登记用例（创建 Source、按 `(source_id, stable_key)`
+查重、FINGERPRINT 阶段 `blob_hash` 匹配），共 78 个新增单元测试。
 项目仍受阶段 0 数据门禁约束，不能据此宣称摄入、检索、问答、引用、Agent 或 Skill 业务
 已经可用。
 
