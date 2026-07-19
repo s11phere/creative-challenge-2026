@@ -9,9 +9,12 @@ attacks via caller‑supplied file names are structurally impossible.
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 
 from infrastructure.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class LocalFileBlobStore:
@@ -55,6 +58,13 @@ class LocalFileBlobStore:
         """Return the bytes at *key*, or ``None`` if missing."""
         path = self._resolve(key)
         if not path.exists():
+            return None
+        if path.is_dir():
+            logger.warning(
+                "Blob key %r resolved to directory %s; treating as missing",
+                key,
+                path,
+            )
             return None
         return path.read_bytes()
 

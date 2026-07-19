@@ -474,23 +474,59 @@ class IngestionOrchestrator:
         task: IngestionTask,
         document: Document,
     ) -> DocumentVersion:
-        """Return the target version for *task*, creating one if needed."""
+        """Return the target version for *task*, creating one if needed.
+
+        Resolution order
+        -----------------
+        1. ``task.target_version_id`` (pinned by a previous pipeline run).
+        2. ``document.current_version_id`` (set by source registration).
+        3. ``get_latest`` — the most-recent version that is still in a
+           processable state (PENDING / PARSING / PARSED / EMBEDDED).
+
+        Unlike the old fallback that created a version with an empty
+        ``blob_hash`` (which caused ``compute_storage_key`` to return a
+        directory path → ``IsADirectoryError``), this method raises a
+        clear ``RuntimeError`` when no usable version can be found.
+        """
+        # 1) Task-pinned version
         if task.target_version_id is not None:
             version = await self._version_repo.get(task.target_version_id)
             if version is not None:
+                if not version.blob_hash:
+                    raise RuntimeError(
+                        f"Target version {version.id} for task {task.id} has an empty blob_hash"
+                    )
                 return version
 
+        # 2) Document-pinned version (set by register_file or a previous
+        #    pipeline run that completed PUBLISH).
+        if document.current_version_id is not None:
+            version = await self._version_repo.get(document.current_version_id)
+            if version is not None and version.blob_hash:
+                return version
+
+        # 3) Latest processable version
         latest = await self._version_repo.get_latest(document.id)
-        if latest is not None and latest.status in (
-            DocumentStatus.PENDING,
-            DocumentStatus.PARSING,
-            DocumentStatus.PARSED,
-            DocumentStatus.EMBEDDED,
+        if (
+            latest is not None
+            and latest.blob_hash
+            and latest.status
+            in (
+                DocumentStatus.PENDING,
+                DocumentStatus.PARSING,
+                DocumentStatus.PARSED,
+                DocumentStatus.EMBEDDED,
+            )
         ):
             return latest
 
-        version = DocumentVersion(document_id=document.id, blob_hash="", content_hash="")
-        return await self._version_repo.create(version)
+        raise RuntimeError(
+            f"No usable version found for document {document.id} "
+            f"(source {document.source_id}, "
+            f"current_version_id={document.current_version_id!r}). "
+            "The document may not have been registered with a blob_hash. "
+            "Upload the file again to trigger re-registration."
+        )
 
     @staticmethod
     def _stage_needed(task: IngestionTask, stage: TaskStage) -> bool:
