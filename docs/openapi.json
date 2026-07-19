@@ -1,7 +1,7 @@
 {
   "components": {
     "schemas": {
-      "Body_upload_file_api_v1_spaces___space_id__sources__source_id__upload_post": {
+      "Body_upload_file_api_v1_spaces__space_id__sources__source_id__upload_post": {
         "properties": {
           "file": {
             "contentMediaType": "application/octet-stream",
@@ -12,7 +12,7 @@
         "required": [
           "file"
         ],
-        "title": "Body_upload_file_api_v1_spaces___space_id__sources__source_id__upload_post",
+        "title": "Body_upload_file_api_v1_spaces__space_id__sources__source_id__upload_post",
         "type": "object"
       },
       "CreateSourceRequest": {
@@ -542,169 +542,6 @@
         "summary": "Ready"
       }
     },
-    "/api/v1/spaces/{_space_id}/sources/{source_id}/detail": {
-      "get": {
-        "description": "Get a source with its documents.",
-        "operationId": "get_source_detail_api_v1_spaces___space_id__sources__source_id__detail_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "_space_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": " Space Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "source_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Source Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SourceDetailResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Source Detail"
-      }
-    },
-    "/api/v1/spaces/{_space_id}/sources/{source_id}/ingest": {
-      "post": {
-        "description": "Trigger an ingestion task for the source's document.",
-        "operationId": "trigger_ingestion_api_v1_spaces___space_id__sources__source_id__ingest_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "_space_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": " Space Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "source_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Source Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/IngestResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Trigger Ingestion"
-      }
-    },
-    "/api/v1/spaces/{_space_id}/sources/{source_id}/upload": {
-      "post": {
-        "description": "Upload a file, register it under *source_id*, and return the result.",
-        "operationId": "upload_file_api_v1_spaces___space_id__sources__source_id__upload_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "_space_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": " Space Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "source_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Source Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_upload_file_api_v1_spaces___space_id__sources__source_id__upload_post"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UploadResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Upload File"
-      }
-    },
     "/api/v1/spaces/{space_id}/sources": {
       "get": {
         "description": "List all sources for a space.",
@@ -793,6 +630,169 @@
           }
         },
         "summary": "Create Source"
+      }
+    },
+    "/api/v1/spaces/{space_id}/sources/{source_id}/detail": {
+      "get": {
+        "description": "Get a source with its documents.",
+        "operationId": "get_source_detail_api_v1_spaces__space_id__sources__source_id__detail_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Space Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Source Detail"
+      }
+    },
+    "/api/v1/spaces/{space_id}/sources/{source_id}/ingest": {
+      "post": {
+        "description": "Trigger an ingestion task for the source's document.",
+        "operationId": "trigger_ingestion_api_v1_spaces__space_id__sources__source_id__ingest_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Space Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Ingestion"
+      }
+    },
+    "/api/v1/spaces/{space_id}/sources/{source_id}/upload": {
+      "post": {
+        "description": "Upload a file, register it under *source_id*, and return the result.",
+        "operationId": "upload_file_api_v1_spaces__space_id__sources__source_id__upload_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Space Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_file_api_v1_spaces__space_id__sources__source_id__upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload File"
       }
     },
     "/api/v1/tasks/{task_id}": {

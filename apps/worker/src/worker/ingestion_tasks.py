@@ -18,7 +18,7 @@ from application.ingestion.orchestrator import (
     IngestionOrchestrator,
 )
 from domain.blob_store import BlobStore
-from domain.models import IngestionTask, TaskStatus
+from domain.models import IngestionTask, TaskOperation, TaskStatus
 from domain.parsing import ParseMetadata, ParseResult
 from infrastructure.blob_store import LocalFileBlobStore
 from infrastructure.chunkers import StructureChunker
@@ -308,7 +308,12 @@ async def _run_ingestion_async(task_id: str, _canonical_trace_id: str) -> None:
                 await session.commit()
                 return
 
-            result = await orch.run_pipeline(task, config=cfg)
+            # Dispatch by operation — DELETE goes to cleanup, others run
+            # the full ingestion pipeline.
+            if task.operation == TaskOperation.DELETE:
+                result = await orch.run_cleanup(task)
+            else:
+                result = await orch.run_pipeline(task, config=cfg)
             await session.commit()
 
         logger.info(

@@ -234,6 +234,7 @@ class IngestionOrchestrator:
         parsed_doc = parse_result.document
         if self._stage_needed(task, TaskStage.PARSE):
             task = await self._update_task_stage(task, TaskStage.PARSE, 0.15)
+            await self._task_repo.checkpoint()
 
         # --- NORMALIZE ---
         await self._check_cancelled(task)
@@ -258,11 +259,13 @@ class IngestionOrchestrator:
                 )
             )
             task = await self._update_task_stage(task, TaskStage.NORMALIZE, 0.25)
+            await self._task_repo.checkpoint()
 
         # --- ENRICH (placeholder, no-op) ---
         await self._check_cancelled(task)
         if self._stage_needed(task, TaskStage.ENRICH):
             task = await self._update_task_stage(task, TaskStage.ENRICH, 0.35)
+            await self._task_repo.checkpoint()
 
         # --- CHUNK ---
         await self._check_cancelled(task)
@@ -274,7 +277,27 @@ class IngestionOrchestrator:
                 min_chunk_size=cfg.min_chunk_size,
             )
             chunking_result = await self._chunker.chunk(parsed_doc, config=chunker_config)
+            # Write chunker identity back to the version record so the
+            # version carries the actual processing config used.
+            version = await self._version_repo.update(
+                DocumentVersion(
+                    id=version.id,
+                    document_id=version.document_id,
+                    blob_hash=version.blob_hash,
+                    content_hash=version.content_hash,
+                    parser_version=version.parser_version,
+                    normalizer_version=version.normalizer_version,
+                    chunker_version=chunking_result.chunker_version,
+                    embedding_version=version.embedding_version,
+                    processing_config_hash=chunking_result.config_hash,
+                    processing_config=version.processing_config,
+                    status=version.status,
+                    file_path=version.file_path,
+                    created_at=version.created_at,
+                )
+            )
             task = await self._update_task_stage(task, TaskStage.CHUNK, 0.50)
+            await self._task_repo.checkpoint()
         else:
             # On retry past CHUNK, load existing chunks from the DB
             existing_chunks = await self._chunk_repo.get_by_version(version.id)
@@ -303,12 +326,16 @@ class IngestionOrchestrator:
 
             if self._stage_needed(task, TaskStage.EMBED):
                 task = await self._update_task_stage(task, TaskStage.EMBED, 0.65)
+                await self._task_repo.checkpoint()
             if self._stage_needed(task, TaskStage.INDEX):
                 task = await self._update_task_stage(task, TaskStage.INDEX, 0.75)
+                await self._task_repo.checkpoint()
             if self._stage_needed(task, TaskStage.VALIDATE):
                 task = await self._update_task_stage(task, TaskStage.VALIDATE, 0.85)
+                await self._task_repo.checkpoint()
             if self._stage_needed(task, TaskStage.PUBLISH):
                 task = await self._update_task_stage(task, TaskStage.PUBLISH, 1.0)
+                await self._task_repo.checkpoint()
         else:
             chunk_count = 0
 

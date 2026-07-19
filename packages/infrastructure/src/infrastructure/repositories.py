@@ -487,6 +487,11 @@ class IngestionTaskRepository:
         )
         return [_task_to_domain(row) for row in result.scalars()]
 
+    async def checkpoint(self) -> None:
+        """Commit the current transaction — persists stage progress and
+        releases row locks so external cancel requests can proceed."""
+        await self._session.commit()
+
     async def update(self, task: IngestionTask) -> IngestionTask:
         values: dict[str, Any] = {
             "operation": task.operation.value,

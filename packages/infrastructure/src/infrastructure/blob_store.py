@@ -85,13 +85,20 @@ class LocalFileBlobStore:
     def _resolve(self, key: str) -> Path:
         """Resolve a storage key to an absolute filesystem path.
 
-        Uses ``resolve()`` to detect and reject path‑traversal attempts:
-        a key that resolves outside the root directory raises
-        ``ValueError``.
+        Uses ``resolve()`` + ``relative_to()`` to detect and reject
+        path‑traversal attempts: a key that resolves outside the root
+        directory raises ``ValueError``.
+
+        The ``relative_to()`` check is used instead of a string prefix
+        because ``startswith`` can be bypassed when an adjacent directory
+        name shares a prefix with the root (e.g. ``/data/blobs-evil`` vs
+        ``/data/blobs``).
         """
         candidate = (self._root / key).resolve()
-        if not str(candidate).startswith(str(self._root)):
-            raise ValueError(f"Path traversal detected in key={key!r}")
+        try:
+            candidate.relative_to(self._root.resolve())
+        except ValueError:
+            raise ValueError(f"Path traversal detected in key={key!r}") from None
         return candidate
 
     @property

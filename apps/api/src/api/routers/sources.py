@@ -274,7 +274,7 @@ async def upload_file(
         task = await task_repo.create(task)
         await session.commit()
 
-    _enqueue_ingestion_task(task.id)
+    await _enqueue_ingestion_task(task.id, db)
 
     return UploadResponse(
         source_id=str(result.source.id),
@@ -328,7 +328,7 @@ async def trigger_ingestion(
         task = await task_repo.create(task)
         await session.commit()
 
-    _enqueue_ingestion_task(task.id)
+    await _enqueue_ingestion_task(task.id, db)
 
     return IngestResponse(task_id=str(task.id))
 
@@ -447,7 +447,7 @@ async def retry_task_endpoint(
         new_task = await task_repo.create(new_task)
         await session.commit()
 
-    _enqueue_ingestion_task(new_task.id)
+    await _enqueue_ingestion_task(new_task.id, db)
 
     return IngestResponse(task_id=str(new_task.id))
 
@@ -457,18 +457,42 @@ async def retry_task_endpoint(
 # ---------------------------------------------------------------------------
 
 
-def _enqueue_ingestion_task(task_id: UUID) -> None:
+async def _enqueue_ingestion_task(task_id: UUID, database: Database) -> None:
     """Send an ingestion task to the Dramatiq queue.
 
-    Failures are logged but not raised — the task is already persisted
-    in the database and can be replayed manually.
+    On enqueue failure the task is marked ``FAILED`` in the database so
+    it does not remain silently stuck in ``QUEUED``.  Users can retry
+    from the UI.
     """
     try:
         from worker.ingestion_tasks import enqueue_ingestion_task as _enq
 
         _enq(task_id=str(task_id), trace_id=normalize_request_id(None))
     except Exception:
-        logger.exception(
-            "Failed to enqueue ingestion task %s — persisted in DB",
-            task_id,
-        )
+        logger.exception("Failed to enqueue ingestion task %s", task_id)
+        async with database.session() as session:
+            repo = IngestionTaskRepository(session)
+            task = await repo.get(task_id)
+            if task is not None:
+                await repo.update(
+                    IngestionTask(
+                        id=task.id,
+                        source_id=task.source_id,
+                        operation=task.operation,
+                        status=TaskStatus.FAILED,
+                        stage=task.stage,
+                        target_version_id=task.target_version_id,
+                        idempotency_key=task.idempotency_key,
+                        progress=task.progress,
+                        retry_count=task.retry_count,
+                        max_retries=task.max_retries,
+                        cancel_requested_at=task.cancel_requested_at,
+                        enqueued_at=task.enqueued_at,
+                        heartbeat_at=task.heartbeat_at,
+                        lease_expires_at=task.lease_expires_at,
+                        error_code="ENQUEUE_FAILED",
+                        error="Failed to enqueue task to Redis: task stays in QUEUED",
+                        created_at=task.created_at,
+                    )
+                )
+                await session.commit()
