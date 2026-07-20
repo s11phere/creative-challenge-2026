@@ -16,12 +16,17 @@ source file for ingestion.  Responsibilities:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from domain.blob_store import BlobStore
-from domain.fingerprinting import compute_storage_key, normalize_stable_key
+from domain.fingerprinting import (
+    compute_storage_key,
+    normalize_stable_key,
+    normalize_stable_key_v1,
+)
 from domain.models import (
     Document,
     DocumentVersion,
@@ -187,6 +192,24 @@ class SourceRegistrationService:
         # --- Step 4: find existing document by stable key ---
         existing_doc = await self._document_repo.get_by_stable_key(source.id, stable_key)
 
+        # Upgrade an ASCII-only v1 key only when the raw bytes prove this is
+        # the same logical document. This preserves identity for existing
+        # Chinese-named uploads without adopting an unrelated legacy row.
+        if existing_doc is None:
+            legacy_key = self._resolve_stable_key(
+                file_stable_key,
+                file_path,
+                normalizer=normalize_stable_key_v1,
+            )
+            if legacy_key != stable_key:
+                legacy_doc = await self._document_repo.get_by_stable_key(source.id, legacy_key)
+                if legacy_doc is not None:
+                    legacy_version = await self._find_version_by_blob_hash(legacy_doc.id, blob_hash)
+                    if legacy_version is not None:
+                        existing_doc = await self._document_repo.update(
+                            replace(legacy_doc, stable_key=stable_key)
+                        )
+
         is_new_doc = False
         if existing_doc is None:
             document = Document(
@@ -211,10 +234,18 @@ class SourceRegistrationService:
             version = DocumentVersion(
                 document_id=document.id,
                 blob_hash=blob_hash,
+                file_path=file_path,
             )
             version = await self._version_repo.create(version)
             resolved_version_id = version.id
         else:
+            # Early upload flows did not persist the original file name. Fill
+            # that source metadata on a byte-identical re-upload without
+            # changing version identity or creating duplicate work.
+            if existing_version.file_path is None and file_path:
+                existing_version = await self._version_repo.update(
+                    replace(existing_version, file_path=file_path)
+                )
             resolved_version_id = existing_version.id
 
         return RegistrationResult(
@@ -235,15 +266,17 @@ class SourceRegistrationService:
     def _resolve_stable_key(
         file_stable_key: str | None,
         file_path: str | None,
+        *,
+        normalizer: Callable[[str], str] = normalize_stable_key,
     ) -> str:
         """Derive a stable key, preferring an explicit key over a path."""
         if file_stable_key:
-            return normalize_stable_key(file_stable_key)
+            return normalizer(file_stable_key)
         if file_path:
-            return normalize_stable_key(file_path)
+            return normalizer(file_path)
         # Last resort: a timestamp-based key.  This should not happen in
         # normal usage — callers should always provide at least one.
-        return normalize_stable_key(f"unnamed_{datetime.now(UTC).isoformat()}")
+        return normalizer(f"unnamed_{datetime.now(UTC).isoformat()}")
 
     async def _find_version_by_blob_hash(
         self,

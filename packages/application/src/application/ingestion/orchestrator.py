@@ -438,7 +438,14 @@ class IngestionOrchestrator:
         error_msg = str(exc)[:2000]
 
         new_retry = task.retry_count + 1
-        new_status = TaskStatus.FAILED if new_retry > task.max_retries else TaskStatus.RUNNING
+        cancellation_won = task.cancel_requested_at is not None
+        new_status = (
+            TaskStatus.CANCELLED
+            if cancellation_won
+            else TaskStatus.FAILED
+            if new_retry > task.max_retries
+            else TaskStatus.RUNNING
+        )
 
         updated = await self._task_repo.update(
             IngestionTask(
@@ -456,8 +463,8 @@ class IngestionOrchestrator:
                 enqueued_at=task.enqueued_at,
                 heartbeat_at=datetime.now(UTC),
                 lease_expires_at=task.lease_expires_at,
-                error_code=error_code,
-                error=error_msg,
+                error_code=None if cancellation_won else error_code,
+                error=None if cancellation_won else error_msg,
                 created_at=task.created_at,
             )
         )
@@ -467,7 +474,7 @@ class IngestionOrchestrator:
             updated.id,
             new_retry,
             task.max_retries,
-            error_msg,
+            "cancellation requested" if cancellation_won else error_msg,
         )
 
         return IngestionResult(

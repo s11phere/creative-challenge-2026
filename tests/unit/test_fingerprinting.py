@@ -12,6 +12,7 @@ from domain.fingerprinting import (
     compute_storage_key,
     normalize_stable_key,
     normalize_stable_key_from_parts,
+    normalize_stable_key_v1,
 )
 
 
@@ -39,6 +40,8 @@ class TestStableKey:
             ("my-file", "my-file"),
             ("my.file.md", "my.file.md"),
             ("my~file", "my~file"),
+            ("中文资料.TXT", "中文资料.txt"),
+            ("Ｆｕｌｌｗｉｄｔｈ.txt", "fullwidth.txt"),
             # empty / degenerate
             ("", ""),
             ("   ", ""),
@@ -60,6 +63,9 @@ class TestStableKey:
     def test_url_encoded_percent_replaced(self) -> None:
         result = normalize_stable_key("upload/file%20name")
         assert "%" not in result
+
+    def test_legacy_normalizer_remains_available_for_migration(self) -> None:
+        assert normalize_stable_key_v1("中文资料.TXT") == ".txt"
 
 
 class TestStableKeyFromParts:

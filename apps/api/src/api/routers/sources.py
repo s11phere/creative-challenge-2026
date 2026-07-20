@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from pathlib import PurePosixPath
 from uuid import UUID
 
 from application.ingestion.source_registration import SourceRegistrationService
@@ -79,6 +80,7 @@ class UploadResponse(BaseModel):
 class DocumentItem(BaseModel):
     id: str
     stable_key: str
+    display_name: str
     current_version_id: str | None = None
     status: str
     created_at: str
@@ -105,6 +107,69 @@ class TaskStatusResponse(BaseModel):
 
 class IngestResponse(BaseModel):
     task_id: str
+
+
+def _task_response(task: IngestionTask) -> TaskStatusResponse:
+    """Map a domain task to the stable public task schema."""
+    return TaskStatusResponse(
+        task_id=str(task.id),
+        source_id=str(task.source_id),
+        operation=task.operation.value,
+        status=task.status.value,
+        stage=task.stage.value,
+        progress=task.progress,
+        retry_count=task.retry_count,
+        max_retries=task.max_retries,
+        error_code=task.error_code,
+        error=task.error,
+        created_at=task.created_at.isoformat(),
+    )
+
+
+def _display_filename(filename: str | None) -> str:
+    """Return a safe, user-facing basename while preserving Unicode."""
+    if not filename:
+        return "未命名文档"
+    decoded = filename
+    # Some multipart clients send raw UTF-8 filename bytes in a header parsed
+    # as a mixture of Latin-1 and CP1252. Native Windows command invocation can
+    # apply that conversion multiple times. Continue only while each reversible
+    # repair shortens the string, with a hard cap for hostile input.
+    for _ in range(8):
+        raw = bytearray()
+        for character in decoded:
+            codepoint = ord(character)
+            if codepoint <= 0xFF:
+                raw.append(codepoint)
+                continue
+            try:
+                encoded = character.encode("cp1252")
+            except UnicodeEncodeError:
+                raw.clear()
+                break
+            if len(encoded) != 1:
+                raw.clear()
+                break
+            raw.extend(encoded)
+        if not raw:
+            break
+        try:
+            repaired = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            break
+        if len(repaired) >= len(decoded):
+            break
+        decoded = repaired
+    return PurePosixPath(decoded.replace("\\", "/")).name or "未命名文档"
+
+
+def _document_display_name(stable_key: str, file_path: str | None) -> str:
+    """Choose a useful title when older uploads stored a placeholder name."""
+    candidate = file_path
+    placeholders = {"未命名文档", "未命名文件"}
+    if candidate in {None, ""} or _display_filename(candidate) in placeholders:
+        candidate = stable_key
+    return _display_filename(candidate)
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +255,7 @@ async def get_source_detail(
     async with db.session() as session:
         source_repo = SourceRepository(session)
         doc_repo = DocumentRepository(session)
+        version_repo = DocumentVersionRepository(session)
 
         source = await source_repo.get(source_id)
         if source is None:
@@ -199,6 +265,25 @@ async def get_source_detail(
 
         docs = await doc_repo.get_by_source(source_id)
 
+        document_items: list[DocumentItem] = []
+        for document in docs:
+            latest_version = await version_repo.get_latest(document.id)
+            document_items.append(
+                DocumentItem(
+                    id=str(document.id),
+                    stable_key=document.stable_key,
+                    display_name=_document_display_name(
+                        document.stable_key,
+                        latest_version.file_path if latest_version else None,
+                    ),
+                    current_version_id=(
+                        str(document.current_version_id) if document.current_version_id else None
+                    ),
+                    status="deleted" if document.deleted_at else "active",
+                    created_at=document.created_at.isoformat(),
+                )
+            )
+
         return SourceDetailResponse(
             source=SourceItem(
                 id=str(source.id),
@@ -207,16 +292,7 @@ async def get_source_detail(
                 uri=source.uri,
                 created_at=source.created_at.isoformat(),
             ),
-            documents=[
-                DocumentItem(
-                    id=str(d.id),
-                    stable_key=d.stable_key,
-                    current_version_id=str(d.current_version_id) if d.current_version_id else None,
-                    status="deleted" if d.deleted_at else "active",
-                    created_at=d.created_at.isoformat(),
-                )
-                for d in docs
-            ],
+            documents=document_items,
         )
 
 
@@ -251,6 +327,7 @@ async def upload_file(
         if source.space_id != space_id:
             raise HTTPException(status_code=404, detail="Source not found")
 
+        original_filename = _display_filename(file.filename)
         registration = SourceRegistrationService(
             source_repo=source_repo,
             document_repo=DocumentRepository(session),
@@ -260,8 +337,8 @@ async def upload_file(
             source=source,
             raw_bytes=raw_bytes,
             blob_store=blob_store,
-            file_stable_key=file.filename,
-            file_path=file.filename,
+            file_stable_key=original_filename,
+            file_path=original_filename,
         )
 
         # A published version that is still current already represents these
@@ -331,11 +408,25 @@ async def trigger_ingestion(
 
         # Pin task to the latest version of the first document
         latest_version = await version_repo.get_latest(docs[0].id)
+        target_version_id = latest_version.id if latest_version else None
+
+        active_tasks = await task_repo.get_by_source(source_id)
+        existing = next(
+            (
+                candidate
+                for candidate in active_tasks
+                if _is_reusable_active_task(candidate)
+                and candidate.target_version_id == target_version_id
+            ),
+            None,
+        )
+        if existing is not None:
+            return IngestResponse(task_id=str(existing.id))
 
         task = IngestionTask(
             source_id=source_id,
             operation=TaskOperation.INGEST,
-            target_version_id=latest_version.id if latest_version else None,
+            target_version_id=target_version_id,
         )
         task = await task_repo.create(task)
         await session.commit()
@@ -356,19 +447,7 @@ async def get_task_status(task_id: UUID, request: Request) -> TaskStatusResponse
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        return TaskStatusResponse(
-            task_id=str(task.id),
-            source_id=str(task.source_id),
-            operation=task.operation.value,
-            status=task.status.value,
-            stage=task.stage.value,
-            progress=task.progress,
-            retry_count=task.retry_count,
-            max_retries=task.max_retries,
-            error_code=task.error_code,
-            error=task.error,
-            created_at=task.created_at.isoformat(),
-        )
+        return _task_response(task)
 
 
 TERMINAL_STATES = {
@@ -377,6 +456,20 @@ TERMINAL_STATES = {
     TaskStatus.CANCELLED,
     TaskStatus.DEAD_LETTER,
 }
+
+ACTIVE_STATES = {
+    TaskStatus.QUEUED,
+    TaskStatus.RUNNING,
+}
+
+
+def _is_reusable_active_task(task: IngestionTask) -> bool:
+    """Return whether an active task still has a worker attempt to reuse."""
+    if task.status not in ACTIVE_STATES:
+        return False
+    # A running task with a recorded error has already lost its worker attempt
+    # or is waiting on a broker retry; do not pin new UI actions to it.
+    return task.status != TaskStatus.RUNNING or task.error_code is None
 
 
 @router.post("/tasks/{task_id}/cancel", response_model=TaskStatusResponse)
@@ -393,18 +486,23 @@ async def cancel_task_endpoint(
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
 
+        # Cancellation is idempotent. The worker can finish between the UI's
+        # last poll and this request; returning the authoritative terminal
+        # state lets clients converge without surfacing a false conflict.
         if task.status in TERMINAL_STATES:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Task is already in terminal state {task.status.value}",
-            )
+            return _task_response(task)
+
+        # Persist cancellation as a terminal user-visible state immediately.
+        # The worker still observes cancel_requested_at and exits cooperatively;
+        # this also converges safely when the broker message was already lost.
+        cancel_status = TaskStatus.CANCELLED
 
         updated = await task_repo.update(
             IngestionTask(
                 id=task.id,
                 source_id=task.source_id,
                 operation=task.operation,
-                status=TaskStatus.CANCEL_REQUESTED,
+                status=cancel_status,
                 stage=task.stage,
                 target_version_id=task.target_version_id,
                 idempotency_key=task.idempotency_key,
@@ -422,19 +520,7 @@ async def cancel_task_endpoint(
         )
         await session.commit()
 
-        return TaskStatusResponse(
-            task_id=str(updated.id),
-            source_id=str(updated.source_id),
-            operation=updated.operation.value,
-            status=updated.status.value,
-            stage=updated.stage.value,
-            progress=updated.progress,
-            retry_count=updated.retry_count,
-            max_retries=updated.max_retries,
-            error_code=updated.error_code,
-            error=updated.error,
-            created_at=updated.created_at.isoformat(),
-        )
+        return _task_response(updated)
 
 
 @router.post("/tasks/{task_id}/retry", response_model=IngestResponse)
@@ -450,6 +536,25 @@ async def retry_task_endpoint(
         old = await task_repo.get(task_id)
         if old is None:
             raise HTTPException(status_code=404, detail="Task not found")
+
+        if old.status not in {TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.DEAD_LETTER}:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Task cannot be retried from state {old.status.value}",
+            )
+
+        active_tasks = await task_repo.get_by_source(old.source_id)
+        existing = next(
+            (
+                candidate
+                for candidate in active_tasks
+                if _is_reusable_active_task(candidate)
+                and candidate.target_version_id == old.target_version_id
+            ),
+            None,
+        )
+        if existing is not None:
+            return IngestResponse(task_id=str(existing.id))
 
         new_task = IngestionTask(
             source_id=old.source_id,

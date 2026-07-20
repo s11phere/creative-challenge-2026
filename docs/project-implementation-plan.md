@@ -498,17 +498,17 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 
 **任务**：
 
-- ~~实现 Space、Source、Document、Version、Chunk、Task 数据模型。~~ ✅ **已完成（2026-07-18，Step 0/1；R2-01~03 已关闭）**
-- ~~实现 Markdown/TXT/PDF parser 和统一 ParsedDocument schema。~~ ✅ **已完成（2026-07-19，Step 2）**
-- ~~实现内容指纹（stable_key/blob_hash/content_hash）、BlobStore 和来源登记。~~ ✅ **已完成（2026-07-19，Step 3）**
-- ~~实现结构感知分块、Embedding 和索引发布。~~ ✅ **已完成（2026-07-19，Step 4-5）**
-- ~~实现异步状态、进度、重试、取消和失败原因展示。~~ ✅ **已完成（2026-07-19，Step 6-8）**
-- ~~实现同文件重复导入、内容修改、删除与重建流程。~~ ✅ **已完成（2026-07-19，Step 7）**
-- ~~编写 parser fixture、幂等测试和故障注入测试。~~ ✅ **已完成（2026-07-19，Step 2-6）**
+- 实现 Space、Source、Document、Version、Chunk、Task 数据模型。
+- 实现 Markdown/TXT/PDF parser 和统一 ParsedDocument schema。
+- 实现内容指纹（stable_key/blob_hash/content_hash）、BlobStore 和来源登记。
+- 实现结构感知分块、Embedding 和索引发布。
+- 实现异步状态、进度、重试、取消和失败原因展示。
+- 实现同文件重复导入、内容修改、删除与重建流程。
+- 编写 parser fixture、幂等测试和故障注入测试。
 
-**交付物**：数据源页面、摄入 API/Worker、可检索索引、解析质量报告。✅ **已完成**
+**交付物**：数据源页面、摄入 API/Worker、可检索索引、解析质量报告。
 
-**退出条件**：样例语料导入成功率达到约定阈值（建议 >= 95%）；重复导入不新增重复块；失败任务可定位和重试。✅ **Compose smoke test 验证通过**
+**退出条件**：样例语料导入成功率达到约定阈值（建议 >= 95%）；重复导入不新增重复块；失败任务可定位和重试。
 
 **已完成的子步骤**：
 

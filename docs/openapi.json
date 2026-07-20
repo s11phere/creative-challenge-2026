@@ -99,6 +99,10 @@
             ],
             "title": "Current Version Id"
           },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -115,6 +119,7 @@
         "required": [
           "id",
           "stable_key",
+          "display_name",
           "status",
           "created_at"
         ],

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import Pool
 
 tracer = trace.get_tracer("infrastructure.database")
 
@@ -23,8 +24,11 @@ tracer = trace.get_tracer("infrastructure.database")
 class Database:
     """Own an async engine without connecting during construction."""
 
-    def __init__(self, url: str | URL) -> None:
-        self.engine: AsyncEngine = create_async_engine(url, pool_pre_ping=True)
+    def __init__(self, url: str | URL, *, poolclass: type[Pool] | None = None) -> None:
+        engine_options: dict[str, object] = {"pool_pre_ping": True}
+        if poolclass is not None:
+            engine_options["poolclass"] = poolclass
+        self.engine: AsyncEngine = create_async_engine(url, **engine_options)
         self._instrumented = False
         self.session_factory = async_sessionmaker(
             bind=self.engine,

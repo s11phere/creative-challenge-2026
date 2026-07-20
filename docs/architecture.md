@@ -391,22 +391,24 @@ Runtime API、Web 入口或 `knowledge_qa` 等业务 Skill；活动版本和生�
 | `tsconfig*.json` | TypeScript 编译配置 |
 | `index.html` | 入口 HTML |
 | `src/main.tsx` | React 挂载入口 |
-| `src/App.tsx` | 系统状态工作台与 TanStack Query 状态编排 |
+| `src/App.tsx` | 系统状态/数据来源双视图导航与 TanStack Query 状态编排 |
+| `src/SourcesPanel.tsx` | 来源、文档上传、摄入任务状态与操作界面 |
+| `src/sources.ts` | 来源和摄入任务 API 客户端及错误映射 |
 | `src/health.ts` | 健康接口类型、响应校验、超时和错误分类 |
 | `src/App.css` | 根样式 |
 | `src/index.css` | 全局样式与设计变量 |
 | `src/test/setup.ts` | 测试初始化（@testing-library/jest-dom matchers） |
 
-**当前状态**：阶段 1 系统状态工作台已实现。页面只读取版本化的 live/ready 接口，展示
-API、PostgreSQL、Redis 和模型网关的真实状态及 Trace/Request ID；包含 8 秒请求超时、
-30 秒自动刷新、手动重试、响应结构校验、键盘焦点和移动端布局。当前不展示任何虚构的
-文档、会话、证据或摄入状态。
+**当前状态**：Web 将“系统状态”和“数据来源”作为两个独立导航视图。系统状态读取
+版本化的 live/ready 接口，展示 API、PostgreSQL、Redis 和模型网关的真实状态及
+Trace/Request ID；数据来源读取真实 Source、Document 和 IngestionTask 数据，支持上传、
+触发、取消、重试与轮询。两个视图均包含错误/空白/加载状态、键盘焦点和移动端布局，
+不展示虚构的文档、会话或证据。
 
 **后续将包含**：
 - 空间/会话导航
 - 对话与任务工作区
 - 证据与原文查看器
-- 长任务进度展示
 - 错误/空白/加载状态
 
 **规范命令**：

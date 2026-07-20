@@ -1,17 +1,19 @@
 /** Data sources panel — list sources, upload files, and track ingestion tasks. */
 
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CloudUpload,
+  FileUp,
   FileText,
   LoaderCircle,
+  RotateCcw,
   RefreshCw,
   XCircle,
   CheckCircle2,
   CircleAlert,
   type LucideIcon,
 } from 'lucide-react'
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   cancelTask,
   fetchSourceDetail,
@@ -29,13 +31,13 @@ const statusMeta: Record<
   string,
   { label: string; color: string; Icon: LucideIcon }
 > = {
-  succeeded: { label: '成功', color: 'var(--color-success)', Icon: CheckCircle2 },
-  failed: { label: '失败', color: 'var(--color-danger)', Icon: CircleAlert },
-  cancelled: { label: '已取消', color: 'var(--color-muted)', Icon: XCircle },
-  cancel_requested: { label: '取消中', color: 'var(--color-warning)', Icon: LoaderCircle },
-  running: { label: '运行中', color: 'var(--color-accent)', Icon: LoaderCircle },
-  queued: { label: '排队中', color: 'var(--color-muted)', Icon: LoaderCircle },
-  dead_letter: { label: '死信', color: 'var(--color-danger)', Icon: CircleAlert },
+  succeeded: { label: '成功', color: 'var(--success)', Icon: CheckCircle2 },
+  failed: { label: '失败', color: 'var(--danger)', Icon: CircleAlert },
+  cancelled: { label: '已取消', color: 'var(--muted)', Icon: XCircle },
+  cancel_requested: { label: '取消中', color: 'var(--warning)', Icon: LoaderCircle },
+  running: { label: '运行中', color: 'var(--accent)', Icon: LoaderCircle },
+  queued: { label: '排队中', color: 'var(--muted)', Icon: LoaderCircle },
+  dead_letter: { label: '死信', color: 'var(--danger)', Icon: CircleAlert },
 }
 
 function stageLabel(stage: string): string {
@@ -59,7 +61,8 @@ function progressPercent(progress: number): string {
   return `${Math.round(progress * 100)}%`
 }
 
-function TaskRow({ taskId }: { taskId: string }) {
+function TaskRow({ taskId, onTaskChange }: { taskId: string; onTaskChange: (taskId: string) => void }) {
+  const queryClient = useQueryClient()
   const { data: task, isLoading, refetch } = useQuery<TaskInfo>({
     queryKey: ['task', taskId],
     queryFn: ({ signal }) => fetchTaskStatus(taskId, signal),
@@ -72,8 +75,26 @@ function TaskRow({ taskId }: { taskId: string }) {
     },
   })
 
-  const cancelMut = useMutation({ mutationFn: () => cancelTask(taskId) })
-  const retryMut = useMutation({ mutationFn: () => retryTask(taskId) })
+  const cancelMut = useMutation({
+    mutationFn: () => cancelTask(taskId),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['task', taskId], updated)
+    },
+  })
+  const retryMut = useMutation({
+    mutationFn: () => retryTask(taskId),
+    onSuccess: (result) => {
+      queryClient.removeQueries({ queryKey: ['task', taskId] })
+      onTaskChange(result.task_id)
+    },
+  })
+
+  useEffect(() => {
+    cancelMut.reset()
+    retryMut.reset()
+    // Mutation state belongs to a task ID and must not leak into the next task.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId])
 
   if (isLoading) {
     return (
@@ -88,16 +109,18 @@ function TaskRow({ taskId }: { taskId: string }) {
 
   const meta = statusMeta[task.status] ?? {
     label: task.status,
-    color: 'var(--color-muted)',
+    color: 'var(--muted)',
     Icon: LoaderCircle,
   }
 
   const isTerminal = ['succeeded', 'failed', 'cancelled', 'dead_letter'].includes(task.status)
+  const retriesUsed = Math.min(task.retry_count, task.max_retries)
+  const operationError = cancelMut.error ?? retryMut.error
 
   return (
     <div className="task-row" data-status={task.status}>
       <div className="task-status-icon" style={{ color: meta.color }}>
-        <meta.Icon size={16} className={task.status === 'running' || task.status === 'queued' ? 'spin' : ''} />
+        <meta.Icon size={16} className={task.status === 'running' || task.status === 'queued' || task.status === 'cancel_requested' ? 'spin' : ''} />
       </div>
       <div className="task-info">
         <div className="task-stage">
@@ -105,49 +128,74 @@ function TaskRow({ taskId }: { taskId: string }) {
           <span className="task-progress">{progressPercent(task.progress)}</span>
         </div>
         <div className="task-meta">
-          {task.operation} · 重试 {task.retry_count}/{task.max_retries}
+          <span>{task.operation === 'ingest' ? '摄入' : task.operation}</span>
+          {task.retry_count > 0 && (
+            <span>自动重试 {retriesUsed}/{task.max_retries}</span>
+          )}
         </div>
-        {task.error && <div className="task-error" title={task.error}>{task.error.slice(0, 120)}</div>}
+        {task.error && <div className="task-error">{task.error}</div>}
+        {operationError && (
+          <div className="task-error" role="alert">
+            操作失败：{operationError instanceof SourcesApiError ? operationError.message : String(operationError)}
+          </div>
+        )}
       </div>
       <div className="task-status-label">{meta.label}</div>
       <div className="task-actions">
         {!isTerminal && (
           <button
             type="button"
-            className="icon-button"
-            onClick={() => cancelMut.mutate()}
+            className="task-action-button"
+            onClick={() => {
+              retryMut.reset()
+              cancelMut.mutate()
+            }}
             disabled={cancelMut.isPending}
-            title="取消任务"
             aria-label="取消任务"
           >
             <XCircle size={16} />
+            <span>{task.status === 'cancel_requested' ? '取消中…' : '取消'}</span>
           </button>
         )}
         {(task.status === 'failed' || task.status === 'dead_letter') && (
           <button
             type="button"
-            className="icon-button"
-            onClick={() => retryMut.mutate()}
+            className="task-action-button"
+            onClick={() => {
+              cancelMut.reset()
+              retryMut.mutate()
+            }}
             disabled={retryMut.isPending}
-            title="重试"
             aria-label="重试"
           >
-            <RefreshCw size={16} />
+            <RotateCcw size={16} />
+            <span>{retryMut.isPending ? '提交中…' : '重试'}</span>
           </button>
         )}
       </div>
-      <button type="button" className="icon-button" onClick={() => refetch()} title="刷新">
-        <RefreshCw size={14} />
+      <button
+        type="button"
+        className="task-action-button task-refresh-button"
+        onClick={() => {
+          cancelMut.reset()
+          retryMut.reset()
+          void refetch()
+        }}
+        aria-label="刷新任务"
+      >
+        <RefreshCw size={16} />
+        <span>刷新</span>
       </button>
     </div>
   )
 }
 
 function SourceCard({ source }: { source: SourceInfo }) {
+  const queryClient = useQueryClient()
   const [isExpanded, setIsExpanded] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [uploadTaskId, setUploadTaskId] = useState<string | null>(null)
-  const [ingestTaskId, setIngestTaskId] = useState<string | null>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
 
   const detailQuery = useQuery({
     queryKey: ['source', source.id],
@@ -158,22 +206,25 @@ function SourceCard({ source }: { source: SourceInfo }) {
   const uploadMut = useMutation({
     mutationFn: (file: File) => uploadFile(source.id, file),
     onSuccess: (data) => {
-      if (data.task_id) setUploadTaskId(data.task_id)
+      queryClient.invalidateQueries({ queryKey: ['source', source.id] })
+      if (data.task_id) setActiveTaskId(data.task_id)
+      setSelectedFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
     },
   })
 
   const ingestMut = useMutation({
     mutationFn: () => triggerIngestion(source.id),
-    onSuccess: (data) => setIngestTaskId(data.task_id),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['source', source.id] })
+      setActiveTaskId(data.task_id)
+    },
   })
 
   const handleUpload = (e: FormEvent) => {
     e.preventDefault()
-    const files = fileInputRef.current?.files
-    if (files?.length) uploadMut.mutate(files[0])
+    if (selectedFile) uploadMut.mutate(selectedFile)
   }
-
-  const activeTaskId = uploadTaskId ?? ingestTaskId
 
   return (
     <div className={`source-card ${isExpanded ? 'expanded' : ''}`}>
@@ -181,17 +232,21 @@ function SourceCard({ source }: { source: SourceInfo }) {
         <FileText size={18} />
         <div className="source-info">
           <strong>{source.uri || '未命名来源'}</strong>
-          <span>{source.source_type} · {source.id.slice(0, 8)}…</span>
+          <span>{source.source_type} · {source.id}</span>
         </div>
         <button
           type="button"
-          className="icon-button"
-          onClick={(e) => { e.stopPropagation(); ingestMut.mutate() }}
+          className="source-action-button"
+          onClick={(e) => {
+            e.stopPropagation()
+            setIsExpanded(true)
+            ingestMut.mutate()
+          }}
           disabled={ingestMut.isPending}
-          title="触发摄入"
           aria-label="触发摄入"
         >
           <CloudUpload size={16} />
+          <span>{ingestMut.isPending ? '提交中…' : '触发摄入'}</span>
         </button>
       </div>
 
@@ -199,15 +254,37 @@ function SourceCard({ source }: { source: SourceInfo }) {
         <div className="source-body">
           {/* Upload form */}
           <form className="upload-form" onSubmit={handleUpload}>
-            <input type="file" ref={fileInputRef} className="file-input" />
-            <button type="submit" className="action-button" disabled={uploadMut.isPending}>
+            <input
+              type="file"
+              ref={fileInputRef}
+              className="file-input"
+              accept=".md,.markdown,.txt,.pdf,text/markdown,text/plain,application/pdf"
+              onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+            />
+            <button
+              type="button"
+              className="file-picker-button"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <FileUp size={16} />
+              选择文件
+            </button>
+            <span className={`selected-file-name ${selectedFile ? '' : 'empty'}`} title={selectedFile?.name}>
+              {selectedFile?.name ?? '未选择文件'}
+            </span>
+            <button
+              type="submit"
+              className="upload-action-button"
+              disabled={uploadMut.isPending || !selectedFile}
+            >
+              <CloudUpload size={16} />
               {uploadMut.isPending ? '上传中…' : '上传并摄入'}
             </button>
           </form>
 
           {uploadMut.data && (
             <div className="upload-result">
-              文件已登记，哈希 {uploadMut.data.blob_hash.slice(0, 12)}…
+              文件已登记，哈希 {uploadMut.data.blob_hash}
               {uploadMut.data.is_unchanged && '（内容未变化）'}
             </div>
           )}
@@ -218,9 +295,16 @@ function SourceCard({ source }: { source: SourceInfo }) {
                 : String(uploadMut.error ?? '未知错误')}
             </div>
           )}
+          {ingestMut.isError && (
+            <div className="upload-error">
+              触发摄入失败：{ingestMut.error instanceof SourcesApiError
+                ? `${ingestMut.error.code}: ${ingestMut.error.message}`
+                : String(ingestMut.error ?? '未知错误')}
+            </div>
+          )}
 
           {/* Task status */}
-          {activeTaskId && <TaskRow taskId={activeTaskId} />}
+          {activeTaskId && <TaskRow taskId={activeTaskId} onTaskChange={setActiveTaskId} />}
 
           {/* Documents */}
           {detailQuery.data && (
@@ -228,8 +312,12 @@ function SourceCard({ source }: { source: SourceInfo }) {
               <h4>文档（{detailQuery.data.documents.length}）</h4>
               {detailQuery.data.documents.map((doc) => (
                 <div className="doc-item" key={doc.id}>
-                  <span className="doc-key">{doc.stable_key}</span>
-                  <span className={`doc-status ${doc.status}`}>{doc.status}</span>
+                  <span className="doc-key" title={`稳定键：${doc.stable_key}`}>
+                    {doc.display_name}
+                  </span>
+                  <span className={`doc-status ${doc.status}`}>
+                    {doc.status === 'active' ? '可用' : '已删除'}
+                  </span>
                 </div>
               ))}
             </div>
@@ -254,13 +342,14 @@ export function SourcesPanel() {
     <section className="status-panel" aria-labelledby="sources-title">
       <div className="panel-heading">
         <div>
-          <h2 id="sources-title">数据来源</h2>
-          <p>文档与摄入任务</p>
+          <h2 id="sources-title">来源与文档</h2>
+          <p>上传文件并管理摄入任务</p>
         </div>
         <div className="panel-actions">
           <span className="service-count">{sources.length}</span>
-          <button type="button" className="icon-button" onClick={() => refetch()} disabled={isLoading} aria-label="刷新来源列表">
+          <button type="button" className="panel-action-button" onClick={() => refetch()} disabled={isLoading} aria-label="刷新来源列表">
             <RefreshCw size={17} className={isLoading ? 'spin' : ''} />
+            <span>刷新</span>
           </button>
         </div>
       </div>

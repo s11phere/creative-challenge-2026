@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from uuid import UUID
 
 # ---------------------------------------------------------------------------
 # Version constants
 # ---------------------------------------------------------------------------
 
-STABLE_KEY_NORMALIZER_VERSION = "1.0"
+STABLE_KEY_NORMALIZER_VERSION = "2.0"
 """Version of the stable_key normalisation algorithm.
 
 Bump this when the normalisation rules change so that the same URI produces
@@ -32,9 +33,10 @@ ones.
 # Stable-key normalisation
 # ---------------------------------------------------------------------------
 
-# Characters that are valid in a stable key (alphanumeric plus a few safe
-# punctuation characters).  Everything else is replaced with underscores.
-_SAFE_KEY_PATTERN = re.compile(r"[^a-zA-Z0-9._~/-]")
+# Unicode letters, marks and digits are valid alongside URI-safe punctuation.
+# This prevents non-ASCII names from collapsing to only their extension.
+_SAFE_KEY_PATTERN = re.compile(r"[^\w._~/-]", flags=re.UNICODE)
+_V1_SAFE_KEY_PATTERN = re.compile(r"[^a-zA-Z0-9._~/-]")
 
 
 def normalize_stable_key(uri: str) -> str:
@@ -42,17 +44,18 @@ def normalize_stable_key(uri: str) -> str:
 
     Rules
     -----
-    - Lowercases the entire URI.
+    - Applies Unicode NFKC normalization and case-folding.
     - Collapses consecutive slashes (``//`` → ``/``).
     - Strips leading and trailing whitespace *and* slashes.
-    - Replaces every character outside ``[a-zA-Z0-9._~-]`` with ``_``.
+    - Preserves Unicode word characters and replaces other unsafe characters
+      with ``_``.
     - Collapses consecutive underscores.
     - Strips leading and trailing underscores.
 
     The result is deterministic and survives cosmetic URI differences
     (trailing slashes, mixed case, doubled slashes, URL‑encoded characters).
     """
-    key = uri.strip().lower()
+    key = unicodedata.normalize("NFKC", uri).strip().casefold()
     # Collapse multiple slashes
     key = re.sub(r"/{2,}", "/", key)
     # Strip leading/trailing slashes
@@ -64,6 +67,16 @@ def normalize_stable_key(uri: str) -> str:
     # Strip leading/trailing underscores
     key = key.strip("_")
     return key
+
+
+def normalize_stable_key_v1(uri: str) -> str:
+    """Apply the legacy ASCII-only rules for identity migration checks."""
+    key = uri.strip().lower()
+    key = re.sub(r"/{2,}", "/", key)
+    key = key.strip("/")
+    key = _V1_SAFE_KEY_PATTERN.sub("_", key)
+    key = re.sub(r"_+", "_", key)
+    return key.strip("_")
 
 
 def normalize_stable_key_from_parts(

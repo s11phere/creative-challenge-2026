@@ -15,6 +15,7 @@ import {
   WifiOff,
   type LucideIcon,
 } from 'lucide-react'
+import { useState } from 'react'
 import {
   fetchHealthSnapshot,
   healthApiLabel,
@@ -26,6 +27,7 @@ import { SourcesPanel } from './SourcesPanel'
 import './App.css'
 
 type ServiceState = 'available' | 'unavailable' | 'checking'
+type WorkspaceView = 'status' | 'sources'
 
 type ServiceRow = {
   key: string
@@ -122,10 +124,14 @@ function formatCheckTime(timestamp: number | undefined): string {
 }
 
 function App() {
+  const [activeView, setActiveView] = useState<WorkspaceView>(() =>
+    window.location.hash === '#sources' ? 'sources' : 'status',
+  )
   const healthQuery = useQuery<HealthSnapshot, HealthApiError>({
     queryKey: ['system-health'],
     queryFn: ({ signal }) => fetchHealthSnapshot(signal),
     retry: false,
+    enabled: activeView === 'status',
     staleTime: 10_000,
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
@@ -136,6 +142,11 @@ function App() {
   const isInitialLoading = healthQuery.isPending
   const hasError = healthQuery.isError
   const localReady = healthQuery.data?.ready.status === 'ready'
+
+  const showView = (view: WorkspaceView) => {
+    setActiveView(view)
+    window.history.replaceState(null, '', view === 'sources' ? '#sources' : '#system-status')
+  }
 
   return (
     <div className="app-shell">
@@ -151,9 +162,27 @@ function App() {
         </div>
 
         <nav className="sidebar-nav">
-          <a href="#system-status" aria-current="page">
+          <a
+            href="#system-status"
+            aria-current={activeView === 'status' ? 'page' : undefined}
+            onClick={(event) => {
+              event.preventDefault()
+              showView('status')
+            }}
+          >
             <Activity size={18} />
             系统状态
+          </a>
+          <a
+            href="#sources"
+            aria-current={activeView === 'sources' ? 'page' : undefined}
+            onClick={(event) => {
+              event.preventDefault()
+              showView('sources')
+            }}
+          >
+            <Database size={18} />
+            数据来源
           </a>
         </nav>
 
@@ -166,13 +195,13 @@ function App() {
         </div>
       </aside>
 
-      <main className="workspace" id="system-status">
+      <main className="workspace" id={activeView === 'status' ? 'system-status' : 'sources'}>
         <header className="workspace-header">
           <div>
-            <p className="eyebrow">运行概览</p>
-            <h1>系统状态</h1>
+            <p className="eyebrow">{activeView === 'status' ? '运行概览' : '知识库内容'}</p>
+            <h1>{activeView === 'status' ? '系统状态' : '数据来源'}</h1>
           </div>
-          <button
+          {activeView === 'status' && <button
             className="icon-button"
             type="button"
             onClick={() => void healthQuery.refetch()}
@@ -181,9 +210,11 @@ function App() {
             title="重新检查"
           >
             <RefreshCw className={healthQuery.isFetching ? 'spin' : ''} size={19} />
-          </button>
+          </button>}
         </header>
 
+        {activeView === 'status' ? (
+          <>
         <section className={`summary-band ${hasError ? 'summary-error' : ''}`} aria-live="polite">
           <div className="summary-copy">
             <span className="summary-icon" aria-hidden="true">
@@ -300,8 +331,10 @@ function App() {
             </div>
           </dl>
         </section>
-
-        <SourcesPanel />
+          </>
+        ) : (
+          <SourcesPanel />
+        )}
       </main>
     </div>
   )

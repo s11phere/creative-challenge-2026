@@ -418,6 +418,7 @@ class DocumentVersionRepository:
             "embedding_version": version.embedding_version,
             "processing_config_hash": version.processing_config_hash,
             "processing_config": dict(version.processing_config),
+            "file_path": version.file_path,
         }
         await self._session.execute(
             update(DocumentVersionModel)
@@ -493,16 +494,25 @@ class IngestionTaskRepository:
         await self._session.commit()
 
     async def update(self, task: IngestionTask) -> IngestionTask:
+        # Serialize task writers so a cancellation request cannot be overwritten
+        # by a stale worker checkpoint or error update.
+        current = await self._session.get(IngestionTaskModel, task.id, with_for_update=True)
+        assert current is not None
+        cancellation_in_flight = (
+            current.cancel_requested_at is not None and task.status != TaskStatus.CANCELLED
+        )
         values: dict[str, Any] = {
             "operation": task.operation.value,
-            "status": task.status.value,
+            "status": current.status if cancellation_in_flight else task.status.value,
             "stage": task.stage.value,
             "target_version_id": task.target_version_id,
             "idempotency_key": task.idempotency_key,
             "progress": task.progress,
             "retry_count": task.retry_count,
             "max_retries": task.max_retries,
-            "cancel_requested_at": task.cancel_requested_at,
+            "cancel_requested_at": (
+                current.cancel_requested_at if cancellation_in_flight else task.cancel_requested_at
+            ),
             "enqueued_at": task.enqueued_at,
             "heartbeat_at": task.heartbeat_at,
             "lease_expires_at": task.lease_expires_at,

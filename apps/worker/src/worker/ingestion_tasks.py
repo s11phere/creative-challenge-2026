@@ -49,6 +49,7 @@ from model_gateway import (
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.pool import NullPool
 
 from worker.broker import broker
 
@@ -78,7 +79,9 @@ def _create_gateway() -> ModelGateway:
 # ---------------------------------------------------------------------------
 
 tracer = trace.get_tracer("worker.ingestion")
-database = Database(settings.database_url)
+# Dramatiq invokes actors from multiple threads, each with its own asyncio
+# event loop. A pooled asyncpg connection cannot safely cross those loops.
+database = Database(settings.database_url, poolclass=NullPool)
 gateway = _create_gateway()
 blob_store: BlobStore = LocalFileBlobStore()
 
@@ -203,7 +206,11 @@ async def _record_dead_letter(task_id: str) -> None:
                 id=task.id,
                 source_id=task.source_id,
                 operation=task.operation,
-                status=TaskStatus.DEAD_LETTER,
+                status=(
+                    TaskStatus.CANCELLED
+                    if task.cancel_requested_at is not None
+                    else TaskStatus.DEAD_LETTER
+                ),
                 stage=task.stage,
                 target_version_id=task.target_version_id,
                 idempotency_key=task.idempotency_key,
@@ -214,8 +221,12 @@ async def _record_dead_letter(task_id: str) -> None:
                 enqueued_at=task.enqueued_at,
                 heartbeat_at=task.heartbeat_at,
                 lease_expires_at=task.lease_expires_at,
-                error_code="RETRY_EXHAUSTED",
-                error="Task exceeded maximum retry count",
+                error_code=(None if task.cancel_requested_at is not None else "RETRY_EXHAUSTED"),
+                error=(
+                    None
+                    if task.cancel_requested_at is not None
+                    else "Task exceeded maximum retry count"
+                ),
                 created_at=task.created_at,
             )
         )
@@ -377,7 +388,14 @@ async def _record_error(task_id: UUID, exc: Exception) -> None:
             return
 
         new_retry = task.retry_count + 1
-        new_status = TaskStatus.FAILED if new_retry > task.max_retries else TaskStatus.RUNNING
+        cancellation_won = task.cancel_requested_at is not None
+        new_status = (
+            TaskStatus.CANCELLED
+            if cancellation_won
+            else TaskStatus.FAILED
+            if new_retry > task.max_retries
+            else TaskStatus.RUNNING
+        )
 
         logger.error(
             "Ingestion task %s error (retry %d/%d): code=%s msg=%s",
@@ -404,8 +422,8 @@ async def _record_error(task_id: UUID, exc: Exception) -> None:
                 enqueued_at=task.enqueued_at,
                 heartbeat_at=task.heartbeat_at,
                 lease_expires_at=task.lease_expires_at,
-                error_code=error_code,
-                error=error_msg,
+                error_code=None if cancellation_won else error_code,
+                error=None if cancellation_won else error_msg,
                 created_at=task.created_at,
             )
         )

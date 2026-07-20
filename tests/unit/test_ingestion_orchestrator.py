@@ -561,6 +561,40 @@ class TestHandlePipelineError:
         assert updated.status == TaskStatus.FAILED
         assert updated.error_code == "RUNTIME_ERROR"
 
+    async def test_cancellation_wins_over_pipeline_error(self) -> None:
+        orch, fakes = _make_orchestrator()
+        source = Source(space_id=uuid4(), source_type=SourceType.UPLOAD)
+        source = fakes["source_repo"]._sources.setdefault(source.id, source)
+        task = _make_task(source.id, stage=TaskStage.PARSE)
+        task = IngestionTask(
+            id=task.id,
+            source_id=task.source_id,
+            operation=task.operation,
+            status=TaskStatus.CANCEL_REQUESTED,
+            stage=task.stage,
+            target_version_id=task.target_version_id,
+            idempotency_key=task.idempotency_key,
+            progress=task.progress,
+            retry_count=task.retry_count,
+            max_retries=task.max_retries,
+            cancel_requested_at=datetime.now(UTC),
+            enqueued_at=task.enqueued_at,
+            heartbeat_at=task.heartbeat_at,
+            lease_expires_at=task.lease_expires_at,
+            error_code=None,
+            error=None,
+            created_at=task.created_at,
+        )
+
+        result = await orch.handle_pipeline_error(task, RuntimeError("late failure"))
+
+        assert result.status == TaskStatus.CANCELLED
+        updated = await fakes["task_repo"].get(task.id)
+        assert updated is not None
+        assert updated.status == TaskStatus.CANCELLED
+        assert updated.error_code is None
+        assert updated.error is None
+
 
 class TestHandleCancellation:
     """Tests for the handle_cancellation method."""

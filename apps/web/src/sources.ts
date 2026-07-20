@@ -13,6 +13,7 @@ export type SourceInfo = {
 export type DocumentInfo = {
   id: string
   stable_key: string
+  display_name: string
   current_version_id: string | null
   status: string
   created_at: string
@@ -70,7 +71,7 @@ const SPACE_ID = '00000000-0000-0000-0000-000000000000' // default space for MVP
 
 async function apiFetch<T>(
   path: string,
-  options?: { method?: string; body?: FormData | object },
+  options?: { method?: string; body?: FormData | object; signal?: AbortSignal },
 ): Promise<T> {
   const url = `${apiBaseUrl}${path}`
 
@@ -88,6 +89,7 @@ async function apiFetch<T>(
     method: options?.method ?? 'GET',
     headers,
     body,
+    signal: options?.signal,
   })
 
   if (!response.ok) {
@@ -103,13 +105,16 @@ async function apiFetch<T>(
 }
 
 /** List all sources. */
-export function fetchSources(_signal?: AbortSignal): Promise<SourceList> {
-  return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources`, { method: 'GET' })
+export function fetchSources(signal?: AbortSignal): Promise<SourceList> {
+  return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources`, { method: 'GET', signal })
 }
 
 /** Get source detail with documents. */
-export function fetchSourceDetail(sourceId: string, _signal?: AbortSignal): Promise<SourceDetail> {
-  return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources/${sourceId}/detail`, { method: 'GET' })
+export function fetchSourceDetail(sourceId: string, signal?: AbortSignal): Promise<SourceDetail> {
+  return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources/${sourceId}/detail`, {
+    method: 'GET',
+    signal,
+  })
 }
 
 /** Upload a file to a source and trigger ingestion. */
@@ -131,13 +136,23 @@ export function triggerIngestion(sourceId: string): Promise<IngestResult> {
 }
 
 /** Get task status. */
-export function fetchTaskStatus(taskId: string, _signal?: AbortSignal): Promise<TaskInfo> {
-  return apiFetch(`/api/v1/tasks/${taskId}`, { method: 'GET' })
+export function fetchTaskStatus(taskId: string, signal?: AbortSignal): Promise<TaskInfo> {
+  return apiFetch(`/api/v1/tasks/${taskId}`, { method: 'GET', signal })
 }
 
 /** Cancel a running task. */
-export function cancelTask(taskId: string): Promise<TaskInfo> {
-  return apiFetch(`/api/v1/tasks/${taskId}/cancel`, { method: 'POST', body: {} })
+export async function cancelTask(taskId: string): Promise<TaskInfo> {
+  try {
+    return await apiFetch(`/api/v1/tasks/${taskId}/cancel`, { method: 'POST', body: {} })
+  } catch (error) {
+    // Older API instances returned 409 when a task finished between polling
+    // and cancellation. Reading the authoritative state is equivalent to a
+    // successful idempotent cancel from the user's perspective.
+    if (error instanceof SourcesApiError && error.status === 409) {
+      return fetchTaskStatus(taskId)
+    }
+    throw error
+  }
 }
 
 /** Retry a failed task. */

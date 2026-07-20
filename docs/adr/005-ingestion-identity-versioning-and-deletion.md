@@ -28,6 +28,12 @@ A move may retain the Document ID only when a hash match has exactly one candida
 Space and Source. No candidate creates a new Document. Multiple candidates produce an explicit
 conflict and are never merged automatically. Space isolation applies before identity matching.
 
+Stable-key normalizer v2 applies Unicode NFKC normalization and case-folding, preserves Unicode
+letters and digits, and replaces only other unsafe characters. This prevents Chinese and other
+non-ASCII file names from collapsing to an extension-only key. When an upload has no v2 match, the
+application may upgrade the matching ASCII-only v1 key in place only after an exact `blob_hash`
+match in the same Source. The Document ID is retained; an unrelated legacy row is never adopted.
+
 ### Raw bytes and normalized content
 
 `blob_hash` is the lowercase SHA-256 of the exact source bytes. It verifies manifest entries and

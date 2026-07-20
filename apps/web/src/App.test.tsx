@@ -51,6 +51,7 @@ function renderApp() {
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  window.history.replaceState(null, '', '#system-status')
 })
 
 describe('system status workspace', () => {
@@ -65,7 +66,7 @@ describe('system status workspace', () => {
     expect(screen.getByText('4 / 4 项当前可用')).toBeInTheDocument()
     expect(screen.getByText('测试替身')).toBeInTheDocument()
     expect(screen.getByText('trace-123')).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('shows degraded dependency state without treating the API as offline', async () => {
@@ -107,7 +108,7 @@ describe('system status workspace', () => {
     expect(screen.getByText('API_UNREACHABLE')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '重新检查' }))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
   })
 
   it('replaces the loading state when the API response schema is invalid', async () => {
@@ -153,5 +154,22 @@ describe('system status workspace', () => {
     refreshButton.focus()
 
     expect(refreshButton).toHaveFocus()
+  })
+
+  it('keeps data sources in a separate workspace view', async () => {
+    const fetchMock = mockHealthyFetch()
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp()
+    await screen.findByText('本地服务运行正常')
+    fireEvent.click(screen.getByRole('link', { name: '数据来源' }))
+
+    expect(screen.getByRole('heading', { level: 1, name: '数据来源' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '来源与文档' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '服务连接' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '数据来源' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
   })
 })

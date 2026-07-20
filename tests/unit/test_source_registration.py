@@ -70,6 +70,9 @@ class _FakeDocumentRepo(DocumentRepository):
         return self._by_source_key.get((source_id, stable_key))
 
     async def update(self, document: Document) -> Document:
+        previous = self._documents.get(document.id)
+        if previous is not None:
+            self._by_source_key.pop((previous.source_id, previous.stable_key), None)
         self._documents[document.id] = document
         key = (document.source_id, document.stable_key)
         self._by_source_key[key] = document
@@ -99,6 +102,10 @@ class _FakeVersionRepo(DocumentVersionRepository):
             return None
         # latest by insertion order
         return self._versions[vids[-1]]
+
+    async def update(self, version: DocumentVersion) -> DocumentVersion:
+        self._versions[version.id] = version
+        return version
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +349,92 @@ class TestRegisterFile:
         result = await service.register_file(source, raw, blob_store, file_path="/path/to/file.md")
         # The stable key should be derived from the path
         assert result.document.stable_key is not None
+
+    async def test_preserves_unicode_filename_as_version_metadata(
+        self,
+        service: SourceRegistrationService,
+        source_repo: _FakeSourceRepo,
+        version_repo: _FakeVersionRepo,
+        blob_store: _FakeBlobStore,
+        space_id: UUID,
+    ) -> None:
+        source = await source_repo.create(Source(space_id=space_id, source_type=SourceType.UPLOAD))
+
+        result = await service.register_file(
+            source,
+            b"content",
+            blob_store,
+            file_stable_key="测试文档.txt",
+            file_path="测试文档.txt",
+        )
+
+        assert result.version_id is not None
+        version = await version_repo.get(result.version_id)
+        assert version is not None
+        assert version.file_path == "测试文档.txt"
+        assert result.document.stable_key == "测试文档.txt"
+
+    async def test_upgrades_matching_legacy_unicode_key_without_new_document(
+        self,
+        service: SourceRegistrationService,
+        source_repo: _FakeSourceRepo,
+        doc_repo: _FakeDocumentRepo,
+        version_repo: _FakeVersionRepo,
+        blob_store: _FakeBlobStore,
+        space_id: UUID,
+    ) -> None:
+        source = await source_repo.create(Source(space_id=space_id, source_type=SourceType.UPLOAD))
+        legacy_document = await doc_repo.create(Document(source_id=source.id, stable_key=".txt"))
+        raw = b"legacy content"
+        legacy_version = await version_repo.create(
+            DocumentVersion(
+                document_id=legacy_document.id,
+                blob_hash=compute_blob_hash(raw),
+            )
+        )
+
+        result = await service.register_file(
+            source,
+            raw,
+            blob_store,
+            file_stable_key="中文资料.txt",
+            file_path="中文资料.txt",
+        )
+
+        assert result.document.id == legacy_document.id
+        assert result.document.stable_key == "中文资料.txt"
+        assert result.version_id == legacy_version.id
+        assert result.is_new_document is False
+        assert await doc_repo.get_by_stable_key(source.id, ".txt") is None
+
+    async def test_backfills_missing_filename_on_identical_reupload(
+        self,
+        service: SourceRegistrationService,
+        source_repo: _FakeSourceRepo,
+        version_repo: _FakeVersionRepo,
+        blob_store: _FakeBlobStore,
+        space_id: UUID,
+    ) -> None:
+        source = await source_repo.create(Source(space_id=space_id, source_type=SourceType.UPLOAD))
+        first = await service.register_file(
+            source,
+            b"same content",
+            blob_store,
+            file_stable_key=".txt",
+        )
+
+        second = await service.register_file(
+            source,
+            b"same content",
+            blob_store,
+            file_stable_key=".txt",
+            file_path="中文资料.txt",
+        )
+
+        assert second.version_id == first.version_id
+        assert second.existing_version is not None
+        assert second.existing_version.file_path == "中文资料.txt"
+        assert len(await version_repo.get_by_document(first.document.id)) == 1
 
     async def test_blob_hash_integrity(
         self,
