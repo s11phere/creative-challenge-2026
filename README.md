@@ -121,6 +121,8 @@ git diff --exit-code -- docs/openapi.json
 - [阶段 1 验收记录](docs/stage-1-acceptance.md)
 - [故障排查与已知限制](docs/troubleshooting.md)
 - [阶段 1 实施计划](docs/stage-1-implementation-plan.md)
+- [阶段 2 实施计划](docs/stage-2-implementation-plan.md)
+- [阶段 3 实施计划](docs/stage-3-implementation-plan.md)
 - [阶段 5 实施计划](docs/stage-5-implementation-plan.md)
 - [阶段 5 实现审查记录](docs/stage-5-implementation-review.md)
 - [OpenAPI](docs/openapi.json)
