@@ -25,17 +25,26 @@
 
 前置条件：Docker Engine 29+ 和 Docker Compose 5+。本机不需要单独安装 PostgreSQL 或 Redis。
 
-1. 创建本地环境文件，并修改其中的 `APP_SECRET_KEY` 和 `POSTGRES_PASSWORD`：
+1. 创建本地环境文件，必须设置 `APP_SECRET_KEY` 和 `POSTGRES_PASSWORD`：
 
-```powershell
-Copy-Item .env.example .env
+```bash
+cp .env.example .env
+```
+
+编辑 `.env`，填入两个必填项（其他保持默认即可快速体验）：
+
+```bash
+APP_SECRET_KEY=your-random-secret-key
+POSTGRES_PASSWORD=your-database-password
 ```
 
 2. 构建并启动完整本地栈：
 
-```powershell
-docker compose -f deploy/compose.yaml up --build --detach --wait
+```bash
+docker compose -f deploy/compose.yaml --env-file .env up --build --detach --wait
 ```
+
+> **注意**：Docker Compose v5 可能需要显式指定 `--env-file .env`；若不加也能正常运行则无需此参数。
 
 3. 打开工作台：<http://127.0.0.1:5173>
 
@@ -44,11 +53,11 @@ API、Worker 和 Web 达到各自完成或健康条件。
 
 ## Smoke Test
 
-```powershell
-curl.exe --fail http://127.0.0.1:8000/api/v1/health/live
-curl.exe --fail http://127.0.0.1:8000/api/v1/health/ready
-curl.exe --fail http://127.0.0.1:5173/api/v1/health/ready
-docker compose -f deploy/compose.yaml ps
+```bash
+curl --fail http://127.0.0.1:8000/api/v1/health/live
+curl --fail http://127.0.0.1:8000/api/v1/health/ready
+curl --fail http://127.0.0.1:5173/api/v1/health/ready
+docker compose -f deploy/compose.yaml --env-file .env ps
 ```
 
 预期 `live` 返回 `alive`，`ready` 返回 `ready`，PostgreSQL 和 Redis 分别报告
@@ -58,14 +67,14 @@ docker compose -f deploy/compose.yaml ps
 
 停止容器但保留 PostgreSQL 和 Redis 数据：
 
-```powershell
-docker compose -f deploy/compose.yaml down
+```bash
+docker compose -f deploy/compose.yaml --env-file .env down
 ```
 
 仅在确认要永久删除当前项目数据时执行：
 
-```powershell
-docker compose -f deploy/compose.yaml down --volumes --remove-orphans
+```bash
+docker compose -f deploy/compose.yaml --env-file .env down --volumes --remove-orphans
 ```
 
 ## 开发命令
