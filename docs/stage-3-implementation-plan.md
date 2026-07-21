@@ -548,6 +548,30 @@ docs/
 5. 为 FTS、query embedding、vector SQL、fusion 和 rerank 建立独立 span，限制低基数属性。
 6. 新增公开 API 后重新生成 `docs/openapi.json`，运行 schema diff 和 API 隔离集成测试。
 
+**当前实现与验证记录（2026-07-22）**：
+
+- 新增 `POST /api/v1/spaces/{space_id}/search`。请求只允许 `query`、四种已定义的
+  `mode` 和 `source_ids`/`document_ids` 缩小过滤；Pydantic 使用领域层的 NFKC、空白折叠和
+  512 字符上限，额外字段和超过 100 项的过滤器被拒绝。API 通过
+  `RetrievalProfileResolver` 将已持久化的 Space profile 白名单映射为 `RetrievalProfileV1`，
+  Embedding 身份和超时只来自服务端配置。
+- 响应包含 requested/executed mode、profile、Embedding/Reranker/索引版本、degraded 状态、
+  有界命中和 locator；无结果返回 200 空列表。debug diagnostics 由
+  `RETRIEVAL_DEBUG_DIAGNOSTICS` 显式开启，且 production 强制隐藏。稳定错误覆盖校验失败、
+  Space/过滤越权、Provider 不可用、超时、维度和 profile 不兼容，统一使用 `ErrorResponse`。
+- Search application 统一承载 scope、候选、版本和融合规则；API 只负责传输映射。FTS、query
+  embedding、vector SQL、fusion 和 rerank 分别建立低基数 span。Fusion 记录实际耗时；结构化
+  日志记录 trace context、阶段耗时、候选数、模式、profile/version、降级和错误码，日志白名单
+  排除 query、Chunk/Embedding 正文、模型响应和密钥。
+- OpenAPI 已由 `scripts/export_openapi.py` 重新生成；新增端点的 400/403/404/409/422/500/503/504
+  均声明 `ErrorResponse`。全仓 `ruff format --check`（121 files）、`ruff check`、`mypy apps packages`
+  通过，默认测试为 `475 passed, 40 skipped`；搜索 API 隔离 PostgreSQL 集成测试 6 个通过，
+  全量隔离集成回归 39 个通过。
+- 专用 `stage3-step8-test` Compose 栈从现有迁移构建并启动，migrate 正常退出，API、Worker、Web、
+  PostgreSQL、Redis 全部 healthy。实际 HTTP smoke 返回 readiness `ready` 和 Keyword 200 空结果；
+  容器日志带相同 trace ID、profile、索引版本、候选计数及 `keyword=9.61 ms`，未出现查询正文，
+  diagnostics 默认隐藏。测试未使用阶段 0 私有语料，因此不作最终质量验收或 Recall 声明。
+
 **完成标准**：API、Application 和 Store 不重复实现规则；OpenAPI 与运行代码一致；超时与
 取消有界；日志和 trace 通过隐私检查。
 

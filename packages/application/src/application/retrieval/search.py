@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import math
 from dataclasses import dataclass
+from time import perf_counter
 
 from domain.repositories import DocumentRepository, SourceRepository, SpaceRepository
 from domain.retrieval import (
@@ -38,6 +39,10 @@ from domain.retrieval import (
     StageTiming,
     analyze_keyword_query,
 )
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
+
+tracer = trace.get_tracer("application.retrieval")
 
 
 @dataclass(frozen=True)
@@ -186,19 +191,32 @@ class SearchService:
                 ),
             )
 
+        fusion_started = perf_counter()
         try:
-            fused = fuse_candidates(
-                keyword.candidates,
-                hybrid_dense.candidates,
-                fusion_alpha=profile.fusion_alpha,
-                rrf_k=profile.rrf_k,
-                limit=profile.fusion_candidate_k,
-            )
+            with tracer.start_as_current_span(
+                "retrieval.fusion",
+                kind=SpanKind.INTERNAL,
+                attributes={
+                    "retrieval.mode": request.mode.value,
+                    "retrieval.profile_version": profile.profile_version,
+                    "retrieval.keyword_candidates": len(keyword.candidates),
+                    "retrieval.dense_candidates": len(hybrid_dense.candidates),
+                },
+            ) as span:
+                fused = fuse_candidates(
+                    keyword.candidates,
+                    hybrid_dense.candidates,
+                    fusion_alpha=profile.fusion_alpha,
+                    rrf_k=profile.rrf_k,
+                    limit=profile.fusion_candidate_k,
+                )
+                span.set_attribute("retrieval.fused_candidates", len(fused))
         except ValueError as exc:
             raise RetrievalError(
                 RetrievalErrorCode.PROFILE_INCOMPATIBLE,
                 "Retrieval candidates violate the fusion contract.",
             ) from exc
+        fusion_latency_ms = (perf_counter() - fusion_started) * 1000
 
         fused = _limit_document_quota(fused, profile.max_chunks_per_document)
 
@@ -220,6 +238,7 @@ class SearchService:
                     embedding=hybrid_embedding,
                     dense=hybrid_dense,
                     fused_count=len(fused),
+                    fusion_latency_ms=fusion_latency_ms,
                     final_count=len(matched_hits),
                     context_only_count=context_count,
                 ),
@@ -254,6 +273,7 @@ class SearchService:
                     embedding=hybrid_embedding,
                     dense=hybrid_dense,
                     fused_count=len(fused),
+                    fusion_latency_ms=fusion_latency_ms,
                     final_count=len(matched_hits),
                     context_only_count=context_count,
                     degradation_reasons=(exc.code,),
@@ -274,6 +294,7 @@ class SearchService:
                 embedding=hybrid_embedding,
                 dense=hybrid_dense,
                 fused_count=len(fused),
+                fusion_latency_ms=fusion_latency_ms,
                 rerank_response=response,
                 final_count=matched_count,
                 context_only_count=context_count,
@@ -312,14 +333,25 @@ class SearchService:
     async def _keyword(self, request: SearchRequest, profile: RetrievalProfileV1) -> CandidateBatch:
         try:
             async with asyncio.timeout(profile.keyword_timeout_seconds):
-                return await self._retrieval_store.keyword_candidates(
-                    KeywordCandidateQuery(
-                        query=request.query,
-                        space_id=request.space_id,
-                        filters=request.filters,
-                        limit=profile.keyword_candidate_k,
+                with tracer.start_as_current_span(
+                    "retrieval.fts",
+                    kind=SpanKind.CLIENT,
+                    attributes={
+                        "retrieval.channel": CandidateChannel.KEYWORD.value,
+                        "retrieval.profile_version": profile.profile_version,
+                    },
+                ) as span:
+                    result = await self._retrieval_store.keyword_candidates(
+                        KeywordCandidateQuery(
+                            query=request.query,
+                            space_id=request.space_id,
+                            filters=request.filters,
+                            limit=profile.keyword_candidate_k,
+                        )
                     )
-                )
+                    span.set_attribute("retrieval.candidate_count", len(result.candidates))
+                    span.set_attribute("retrieval.index_version", result.index_version)
+                    return result
         except TimeoutError as exc:
             raise RetrievalError(
                 RetrievalErrorCode.RETRIEVAL_TIMEOUT,
@@ -332,7 +364,15 @@ class SearchService:
     ) -> tuple[QueryEmbedding, CandidateBatch]:
         try:
             async with asyncio.timeout(profile.dense_timeout_seconds):
-                embedding = await self._query_embedder.embed_query(request.query)
+                with tracer.start_as_current_span(
+                    "retrieval.query_embedding",
+                    kind=SpanKind.CLIENT,
+                    attributes={"retrieval.profile_version": profile.profile_version},
+                ) as embedding_span:
+                    embedding = await self._query_embedder.embed_query(request.query)
+                    embedding_span.set_attribute(
+                        "retrieval.embedding_version", embedding.model_version
+                    )
                 if len(embedding.vector) != RETRIEVAL_EMBEDDING_DIMENSIONS or any(
                     not math.isfinite(value) for value in embedding.vector
                 ):
@@ -345,15 +385,25 @@ class SearchService:
                         RetrievalErrorCode.PROFILE_INCOMPATIBLE,
                         "Query embedding version does not match the active profile.",
                     )
-                dense = await self._retrieval_store.dense_candidates(
-                    DenseCandidateQuery(
-                        query_vector=embedding.vector,
-                        space_id=request.space_id,
-                        filters=request.filters,
-                        limit=profile.dense_candidate_k,
-                        embedding_version=profile.embedding_version,
+                with tracer.start_as_current_span(
+                    "retrieval.vector_sql",
+                    kind=SpanKind.CLIENT,
+                    attributes={
+                        "retrieval.channel": CandidateChannel.DENSE.value,
+                        "retrieval.profile_version": profile.profile_version,
+                    },
+                ) as vector_span:
+                    dense = await self._retrieval_store.dense_candidates(
+                        DenseCandidateQuery(
+                            query_vector=embedding.vector,
+                            space_id=request.space_id,
+                            filters=request.filters,
+                            limit=profile.dense_candidate_k,
+                            embedding_version=profile.embedding_version,
+                        )
                     )
-                )
+                    vector_span.set_attribute("retrieval.candidate_count", len(dense.candidates))
+                    vector_span.set_attribute("retrieval.index_version", dense.index_version)
         except TimeoutError as exc:
             raise RetrievalError(
                 RetrievalErrorCode.RETRIEVAL_TIMEOUT,
@@ -470,7 +520,16 @@ class SearchService:
             ),
         )
         try:
-            response = await self._reranker.rerank(rerank_request)
+            with tracer.start_as_current_span(
+                "retrieval.rerank",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "retrieval.profile_version": profile.profile_version,
+                    "retrieval.candidate_count": len(selected),
+                },
+            ) as span:
+                response = await self._reranker.rerank(rerank_request)
+                span.set_attribute("retrieval.reranker_version", response.model_version)
         except TimeoutError as exc:
             raise RetrievalError(
                 RetrievalErrorCode.RERANKER_UNAVAILABLE,
@@ -525,6 +584,7 @@ class SearchService:
         embedding: QueryEmbedding | None = None,
         dense: CandidateBatch | None = None,
         fused_count: int = 0,
+        fusion_latency_ms: float | None = None,
         rerank_response: RerankResponse | None = None,
         final_count: int = 0,
         context_only_count: int = 0,
@@ -539,12 +599,8 @@ class SearchService:
             timings.append(StageTiming(stage="query_embedding", latency_ms=embedding.latency_ms))
         if dense is not None:
             timings.append(StageTiming(stage="dense", latency_ms=dense.latency_ms))
-        if (
-            keyword is not None
-            and dense is not None
-            and request.mode in {RetrievalMode.HYBRID, RetrievalMode.HYBRID_RERANK}
-        ):
-            timings.append(StageTiming(stage="fusion", latency_ms=0.0))
+        if fusion_latency_ms is not None:
+            timings.append(StageTiming(stage="fusion", latency_ms=fusion_latency_ms))
         if rerank_response is not None:
             timings.append(StageTiming(stage="rerank", latency_ms=rerank_response.latency_ms))
         return SearchDiagnostics(

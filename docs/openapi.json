@@ -15,6 +15,39 @@
         "title": "Body_upload_file_api_v1_spaces__space_id__sources__source_id__upload_post",
         "type": "object"
       },
+      "CandidateCountsResponse": {
+        "properties": {
+          "dense": {
+            "title": "Dense",
+            "type": "integer"
+          },
+          "final": {
+            "title": "Final",
+            "type": "integer"
+          },
+          "fused": {
+            "title": "Fused",
+            "type": "integer"
+          },
+          "keyword": {
+            "title": "Keyword",
+            "type": "integer"
+          },
+          "reranked": {
+            "title": "Reranked",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "keyword",
+          "dense",
+          "fused",
+          "reranked",
+          "final"
+        ],
+        "title": "CandidateCountsResponse",
+        "type": "object"
+      },
       "CreateSourceRequest": {
         "properties": {
           "source_type": {
@@ -269,6 +302,510 @@
         "title": "ReadyResponse",
         "type": "object"
       },
+      "RetrievalMode": {
+        "enum": [
+          "keyword",
+          "dense",
+          "hybrid",
+          "hybrid_rerank"
+        ],
+        "title": "RetrievalMode",
+        "type": "string"
+      },
+      "SearchApiRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "filters": {
+            "$ref": "#/components/schemas/SearchFiltersRequest"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/RetrievalMode",
+            "default": "hybrid"
+          },
+          "query": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "SearchApiRequest",
+        "type": "object"
+      },
+      "SearchApiResponse": {
+        "properties": {
+          "degradation_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Degradation Reasons",
+            "type": "array"
+          },
+          "degraded": {
+            "title": "Degraded",
+            "type": "boolean"
+          },
+          "dense_index_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dense Index Version"
+          },
+          "diagnostics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchDiagnosticsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "embedding_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Version"
+          },
+          "executed_mode": {
+            "$ref": "#/components/schemas/RetrievalMode"
+          },
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/SearchHitResponse"
+            },
+            "title": "Hits",
+            "type": "array"
+          },
+          "keyword_index_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword Index Version"
+          },
+          "profile_version": {
+            "title": "Profile Version",
+            "type": "string"
+          },
+          "requested_mode": {
+            "$ref": "#/components/schemas/RetrievalMode"
+          },
+          "reranker_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Version"
+          }
+        },
+        "required": [
+          "requested_mode",
+          "executed_mode",
+          "profile_version",
+          "embedding_version",
+          "reranker_version",
+          "keyword_index_version",
+          "dense_index_version",
+          "degraded",
+          "degradation_reasons",
+          "hits"
+        ],
+        "title": "SearchApiResponse",
+        "type": "object"
+      },
+      "SearchDiagnosticsResponse": {
+        "properties": {
+          "candidate_counts": {
+            "$ref": "#/components/schemas/CandidateCountsResponse"
+          },
+          "context_only_count": {
+            "title": "Context Only Count",
+            "type": "integer"
+          },
+          "degradation_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Degradation Reasons",
+            "type": "array"
+          },
+          "degraded": {
+            "title": "Degraded",
+            "type": "boolean"
+          },
+          "dense_index_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dense Index Version"
+          },
+          "dense_language_slice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dense Language Slice"
+          },
+          "dense_query_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dense Query Kind"
+          },
+          "document_filter_count": {
+            "title": "Document Filter Count",
+            "type": "integer"
+          },
+          "embedding_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Version"
+          },
+          "executed_mode": {
+            "$ref": "#/components/schemas/RetrievalMode"
+          },
+          "filter_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Filter Reasons",
+            "type": "array"
+          },
+          "keyword_index_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword Index Version"
+          },
+          "keyword_language_slice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword Language Slice"
+          },
+          "keyword_literal_term_count": {
+            "title": "Keyword Literal Term Count",
+            "type": "integer"
+          },
+          "keyword_query_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword Query Kind"
+          },
+          "profile_version": {
+            "title": "Profile Version",
+            "type": "string"
+          },
+          "requested_mode": {
+            "$ref": "#/components/schemas/RetrievalMode"
+          },
+          "reranker_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Version"
+          },
+          "source_filter_count": {
+            "title": "Source Filter Count",
+            "type": "integer"
+          },
+          "stage_timings": {
+            "items": {
+              "$ref": "#/components/schemas/StageTimingResponse"
+            },
+            "title": "Stage Timings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "requested_mode",
+          "executed_mode",
+          "profile_version",
+          "embedding_version",
+          "reranker_version",
+          "keyword_index_version",
+          "dense_index_version",
+          "candidate_counts",
+          "stage_timings",
+          "keyword_language_slice",
+          "keyword_query_kind",
+          "keyword_literal_term_count",
+          "dense_language_slice",
+          "dense_query_kind",
+          "degraded",
+          "degradation_reasons",
+          "filter_reasons",
+          "source_filter_count",
+          "document_filter_count",
+          "context_only_count"
+        ],
+        "title": "SearchDiagnosticsResponse",
+        "type": "object"
+      },
+      "SearchFiltersRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "document_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Document Ids",
+            "type": "array"
+          },
+          "source_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Source Ids",
+            "type": "array"
+          }
+        },
+        "title": "SearchFiltersRequest",
+        "type": "object"
+      },
+      "SearchHitResponse": {
+        "properties": {
+          "chunk_hash": {
+            "title": "Chunk Hash",
+            "type": "string"
+          },
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "context_only": {
+            "title": "Context Only",
+            "type": "boolean"
+          },
+          "dense_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dense Rank"
+          },
+          "dense_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dense Score"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "final_rank": {
+            "title": "Final Rank",
+            "type": "integer"
+          },
+          "fused_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fused Rank"
+          },
+          "fused_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fused Score"
+          },
+          "keyword_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword Rank"
+          },
+          "keyword_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword Score"
+          },
+          "locators": {
+            "items": {
+              "$ref": "#/components/schemas/SearchLocatorResponse"
+            },
+            "title": "Locators",
+            "type": "array"
+          },
+          "rerank_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Rank"
+          },
+          "rerank_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Score"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_key": {
+            "title": "Source Key",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "version_id",
+          "document_id",
+          "source_id",
+          "source_key",
+          "text",
+          "chunk_hash",
+          "locators",
+          "final_rank",
+          "context_only"
+        ],
+        "title": "SearchHitResponse",
+        "type": "object"
+      },
+      "SearchLocatorResponse": {
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "start",
+          "end"
+        ],
+        "title": "SearchLocatorResponse",
+        "type": "object"
+      },
       "SourceDetailResponse": {
         "properties": {
           "documents": {
@@ -336,6 +873,24 @@
           "sources"
         ],
         "title": "SourceListResponse",
+        "type": "object"
+      },
+      "StageTimingResponse": {
+        "properties": {
+          "latency_ms": {
+            "title": "Latency Ms",
+            "type": "number"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "latency_ms"
+        ],
+        "title": "StageTimingResponse",
         "type": "object"
       },
       "TaskStatusResponse": {
@@ -571,6 +1126,127 @@
           }
         },
         "summary": "Ready"
+      }
+    },
+    "/api/v1/spaces/{space_id}/search": {
+      "post": {
+        "description": "Execute one bounded retrieval request inside a single Space.",
+        "operationId": "search_space_api_v1_spaces__space_id__search_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Space Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchApiRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Stable retrieval error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Stable retrieval error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Stable retrieval error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Stable retrieval error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Stable retrieval error"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Stable retrieval error"
+          }
+        },
+        "summary": "Search Space"
       }
     },
     "/api/v1/spaces/{space_id}/sources": {

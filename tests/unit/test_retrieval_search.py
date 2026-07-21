@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass, field
 from uuid import UUID
 
+import application.retrieval.search as search_module
 import pytest
 from application.retrieval.search import SearchService, fuse_candidates
 from domain.models import Document, Source, Space
@@ -32,6 +33,9 @@ from domain.retrieval import (
     SearchLocator,
     SearchRequest,
 )
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 SPACE_ID = UUID(int=1)
 OTHER_SPACE_ID = UUID(int=2)
@@ -346,6 +350,44 @@ async def test_hybrid_runs_keyword_and_dense_candidates_concurrently(repos) -> N
         _profile(adjacent_window=0),
     )
     assert store.max_active_calls == 2
+
+
+async def test_retrieval_stage_spans_are_separate_and_content_free(
+    repos, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(search_module, "tracer", provider.get_tracer("test.retrieval"))
+    private_query = "private-query-marker"
+    private_chunk = "private-chunk-marker"
+    keyword = _candidate(1, channel=CandidateChannel.KEYWORD, rank=1, score=0.9)
+    dense = _candidate(1, channel=CandidateChannel.DENSE, rank=1, score=0.8)
+    keyword = RetrievalCandidate(**{**keyword.__dict__, "text": private_chunk})
+    dense = RetrievalCandidate(**{**dense.__dict__, "text": private_chunk})
+
+    await _service(
+        repos,
+        _FakeStore(keyword=(keyword,), dense=(dense,)),
+        _FakeEmbedder(),
+        _FakeReranker(),
+    ).search(
+        SearchRequest(private_query, SPACE_ID, mode=RetrievalMode.HYBRID_RERANK),
+        _profile(reranker_enabled=True, adjacent_window=0),
+    )
+
+    spans = exporter.get_finished_spans()
+    names = {span.name for span in spans}
+    assert {
+        "retrieval.fts",
+        "retrieval.query_embedding",
+        "retrieval.vector_sql",
+        "retrieval.fusion",
+        "retrieval.rerank",
+    } <= names
+    serialized_attributes = repr([dict(span.attributes or {}) for span in spans])
+    assert private_query not in serialized_attributes
+    assert private_chunk not in serialized_attributes
 
 
 async def test_hybrid_keyword_candidate_timeout_is_bounded(repos) -> None:

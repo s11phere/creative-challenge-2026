@@ -18,7 +18,6 @@ from application.ingestion.orchestrator import (
     IngestionOrchestrator,
 )
 from domain.blob_store import BlobStore
-from domain.embedding import EmbeddingIdentity
 from domain.models import IngestionTask, TaskOperation, TaskStatus
 from domain.parsing import ParseMetadata, ParseResult
 from infrastructure.blob_store import LocalFileBlobStore
@@ -325,22 +324,7 @@ async def _run_ingestion_async(
 ) -> None:
     """Core async ingestion logic with session management."""
     tid = UUID(task_id)
-    model_revision = settings.embedding_model_revision
-    if not model_revision:
-        model_revision = (
-            "fake-sha256-v1" if settings.model_provider == "fake" else settings.embedding_model
-        )
-    if not model_revision:
-        raise RuntimeError("EMBEDDING_MODEL_REVISION is required for non-fake embedding")
-    cfg = IngestionConfig(
-        embedding_identity=EmbeddingIdentity(
-            model_revision=model_revision,
-            query_instruction_version=settings.embedding_query_instruction_version,
-            document_instruction_version=settings.embedding_document_instruction_version,
-            normalization=settings.embedding_normalization,
-            precision=settings.embedding_precision,
-        )
-    )
+    cfg = IngestionConfig(embedding_identity=settings.active_embedding_identity())
 
     # ------------------------------------------------------------------
     # Phase 1: Run the pipeline in its own session

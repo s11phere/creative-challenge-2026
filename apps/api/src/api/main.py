@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from .errors import ErrorResponse, register_error_handlers
 from .observability import TraceMiddleware
-from .routers import sources
+from .routers import search, sources
 
 
 class LiveResponse(BaseModel):
@@ -99,6 +99,7 @@ def create_app(
 
 def _register_routes(app: FastAPI) -> None:
     app.include_router(sources.router)
+    app.include_router(search.router)
 
     @app.get(
         "/api/v1/health/live",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from domain.embedding import EmbeddingIdentity
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
@@ -97,6 +98,30 @@ class Settings(BaseSettings):
     model_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     model_max_retries: int = Field(default=2, ge=0, le=5)
     model_retry_backoff_seconds: float = Field(default=0.1, ge=0, le=10)
+
+    # --- Retrieval ---
+    retrieval_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    retrieval_debug_diagnostics: bool = False
+
+    def active_embedding_identity(self, *, allow_unconfigured: bool = False) -> EmbeddingIdentity:
+        """Return the one identity shared by ingestion and online retrieval."""
+        model_revision = self.embedding_model_revision
+        if not model_revision:
+            model_revision = (
+                "fake-sha256-v1" if self.model_provider == "fake" else self.embedding_model
+            )
+        if not model_revision:
+            if allow_unconfigured:
+                model_revision = "embedding-unconfigured-v1"
+            else:
+                raise ValueError("EMBEDDING_MODEL_REVISION is required for non-fake embedding")
+        return EmbeddingIdentity(
+            model_revision=model_revision,
+            query_instruction_version=self.embedding_query_instruction_version,
+            document_instruction_version=self.embedding_document_instruction_version,
+            normalization=self.embedding_normalization,
+            precision=self.embedding_precision,
+        )
 
     @property
     def redis_url(self) -> str:

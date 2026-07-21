@@ -17,12 +17,50 @@ from domain.retrieval import (
     RetrievalErrorCode,
     normalize_search_query,
 )
+from model_gateway import (
+    CapabilityAlias,
+    EmbeddingRequest,
+    ModelErrorCode,
+    ModelGateway,
+    ModelGatewayError,
+)
 
 
 class QueryTextEmbedder(Protocol):
     """Structural port for a ModelGateway-backed text embedding adapter."""
 
     async def embed(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]: ...
+
+
+class GatewayQueryTextEmbedder:
+    """Adapt ModelGateway embedding responses to the query embedding port."""
+
+    def __init__(self, gateway: ModelGateway) -> None:
+        self._gateway = gateway
+
+    async def embed(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
+        try:
+            response = await self._gateway.embed(
+                EmbeddingRequest(texts=texts),
+                capability=CapabilityAlias.EMBEDDING_ZH,
+            )
+        except ModelGatewayError as exc:
+            code = (
+                RetrievalErrorCode.PROVIDER_POLICY_DENIED
+                if exc.code is ModelErrorCode.POLICY_DENIED
+                else RetrievalErrorCode.EMBEDDING_UNAVAILABLE
+            )
+            raise RetrievalError(
+                code,
+                "The configured query embedding provider is unavailable.",
+                retryable=exc.retryable,
+            ) from exc
+        if response.capability is not CapabilityAlias.EMBEDDING_ZH:
+            raise RetrievalError(
+                RetrievalErrorCode.EMBEDDING_UNAVAILABLE,
+                "The query embedding provider returned an incompatible capability.",
+            )
+        return response.vectors
 
 
 @dataclass(frozen=True)

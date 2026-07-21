@@ -17,12 +17,15 @@ async def test_openapi_includes_health_endpoints() -> None:
     paths = schema["paths"]
     assert "/api/v1/health/live" in paths
     assert "/api/v1/health/ready" in paths
+    assert "/api/v1/spaces/{space_id}/search" in paths
 
     schemas = schema["components"]["schemas"]
     assert "LiveResponse" in schemas
     assert "ReadyResponse" in schemas
     assert "ReadinessChecks" in schemas
     assert "ErrorResponse" in schemas
+    assert "SearchApiRequest" in schemas
+    assert "SearchApiResponse" in schemas
     assert "model" in schemas["ReadinessChecks"]["properties"]
     assert "model" in schemas["ReadinessChecks"]["required"]
 
@@ -40,4 +43,15 @@ async def test_openapi_includes_health_endpoints() -> None:
     }
     assert ready_responses["503"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/ReadyResponse"
+    }
+
+    search_operation = paths["/api/v1/spaces/{space_id}/search"]["post"]
+    assert search_operation["requestBody"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/SearchApiRequest"
+    }
+    assert search_operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/SearchApiResponse"
+    }
+    assert search_operation["responses"]["422"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ErrorResponse"
     }
