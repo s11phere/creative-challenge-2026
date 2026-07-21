@@ -79,6 +79,10 @@ class PostgresRetrievalStore:
             .order_by(rank_score.desc(), ChunkModel.id.asc())
             .limit(query.limit)
         )
+        for literal_term in query.analysis.literal_terms:
+            statement = statement.where(
+                func.strpos(func.lower(ChunkModel.text), literal_term.lower()) > 0
+            )
         return await self._execute_candidates(
             statement,
             channel=CandidateChannel.KEYWORD,

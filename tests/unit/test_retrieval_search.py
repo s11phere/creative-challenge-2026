@@ -12,6 +12,8 @@ from domain.retrieval import (
     DenseCandidateQuery,
     HybridEmbeddingFailurePolicy,
     KeywordCandidateQuery,
+    KeywordLanguageSlice,
+    KeywordQueryKind,
     LocatorKind,
     QueryEmbedding,
     RerankerFailurePolicy,
@@ -209,15 +211,31 @@ async def test_keyword_mode_never_calls_embedder(repos) -> None:
     )
     embedder = _FakeEmbedder()
     result = await _service(repos, store, embedder).search(
-        SearchRequest("kernel", SPACE_ID, mode=RetrievalMode.KEYWORD), _profile()
+        SearchRequest("  kernel\nthread  ", SPACE_ID, mode=RetrievalMode.KEYWORD), _profile()
     )
     assert [hit.chunk_id for hit in result.hits] == [UUID(int=1)]
     assert result.hits[0].keyword_rank == 1
     assert result.hits[0].safe_summary.text_length == len("chunk 1")
     assert not hasattr(result.hits[0].safe_summary, "text")
     assert result.diagnostics.executed_mode is RetrievalMode.KEYWORD
+    assert result.diagnostics.keyword_language_slice is KeywordLanguageSlice.ENGLISH
+    assert result.diagnostics.keyword_query_kind is KeywordQueryKind.NATURAL_LANGUAGE
+    assert result.diagnostics.keyword_literal_term_count == 0
+    assert store.keyword_queries[0].query == "kernel thread"
     assert embedder.call_count == 0
     assert not store.dense_queries
+
+
+async def test_keyword_diagnostics_report_mixed_code_query(repos) -> None:
+    store = _FakeStore()
+    result = await _service(repos, store, _FakeEmbedder()).search(
+        SearchRequest("\u4f7f\u7528 std::vector", SPACE_ID, mode=RetrievalMode.KEYWORD),
+        _profile(),
+    )
+    assert result.diagnostics.keyword_language_slice is KeywordLanguageSlice.MIXED
+    assert result.diagnostics.keyword_query_kind is KeywordQueryKind.CODE
+    assert result.diagnostics.keyword_literal_term_count == 1
+    assert store.keyword_queries[0].analysis.literal_terms == ("std::vector",)
 
 
 async def test_embedding_version_mismatch_never_queries_store(repos) -> None:

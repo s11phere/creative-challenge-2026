@@ -4,10 +4,13 @@ from uuid import UUID
 
 import pytest
 from domain.retrieval import (
+    MAX_SEARCH_QUERY_CHARS,
     CandidateBatch,
     CandidateChannel,
     DenseCandidateQuery,
     KeywordCandidateQuery,
+    KeywordLanguageSlice,
+    KeywordQueryKind,
     LocatorKind,
     RetrievalCandidate,
     RetrievalError,
@@ -17,6 +20,8 @@ from domain.retrieval import (
     SearchFilters,
     SearchLocator,
     SearchRequest,
+    analyze_keyword_query,
+    normalize_search_query,
 )
 
 
@@ -68,6 +73,65 @@ def test_profile_rejects_incompatible_values(overrides: dict[str, object]) -> No
 def test_search_request_rejects_blank_query() -> None:
     with pytest.raises(ValueError, match="blank"):
         SearchRequest(query="  ", space_id=UUID(int=1))
+
+
+def test_search_query_normalization_preserves_technical_syntax() -> None:
+    raw = "  \uff23\uff0b\uff0b\n std::vector\t snake_case_identifier  "
+    assert normalize_search_query(raw) == "C++ std::vector snake_case_identifier"
+    request = SearchRequest(query=raw, space_id=UUID(int=1))
+    assert request.query == "C++ std::vector snake_case_identifier"
+
+
+def test_search_query_rejects_overlong_input() -> None:
+    with pytest.raises(ValueError, match=str(MAX_SEARCH_QUERY_CHARS)):
+        SearchRequest(query="x" * (MAX_SEARCH_QUERY_CHARS + 1), space_id=UUID(int=1))
+
+
+@pytest.mark.parametrize(
+    ("query", "language_slice", "query_kind", "literal_terms"),
+    [
+        (
+            "deadlock prevention",
+            KeywordLanguageSlice.ENGLISH,
+            KeywordQueryKind.NATURAL_LANGUAGE,
+            (),
+        ),
+        (
+            "\u5e76\u53d1\u63a7\u5236",
+            KeywordLanguageSlice.CHINESE,
+            KeywordQueryKind.NATURAL_LANGUAGE,
+            (),
+        ),
+        (
+            "\u4f7f\u7528 std::vector",
+            KeywordLanguageSlice.MIXED,
+            KeywordQueryKind.CODE,
+            ("std::vector",),
+        ),
+        (
+            "C++ snake_case C++",
+            KeywordLanguageSlice.ENGLISH,
+            KeywordQueryKind.CODE,
+            ("C++", "snake_case"),
+        ),
+    ],
+)
+def test_keyword_query_analysis_reports_language_and_query_kind(
+    query: str,
+    language_slice: KeywordLanguageSlice,
+    query_kind: KeywordQueryKind,
+    literal_terms: tuple[str, ...],
+) -> None:
+    analysis = analyze_keyword_query(query)
+    assert analysis.language_slice is language_slice
+    assert analysis.query_kind is query_kind
+    assert analysis.literal_terms == literal_terms
+
+
+def test_keyword_candidate_query_carries_normalized_analysis() -> None:
+    query = KeywordCandidateQuery("  \uff23\uff0b\uff0b  ", UUID(int=1), SearchFilters(), 5)
+    assert query.query == "C++"
+    assert query.analysis.literal_terms == ("C++",)
 
 
 def test_locator_overlap_requires_same_kind_and_inclusive_intersection() -> None:

@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+import re
+import unicodedata
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
+
+MAX_SEARCH_QUERY_CHARS = 512
+_TECHNICAL_TERM_MARKERS = ("++", "::", "#", "_")
+_TERM_BOUNDARY_PUNCTUATION = ".,;:!?\uff0c\u3002\uff1b\uff1a\uff01\uff1f()[]{}<>\"'`"
+_CHINESE_CHARACTER = re.compile(r"[\u3400-\u9fff]")
+_LATIN_CHARACTER = re.compile(r"[A-Za-z]")
 
 
 class RetrievalMode(StrEnum):
@@ -19,6 +27,18 @@ class RetrievalMode(StrEnum):
 class SearchExecutionContext(StrEnum):
     ONLINE = "online"
     OFFLINE_EVALUATION = "offline_evaluation"
+
+
+class KeywordLanguageSlice(StrEnum):
+    CHINESE = "chinese"
+    ENGLISH = "english"
+    MIXED = "mixed"
+    OTHER = "other"
+
+
+class KeywordQueryKind(StrEnum):
+    CODE = "code"
+    NATURAL_LANGUAGE = "natural_language"
 
 
 class CandidateChannel(StrEnum):
@@ -78,6 +98,58 @@ class SearchFilters:
 
 
 @dataclass(frozen=True)
+class KeywordQueryAnalysis:
+    normalized_query: str
+    language_slice: KeywordLanguageSlice
+    query_kind: KeywordQueryKind
+    literal_terms: tuple[str, ...] = ()
+
+
+def normalize_search_query(query: str) -> str:
+    """Normalize presentation whitespace while preserving retrieval syntax."""
+    if len(query) > MAX_SEARCH_QUERY_CHARS:
+        raise ValueError(f"Search query must not exceed {MAX_SEARCH_QUERY_CHARS} characters")
+    normalized = " ".join(unicodedata.normalize("NFKC", query).split())
+    if not normalized:
+        raise ValueError("Search query must not be blank")
+    if len(normalized) > MAX_SEARCH_QUERY_CHARS:
+        raise ValueError(f"Search query must not exceed {MAX_SEARCH_QUERY_CHARS} characters")
+    return normalized
+
+
+def analyze_keyword_query(query: str) -> KeywordQueryAnalysis:
+    normalized = normalize_search_query(query)
+    has_chinese = _CHINESE_CHARACTER.search(normalized) is not None
+    has_latin = _LATIN_CHARACTER.search(normalized) is not None
+    if has_chinese and has_latin:
+        language_slice = KeywordLanguageSlice.MIXED
+    elif has_chinese:
+        language_slice = KeywordLanguageSlice.CHINESE
+    elif has_latin:
+        language_slice = KeywordLanguageSlice.ENGLISH
+    else:
+        language_slice = KeywordLanguageSlice.OTHER
+
+    literal_terms: list[str] = []
+    for raw_term in normalized.split():
+        term = raw_term.strip(_TERM_BOUNDARY_PUNCTUATION)
+        if (
+            term
+            and any(marker in term for marker in _TECHNICAL_TERM_MARKERS)
+            and any(character.isalnum() for character in term)
+            and term not in literal_terms
+        ):
+            literal_terms.append(term)
+    query_kind = KeywordQueryKind.CODE if literal_terms else KeywordQueryKind.NATURAL_LANGUAGE
+    return KeywordQueryAnalysis(
+        normalized_query=normalized,
+        language_slice=language_slice,
+        query_kind=query_kind,
+        literal_terms=tuple(literal_terms),
+    )
+
+
+@dataclass(frozen=True)
 class SearchRequest:
     query: str
     space_id: UUID
@@ -86,8 +158,7 @@ class SearchRequest:
     execution_context: SearchExecutionContext = SearchExecutionContext.ONLINE
 
     def __post_init__(self) -> None:
-        if not self.query.strip():
-            raise ValueError("Search query must not be blank")
+        object.__setattr__(self, "query", normalize_search_query(self.query))
 
 
 @dataclass(frozen=True)
@@ -204,10 +275,14 @@ class KeywordCandidateQuery:
     space_id: UUID
     filters: SearchFilters
     limit: int
+    analysis: KeywordQueryAnalysis = field(init=False)
 
     def __post_init__(self) -> None:
-        if not self.query.strip() or self.limit < 1:
-            raise ValueError("Keyword candidate query and limit must be valid")
+        if self.limit < 1:
+            raise ValueError("Keyword candidate limit must be positive")
+        analysis = analyze_keyword_query(self.query)
+        object.__setattr__(self, "query", analysis.normalized_query)
+        object.__setattr__(self, "analysis", analysis)
 
 
 @dataclass(frozen=True)
@@ -352,6 +427,9 @@ class SearchDiagnostics:
     dense_index_version: str | None
     candidate_counts: CandidateCounts
     stage_timings: tuple[StageTiming, ...]
+    keyword_language_slice: KeywordLanguageSlice | None = None
+    keyword_query_kind: KeywordQueryKind | None = None
+    keyword_literal_term_count: int = 0
     degraded: bool = False
     degradation_reasons: tuple[RetrievalErrorCode, ...] = ()
     filter_reasons: tuple[str, ...] = ()

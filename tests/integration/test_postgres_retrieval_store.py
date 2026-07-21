@@ -288,6 +288,95 @@ async def test_keyword_and_dense_share_the_published_candidate_boundary(
         assert narrowed_to_empty.candidates == ()
 
 
+async def test_keyword_baseline_covers_language_code_and_stable_ranking(
+    retrieval_database: RetrievalDatabase,
+) -> None:
+    async with retrieval_database.sessions() as session:
+        space = await _add_space(session, "keyword-slices")
+        _, english = await _add_document(
+            session,
+            space_id=space.id,
+            label="english-natural",
+            text_value="Transaction retry budget and deadline handling.",
+        )
+        _, chinese = await _add_document(
+            session,
+            space_id=space.id,
+            label="chinese-natural",
+            text_value=(
+                "\u5e76\u53d1\u63a7\u5236 "
+                "\u4f7f\u7528\u4e92\u65a5\u9501\u4fdd\u62a4\u5171\u4eab\u72b6\u6001\u3002"
+            ),
+        )
+        _, mixed_code = await _add_document(
+            session,
+            space_id=space.id,
+            label="mixed-code",
+            text_value=(
+                "\u6a21\u677f\u5bb9\u5668 \u4f7f\u7528 C++ std::vector and "
+                "snake_case_identifier for examples."
+            ),
+        )
+        await _add_document(
+            session,
+            space_id=space.id,
+            label="plain-c",
+            text_value="C language arrays and pointers.",
+        )
+        _, first_tie = await _add_document(
+            session,
+            space_id=space.id,
+            label="stable-tie-a",
+            text_value="stabletie identical ranking text",
+        )
+        _, second_tie = await _add_document(
+            session,
+            space_id=space.id,
+            label="stable-tie-b",
+            text_value="stabletie identical ranking text",
+        )
+        await session.commit()
+
+        store = PostgresRetrievalStore(session)
+        english_result = await store.keyword_candidates(
+            _keyword_query("  transaction\nretry  ", space.id)
+        )
+        assert [candidate.chunk_id for candidate in english_result.candidates] == [english.chunk_id]
+
+        chinese_result = await store.keyword_candidates(
+            _keyword_query("\u5e76\u53d1\u63a7\u5236", space.id)
+        )
+        assert [candidate.chunk_id for candidate in chinese_result.candidates] == [chinese.chunk_id]
+
+        mixed_result = await store.keyword_candidates(
+            _keyword_query("\u4f7f\u7528 std::vector", space.id)
+        )
+        assert [candidate.chunk_id for candidate in mixed_result.candidates] == [
+            mixed_code.chunk_id
+        ]
+
+        cpp_result = await store.keyword_candidates(_keyword_query("\uff23\uff0b\uff0b", space.id))
+        assert [candidate.chunk_id for candidate in cpp_result.candidates] == [mixed_code.chunk_id]
+        identifier_result = await store.keyword_candidates(
+            _keyword_query("snake_case_identifier", space.id)
+        )
+        assert [candidate.chunk_id for candidate in identifier_result.candidates] == [
+            mixed_code.chunk_id
+        ]
+
+        expected_tie_order = sorted(
+            (first_tie.chunk_id, second_tie.chunk_id),
+            key=str,
+        )
+        repeated_orders = []
+        for _ in range(3):
+            result = await store.keyword_candidates(_keyword_query("stabletie", space.id))
+            repeated_orders.append([candidate.chunk_id for candidate in result.candidates])
+            assert all(candidate.score > 0 for candidate in result.candidates)
+            assert [candidate.rank for candidate in result.candidates] == [1, 2]
+        assert repeated_orders == [expected_tie_order] * 3
+
+
 async def test_uncommitted_version_switch_keeps_old_version_visible(
     retrieval_database: RetrievalDatabase,
 ) -> None:

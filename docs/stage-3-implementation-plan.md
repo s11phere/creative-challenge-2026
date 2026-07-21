@@ -387,6 +387,30 @@ docs/
 5. 预先定义升级触发条件：若 Keyword 路径导致混合检索无法满足门槛，再在相同 Port 下比较
    受控分词方案或 PGroonga；更换关键词后端或新增数据库扩展前更新 ADR-002 或新增 ADR。
 
+**当前实现与验证记录（2026-07-21）**：
+
+- 查询入口契约使用 Unicode NFKC、空白折叠和前后去空白，保留 `C++`、`std::vector`、
+  `snake_case_identifier` 等技术符号与标识符；原始或规范化查询超过 512 字符、或规范化后为空
+  时拒绝。Step 8 的 Pydantic 传输模型必须复用该上限和领域校验，不能建立第二套不一致规则。
+- `KeywordQueryAnalysis` 将每个查询标记为 Chinese/English/Mixed/Other 语言切片及 Code/
+  Natural Language 类型，并记录需要字面匹配的技术词；Search diagnostics 暴露切片、类型和
+  字面词数量，供后续离线报告聚合，不记录原始查询正文。
+- PostgreSQL 仍以 `websearch_to_tsquery('simple', ...)`、持久 FTS 列、GIN 和 `ts_rank_cd` 为
+  唯一 Keyword 基线。对于 `++`、`::`、`#`、`_` 技术词，Store 使用绑定参数追加大小写不敏感
+  的字面条件，只会缩小 FTS 结果，避免 `C++` 被 parser 退化成宽泛的 `c`；没有引入第二后端。
+- Keyword 候选保留原始 rank/score，按 score 降序、稳定 Chunk UUID 排序；三次重复查询的等分
+  候选顺序一致。Application 的 Keyword 模式不调用 Embedding，也不执行 RRF、Reranker 或上下文
+  扩展。
+- 合成公开测试覆盖英文自然语言、显式分隔的中文 token、中文与 `std::vector` 混合查询、
+  全角 `Ｃ＋＋` 规范化、精确标识符和等分 tie-break。真实 PostgreSQL 测试 4 个通过；阶段 0
+  私有语料未用于本步验证，因而这里只形成工程切片基线，不报告正式 Recall。
+- PostgreSQL `simple` 不提供中文分词，连续中文子词可能无法命中，这是已知基线限制。升级触发
+  条件固定为：冻结 development 集的中文 Keyword evidence Recall@5 低于 85%，或 Hybrid 未达
+  总门槛且逐 case 证据定位到 Keyword 分词损失；届时在同一 `RetrievalStore` Port 下比较受控
+  分词方案或 PGroonga，并在更换后端或增加数据库扩展前更新 ADR-002。不得查看 holdout 后调参。
+- 检索 HTTP API 和 OpenAPI 仍属于 Step 8；本步没有提前新增公开端点，也没有声明阶段 3 正式
+  验收完成。
+
 **完成标准**：Keyword 模式可独立调用、可解释且确定性；技术词和精确标识符用例通过；
 语言切片失败可定位到查询解析、候选召回或排序阶段。
 

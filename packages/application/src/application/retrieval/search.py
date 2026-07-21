@@ -32,6 +32,7 @@ from domain.retrieval import (
     SearchRequest,
     SearchResult,
     StageTiming,
+    analyze_keyword_query,
 )
 
 
@@ -421,6 +422,7 @@ class SearchService:
         final_count: int = 0,
         degradation_reasons: tuple[RetrievalErrorCode, ...] = (),
     ) -> SearchDiagnostics:
+        keyword_analysis = analyze_keyword_query(request.query) if keyword is not None else None
         timings: list[StageTiming] = []
         if keyword is not None:
             timings.append(StageTiming(stage="keyword", latency_ms=keyword.latency_ms))
@@ -452,6 +454,15 @@ class SearchService:
                 final=final_count,
             ),
             stage_timings=tuple(timings),
+            keyword_language_slice=(
+                keyword_analysis.language_slice if keyword_analysis is not None else None
+            ),
+            keyword_query_kind=(
+                keyword_analysis.query_kind if keyword_analysis is not None else None
+            ),
+            keyword_literal_term_count=(
+                len(keyword_analysis.literal_terms) if keyword_analysis is not None else 0
+            ),
             degraded=bool(degradation_reasons),
             degradation_reasons=degradation_reasons,
             filter_reasons=tuple(

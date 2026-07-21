@@ -74,6 +74,9 @@ from .retrieval import (
     DenseCandidateQuery,
     HybridEmbeddingFailurePolicy,
     KeywordCandidateQuery,
+    KeywordLanguageSlice,
+    KeywordQueryAnalysis,
+    KeywordQueryKind,
     LocatorKind,
     QueryEmbedder,
     QueryEmbedding,
@@ -98,6 +101,8 @@ from .retrieval import (
     SearchRequest,
     SearchResult,
     StageTiming,
+    analyze_keyword_query,
+    normalize_search_query,
 )
 
 __all__ = [
@@ -129,6 +134,9 @@ __all__ = [
     "IngestionTaskRepository",
     "InvalidRunTransitionError",
     "KeywordCandidateQuery",
+    "KeywordLanguageSlice",
+    "KeywordQueryAnalysis",
+    "KeywordQueryKind",
     "LocatorKind",
     "ParseError",
     "ParseErrorCode",
@@ -189,4 +197,6 @@ __all__ = [
     "compute_chunk_hash",
     "compute_chunker_config_hash",
     "compute_processing_config_hash",
+    "analyze_keyword_query",
+    "normalize_search_query",
 ]
