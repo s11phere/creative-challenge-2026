@@ -42,6 +42,43 @@ runtime:
   warmup_queries: 3
   sampling: one_complete_pass
   retrieval_p95_budget_ms: 1000
+experiments:
+  - id: keyword-baseline
+    mode: keyword
+    dense_mode: exact
+    profile: &baseline_profile
+      keyword_candidate_k: 30
+      dense_candidate_k: 30
+      fusion_candidate_k: 30
+      rrf_k: 60
+      fusion_alpha: 0.5
+      reranker_enabled: false
+      rerank_k: 10
+      final_k: 5
+      adjacent_window: 1
+      max_chunks_per_document: 3
+      hybrid_embedding_failure_policy: error
+      reranker_failure_policy: error
+  - id: dense-exact
+    mode: dense
+    dense_mode: exact
+    profile: *baseline_profile
+  - id: dense-ivfflat
+    mode: dense
+    dense_mode: ivfflat
+    ivfflat_probes: 10
+    profile: *baseline_profile
+  - id: hybrid
+    mode: hybrid
+    dense_mode: exact
+    profile: *baseline_profile
+  - id: hybrid-rerank
+    mode: hybrid_rerank
+    dense_mode: exact
+    profile:
+      <<: *baseline_profile
+      reranker_enabled: true
+      rerank_k: 5
 gates:
   formal_manifest_status: frozen
   stage_2_step_9_acceptance_path: docs/stage-2-acceptance.md

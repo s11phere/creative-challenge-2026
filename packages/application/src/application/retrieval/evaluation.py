@@ -10,8 +10,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections import defaultdict
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from fnmatch import fnmatchcase
 
 
@@ -69,6 +71,15 @@ class RetrievedChunk:
     source_version: str
     rank: int
     locators: tuple[Locator, ...]
+    keyword_rank: int | None = None
+    keyword_score: float | None = None
+    dense_rank: int | None = None
+    dense_score: float | None = None
+    fused_rank: int | None = None
+    fused_score: float | None = None
+    rerank_rank: int | None = None
+    rerank_score: float | None = None
+    context_only: bool = False
 
     def __post_init__(self) -> None:
         if self.rank < 1:
@@ -102,6 +113,72 @@ class AggregateRetrievalMetrics:
     latency_p50_ms: float | None
     latency_p95_ms: float | None
     failure_rate: float
+
+
+class EvaluationFailureCategory(StrEnum):
+    PARSER = "parser"
+    LOCATOR_MAPPING = "locator_mapping"
+    KEYWORD_RECALL = "keyword_recall"
+    DENSE_RECALL = "dense_recall"
+    FUSION = "fusion"
+    RERANK = "rerank"
+    VERSION_OR_FILTER = "version_or_filter"
+    SAFETY_VIOLATION = "safety_violation"
+    PROVIDER = "provider"
+    INFRASTRUCTURE = "infrastructure"
+    PROFILE = "profile"
+
+
+@dataclass(frozen=True)
+class RetrievalEvaluationCase:
+    """Private query plus gold metadata for one retrieval-only case."""
+
+    case_id: str
+    category: str
+    space_id: str
+    query: str
+    gold_evidence: tuple[EvidenceUnit, ...]
+    must_exclude: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class RetrievalEvaluationObservation:
+    """Safe execution output; it never carries query or Chunk text."""
+
+    requested_mode: str
+    executed_mode: str
+    hits: tuple[RetrievedChunk, ...]
+    latency_ms: float
+    profile_version: str
+    embedding_version: str | None = None
+    reranker_version: str | None = None
+    keyword_index_version: str | None = None
+    dense_index_version: str | None = None
+    candidate_counts: tuple[tuple[str, int], ...] = ()
+    degraded: bool = False
+    degradation_reasons: tuple[str, ...] = ()
+    error_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.latency_ms < 0 or not math.isfinite(self.latency_ms):
+            raise ValueError("Evaluation latency must be finite and non-negative")
+
+
+@dataclass(frozen=True)
+class RetrievalEvaluationCaseResult:
+    case_id: str
+    category: str
+    status: str
+    metrics: CaseRetrievalMetrics
+    observation: RetrievalEvaluationObservation
+    failure_categories: tuple[EvaluationFailureCategory, ...] = ()
+
+
+@dataclass(frozen=True)
+class RetrievalEvaluationResult:
+    cases: tuple[RetrievalEvaluationCaseResult, ...]
+    metrics: AggregateRetrievalMetrics
+    slices: tuple[tuple[str, AggregateRetrievalMetrics], ...]
 
 
 def canonical_config_hash(config: Mapping[str, object]) -> str:
@@ -149,6 +226,7 @@ def evaluate_retrieval_case(
         raise ValueError("Retrieved chunk IDs must be unique")
 
     top_k = tuple(item for item in ranked if item.rank <= k)
+    evidence_top_k = tuple(item for item in top_k if not item.context_only)
     violations = tuple(
         item.chunk_id
         for item in top_k
@@ -170,7 +248,7 @@ def evaluate_retrieval_case(
     for evidence in gold_evidence:
         first_hit_ranks.append(
             next(
-                (item.rank for item in top_k if evidence_matches_chunk(evidence, item)),
+                (item.rank for item in evidence_top_k if evidence_matches_chunk(evidence, item)),
                 None,
             )
         )
@@ -230,6 +308,133 @@ def aggregate_retrieval_metrics(
         latency_p95_ms=_percentile(latency_ms, 0.95),
         failure_rate=0.0 if query_count == 0 else failure_count / query_count,
     )
+
+
+async def run_retrieval_evaluation(
+    cases: Sequence[RetrievalEvaluationCase],
+    execute: Callable[[RetrievalEvaluationCase], Awaitable[RetrievalEvaluationObservation]],
+    *,
+    k: int = 5,
+    failed_source_keys: frozenset[str] = frozenset(),
+) -> RetrievalEvaluationResult:
+    """Execute and score one experiment without serializing private inputs."""
+    results: list[RetrievalEvaluationCaseResult] = []
+    for case in cases:
+        observation = await execute(case)
+        metrics = evaluate_retrieval_case(
+            case.gold_evidence,
+            observation.hits,
+            k=k,
+            must_exclude=case.must_exclude,
+        )
+        failures = classify_retrieval_failure(
+            case,
+            observation,
+            metrics,
+            failed_source_keys=failed_source_keys,
+        )
+        results.append(
+            RetrievalEvaluationCaseResult(
+                case_id=case.case_id,
+                category=case.category,
+                status="passed" if not failures else "failed",
+                metrics=metrics,
+                observation=observation,
+                failure_categories=failures,
+            )
+        )
+
+    aggregate = _aggregate_case_results(results)
+    by_category: defaultdict[str, list[RetrievalEvaluationCaseResult]] = defaultdict(list)
+    for result in results:
+        by_category[result.category].append(result)
+    slices = tuple(
+        (category, _aggregate_case_results(category_results))
+        for category, category_results in sorted(by_category.items())
+    )
+    return RetrievalEvaluationResult(cases=tuple(results), metrics=aggregate, slices=slices)
+
+
+def classify_retrieval_failure(
+    case: RetrievalEvaluationCase,
+    observation: RetrievalEvaluationObservation,
+    metrics: CaseRetrievalMetrics,
+    *,
+    failed_source_keys: frozenset[str] = frozenset(),
+) -> tuple[EvaluationFailureCategory, ...]:
+    """Return deterministic, content-free failure attribution categories."""
+    failures: list[EvaluationFailureCategory] = []
+    if observation.error_code is not None:
+        failures.append(_error_category(observation.error_code))
+    if metrics.must_exclude_violations:
+        failures.append(EvaluationFailureCategory.SAFETY_VIOLATION)
+    if metrics.gold_evidence_count and not metrics.full_evidence_coverage_at_k:
+        gold_sources = {evidence.source_key for evidence in case.gold_evidence}
+        if gold_sources & failed_source_keys:
+            failures.append(EvaluationFailureCategory.PARSER)
+        elif _has_source_version_mismatch(case.gold_evidence, observation.hits):
+            failures.append(EvaluationFailureCategory.VERSION_OR_FILTER)
+        elif _has_locator_mismatch(case.gold_evidence, observation.hits):
+            failures.append(EvaluationFailureCategory.LOCATOR_MAPPING)
+        else:
+            failures.append(_mode_failure_category(observation.requested_mode))
+    return tuple(dict.fromkeys(failures))
+
+
+def _aggregate_case_results(
+    results: Sequence[RetrievalEvaluationCaseResult],
+) -> AggregateRetrievalMetrics:
+    return aggregate_retrieval_metrics(
+        [result.metrics for result in results],
+        latency_ms=[
+            result.observation.latency_ms
+            for result in results
+            if result.observation.error_code is None
+        ],
+        failure_count=sum(result.observation.error_code is not None for result in results),
+        total_query_count=len(results),
+    )
+
+
+def _has_source_version_mismatch(
+    evidence: Sequence[EvidenceUnit], hits: Sequence[RetrievedChunk]
+) -> bool:
+    return any(
+        gold.source_key == hit.source_key and gold.source_version != hit.source_version
+        for gold in evidence
+        for hit in hits
+        if not hit.context_only
+    )
+
+
+def _has_locator_mismatch(evidence: Sequence[EvidenceUnit], hits: Sequence[RetrievedChunk]) -> bool:
+    return any(
+        gold.source_key == hit.source_key
+        and gold.source_version == hit.source_version
+        and not any(gold.locator.overlaps(locator) for locator in hit.locators)
+        for gold in evidence
+        for hit in hits
+        if not hit.context_only
+    )
+
+
+def _mode_failure_category(mode: str) -> EvaluationFailureCategory:
+    return {
+        "keyword": EvaluationFailureCategory.KEYWORD_RECALL,
+        "dense": EvaluationFailureCategory.DENSE_RECALL,
+        "hybrid": EvaluationFailureCategory.FUSION,
+        "hybrid_rerank": EvaluationFailureCategory.RERANK,
+    }.get(mode, EvaluationFailureCategory.INFRASTRUCTURE)
+
+
+def _error_category(error_code: str) -> EvaluationFailureCategory:
+    if "EMBEDDING" in error_code or "RERANKER" in error_code or "PROVIDER" in error_code:
+        return EvaluationFailureCategory.PROVIDER
+    if "PROFILE" in error_code:
+        return EvaluationFailureCategory.PROFILE
+    if "FILTER" in error_code or "SPACE" in error_code:
+        return EvaluationFailureCategory.VERSION_OR_FILTER
+    return EvaluationFailureCategory.INFRASTRUCTURE
 
 
 def _mean(values: Iterable[float]) -> float | None:

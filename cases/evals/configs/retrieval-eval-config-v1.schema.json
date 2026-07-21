@@ -4,7 +4,7 @@
   "title": "Retrieval evaluation configuration v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "status", "corpus", "dataset", "protocol", "runtime", "gates"],
+  "required": ["schema_version", "status", "corpus", "dataset", "protocol", "runtime", "experiments", "gates"],
   "properties": {
     "schema_version": {"const": "retrieval-eval-config-v1"},
     "status": {"enum": ["provisional", "frozen"]},
@@ -75,6 +75,23 @@
         "retrieval_p95_budget_ms": {"type": "integer", "minimum": 1}
       }
     },
+    "experiments": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "mode", "dense_mode", "profile"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"},
+          "mode": {"enum": ["keyword", "dense", "hybrid", "hybrid_rerank"]},
+          "dense_mode": {"enum": ["exact", "ivfflat"]},
+          "ivfflat_probes": {"type": "integer", "minimum": 1},
+          "profile": {"$ref": "#/$defs/profile"}
+        }
+      }
+    },
     "gates": {
       "type": "object",
       "additionalProperties": false,
@@ -95,6 +112,29 @@
       "properties": {
         "count": {"type": "integer", "minimum": 1},
         "content_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keyword_candidate_k", "dense_candidate_k", "fusion_candidate_k", "rrf_k",
+        "fusion_alpha", "reranker_enabled", "rerank_k", "final_k", "adjacent_window",
+        "max_chunks_per_document", "hybrid_embedding_failure_policy", "reranker_failure_policy"
+      ],
+      "properties": {
+        "keyword_candidate_k": {"type": "integer", "minimum": 1},
+        "dense_candidate_k": {"type": "integer", "minimum": 1},
+        "fusion_candidate_k": {"type": "integer", "minimum": 1},
+        "rrf_k": {"type": "integer", "minimum": 1},
+        "fusion_alpha": {"type": "number", "minimum": 0, "maximum": 1},
+        "reranker_enabled": {"type": "boolean"},
+        "rerank_k": {"type": "integer", "minimum": 1},
+        "final_k": {"type": "integer", "minimum": 1},
+        "adjacent_window": {"type": "integer", "minimum": 0},
+        "max_chunks_per_document": {"type": "integer", "minimum": 1},
+        "hybrid_embedding_failure_policy": {"enum": ["error", "keyword_fallback"]},
+        "reranker_failure_policy": {"enum": ["error", "fused_fallback"]}
       }
     }
   }

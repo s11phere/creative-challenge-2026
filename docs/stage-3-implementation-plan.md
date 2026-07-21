@@ -605,6 +605,14 @@ docs/
 **完成标准**：同一冻结配置可重复得到相同通过/失败结论；默认模型和 profile 的选择有
 development 消融与 holdout 证据；每个失败 case 可定位到具体阶段。
 
+**当前实现与实际验证记录（2026-07-22）：**
+
+- Added a versioned evaluation schema/config covering corpus and dataset SHA-256, development/holdout split hashes, Keyword, Dense exact/IVFFlat, Hybrid, and Hybrid+Reranker experiments.
+- `scripts/evaluate_retrieval.py` now supports `--validate-only`, `--prepare-corpus`, repeatable `--experiment`, `--quiet`, isolated database enforcement via `EVALUATION_DATABASE_ISOLATED=1`, formal holdout blocking, safe run metadata, failure attribution, and a recursive privacy scan.
+- Reports contain only case/source/version/locator/rank/score/latency/error metadata. Query text, document text, quotes, vectors, secrets, and provider payloads are rejected and reports are written under ignored `tmp/retrieval-eval-*.json` paths.
+- Development evaluation on isolated PostgreSQL/Redis completed with 38 Markdown/TXT/PDF sources published and 5 code sources recorded as parser failures. With the deterministic fake embedding: Keyword Recall@5=0, Dense exact=0.1081, Hybrid=0.1081, Hybrid+Reranker=0.1081. IVFFlat encountered an infrastructure failure and was attributed as such rather than counted as a quality pass.
+- All reports remain `formal_run_eligible=false`; holdout execution was rejected with exit code 4. The 20 evaluation/CLI/evidence unit tests passed. This closes the Step 9 engineering flow only; it is not a Stage 0, formal holdout, or retrieval-quality acceptance.
+
 ### Step 10：集成验收与文档移交
 
 1. 在隔离 PostgreSQL/Redis 和本地模型服务上运行全链路：批准来源摄入、发布、检索、修改

@@ -125,6 +125,27 @@ def _write_validation_fixture(root: Path, monkeypatch: MonkeyPatch) -> tuple[dic
             "sampling": "one_complete_pass",
             "retrieval_p95_budget_ms": 1000,
         },
+        "experiments": [
+            {
+                "id": "keyword-baseline",
+                "mode": "keyword",
+                "dense_mode": "exact",
+                "profile": {
+                    "keyword_candidate_k": 30,
+                    "dense_candidate_k": 30,
+                    "fusion_candidate_k": 30,
+                    "rrf_k": 60,
+                    "fusion_alpha": 0.5,
+                    "reranker_enabled": False,
+                    "rerank_k": 10,
+                    "final_k": 5,
+                    "adjacent_window": 1,
+                    "max_chunks_per_document": 3,
+                    "hybrid_embedding_failure_policy": "error",
+                    "reranker_failure_policy": "error",
+                },
+            }
+        ],
         "gates": {
             "formal_manifest_status": "frozen",
             "stage_2_step_9_acceptance_path": "docs/stage-2-acceptance.md",
@@ -160,12 +181,33 @@ def test_fixture_config_validates_as_provisional(tmp_path: Path, monkeypatch: Mo
     assert summary["dataset"]["no_evidence_case_count"] == 1
 
 
-def test_cli_requires_validate_only(tmp_path: Path, monkeypatch: MonkeyPatch, capsys: Any) -> None:
+def test_cli_requires_isolated_database(
+    tmp_path: Path, monkeypatch: MonkeyPatch, capsys: Any
+) -> None:
     _, config_path = _write_validation_fixture(tmp_path, monkeypatch)
     result = evaluate_retrieval.main(["--config", config_path.name, "--split", "development"])
     captured = capsys.readouterr()
-    assert result == 3
-    assert "not connected" in captured.err
+    assert result == 4
+    assert "EVALUATION_DATABASE_ISOLATED=1" in captured.err
+
+
+def test_cli_blocks_provisional_holdout(
+    tmp_path: Path, monkeypatch: MonkeyPatch, capsys: Any
+) -> None:
+    _, config_path = _write_validation_fixture(tmp_path, monkeypatch)
+    result = evaluate_retrieval.main(["--config", config_path.name, "--split", "holdout"])
+    captured = capsys.readouterr()
+    assert result == 4
+    assert "holdout execution blocked" in captured.err
+
+
+def test_privacy_scan_rejects_private_payload_fields() -> None:
+    try:
+        evaluate_retrieval._privacy_scan({"cases": [{"query": "private"}]})
+    except evaluate_retrieval.EvaluationConfigError as exc:
+        assert "forbidden field" in str(exc)
+    else:
+        raise AssertionError("private query field was accepted in a report")
 
 
 def test_split_hash_preserves_jsonl_line_order() -> None:

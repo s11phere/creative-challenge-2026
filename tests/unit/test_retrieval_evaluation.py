@@ -4,11 +4,15 @@ import math
 
 import pytest
 from application.retrieval.evaluation import (
+    EvaluationFailureCategory,
     EvidenceUnit,
     Locator,
+    RetrievalEvaluationCase,
+    RetrievalEvaluationObservation,
     RetrievedChunk,
     aggregate_retrieval_metrics,
     canonical_config_hash,
+    classify_retrieval_failure,
     evaluate_retrieval_case,
     evidence_matches_chunk,
 )
@@ -168,3 +172,47 @@ def test_config_hash_is_semantic_and_deterministic() -> None:
     left = {"schema_version": "v1", "nested": {"alpha": 1, "beta": [2, 3]}}
     right = {"nested": {"beta": [2, 3], "alpha": 1}, "schema_version": "v1"}
     assert canonical_config_hash(left) == canonical_config_hash(right)
+
+
+def test_context_only_chunk_does_not_satisfy_gold_evidence() -> None:
+    evidence = (_evidence("space/doc", Locator("lines", 1, 2)),)
+    context = RetrievedChunk(
+        chunk_id="context",
+        source_key="space/doc",
+        source_version=VERSION,
+        rank=1,
+        locators=(Locator("lines", 1, 2),),
+        context_only=True,
+    )
+
+    metrics = evaluate_retrieval_case(evidence, (context,))
+
+    assert metrics.evidence_recall_at_k == 0.0
+    assert metrics.full_evidence_coverage_at_k is False
+
+
+def test_failure_attribution_prefers_parser_for_failed_gold_source() -> None:
+    case = RetrievalEvaluationCase(
+        case_id="qa-001",
+        category="single_document_factual",
+        space_id="space",
+        query="private query",
+        gold_evidence=(_evidence("space/doc", Locator("lines", 1, 2)),),
+    )
+    observation = RetrievalEvaluationObservation(
+        requested_mode="hybrid",
+        executed_mode="hybrid",
+        hits=(),
+        latency_ms=1.0,
+        profile_version="retrieval-profile-v1",
+    )
+    metrics = evaluate_retrieval_case(case.gold_evidence, observation.hits)
+
+    failures = classify_retrieval_failure(
+        case,
+        observation,
+        metrics,
+        failed_source_keys=frozenset({"space/doc"}),
+    )
+
+    assert failures == (EvaluationFailureCategory.PARSER,)
