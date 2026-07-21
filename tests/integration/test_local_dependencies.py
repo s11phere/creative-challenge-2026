@@ -40,11 +40,31 @@ async def test_migrated_postgresql_has_pgvector_and_single_head() -> None:
                 .scalars()
                 .all()
             )
+            fts_column = (
+                await connection.execute(
+                    text(
+                        "SELECT is_generated, generation_expression "
+                        "FROM information_schema.columns "
+                        "WHERE table_schema = 'public' AND table_name = 'chunks' "
+                        "AND column_name = 'search_vector'"
+                    )
+                )
+            ).one()
+            fts_index = await connection.scalar(
+                text(
+                    "SELECT indexdef FROM pg_indexes "
+                    "WHERE schemaname = 'public' AND indexname = 'idx_chunks_search_vector'"
+                )
+            )
     finally:
         await engine.dispose()
 
     assert vector_version
     assert set(migration_heads) == set(_EXPECTED_HEADS)
+    assert fts_column.is_generated == "ALWAYS"
+    assert "to_tsvector('simple'" in fts_column.generation_expression
+    assert fts_index is not None
+    assert "USING gin" in fts_index
 
 
 async def test_orm_metadata_creates_cosine_vector_index_in_isolated_schema() -> None:
@@ -65,6 +85,14 @@ async def test_orm_metadata_creates_cosine_vector_index_in_isolated_schema() -> 
                 ),
                 {"schema_name": schema_name},
             )
+            fts_index_definition = await translated.scalar(
+                text(
+                    "SELECT indexdef FROM pg_indexes "
+                    "WHERE schemaname = :schema_name "
+                    "AND indexname = 'idx_chunks_search_vector'"
+                ),
+                {"schema_name": schema_name},
+            )
     finally:
         async with engine.begin() as connection:
             await connection.execute(text(f"DROP SCHEMA IF EXISTS {quoted_schema} CASCADE"))
@@ -72,6 +100,8 @@ async def test_orm_metadata_creates_cosine_vector_index_in_isolated_schema() -> 
 
     assert index_definition is not None
     assert "vector_cosine_ops" in index_definition
+    assert fts_index_definition is not None
+    assert "USING gin" in fts_index_definition
 
 
 async def test_redis_round_trip_uses_ephemeral_control_metadata() -> None:
@@ -96,7 +126,14 @@ async def test_readiness_reports_real_local_dependencies() -> None:
         "checks": {
             "postgresql": {"healthy": True, "code": "POSTGRESQL_OK"},
             "redis": {"healthy": True, "code": "REDIS_OK"},
-            "model": {"healthy": True, "code": "MODEL_FAKE_READY"},
+            "model": {
+                "healthy": True,
+                "code": "MODEL_FAKE_READY",
+                "capabilities": {
+                    "fast_chat": {"healthy": True, "code": "MODEL_FAKE_READY"},
+                    "embedding_zh": {"healthy": True, "code": "MODEL_FAKE_READY"},
+                },
+            },
         },
     }
     assert response.headers["x-trace-id"]

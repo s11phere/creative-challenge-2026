@@ -261,6 +261,17 @@ class TestOrmModelConstruction:
         assert model.meta == {}
         assert model.embedding is None
 
+    def test_chunk_search_vector_is_generated_and_gin_indexed(self) -> None:
+        search_vector = ChunkModel.__table__.c.search_vector
+        assert search_vector.computed is not None
+        assert "to_tsvector('simple'" in str(search_vector.computed.sqltext)
+        search_index = next(
+            index
+            for index in ChunkModel.__table__.indexes
+            if index.name == "idx_chunks_search_vector"
+        )
+        assert search_index.dialect_options["postgresql"]["using"] == "gin"
+
     def test_ingestion_task_model(self) -> None:
         source_id = UUID("00000000-0000-4000-8000-000000000005")
         model = IngestionTaskModel(

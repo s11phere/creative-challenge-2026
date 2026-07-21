@@ -24,6 +24,7 @@ from .repositories import (
     SourceRepository,
     SpaceRepository,
 )
+from .retrieval import DensePathComparison, DenseSearchMode, PostgresRetrievalStore
 
 __all__ = [
     "Base",
@@ -33,11 +34,14 @@ __all__ = [
     "DocumentRepository",
     "DocumentVersionModel",
     "DocumentVersionRepository",
+    "DensePathComparison",
+    "DenseSearchMode",
     "IngestionTaskModel",
     "IngestionTaskRepository",
     "MarkdownParser",
     "ParserFactory",
     "PdfParser",
+    "PostgresRetrievalStore",
     "SourceModel",
     "SourceRepository",
     "SpaceModel",

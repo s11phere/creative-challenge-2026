@@ -1,0 +1,402 @@
+"""PostgreSQL retrieval boundary, FTS, and pgvector integration checks."""
+
+from __future__ import annotations
+
+import math
+import os
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from uuid import UUID, uuid4
+
+import pytest
+from domain.models import DocumentStatus
+from domain.retrieval import DenseCandidateQuery, KeywordCandidateQuery, SearchFilters
+from infrastructure.config import settings
+from infrastructure.orm import (
+    EMBEDDING_DIMENSIONS,
+    Base,
+    ChunkModel,
+    DocumentModel,
+    DocumentVersionModel,
+    SourceModel,
+    SpaceModel,
+)
+from infrastructure.retrieval import DenseSearchMode, PostgresRetrievalStore
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        os.getenv("RUN_INTEGRATION") != "1",
+        reason="set RUN_INTEGRATION=1 with isolated PostgreSQL and Redis services",
+    ),
+]
+
+_EMPTY_FILTERS = SearchFilters()
+
+
+@dataclass(frozen=True)
+class RetrievalDatabase:
+    engine: AsyncEngine
+    sessions: async_sessionmaker[AsyncSession]
+    schema_name: str
+
+
+@dataclass(frozen=True)
+class SeededChunk:
+    space_id: UUID
+    source_id: UUID
+    document_id: UUID
+    version_id: UUID
+    chunk_id: UUID
+
+
+@pytest.fixture
+async def retrieval_database() -> AsyncIterator[RetrievalDatabase]:
+    engine = create_async_engine(settings.database_url)
+    schema_name = f"retrieval_{uuid4().hex}"
+    quoted_schema = engine.dialect.identifier_preparer.quote(schema_name)
+    translated_engine = engine.execution_options(schema_translate_map={None: schema_name})
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text(f"CREATE SCHEMA {quoted_schema}"))
+        async with translated_engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        yield RetrievalDatabase(
+            engine=translated_engine,
+            sessions=async_sessionmaker(
+                translated_engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+            ),
+            schema_name=schema_name,
+        )
+    finally:
+        await translated_engine.dispose()
+        async with engine.begin() as connection:
+            await connection.execute(text(f"DROP SCHEMA IF EXISTS {quoted_schema} CASCADE"))
+        await engine.dispose()
+
+
+def _vector(angle: float = 0.0) -> list[float]:
+    return [math.cos(angle), math.sin(angle), *([0.0] * (EMBEDDING_DIMENSIONS - 2))]
+
+
+async def _add_space(session: AsyncSession, label: str) -> SpaceModel:
+    space = SpaceModel(name=label, owner_id="integration", retrieval_profile={})
+    session.add(space)
+    await session.flush()
+    return space
+
+
+async def _add_version(
+    session: AsyncSession,
+    *,
+    document: DocumentModel,
+    label: str,
+    text_value: str,
+    embedding: list[float],
+    embedding_version: str = "embedding-v1",
+    status: str = DocumentStatus.PUBLISHED.value,
+    make_current: bool = False,
+) -> SeededChunk:
+    version = DocumentVersionModel(
+        document_id=document.id,
+        blob_hash=f"blob-{label}",
+        content_hash=f"content-{label}",
+        embedding_version=embedding_version,
+        processing_config_hash=f"config-{label}",
+        processing_config={"fixture": label},
+        status=status,
+    )
+    session.add(version)
+    await session.flush()
+    chunk = ChunkModel(
+        version_id=version.id,
+        ordinal=0,
+        chunk_hash=f"chunk-{label}",
+        text=text_value,
+        meta={
+            "start_line": "2",
+            "end_line": "4",
+            "start_page": "1",
+            "end_page": "1",
+        },
+        embedding=embedding,
+    )
+    session.add(chunk)
+    await session.flush()
+    if make_current:
+        document.current_version_id = version.id
+        await session.flush()
+    source = await session.get(SourceModel, document.source_id)
+    assert source is not None
+    return SeededChunk(
+        space_id=source.space_id,
+        source_id=source.id,
+        document_id=document.id,
+        version_id=version.id,
+        chunk_id=chunk.id,
+    )
+
+
+async def _add_document(
+    session: AsyncSession,
+    *,
+    space_id: UUID,
+    label: str,
+    text_value: str,
+    embedding: list[float] | None = None,
+    embedding_version: str = "embedding-v1",
+    status: str = DocumentStatus.PUBLISHED.value,
+    deleted: bool = False,
+) -> tuple[DocumentModel, SeededChunk]:
+    source = SourceModel(space_id=space_id, source_type="upload", uri=f"fixture://{label}")
+    session.add(source)
+    await session.flush()
+    document = DocumentModel(
+        source_id=source.id,
+        stable_key=f"{label}.md",
+        deleted_at=datetime.now(UTC) if deleted else None,
+    )
+    session.add(document)
+    await session.flush()
+    seeded = await _add_version(
+        session,
+        document=document,
+        label=label,
+        text_value=text_value,
+        embedding=embedding or _vector(),
+        embedding_version=embedding_version,
+        status=status,
+        make_current=True,
+    )
+    return document, seeded
+
+
+def _keyword_query(
+    term: str,
+    space_id: UUID,
+    *,
+    filters: SearchFilters = _EMPTY_FILTERS,
+) -> KeywordCandidateQuery:
+    return KeywordCandidateQuery(query=term, space_id=space_id, filters=filters, limit=10)
+
+
+def _dense_query(space_id: UUID, *, filters: SearchFilters = _EMPTY_FILTERS) -> DenseCandidateQuery:
+    return DenseCandidateQuery(
+        query_vector=tuple(_vector()),
+        space_id=space_id,
+        filters=filters,
+        limit=10,
+        embedding_version="embedding-v1",
+    )
+
+
+async def test_keyword_and_dense_share_the_published_candidate_boundary(
+    retrieval_database: RetrievalDatabase,
+) -> None:
+    async with retrieval_database.sessions() as session:
+        target_space = await _add_space(session, "target")
+        other_space = await _add_space(session, "other")
+        visible_document, visible = await _add_document(
+            session,
+            space_id=target_space.id,
+            label="visible",
+            text_value="visibleterm current published",
+        )
+        await _add_version(
+            session,
+            document=visible_document,
+            label="visible-old",
+            text_value="oldterm published but not current",
+            embedding=_vector(0.01),
+        )
+        await _add_document(
+            session,
+            space_id=target_space.id,
+            label="unpublished",
+            text_value="unpublishedterm candidate",
+            status=DocumentStatus.EMBEDDED.value,
+        )
+        await _add_document(
+            session,
+            space_id=target_space.id,
+            label="deleted",
+            text_value="deletedterm tombstone",
+            deleted=True,
+        )
+        await _add_document(
+            session,
+            space_id=target_space.id,
+            label="wrong-embedding",
+            text_value="wrongembeddingterm current published",
+            embedding_version="embedding-v2",
+        )
+        _, other = await _add_document(
+            session,
+            space_id=other_space.id,
+            label="other-space",
+            text_value="visibleterm crossspaceterm",
+        )
+        await session.commit()
+
+        store = PostgresRetrievalStore(session)
+        keyword = await store.keyword_candidates(_keyword_query("visibleterm", target_space.id))
+        assert [candidate.chunk_id for candidate in keyword.candidates] == [visible.chunk_id]
+        assert [(locator.start, locator.end) for locator in keyword.candidates[0].locators] == [
+            (2, 4),
+            (1, 1),
+        ]
+        for hidden_term in ("oldterm", "unpublishedterm", "deletedterm", "crossspaceterm"):
+            hidden = await store.keyword_candidates(_keyword_query(hidden_term, target_space.id))
+            assert hidden.candidates == ()
+
+        dense = await store.dense_candidates(_dense_query(target_space.id))
+        assert [candidate.chunk_id for candidate in dense.candidates] == [visible.chunk_id]
+        assert dense.index_version == "pgvector-cosine-exact-v1"
+
+        ivfflat_store = PostgresRetrievalStore(
+            session,
+            dense_mode=DenseSearchMode.IVFFLAT,
+            ivfflat_probes=10,
+        )
+        approximate = await ivfflat_store.dense_candidates(_dense_query(target_space.id))
+        assert [candidate.chunk_id for candidate in approximate.candidates] == [visible.chunk_id]
+        assert approximate.index_version == "pgvector-ivfflat-lists100-probes10-v1"
+
+        matching_filter = SearchFilters(
+            source_ids=frozenset({visible.source_id}),
+            document_ids=frozenset({visible.document_id}),
+        )
+        filtered = await store.keyword_candidates(
+            _keyword_query("visibleterm", target_space.id, filters=matching_filter)
+        )
+        assert [candidate.chunk_id for candidate in filtered.candidates] == [visible.chunk_id]
+
+        cross_space_filter = SearchFilters(source_ids=frozenset({other.source_id}))
+        narrowed_to_empty = await store.keyword_candidates(
+            _keyword_query("visibleterm", target_space.id, filters=cross_space_filter)
+        )
+        assert narrowed_to_empty.candidates == ()
+
+
+async def test_uncommitted_version_switch_keeps_old_version_visible(
+    retrieval_database: RetrievalDatabase,
+) -> None:
+    async with retrieval_database.sessions() as seed_session:
+        space = await _add_space(seed_session, "switch")
+        document, old = await _add_document(
+            seed_session,
+            space_id=space.id,
+            label="switch-old",
+            text_value="switchterm old version",
+        )
+        new = await _add_version(
+            seed_session,
+            document=document,
+            label="switch-new",
+            text_value="switchterm new version",
+            embedding=_vector(0.02),
+        )
+        await seed_session.commit()
+
+    async with retrieval_database.sessions() as reader, retrieval_database.sessions() as writer:
+        store = PostgresRetrievalStore(reader)
+        before = await store.keyword_candidates(_keyword_query("switchterm", space.id))
+        assert [candidate.chunk_id for candidate in before.candidates] == [old.chunk_id]
+
+        writable_document = await writer.get(DocumentModel, document.id)
+        assert writable_document is not None
+        writable_document.current_version_id = new.version_id
+        await writer.flush()
+
+        while_uncommitted = await store.keyword_candidates(_keyword_query("switchterm", space.id))
+        assert [candidate.chunk_id for candidate in while_uncommitted.candidates] == [old.chunk_id]
+
+        await writer.commit()
+        after_commit = await store.keyword_candidates(_keyword_query("switchterm", space.id))
+        assert [candidate.chunk_id for candidate in after_commit.candidates] == [new.chunk_id]
+
+
+async def test_exact_and_ivfflat_paths_report_overlap_plans_and_statistics(
+    retrieval_database: RetrievalDatabase,
+) -> None:
+    async with retrieval_database.sessions() as session:
+        space = await _add_space(session, "vector-comparison")
+        source = SourceModel(space_id=space.id, source_type="upload", uri="fixture://vectors")
+        session.add(source)
+        await session.flush()
+
+        documents: list[DocumentModel] = []
+        versions: list[DocumentVersionModel] = []
+        chunks: list[ChunkModel] = []
+        for ordinal in range(120):
+            document = DocumentModel(
+                id=uuid4(),
+                source_id=source.id,
+                stable_key=f"vector-{ordinal}.md",
+            )
+            version = DocumentVersionModel(
+                id=uuid4(),
+                document_id=document.id,
+                blob_hash=f"{ordinal:064x}",
+                content_hash=f"{ordinal + 1000:064x}",
+                embedding_version="embedding-v1",
+                processing_config_hash=f"{ordinal + 2000:064x}",
+                status=DocumentStatus.PUBLISHED.value,
+            )
+            chunk = ChunkModel(
+                id=uuid4(),
+                version_id=version.id,
+                ordinal=0,
+                chunk_hash=f"{ordinal + 3000:064x}",
+                text=f"vector fixture {ordinal}",
+                meta={},
+                embedding=_vector(ordinal * 0.005),
+            )
+            documents.append(document)
+            versions.append(version)
+            chunks.append(chunk)
+        session.add_all(documents)
+        await session.flush()
+        session.add_all(versions)
+        await session.flush()
+        session.add_all(chunks)
+        await session.flush()
+        for document, version in zip(documents, versions, strict=True):
+            document.current_version_id = version.id
+        await session.commit()
+
+    quoted_schema = retrieval_database.engine.dialect.identifier_preparer.quote(
+        retrieval_database.schema_name
+    )
+    async with retrieval_database.engine.begin() as connection:
+        await connection.execute(text(f"ANALYZE {quoted_schema}.chunks"))
+
+    async with retrieval_database.sessions() as session:
+        store = PostgresRetrievalStore(
+            session,
+            dense_mode=DenseSearchMode.EXACT,
+            ivfflat_probes=10,
+        )
+        comparison = await store.compare_dense_paths(_dense_query(space.id))
+
+    assert len(comparison.exact.candidates) == 10
+    assert len(comparison.ivfflat.candidates) == 10
+    assert comparison.overlap_count == 10
+    assert comparison.overlap_ratio == 1.0
+    assert comparison.ivfflat_lists == 100
+    assert comparison.ivfflat_probes == 10
+    assert comparison.ivfflat_shortlist_k == 100
+    assert comparison.statistics_analyzed is True
+    assert comparison.ivfflat_index_used is True
+    assert "Seq Scan" in comparison.exact_plan
+    assert "idx_chunks_embedding" in comparison.ivfflat_plan

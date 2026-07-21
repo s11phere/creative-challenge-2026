@@ -68,9 +68,11 @@ SQL、API 和安全工程验证，但不得生成正式检索基线或宣称阶�
    Embedding-only 本地服务不再要求部署 Chat 模型。
 2. **已于 Step 2 关闭实现缺口**：`Chunk.meta` 已映射非空的 `parent_ordinal`、
    `prev_ordinal`、`next_ordinal`；待阶段 0 门禁关闭后再对冻结语料执行正式重建。
-3. 当前 `chunks` 没有 FTS 文档列和 GIN 索引，需要新的 Alembic revision；禁止修改既有迁移。
-4. 当前 IVFFlat 索引固定 `lists=100`，尚未与精确扫描比较召回率，也未验证 Space 过滤后的
-   执行计划。阶段 3 必须先建立 exact baseline，再决定 probes 或索引参数。
+3. **已于 Step 3 关闭**：新 Alembic revision 已为 `chunks` 增加持久生成的 FTS 文档列和
+   GIN 索引，既有迁移未修改，旧数据回填和降级保留已验证。
+4. **已于 Step 3 建立工程基线**：exact cosine 为默认路径；IVFFlat 已记录 `lists`、`probes`、
+   shortlist、ANALYZE 状态、执行计划和 exact overlap。阶段 0 冻结语料上的正式门槛未执行，
+   因此近似路径尚未激活为默认配置。
 5. 现有 `RetrievalProfile` 字段不足以无歧义描述候选数、RRF 常数、最终条数、扩展窗口、
    Reranker 开关和降级策略，需要定义版本化 profile schema 和兼容默认值。
 6. 评测集已有问题、证据和标签，但还没有“证据 locator 如何映射到 Chunk”的统一算法、
@@ -346,6 +348,29 @@ docs/
 6. 查询使用 SQLAlchemy 参数绑定或结构化 SQL；禁止拼接用户查询、排序字段或过滤表达式。
 7. 为迁移回填、当前版本切换、删除撤下、跨 Space 和并发发布/检索编写真实 PostgreSQL
    集成测试。
+
+**当前实现与验证记录（2026-07-21）**：
+
+- Alembic revision `d4e5f6a7b8c9` 为 `chunks.search_vector` 增加基于 PostgreSQL `simple`
+  配置的持久生成列，并创建 `idx_chunks_search_vector` GIN 索引；ORM metadata 与迁移保持一致。
+- `PostgresRetrievalStore` 在 Infrastructure 层实现 `RetrievalStore` Port。Keyword 与 exact Dense
+  共用同一 `_apply_published_scope` 边界，强制目标 Space、未删除 Document、当前且已发布
+  DocumentVersion；Dense 额外匹配 `embedding_version`，Source/Document filter 只能追加条件。
+- exact cosine 默认关闭 index/bitmap scan，作为正确性基线。IVFFlat 诊断使用 materialized
+  vector shortlist 后在同一 SQL 中应用相同发布边界；这是为了让 pgvector 索引计划可测，也会
+  显式暴露过滤后可能少召回的风险，因此正式语料门槛关闭前不作为默认路径。
+- `DensePathComparison` 记录 exact/IVFFlat 候选、overlap、`lists=100`、`probes`、shortlist 大小、
+  ANALYZE 状态和两份 JSON 执行计划，并明确标记 `idx_chunks_embedding` 是否实际使用。合成的
+  120 向量测试在 top 10 上得到 10/10 overlap，exact 计划包含顺序扫描，IVFFlat 计划实际命中
+  `idx_chunks_embedding`。
+- 隔离 PostgreSQL 上从 `c3d4e5f6a7b8` 插入旧 Chunk 后升级至 head，生成列可立即命中旧文本；
+  降级后列被删除而原 Chunk 文本保留，再升级成功。真实 PostgreSQL/Redis 集成测试 31 个通过，
+  覆盖当前版本切换提交前后、tombstone、未发布版本、Embedding 版本、跨 Space、filters、FTS、
+  exact/IVFFlat 和迁移 head/索引契约。
+- SQL 查询由 SQLAlchemy 表达式和绑定参数构造；诊断中的 EXPLAIN 只编译内部生成的受控语句，
+  用户查询、ID 和 filter 不参与 SQL 字符串拼接。
+- 阶段 0 仍为 `draft_pending_license_review`，以上只关闭 Step 3 的工程流程；尚未在冻结语料上
+  证明近似索引召回门槛，也不构成阶段 3 的正式质量验收。
 
 **完成标准**：任何检索模式都只能看到目标 Space 的当前发布版本；迁移往返通过；explain
 计划和 exact/approx 差异进入诊断报告；跨 Space 与撤下来源违规为 0。

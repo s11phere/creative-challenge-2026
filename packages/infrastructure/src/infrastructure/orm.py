@@ -12,6 +12,7 @@ from typing import Any
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     CheckConstraint,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -21,7 +22,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 # ---------------------------------------------------------------------------
@@ -202,6 +203,11 @@ class ChunkModel(Base):
     chunk_hash: Mapped[str] = mapped_column(String(64), default="")
     text: Mapped[str] = mapped_column(Text, default="")
     meta: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict)
+    search_vector: Mapped[Any] = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('simple'::regconfig, coalesce(text, ''::text))", persisted=True),
+        nullable=False,
+    )
     embedding: Mapped[list[float] | None] = mapped_column(
         Vector(EMBEDDING_DIMENSIONS), nullable=True
     )
@@ -214,6 +220,7 @@ class ChunkModel(Base):
     __table_args__ = (
         Index("idx_chunks_version_id", "version_id"),
         Index("idx_chunks_chunk_hash", "chunk_hash"),
+        Index("idx_chunks_search_vector", search_vector, postgresql_using="gin"),
         UniqueConstraint("version_id", "ordinal", name="uq_chunks_version_ordinal"),
         Index(
             "idx_chunks_embedding",
