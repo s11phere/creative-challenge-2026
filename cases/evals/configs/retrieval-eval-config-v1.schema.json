@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "retrieval-eval-config-v1.schema.json",
+  "title": "Retrieval evaluation configuration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "corpus", "dataset", "protocol", "runtime", "gates"],
+  "properties": {
+    "schema_version": {"const": "retrieval-eval-config-v1"},
+    "status": {"enum": ["provisional", "frozen"]},
+    "corpus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "manifest_path", "manifest_sha256", "required_allowed_use"],
+      "properties": {
+        "version": {"type": "string", "minLength": 1},
+        "manifest_path": {"type": "string", "minLength": 1},
+        "manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "required_allowed_use": {"const": "local_evaluation"}
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "cases_path", "cases_sha256", "schema_path", "schema_sha256", "splits"],
+      "properties": {
+        "version": {"type": "string", "minLength": 1},
+        "cases_path": {"type": "string", "minLength": 1},
+        "cases_sha256": {"$ref": "#/$defs/sha256"},
+        "schema_path": {"type": "string", "minLength": 1},
+        "schema_sha256": {"$ref": "#/$defs/sha256"},
+        "splits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["development", "holdout"],
+          "properties": {
+            "development": {"$ref": "#/$defs/split"},
+            "holdout": {"$ref": "#/$defs/split"}
+          }
+        }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_match", "metrics", "recall_k", "ndcg_k", "no_evidence_policy", "safety_slices"],
+      "properties": {
+        "evidence_match": {"const": "source_key+source_version+locator_overlap-v1"},
+        "metrics": {
+          "type": "array",
+          "minItems": 7,
+          "uniqueItems": true,
+          "items": {"enum": ["evidence_recall", "mrr", "evidence_ndcg", "full_evidence_coverage", "must_exclude_violations", "latency_p50_p95", "failure_rate"]}
+        },
+        "recall_k": {"const": 5},
+        "ndcg_k": {"type": "integer", "minimum": 1},
+        "no_evidence_policy": {"const": "exclude_from_recall_and_ranking_denominators"},
+        "safety_slices": {
+          "type": "array",
+          "minItems": 4,
+          "uniqueItems": true,
+          "items": {"enum": ["no_answer", "cross_space", "withdrawn_version", "adversarial_document"]}
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "concurrency", "warmup_queries", "sampling", "retrieval_p95_budget_ms"],
+      "properties": {
+        "target": {"type": "string", "minLength": 1},
+        "concurrency": {"type": "integer", "minimum": 1},
+        "warmup_queries": {"type": "integer", "minimum": 0},
+        "sampling": {"enum": ["one_complete_pass"]},
+        "retrieval_p95_budget_ms": {"type": "integer", "minimum": 1}
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["formal_manifest_status", "stage_2_step_9_acceptance_path", "formal_runs_enabled"],
+      "properties": {
+        "formal_manifest_status": {"const": "frozen"},
+        "stage_2_step_9_acceptance_path": {"type": "string", "minLength": 1},
+        "formal_runs_enabled": {"type": "boolean"}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "split": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "content_sha256"],
+      "properties": {
+        "count": {"type": "integer", "minimum": 1},
+        "content_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

@@ -25,7 +25,8 @@ source = { virtual = "." }
 dependencies = [
     { name = "agent-runtime" },
     { name = "api" },
-    { name = "python-multipart" },
+    { name = "jsonschema" },
+    { name = "pyyaml" },
     { name = "worker" },
 ]
 
@@ -44,7 +45,8 @@ dev = [
 requires-dist = [
     { name = "agent-runtime", editable = "packages/agent_runtime" },
     { name = "api", editable = "apps/api" },
-    { name = "python-multipart", specifier = ">=0.0.32" },
+    { name = "jsonschema", specifier = ">=4.23,<5" },
+    { name = "pyyaml", specifier = ">=6,<7" },
     { name = "worker", editable = "apps/worker" },
 ]
 

@@ -2,7 +2,13 @@
 name = "agent-knowledge-repo"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["agent-runtime", "api", "worker"]
+dependencies = [
+    "agent-runtime",
+    "api",
+    "jsonschema>=4.23,<5",
+    "pyyaml>=6,<7",
+    "worker",
+]
 
 [tool.uv.workspace]
 members = [

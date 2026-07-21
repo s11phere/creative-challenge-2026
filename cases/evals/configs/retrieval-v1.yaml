@@ -1,0 +1,48 @@
+schema_version: retrieval-eval-config-v1
+status: provisional
+corpus:
+  version: v0
+  manifest_path: cases/evals/corpus/v0/manifest.yaml
+  manifest_sha256: dd096e1aefc5b612124ed239d88fb035d0c42ee724eb52da7d8c72d12287d8b6
+  required_allowed_use: local_evaluation
+dataset:
+  version: v0
+  cases_path: cases/evals/datasets/knowledge-qa-v0/cases.jsonl
+  cases_sha256: e0947b3c028c562ad99ad00c44b78642c2a9dd53542784da7a3dcf7f0bd086c2
+  schema_path: cases/evals/datasets/knowledge-qa-v0/schema.json
+  schema_sha256: 4949f3f4a9212f5fa02c915850f06a64bde501df0568e57fab582057a3b45e16
+  splits:
+    development:
+      count: 20
+      content_sha256: 4628f7192042a4eea03861026b003d776fda535d633d20e3d0146f22e199874b
+    holdout:
+      count: 10
+      content_sha256: 67b34a4d071a8bc8512281701a2239467efb736e98dc639d93926d3f9d5fb2ff
+protocol:
+  evidence_match: source_key+source_version+locator_overlap-v1
+  metrics:
+    - evidence_recall
+    - mrr
+    - evidence_ndcg
+    - full_evidence_coverage
+    - must_exclude_violations
+    - latency_p50_p95
+    - failure_rate
+  recall_k: 5
+  ndcg_k: 5
+  no_evidence_policy: exclude_from_recall_and_ranking_denominators
+  safety_slices:
+    - no_answer
+    - cross_space
+    - withdrawn_version
+    - adversarial_document
+runtime:
+  target: Windows 10.0.26200; Intel64 family 6 model 183; 32 logical processors
+  concurrency: 1
+  warmup_queries: 3
+  sampling: one_complete_pass
+  retrieval_p95_budget_ms: 1000
+gates:
+  formal_manifest_status: frozen
+  stage_2_step_9_acceptance_path: docs/stage-2-acceptance.md
+  formal_runs_enabled: false

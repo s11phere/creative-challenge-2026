@@ -1,5 +1,11 @@
 # Third-party / course materials
 cases/
+!cases/
+cases/*
+!cases/evals/
+cases/evals/*
+!cases/evals/configs/
+!cases/evals/configs/**
 
 # Environment
 .env
