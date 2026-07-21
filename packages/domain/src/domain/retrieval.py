@@ -11,6 +11,7 @@ from typing import Protocol
 from uuid import UUID
 
 MAX_SEARCH_QUERY_CHARS = 512
+RETRIEVAL_EMBEDDING_DIMENSIONS = 768
 _TECHNICAL_TERM_MARKERS = ("++", "::", "#", "_")
 _TERM_BOUNDARY_PUNCTUATION = ".,;:!?\uff0c\u3002\uff1b\uff1a\uff01\uff1f()[]{}<>\"'`"
 _CHINESE_CHARACTER = re.compile(r"[\u3400-\u9fff]")
@@ -180,6 +181,7 @@ class RetrievalProfileV1:
     reranker_failure_policy: RerankerFailurePolicy = RerankerFailurePolicy.ERROR
     embedding_version: str = "embedding-unset"
     expected_embedding_dimensions: int = 768
+    dense_timeout_seconds: float = 15.0
 
     def __post_init__(self) -> None:
         if self.profile_version != "retrieval-profile-v1":
@@ -208,6 +210,10 @@ class RetrievalProfileV1:
             raise ValueError("rerank_k cannot exceed fusion_candidate_k")
         if not self.embedding_version:
             raise ValueError("embedding_version must not be empty")
+        if self.expected_embedding_dimensions != RETRIEVAL_EMBEDDING_DIMENSIONS:
+            raise ValueError("Retrieval embeddings are fixed at 768 dimensions")
+        if self.dense_timeout_seconds <= 0 or not math.isfinite(self.dense_timeout_seconds):
+            raise ValueError("dense_timeout_seconds must be finite and positive")
 
 
 @dataclass(frozen=True)
@@ -430,6 +436,8 @@ class SearchDiagnostics:
     keyword_language_slice: KeywordLanguageSlice | None = None
     keyword_query_kind: KeywordQueryKind | None = None
     keyword_literal_term_count: int = 0
+    dense_language_slice: KeywordLanguageSlice | None = None
+    dense_query_kind: KeywordQueryKind | None = None
     degraded: bool = False
     degradation_reasons: tuple[RetrievalErrorCode, ...] = ()
     filter_reasons: tuple[str, ...] = ()

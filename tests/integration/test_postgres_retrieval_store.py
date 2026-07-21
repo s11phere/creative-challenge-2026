@@ -262,6 +262,8 @@ async def test_keyword_and_dense_share_the_published_candidate_boundary(
         dense = await store.dense_candidates(_dense_query(target_space.id))
         assert [candidate.chunk_id for candidate in dense.candidates] == [visible.chunk_id]
         assert dense.index_version == "pgvector-cosine-exact-v1"
+        assert dense.candidates[0].rank == 1
+        assert math.isclose(dense.candidates[0].score, 1.0, rel_tol=1e-6)
 
         ivfflat_store = PostgresRetrievalStore(
             session,

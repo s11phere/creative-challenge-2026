@@ -68,6 +68,7 @@ from .repositories import (
     SpaceRepository,
 )
 from .retrieval import (
+    RETRIEVAL_EMBEDDING_DIMENSIONS,
     CandidateBatch,
     CandidateChannel,
     CandidateCounts,
@@ -137,6 +138,7 @@ __all__ = [
     "KeywordLanguageSlice",
     "KeywordQueryAnalysis",
     "KeywordQueryKind",
+    "RETRIEVAL_EMBEDDING_DIMENSIONS",
     "LocatorKind",
     "ParseError",
     "ParseErrorCode",

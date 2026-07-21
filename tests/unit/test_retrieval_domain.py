@@ -63,6 +63,8 @@ def test_retrieval_modes_and_error_codes_are_unique() -> None:
         {"fusion_candidate_k": 5, "rerank_k": 6},
         {"reranker_enabled": True, "rerank_k": 4, "final_k": 5},
         {"embedding_version": ""},
+        {"expected_embedding_dimensions": 384},
+        {"dense_timeout_seconds": 0},
     ],
 )
 def test_profile_rejects_incompatible_values(overrides: dict[str, object]) -> None:

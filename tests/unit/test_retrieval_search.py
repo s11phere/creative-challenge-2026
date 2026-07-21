@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -100,12 +101,15 @@ class _FakeEmbedder:
     dimensions: int = 768
     model_version: str = "fake-embedding-v1"
     error: Exception | None = None
+    delay_seconds: float = 0.0
     call_count: int = 0
 
     async def embed_query(self, _query: str) -> QueryEmbedding:
         self.call_count += 1
         if self.error:
             raise self.error
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
         return QueryEmbedding(
             vector=tuple(0.01 for _ in range(self.dimensions)),
             model_version=self.model_version,
@@ -257,8 +261,31 @@ async def test_dense_mode_passes_versioned_vector_query(repos) -> None:
     )
     assert result.hits[0].dense_rank == 1
     assert result.diagnostics.embedding_version == "fake-embedding-v1"
+    assert result.diagnostics.dense_language_slice is KeywordLanguageSlice.ENGLISH
+    assert result.diagnostics.dense_query_kind is KeywordQueryKind.NATURAL_LANGUAGE
     assert store.dense_queries[0].embedding_version == "fake-embedding-v1"
     assert len(store.dense_queries[0].query_vector) == 768
+
+
+async def test_dense_mode_has_a_profile_timeout(repos) -> None:
+    store = _FakeStore()
+    with pytest.raises(RetrievalError) as captured:
+        await _service(repos, store, _FakeEmbedder(delay_seconds=0.05)).search(
+            SearchRequest("kernel", SPACE_ID, mode=RetrievalMode.DENSE),
+            _profile(dense_timeout_seconds=0.01),
+        )
+    assert captured.value.code is RetrievalErrorCode.RETRIEVAL_TIMEOUT
+    assert not store.dense_queries
+
+
+async def test_dense_diagnostics_report_mixed_code_query(repos) -> None:
+    store = _FakeStore()
+    result = await _service(repos, store, _FakeEmbedder()).search(
+        SearchRequest("\u4e2d\u6587 std::vector", SPACE_ID, mode=RetrievalMode.DENSE),
+        _profile(),
+    )
+    assert result.diagnostics.dense_language_slice is KeywordLanguageSlice.MIXED
+    assert result.diagnostics.dense_query_kind is KeywordQueryKind.CODE
 
 
 async def test_hybrid_mode_fuses_and_deduplicates_candidates(repos) -> None:

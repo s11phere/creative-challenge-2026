@@ -1,5 +1,12 @@
 """Retrieval application services and evaluation primitives."""
 
+from application.retrieval.dense import (
+    QueryEmbeddingBatchResult,
+    QueryEmbeddingBatchRunner,
+    QueryEmbeddingConfig,
+    QueryEmbeddingService,
+    QueryTextEmbedder,
+)
 from application.retrieval.evaluation import (
     AggregateRetrievalMetrics,
     CaseRetrievalMetrics,
@@ -20,6 +27,11 @@ __all__ = [
     "Locator",
     "RetrievedChunk",
     "SearchService",
+    "QueryEmbeddingBatchResult",
+    "QueryEmbeddingBatchRunner",
+    "QueryEmbeddingConfig",
+    "QueryEmbeddingService",
+    "QueryTextEmbedder",
     "aggregate_retrieval_metrics",
     "canonical_config_hash",
     "evaluate_retrieval_case",

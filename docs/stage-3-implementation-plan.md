@@ -427,6 +427,30 @@ docs/
    比较。
 6. 比较 exact 与活动近似索引，记录 Recall@K、延迟和结果重合，不只记录 SQL 执行时间。
 
+**当前实现与验证记录（2026-07-21）**：
+
+- `QueryEmbeddingService` 是 provider-neutral `QueryEmbedder` 实现：它通过 TextEmbedder 适配
+  ModelGateway，先规范化 query，再可选追加受版本约束的 query prefix；返回恰好一个、768 维、
+  全部有限的向量，并按 `EmbeddingIdentity` 进行可复现归一化，`model_version` 固定为完整
+  identity version。带 prefix 的配置必须声明非 `none-v1` 的 query instruction version，防止
+  改变查询格式却复用旧 `embedding_version`。
+- 活动 `RetrievalProfileV1` 现在固定 768 维并持有独立 `dense_timeout_seconds`。SearchService 在
+  访问 pgvector 前再次检查维度和有限值，严格匹配 `embedding_version`；模型或 Store 超时统一映射
+  为可重试 `RETRIEVAL_TIMEOUT`，取消不被吞掉，模型响应数量/维度/非有限/L2 零向量映射为稳定
+  RetrievalError，不能以裸 `ValueError` 越过 Application 边界。
+- `QueryEmbeddingBatchRunner` 为离线评测的 query embedding 提供有界并发、每项超时、输入顺序
+  保持和取消清理。它只覆盖 Dense 输入生成；完整 retrieval evaluation/report 仍在后续评测步骤
+  完成，避免将当前工程 smoke test 误报为正式 Recall。
+- Dense Store 使用 cosine distance，候选中保留数据库原始 score (`1 - distance`) 与 rank；Application
+  不在模型间比较绝对分数。真实 PostgreSQL 合成数据验证 query 与同向量 Chunk 的 score 为 `1.0`
+  且 rank 为 `1`，Embedding version 不同的当前发布 Chunk 不可见。exact/IVFFlat 的 lists、probes、
+  ANALYZE、计划和 top-10 overlap 仍沿用 Step 3 诊断，默认保持 exact。
+- Search diagnostics 记录 Dense 的语言及 Code/Natural Language 切片，单元测试覆盖英文、混合中文
+  与 `std::vector`；隔离 PostgreSQL/Redis 集成套件 32 个通过。跨语言、中文问英文、代码和长术语
+  的正式逐 case 比较必须等阶段 0 冻结 development/holdout 后执行，不能以当前合成 fixture 代替。
+- 阶段 0 仍为 `draft_pending_license_review`，本记录只关闭 Step 5 的工程流程和可复现执行边界，
+  不声明 Dense、Hybrid 或近似索引已经达到 Recall@5 质量门槛。
+
 **完成标准**：Dense 模式独立达到可复现基线；维度/版本错误不会发布或查询；同一配置重复
 运行排名稳定；模型和数据库阶段耗时可分开观察。
 

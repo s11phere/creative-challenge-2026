@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import math
 from dataclasses import dataclass
 
 from domain.repositories import DocumentRepository, SourceRepository, SpaceRepository
 from domain.retrieval import (
+    RETRIEVAL_EMBEDDING_DIMENSIONS,
     CandidateBatch,
     CandidateChannel,
     CandidateCounts,
@@ -303,37 +306,33 @@ class SearchService:
         self, request: SearchRequest, profile: RetrievalProfileV1
     ) -> tuple[QueryEmbedding, CandidateBatch]:
         try:
-            embedding = await self._query_embedder.embed_query(request.query)
-        except TimeoutError as exc:
-            raise RetrievalError(
-                RetrievalErrorCode.RETRIEVAL_TIMEOUT,
-                "Query embedding timed out.",
-                retryable=True,
-            ) from exc
-        if len(embedding.vector) != profile.expected_embedding_dimensions:
-            raise RetrievalError(
-                RetrievalErrorCode.EMBEDDING_DIMENSION_MISMATCH,
-                "Query embedding dimensions do not match the active profile.",
-            )
-        if embedding.model_version != profile.embedding_version:
-            raise RetrievalError(
-                RetrievalErrorCode.PROFILE_INCOMPATIBLE,
-                "Query embedding version does not match the active profile.",
-            )
-        try:
-            dense = await self._retrieval_store.dense_candidates(
-                DenseCandidateQuery(
-                    query_vector=embedding.vector,
-                    space_id=request.space_id,
-                    filters=request.filters,
-                    limit=profile.dense_candidate_k,
-                    embedding_version=profile.embedding_version,
+            async with asyncio.timeout(profile.dense_timeout_seconds):
+                embedding = await self._query_embedder.embed_query(request.query)
+                if len(embedding.vector) != RETRIEVAL_EMBEDDING_DIMENSIONS or any(
+                    not math.isfinite(value) for value in embedding.vector
+                ):
+                    raise RetrievalError(
+                        RetrievalErrorCode.EMBEDDING_DIMENSION_MISMATCH,
+                        "Query embedding must be finite and exactly 768 dimensions.",
+                    )
+                if embedding.model_version != profile.embedding_version:
+                    raise RetrievalError(
+                        RetrievalErrorCode.PROFILE_INCOMPATIBLE,
+                        "Query embedding version does not match the active profile.",
+                    )
+                dense = await self._retrieval_store.dense_candidates(
+                    DenseCandidateQuery(
+                        query_vector=embedding.vector,
+                        space_id=request.space_id,
+                        filters=request.filters,
+                        limit=profile.dense_candidate_k,
+                        embedding_version=profile.embedding_version,
+                    )
                 )
-            )
         except TimeoutError as exc:
             raise RetrievalError(
                 RetrievalErrorCode.RETRIEVAL_TIMEOUT,
-                "Dense retrieval timed out.",
+                "Dense search exceeded the active profile timeout.",
                 retryable=True,
             ) from exc
         return embedding, dense
@@ -423,6 +422,7 @@ class SearchService:
         degradation_reasons: tuple[RetrievalErrorCode, ...] = (),
     ) -> SearchDiagnostics:
         keyword_analysis = analyze_keyword_query(request.query) if keyword is not None else None
+        dense_analysis = analyze_keyword_query(request.query) if dense is not None else None
         timings: list[StageTiming] = []
         if keyword is not None:
             timings.append(StageTiming(stage="keyword", latency_ms=keyword.latency_ms))
@@ -463,6 +463,10 @@ class SearchService:
             keyword_literal_term_count=(
                 len(keyword_analysis.literal_terms) if keyword_analysis is not None else 0
             ),
+            dense_language_slice=(
+                dense_analysis.language_slice if dense_analysis is not None else None
+            ),
+            dense_query_kind=(dense_analysis.query_kind if dense_analysis is not None else None),
             degraded=bool(degradation_reasons),
             degradation_reasons=degradation_reasons,
             filter_reasons=tuple(
