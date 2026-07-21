@@ -21,6 +21,9 @@ from .contracts import (
     ModelGatewayError,
     ModelProvider,
     ModelUsage,
+    RerankRequest,
+    RerankResponse,
+    RerankScore,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,11 +59,21 @@ class FakeModelGateway:
             code=code,
             provider=ModelProvider.FAKE,
             capabilities=(
-                (CapabilityAlias.FAST_CHAT, CapabilityAlias.EMBEDDING_ZH) if available else ()
+                (
+                    CapabilityAlias.FAST_CHAT,
+                    CapabilityAlias.EMBEDDING_ZH,
+                    CapabilityAlias.RERANKER_MULTILINGUAL,
+                )
+                if available
+                else ()
             ),
             capability_statuses=tuple(
                 CapabilityStatus(capability=capability, available=available, code=code)
-                for capability in (CapabilityAlias.FAST_CHAT, CapabilityAlias.EMBEDDING_ZH)
+                for capability in (
+                    CapabilityAlias.FAST_CHAT,
+                    CapabilityAlias.EMBEDDING_ZH,
+                    CapabilityAlias.RERANKER_MULTILINGUAL,
+                )
             ),
         )
 
@@ -149,6 +162,38 @@ class FakeModelGateway:
             self._log_success(capability, usage)
             return EmbeddingResponse(
                 vectors=vectors,
+                usage=usage,
+                capability=capability,
+                latency_ms=0.0,
+            )
+
+    async def rerank(
+        self,
+        request: RerankRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.RERANKER_MULTILINGUAL,
+    ) -> RerankResponse:
+        if capability is not CapabilityAlias.RERANKER_MULTILINGUAL:
+            raise self._unsupported(capability)
+        with tracer.start_as_current_span(
+            "model.rerank",
+            kind=SpanKind.CLIENT,
+            attributes={"model.capability": capability.value, "model.provider": "fake"},
+        ) as span:
+            self._raise_scenario(capability)
+            scores = tuple(
+                RerankScore(index=index, score=-float(index))
+                for index, _document in enumerate(request.documents)
+            )
+            usage = ModelUsage(
+                input_tokens=max(1, len(request.query.split()))
+                + sum(max(1, len(document.split())) for document in request.documents)
+            )
+            span.set_attribute("gen_ai.usage.input_tokens", usage.input_tokens)
+            self._log_success(capability, usage)
+            return RerankResponse(
+                scores=scores,
+                model_version="fake-reranker-v1",
                 usage=usage,
                 capability=capability,
                 latency_ms=0.0,

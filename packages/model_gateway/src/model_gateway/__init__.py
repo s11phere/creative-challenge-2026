@@ -15,6 +15,9 @@ from .contracts import (
     ModelGatewayError,
     ModelProvider,
     ModelUsage,
+    RerankRequest,
+    RerankResponse,
+    RerankScore,
 )
 from .factory import GatewayConfig, create_model_gateway
 from .fake import FakeModelGateway, FakeScenario
@@ -40,6 +43,9 @@ __all__ = [
     "ModelProvider",
     "ModelUsage",
     "OpenAICompatibleGateway",
+    "RerankRequest",
+    "RerankResponse",
+    "RerankScore",
     "UnavailableModelGateway",
     "create_model_gateway",
 ]

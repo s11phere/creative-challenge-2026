@@ -18,6 +18,8 @@ from model_gateway import (
     FakeModelGateway,
     ModelGateway,
     OpenAICompatibleGateway,
+    RerankRequest,
+    RerankResponse,
 )
 
 GatewayFactory = Callable[[], tuple[ModelGateway, httpx.AsyncClient | None]]
@@ -37,6 +39,19 @@ async def provider_stub(request: httpx.Request) -> httpx.Response:
                     }
                 ],
                 "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+            },
+        )
+    if request.url.path.endswith("/rerank"):
+        assert payload["model"] == "configured-reranker-model"
+        assert payload["texts"] == ["alpha", "beta"]
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"index": 1, "relevance_score": 0.2},
+                    {"index": 0, "relevance_score": 0.8},
+                ],
+                "usage": {"prompt_tokens": 4},
             },
         )
     assert request.url.path.endswith("/embeddings")
@@ -64,6 +79,7 @@ def provider_factory() -> tuple[ModelGateway, httpx.AsyncClient]:
             endpoint="http://127.0.0.1:11434/v1",
             fast_chat_model="configured-chat-model",
             embedding_model="configured-embedding-model",
+            reranker_model="configured-reranker-model",
             client=client,
         ),
         client,
@@ -104,6 +120,24 @@ async def test_embedding_contract(gateway_factory: GatewayFactory) -> None:
         assert {len(vector) for vector in response.vectors} == {2}
         assert all(isinstance(value, float) for vector in response.vectors for value in vector)
         assert response.usage.input_tokens >= 0
+        assert response.latency_ms >= 0
+    finally:
+        if client is not None:
+            await client.aclose()
+
+
+@pytest.mark.parametrize("gateway_factory", [fake_factory, provider_factory])
+async def test_reranker_contract(gateway_factory: GatewayFactory) -> None:
+    gateway, client = gateway_factory()
+    try:
+        response = await gateway.rerank(
+            RerankRequest(query="synthetic question", documents=("alpha", "beta"))
+        )
+
+        assert isinstance(response, RerankResponse)
+        assert response.capability is CapabilityAlias.RERANKER_MULTILINGUAL
+        assert {score.index for score in response.scores} == {0, 1}
+        assert response.model_version
         assert response.latency_ms >= 0
     finally:
         if client is not None:

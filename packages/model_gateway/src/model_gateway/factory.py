@@ -25,6 +25,9 @@ class GatewayConfig:
     embedding_endpoint: str | None = None
     embedding_api_key: str | None = None
     embedding_model: str | None = None
+    reranker_endpoint: str | None = None
+    reranker_api_key: str | None = None
+    reranker_model: str | None = None
     allow_external: bool = False
     timeout_seconds: float = 15.0
     max_retries: int = 2
@@ -54,12 +57,23 @@ def create_model_gateway(
             config.embedding_model,
             allow_external=config.allow_external,
         )
+        reranker_endpoint = config.reranker_endpoint
+        reranker_status, reranker_error = _capability_configuration_status(
+            reranker_endpoint,
+            config.reranker_model,
+            allow_external=config.allow_external,
+        )
         return OpenAICompatibleGateway(
             embedding_endpoint=endpoint if error is None else None,
             embedding_model=config.embedding_model,
+            reranker_endpoint=reranker_endpoint if reranker_error is None else None,
+            reranker_api_key=config.reranker_api_key or config.api_key,
+            reranker_model=config.reranker_model,
             embedding_api_key=config.embedding_api_key or config.api_key,
             embedding_status_code=status,
             embedding_error_code=error or ModelErrorCode.UNAVAILABLE,
+            reranker_status_code=reranker_status,
+            reranker_error_code=reranker_error or ModelErrorCode.UNAVAILABLE,
             timeout_seconds=config.timeout_seconds,
             max_retries=config.max_retries,
             retry_backoff_seconds=config.retry_backoff_seconds,
@@ -79,6 +93,12 @@ def create_model_gateway(
         config.embedding_model,
         allow_external=config.allow_external,
     )
+    reranker_endpoint = config.reranker_endpoint or config.endpoint
+    reranker_status, reranker_error = _capability_configuration_status(
+        reranker_endpoint,
+        config.reranker_model,
+        allow_external=config.allow_external,
+    )
     return OpenAICompatibleGateway(
         endpoint=None,
         fast_chat_endpoint=chat_endpoint if chat_error is None else None,
@@ -88,10 +108,15 @@ def create_model_gateway(
         api_key=config.api_key,
         fast_chat_api_key=config.fast_chat_api_key,
         embedding_api_key=config.embedding_api_key,
+        reranker_endpoint=reranker_endpoint if reranker_error is None else None,
+        reranker_api_key=config.reranker_api_key or config.api_key,
+        reranker_model=config.reranker_model,
         fast_chat_status_code=chat_status,
         embedding_status_code=embedding_status,
         fast_chat_error_code=chat_error or ModelErrorCode.UNAVAILABLE,
         embedding_error_code=embedding_error or ModelErrorCode.UNAVAILABLE,
+        reranker_status_code=reranker_status,
+        reranker_error_code=reranker_error or ModelErrorCode.UNAVAILABLE,
         provider=config.provider,
         embedding_protocol=config.embedding_protocol,
         timeout_seconds=config.timeout_seconds,
@@ -127,7 +152,7 @@ def _endpoint_allowed(endpoint: str, *, allow_external: bool) -> bool:
         ):
             return False
         host = parsed.hostname.lower()
-        if host in {"localhost", "host.docker.internal", "tei"}:
+        if host in {"localhost", "host.docker.internal", "tei", "reranker"}:
             return True
         try:
             address = ipaddress.ip_address(host)

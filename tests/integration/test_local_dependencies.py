@@ -132,6 +132,10 @@ async def test_readiness_reports_real_local_dependencies() -> None:
                 "capabilities": {
                     "fast_chat": {"healthy": True, "code": "MODEL_FAKE_READY"},
                     "embedding_zh": {"healthy": True, "code": "MODEL_FAKE_READY"},
+                    "reranker_multilingual": {
+                        "healthy": True,
+                        "code": "MODEL_FAKE_READY",
+                    },
                 },
             },
         },

@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     embedding_api_key: SecretStr | None = None
     embedding_model: str | None = None
     embedding_model_revision: str | None = None
+    reranker_endpoint: str | None = None
+    reranker_api_key: SecretStr | None = None
+    reranker_model: str | None = None
     embedding_protocol: Literal["openai-compatible", "tei"] = "openai-compatible"
     embedding_query_instruction_version: str = "none-v1"
     embedding_document_instruction_version: str = "none-v1"

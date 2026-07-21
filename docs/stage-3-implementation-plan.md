@@ -511,6 +511,27 @@ docs/
    退出条件；应先用评测证据更新 `docs/project-implementation-plan.md` 的门槛和后果，再决定
    是否以默认关闭 Reranker 的 Hybrid 配置退出。
 
+**当前实现与验证记录（2026-07-21）**：
+- ModelGateway 新增 `reranker_multilingual` 能力 alias、provider-neutral `RerankRequest`/
+  `RerankResponse`/`RerankScore`（含 model version、usage、latency），Fake、Unavailable 和
+  OpenAI-compatible/TEI HTTP Adapter 均实现同一契约。
+- `GatewayReranker` 将 ModelGateway 错误映射为稳定 `RETRIEVAL_RERANKER_UNAVAILABLE`，有界
+  timeout，不把 query/chunk 正文写入日志；Application 仍只发送融合后的 `rerank_k` 项并校验
+  index 完整性、重复和越界。
+- Compose 新增可选 `reranker` profile，固定 TEI CPU 镜像 digest 和
+  `BAAI/bge-reranker-base` revision `2cfc18c9415c912f9d8155881c133215df768a70`，服务端点为
+  `/rerank`；默认 fake/profile 关闭，不改变既有本地管理功能。
+- ModelGateway/Adapter 契约与失败、超时、非法 index 测试通过；完整默认回归为
+  `467 passed, 34 skipped`，隔离 PostgreSQL/Redis 集成回归为 `33 passed`，`ruff` 和 `mypy`
+  通过。
+- 固定 revision 的 TEI 容器前两次因 `huggingface.co` 下载 `unexpected EOF` 退出；复用
+  `stage3-step7-test_rerankerdata` 缓存卷重试后成功下载 1.11 GB ONNX 权重、完成 warm-up 并
+  达到 healthy。直接中文 `/rerank` smoke 中相关文档得分 `0.7438486`，无关项低于
+  `0.000038`；经 `GatewayConfig -> ModelGateway -> GatewayReranker` 的英文 smoke 中相关文档
+  得分 `0.4751372`，无关项低于 `0.000056`，返回固定 model version，Adapter 延迟约 `279 ms`。
+  这关闭了真实模型部署与契约 smoke，但不替代阶段 0 冻结后的 development 消融、P95 和
+  holdout 质量验收；默认 Reranker 仍保持关闭。
+
 **完成标准**：开关 Reranker 不改变召回集合安全边界；真实和 fake Adapter 通过同一契约；
 精排收益和新增延迟分别报告。
 

@@ -181,6 +181,9 @@ def _create_configured_model_gateway() -> ModelGateway:
     embedding_api_key = (
         settings.embedding_api_key.get_secret_value() if settings.embedding_api_key else None
     )
+    reranker_api_key = (
+        settings.reranker_api_key.get_secret_value() if settings.reranker_api_key else None
+    )
     return create_model_gateway(
         GatewayConfig(
             provider=ModelProvider(settings.model_provider),
@@ -192,6 +195,9 @@ def _create_configured_model_gateway() -> ModelGateway:
             embedding_endpoint=settings.embedding_endpoint,
             embedding_api_key=embedding_api_key,
             embedding_model=settings.embedding_model,
+            reranker_endpoint=settings.reranker_endpoint,
+            reranker_api_key=reranker_api_key,
+            reranker_model=settings.reranker_model,
             embedding_protocol=settings.embedding_protocol,
             allow_external=settings.model_allow_external,
             timeout_seconds=settings.model_timeout_seconds,

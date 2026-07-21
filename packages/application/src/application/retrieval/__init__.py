@@ -17,6 +17,7 @@ from application.retrieval.evaluation import (
     canonical_config_hash,
     evaluate_retrieval_case,
 )
+from application.retrieval.reranker import GatewayReranker, GatewayRerankerConfig
 from application.retrieval.search import FusedCandidate, SearchService, fuse_candidates
 
 __all__ = [
@@ -36,4 +37,6 @@ __all__ = [
     "canonical_config_hash",
     "evaluate_retrieval_case",
     "fuse_candidates",
+    "GatewayReranker",
+    "GatewayRerankerConfig",
 ]

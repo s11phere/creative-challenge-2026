@@ -25,6 +25,9 @@ from .contracts import (
     ModelGatewayError,
     ModelProvider,
     ModelUsage,
+    RerankRequest,
+    RerankResponse,
+    RerankScore,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,10 +59,15 @@ class OpenAICompatibleGateway:
         embedding_endpoint: str | None = None,
         fast_chat_api_key: str | None = None,
         embedding_api_key: str | None = None,
+        reranker_endpoint: str | None = None,
+        reranker_model: str | None = None,
+        reranker_api_key: str | None = None,
         fast_chat_status_code: str = "MODEL_CONFIGURATION_MISSING",
         embedding_status_code: str = "MODEL_CONFIGURATION_MISSING",
         fast_chat_error_code: ModelErrorCode = ModelErrorCode.UNAVAILABLE,
         embedding_error_code: ModelErrorCode = ModelErrorCode.UNAVAILABLE,
+        reranker_status_code: str = "MODEL_CONFIGURATION_MISSING",
+        reranker_error_code: ModelErrorCode = ModelErrorCode.UNAVAILABLE,
         provider: ModelProvider = ModelProvider.OPENAI_COMPATIBLE,
         embedding_protocol: str = "openai-compatible",
         timeout_seconds: float = 15.0,
@@ -86,6 +94,13 @@ class OpenAICompatibleGateway:
                 embedding_status_code,
                 embedding_error_code,
             ),
+            CapabilityAlias.RERANKER_MULTILINGUAL: self._capability_config(
+                reranker_endpoint or resolved_chat_endpoint,
+                reranker_model,
+                reranker_api_key if reranker_api_key is not None else api_key,
+                reranker_status_code,
+                reranker_error_code,
+            ),
         }
         self.endpoint = httpx.URL(endpoint.rstrip("/") + "/") if endpoint else None
         self.fast_chat_model = fast_chat_model
@@ -111,12 +126,14 @@ class OpenAICompatibleGateway:
             for capability, config in self._capability_configs.items()
         )
         capabilities = tuple(status.capability for status in statuses if status.available)
-        if len(capabilities) == 2:
+        if len(capabilities) == len(self._capability_configs):
             code = "MODEL_PROVIDER_CONFIGURED"
         elif capabilities == (CapabilityAlias.EMBEDDING_ZH,):
             code = "MODEL_EMBEDDING_CONFIGURED"
         elif capabilities == (CapabilityAlias.FAST_CHAT,):
             code = "MODEL_CHAT_CONFIGURED"
+        elif capabilities == (CapabilityAlias.RERANKER_MULTILINGUAL,):
+            code = "MODEL_RERANKER_CONFIGURED"
         else:
             code = (
                 "MODEL_POLICY_DENIED"
@@ -242,6 +259,52 @@ class OpenAICompatibleGateway:
             self._log_success(capability, latency_ms, usage, retries)
             return EmbeddingResponse(
                 vectors=vectors,
+                usage=usage,
+                capability=capability,
+                latency_ms=latency_ms,
+            )
+
+    async def rerank(
+        self,
+        request: RerankRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.RERANKER_MULTILINGUAL,
+    ) -> RerankResponse:
+        if capability is not CapabilityAlias.RERANKER_MULTILINGUAL:
+            raise self._unsupported(capability)
+        config = self._require_capability(capability)
+        started_at = perf_counter()
+        with tracer.start_as_current_span(
+            "model.rerank",
+            kind=SpanKind.CLIENT,
+            attributes={
+                "gen_ai.operation.name": "rerank",
+                "gen_ai.provider.name": self._provider.value,
+                "model.capability": capability.value,
+            },
+        ) as span:
+            data, retries = await self._request_json(
+                "rerank",
+                {
+                    "query": request.query,
+                    "texts": list(request.documents),
+                    "raw_scores": False,
+                    **(
+                        {}
+                        if self._provider is ModelProvider.TEXT_EMBEDDINGS_INFERENCE
+                        else {"model": config.model}
+                    ),
+                },
+                capability=capability,
+            )
+            scores = self._parse_rerank(data, len(request.documents), capability)
+            usage = self._parse_usage(data if isinstance(data, dict) else {}, embedding=False)
+            latency_ms = (perf_counter() - started_at) * 1000
+            span.set_attribute("gen_ai.usage.input_tokens", usage.input_tokens)
+            self._log_success(capability, latency_ms, usage, retries)
+            return RerankResponse(
+                scores=scores,
+                model_version=config.model or "unknown",
                 usage=usage,
                 capability=capability,
                 latency_ms=latency_ms,
@@ -484,6 +547,37 @@ class OpenAICompatibleGateway:
         if len({len(vector) for vector in vectors}) != 1:
             raise cls._invalid_response(capability)
         return tuple(vectors)
+
+    @classmethod
+    def _parse_rerank(
+        cls,
+        payload: dict[str, Any] | list[Any],
+        expected_count: int,
+        capability: CapabilityAlias,
+    ) -> tuple[RerankScore, ...]:
+        values: Any = (
+            payload.get("results", payload.get("data")) if isinstance(payload, dict) else payload
+        )
+        if not isinstance(values, list) or len(values) != expected_count:
+            raise cls._invalid_response(capability)
+        scores: list[RerankScore] = []
+        for value in values:
+            if not isinstance(value, dict):
+                raise cls._invalid_response(capability)
+            index = value.get("index")
+            score = value.get("relevance_score", value.get("score"))
+            if (
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or isinstance(score, bool)
+                or not isinstance(score, (int, float))
+                or not math.isfinite(float(score))
+            ):
+                raise cls._invalid_response(capability)
+            scores.append(RerankScore(index=index, score=float(score)))
+        if {score.index for score in scores} != set(range(expected_count)):
+            raise cls._invalid_response(capability)
+        return tuple(scores)
 
     @classmethod
     def _parse_usage(cls, payload: dict[str, Any], *, embedding: bool) -> ModelUsage:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -10,6 +11,7 @@ from typing import Protocol
 class CapabilityAlias(StrEnum):
     FAST_CHAT = "fast_chat"
     EMBEDDING_ZH = "embedding_zh"
+    RERANKER_MULTILINGUAL = "reranker_multilingual"
 
 
 class ChatRole(StrEnum):
@@ -68,6 +70,48 @@ class EmbeddingRequest:
     def __post_init__(self) -> None:
         if not self.texts or any(not text for text in self.texts):
             raise ValueError("Embedding request must contain non-empty texts")
+
+
+@dataclass(frozen=True)
+class RerankRequest:
+    query: str
+    documents: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.query.strip():
+            raise ValueError("Rerank query must not be blank")
+        if not self.documents or any(not document for document in self.documents):
+            raise ValueError("Rerank request must contain non-empty documents")
+
+
+@dataclass(frozen=True)
+class RerankScore:
+    index: int
+    score: float
+
+    def __post_init__(self) -> None:
+        if self.index < 0 or not math.isfinite(self.score):
+            raise ValueError("Rerank score index and value must be valid")
+
+
+@dataclass(frozen=True)
+class RerankResponse:
+    scores: tuple[RerankScore, ...]
+    model_version: str
+    usage: ModelUsage
+    capability: CapabilityAlias
+    latency_ms: float
+
+    def __post_init__(self) -> None:
+        if not self.model_version:
+            raise ValueError("Rerank model_version must not be empty")
+        if self.capability is not CapabilityAlias.RERANKER_MULTILINGUAL:
+            raise ValueError("Rerank response capability must be reranker_multilingual")
+        if self.latency_ms < 0 or not math.isfinite(self.latency_ms):
+            raise ValueError("Rerank latency must be finite and non-negative")
+        indices = tuple(score.index for score in self.scores)
+        if len(indices) != len(set(indices)):
+            raise ValueError("Rerank score indices must be unique")
 
 
 @dataclass(frozen=True)
@@ -158,5 +202,12 @@ class ModelGateway(Protocol):
         *,
         capability: CapabilityAlias = CapabilityAlias.EMBEDDING_ZH,
     ) -> EmbeddingResponse: ...
+
+    async def rerank(
+        self,
+        request: RerankRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.RERANKER_MULTILINGUAL,
+    ) -> RerankResponse: ...
 
     async def aclose(self) -> None: ...

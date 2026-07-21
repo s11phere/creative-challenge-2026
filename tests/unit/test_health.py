@@ -51,6 +51,7 @@ async def test_ready_returns_degraded_without_dependencies(monkeypatch: MonkeyPa
         "capabilities": {
             "fast_chat": {"healthy": True, "code": "MODEL_FAKE_READY"},
             "embedding_zh": {"healthy": True, "code": "MODEL_FAKE_READY"},
+            "reranker_multilingual": {"healthy": True, "code": "MODEL_FAKE_READY"},
         },
     }
     # Must not leak host or port in failure details
@@ -91,6 +92,7 @@ async def test_ready_returns_success_when_dependencies_are_available(
         "capabilities": {
             "fast_chat": {"healthy": True, "code": "MODEL_FAKE_READY"},
             "embedding_zh": {"healthy": True, "code": "MODEL_FAKE_READY"},
+            "reranker_multilingual": {"healthy": True, "code": "MODEL_FAKE_READY"},
         },
     }
 
@@ -129,5 +131,6 @@ async def test_model_unavailable_does_not_degrade_local_readiness(
         "capabilities": {
             "fast_chat": {"healthy": False, "code": "MODEL_DISABLED"},
             "embedding_zh": {"healthy": False, "code": "MODEL_DISABLED"},
+            "reranker_multilingual": {"healthy": False, "code": "MODEL_DISABLED"},
         },
     }

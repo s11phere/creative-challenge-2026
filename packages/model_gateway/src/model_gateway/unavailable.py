@@ -13,6 +13,8 @@ from .contracts import (
     ModelErrorCode,
     ModelGatewayError,
     ModelProvider,
+    RerankRequest,
+    RerankResponse,
 )
 
 
@@ -36,7 +38,11 @@ class UnavailableModelGateway:
                     available=False,
                     code=status_code,
                 )
-                for capability in (CapabilityAlias.FAST_CHAT, CapabilityAlias.EMBEDDING_ZH)
+                for capability in (
+                    CapabilityAlias.FAST_CHAT,
+                    CapabilityAlias.EMBEDDING_ZH,
+                    CapabilityAlias.RERANKER_MULTILINGUAL,
+                )
             ),
         )
         self.error_code = error_code
@@ -68,6 +74,14 @@ class UnavailableModelGateway:
         *,
         capability: CapabilityAlias = CapabilityAlias.EMBEDDING_ZH,
     ) -> EmbeddingResponse:
+        raise self._error(capability)
+
+    async def rerank(
+        self,
+        _request: RerankRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.RERANKER_MULTILINGUAL,
+    ) -> RerankResponse:
         raise self._error(capability)
 
     async def aclose(self) -> None:
