@@ -11,7 +11,12 @@ from uuid import UUID, uuid4
 
 import pytest
 from domain.models import DocumentStatus
-from domain.retrieval import DenseCandidateQuery, KeywordCandidateQuery, SearchFilters
+from domain.retrieval import (
+    ContextCandidateQuery,
+    DenseCandidateQuery,
+    KeywordCandidateQuery,
+    SearchFilters,
+)
 from infrastructure.config import settings
 from infrastructure.orm import (
     EMBEDDING_DIMENSIONS,
@@ -288,6 +293,79 @@ async def test_keyword_and_dense_share_the_published_candidate_boundary(
             _keyword_query("visibleterm", target_space.id, filters=cross_space_filter)
         )
         assert narrowed_to_empty.candidates == ()
+
+
+async def test_context_expansion_stays_in_seed_version_document_and_space(
+    retrieval_database: RetrievalDatabase,
+) -> None:
+    async with retrieval_database.sessions() as session:
+        target_space = await _add_space(session, "target-context")
+        other_space = await _add_space(session, "other-context")
+        document, parent = await _add_document(
+            session,
+            space_id=target_space.id,
+            label="context-document",
+            text_value="parent context",
+        )
+        seed_chunk = ChunkModel(
+            version_id=parent.version_id,
+            ordinal=1,
+            chunk_hash="context-seed",
+            text="seedterm matched child",
+            meta={"start_line": "5", "end_line": "7", "parent_ordinal": "0"},
+            embedding=_vector(0.01),
+        )
+        adjacent_chunk = ChunkModel(
+            version_id=parent.version_id,
+            ordinal=2,
+            chunk_hash="context-adjacent",
+            text="adjacent child",
+            meta={"start_line": "8", "end_line": "10"},
+            embedding=_vector(0.02),
+        )
+        session.add_all((seed_chunk, adjacent_chunk))
+        await _add_version(
+            session,
+            document=document,
+            label="context-old",
+            text_value="old version neighbor",
+            embedding=_vector(0.03),
+        )
+        await _add_document(
+            session,
+            space_id=target_space.id,
+            label="other-document-context",
+            text_value="other document neighbor",
+        )
+        await _add_document(
+            session,
+            space_id=other_space.id,
+            label="other-space-context",
+            text_value="other space neighbor",
+        )
+        await session.commit()
+
+        store = PostgresRetrievalStore(session)
+        seed_batch = await store.keyword_candidates(_keyword_query("seedterm", target_space.id))
+        assert len(seed_batch.candidates) == 1
+        seed = seed_batch.candidates[0]
+        assert seed.ordinal == 1
+        assert dict(seed.metadata)["parent_ordinal"] == "0"
+
+        contexts = await store.context_candidates(
+            ContextCandidateQuery(
+                space_id=target_space.id,
+                filters=SearchFilters(document_ids=frozenset({document.id})),
+                seeds=(seed,),
+                adjacent_window=1,
+            )
+        )
+        assert {candidate.chunk_id for candidate in contexts} == {
+            parent.chunk_id,
+            adjacent_chunk.id,
+        }
+        assert {candidate.version_id for candidate in contexts} == {parent.version_id}
+        assert {candidate.document_id for candidate in contexts} == {document.id}
 
 
 async def test_keyword_baseline_covers_language_code_and_stable_ranking(

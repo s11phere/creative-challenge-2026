@@ -10,6 +10,7 @@ from domain.models import Document, Source, Space
 from domain.retrieval import (
     CandidateBatch,
     CandidateChannel,
+    ContextCandidateQuery,
     DenseCandidateQuery,
     HybridEmbeddingFailurePolicy,
     KeywordCandidateQuery,
@@ -70,11 +71,27 @@ class _FakeStore:
     dense: tuple[RetrievalCandidate, ...] = ()
     keyword_error: Exception | None = None
     dense_error: Exception | None = None
+    contexts: tuple[RetrievalCandidate, ...] = ()
     keyword_queries: list[KeywordCandidateQuery] = field(default_factory=list)
     dense_queries: list[DenseCandidateQuery] = field(default_factory=list)
+    context_queries: list[ContextCandidateQuery] = field(default_factory=list)
+    keyword_delay_seconds: float = 0.0
+    dense_delay_seconds: float = 0.0
+    active_calls: int = 0
+    max_active_calls: int = 0
+
+    async def _delay(self, seconds: float) -> None:
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            if seconds:
+                await asyncio.sleep(seconds)
+        finally:
+            self.active_calls -= 1
 
     async def keyword_candidates(self, query: KeywordCandidateQuery) -> CandidateBatch:
         self.keyword_queries.append(query)
+        await self._delay(self.keyword_delay_seconds)
         if self.keyword_error:
             raise self.keyword_error
         return CandidateBatch(
@@ -86,6 +103,7 @@ class _FakeStore:
 
     async def dense_candidates(self, query: DenseCandidateQuery) -> CandidateBatch:
         self.dense_queries.append(query)
+        await self._delay(self.dense_delay_seconds)
         if self.dense_error:
             raise self.dense_error
         return CandidateBatch(
@@ -94,6 +112,12 @@ class _FakeStore:
             index_version="pgvector-exact-v1",
             latency_ms=3.0,
         )
+
+    async def context_candidates(
+        self, query: ContextCandidateQuery
+    ) -> tuple[RetrievalCandidate, ...]:
+        self.context_queries.append(query)
+        return self.contexts
 
 
 @dataclass
@@ -144,10 +168,13 @@ def _candidate(
     score: float,
     document_id: UUID = DOCUMENT_ID,
     source_id: UUID = SOURCE_ID,
+    version_id: UUID | None = None,
+    ordinal: int = 0,
+    metadata: tuple[tuple[str, str], ...] = (),
 ) -> RetrievalCandidate:
     return RetrievalCandidate(
         chunk_id=UUID(int=chunk),
-        version_id=UUID(int=100 + chunk),
+        version_id=version_id or UUID(int=100 + chunk),
         document_id=document_id,
         source_id=source_id,
         source_key=f"space/source-{source_id.int}",
@@ -157,6 +184,8 @@ def _candidate(
         channel=channel,
         rank=rank,
         score=score,
+        ordinal=ordinal,
+        metadata=metadata,
     )
 
 
@@ -308,6 +337,105 @@ async def test_hybrid_mode_fuses_and_deduplicates_candidates(repos) -> None:
     assert result.hits[0].dense_rank == 1
     assert result.diagnostics.candidate_counts.fused == 3
     assert result.diagnostics.executed_mode is RetrievalMode.HYBRID
+
+
+async def test_hybrid_runs_keyword_and_dense_candidates_concurrently(repos) -> None:
+    store = _FakeStore(keyword_delay_seconds=0.02, dense_delay_seconds=0.02)
+    await _service(repos, store, _FakeEmbedder()).search(
+        SearchRequest("kernel", SPACE_ID, mode=RetrievalMode.HYBRID),
+        _profile(adjacent_window=0),
+    )
+    assert store.max_active_calls == 2
+
+
+async def test_hybrid_keyword_candidate_timeout_is_bounded(repos) -> None:
+    store = _FakeStore(keyword_delay_seconds=0.05)
+    with pytest.raises(RetrievalError) as captured:
+        await _service(repos, store, _FakeEmbedder()).search(
+            SearchRequest("kernel", SPACE_ID, mode=RetrievalMode.HYBRID),
+            _profile(keyword_timeout_seconds=0.01, adjacent_window=0),
+        )
+    assert captured.value.code is RetrievalErrorCode.RETRIEVAL_TIMEOUT
+
+
+async def test_hybrid_marks_parent_and_adjacent_context_only_hits(repos) -> None:
+    version_id = UUID(int=500)
+    matched = _candidate(
+        2,
+        channel=CandidateChannel.KEYWORD,
+        rank=1,
+        score=0.9,
+        version_id=version_id,
+        ordinal=2,
+        metadata=(("parent_ordinal", "0"),),
+    )
+    store = _FakeStore(
+        keyword=(matched,),
+        dense=(
+            _candidate(
+                2,
+                channel=CandidateChannel.DENSE,
+                rank=1,
+                score=0.8,
+                version_id=version_id,
+                ordinal=2,
+                metadata=(("parent_ordinal", "0"),),
+            ),
+        ),
+        contexts=(
+            _candidate(
+                1,
+                channel=CandidateChannel.KEYWORD,
+                rank=1,
+                score=0.0,
+                version_id=version_id,
+                ordinal=1,
+            ),
+            _candidate(
+                3,
+                channel=CandidateChannel.KEYWORD,
+                rank=2,
+                score=0.0,
+                version_id=version_id,
+                ordinal=3,
+            ),
+        ),
+    )
+    result = await _service(repos, store, _FakeEmbedder()).search(
+        SearchRequest("kernel", SPACE_ID, mode=RetrievalMode.HYBRID),
+        _profile(final_k=3, max_chunks_per_document=3, adjacent_window=1),
+    )
+
+    assert [hit.chunk_id for hit in result.hits] == [UUID(int=2), UUID(int=1), UUID(int=3)]
+    assert [hit.context_only for hit in result.hits] == [False, True, True]
+    assert result.diagnostics.candidate_counts.fused == 1
+    assert result.diagnostics.context_only_count == 2
+    assert result.diagnostics.candidate_counts.final == 1
+    assert store.context_queries[0].space_id == SPACE_ID
+    assert store.context_queries[0].seeds == (matched,)
+
+
+async def test_hybrid_caps_fused_matches_per_document(repos) -> None:
+    other_document_id = UUID(int=22)
+    store = _FakeStore(
+        keyword=(
+            _candidate(1, channel=CandidateChannel.KEYWORD, rank=1, score=0.9),
+            _candidate(2, channel=CandidateChannel.KEYWORD, rank=2, score=0.8),
+            _candidate(
+                3,
+                channel=CandidateChannel.KEYWORD,
+                rank=3,
+                score=0.7,
+                document_id=other_document_id,
+            ),
+        )
+    )
+    result = await _service(repos, store, _FakeEmbedder()).search(
+        SearchRequest("kernel", SPACE_ID, mode=RetrievalMode.HYBRID),
+        _profile(max_chunks_per_document=1, adjacent_window=0),
+    )
+    assert [hit.chunk_id for hit in result.hits] == [UUID(int=1), UUID(int=3)]
+    assert result.diagnostics.candidate_counts.fused == 2
 
 
 async def test_hybrid_rerank_maps_scores_back_to_chunks(repos) -> None:

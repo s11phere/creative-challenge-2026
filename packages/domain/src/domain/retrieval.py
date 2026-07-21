@@ -181,6 +181,7 @@ class RetrievalProfileV1:
     reranker_failure_policy: RerankerFailurePolicy = RerankerFailurePolicy.ERROR
     embedding_version: str = "embedding-unset"
     expected_embedding_dimensions: int = 768
+    keyword_timeout_seconds: float = 15.0
     dense_timeout_seconds: float = 15.0
 
     def __post_init__(self) -> None:
@@ -212,8 +213,9 @@ class RetrievalProfileV1:
             raise ValueError("embedding_version must not be empty")
         if self.expected_embedding_dimensions != RETRIEVAL_EMBEDDING_DIMENSIONS:
             raise ValueError("Retrieval embeddings are fixed at 768 dimensions")
-        if self.dense_timeout_seconds <= 0 or not math.isfinite(self.dense_timeout_seconds):
-            raise ValueError("dense_timeout_seconds must be finite and positive")
+        timeouts = (self.keyword_timeout_seconds, self.dense_timeout_seconds)
+        if any(timeout <= 0 or not math.isfinite(timeout) for timeout in timeouts):
+            raise ValueError("Retrieval timeouts must be finite and positive")
 
 
 @dataclass(frozen=True)
@@ -243,6 +245,8 @@ class RetrievalCandidate:
     channel: CandidateChannel
     rank: int
     score: float
+    ordinal: int = 0
+    metadata: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if self.rank < 1:
@@ -251,6 +255,23 @@ class RetrievalCandidate:
             raise ValueError("Candidate score must be finite")
         if not self.source_key or not self.chunk_hash:
             raise ValueError("Candidate source_key and chunk_hash must not be empty")
+        if self.ordinal < 0:
+            raise ValueError("Candidate ordinal cannot be negative")
+
+
+@dataclass(frozen=True)
+class ContextCandidateQuery:
+    space_id: UUID
+    filters: SearchFilters
+    seeds: tuple[RetrievalCandidate, ...]
+    adjacent_window: int
+
+    def __post_init__(self) -> None:
+        if self.adjacent_window < 1:
+            raise ValueError("Context adjacent_window must be positive")
+        chunk_ids = tuple(seed.chunk_id for seed in self.seeds)
+        if not chunk_ids or len(chunk_ids) != len(set(chunk_ids)):
+            raise ValueError("Context seeds must be non-empty and unique")
 
 
 @dataclass(frozen=True)
@@ -443,6 +464,7 @@ class SearchDiagnostics:
     filter_reasons: tuple[str, ...] = ()
     source_filter_count: int = 0
     document_filter_count: int = 0
+    context_only_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -457,6 +479,10 @@ class RetrievalStore(Protocol):
     async def keyword_candidates(self, query: KeywordCandidateQuery) -> CandidateBatch: ...
 
     async def dense_candidates(self, query: DenseCandidateQuery) -> CandidateBatch: ...
+
+    async def context_candidates(
+        self, query: ContextCandidateQuery
+    ) -> tuple[RetrievalCandidate, ...]: ...
 
 
 class QueryEmbedder(Protocol):

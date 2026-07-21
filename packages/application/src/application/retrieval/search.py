@@ -12,6 +12,7 @@ from domain.retrieval import (
     CandidateBatch,
     CandidateChannel,
     CandidateCounts,
+    ContextCandidateQuery,
     DenseCandidateQuery,
     HybridEmbeddingFailurePolicy,
     KeywordCandidateQuery,
@@ -48,6 +49,7 @@ class FusedCandidate:
     keyword_score: float | None = None
     dense_rank: int | None = None
     dense_score: float | None = None
+    context_only: bool = False
 
 
 def fuse_candidates(
@@ -164,12 +166,13 @@ class SearchService:
                 ),
             )
 
-        keyword = await self._keyword(request, profile)
-        try:
-            embedding, dense = await self._dense(request, profile)
-        except RetrievalError as exc:
-            if not self._can_fallback_embedding(request, profile, exc):
-                raise
+        (
+            keyword,
+            hybrid_embedding,
+            hybrid_dense,
+            embedding_degradations,
+        ) = await self._hybrid_candidates(request, profile)
+        if hybrid_dense is None:
             hits = _raw_hits(keyword, final_k=profile.final_k)
             return SearchResult(
                 hits=hits,
@@ -179,14 +182,14 @@ class SearchService:
                     executed_mode=RetrievalMode.KEYWORD,
                     keyword=keyword,
                     final_count=len(hits),
-                    degradation_reasons=(exc.code,),
+                    degradation_reasons=embedding_degradations,
                 ),
             )
 
         try:
             fused = fuse_candidates(
                 keyword.candidates,
-                dense.candidates,
+                hybrid_dense.candidates,
                 fusion_alpha=profile.fusion_alpha,
                 rrf_k=profile.rrf_k,
                 limit=profile.fusion_candidate_k,
@@ -197,8 +200,16 @@ class SearchService:
                 "Retrieval candidates violate the fusion contract.",
             ) from exc
 
+        fused = _limit_document_quota(fused, profile.max_chunks_per_document)
+
         if request.mode is RetrievalMode.HYBRID:
-            hits = _fused_hits(fused, final_k=profile.final_k)
+            matched_hits = _fused_hits(fused, final_k=profile.final_k)
+            hits, context_count = await self._expand_context(
+                request,
+                profile,
+                tuple(item.candidate for item in fused[: profile.final_k]),
+                matched_hits,
+            )
             return SearchResult(
                 hits=hits,
                 diagnostics=self._diagnostics(
@@ -206,10 +217,11 @@ class SearchService:
                     profile,
                     executed_mode=RetrievalMode.HYBRID,
                     keyword=keyword,
-                    embedding=embedding,
-                    dense=dense,
+                    embedding=hybrid_embedding,
+                    dense=hybrid_dense,
                     fused_count=len(fused),
-                    final_count=len(hits),
+                    final_count=len(matched_hits),
+                    context_only_count=context_count,
                 ),
             )
 
@@ -225,7 +237,13 @@ class SearchService:
         except RetrievalError as exc:
             if not self._can_fallback_reranker(request, profile, exc):
                 raise
-            hits = _fused_hits(fused, final_k=profile.final_k)
+            matched_hits = _fused_hits(fused, final_k=profile.final_k)
+            hits, context_count = await self._expand_context(
+                request,
+                profile,
+                tuple(item.candidate for item in fused[: profile.final_k]),
+                matched_hits,
+            )
             return SearchResult(
                 hits=hits,
                 diagnostics=self._diagnostics(
@@ -233,13 +251,18 @@ class SearchService:
                     profile,
                     executed_mode=RetrievalMode.HYBRID,
                     keyword=keyword,
-                    embedding=embedding,
-                    dense=dense,
+                    embedding=hybrid_embedding,
+                    dense=hybrid_dense,
                     fused_count=len(fused),
-                    final_count=len(hits),
+                    final_count=len(matched_hits),
+                    context_only_count=context_count,
                     degradation_reasons=(exc.code,),
                 ),
             )
+
+        matched_count = len(hits)
+        reranked_seeds = _reranked_candidates(fused, response, final_k=profile.final_k)
+        hits, context_count = await self._expand_context(request, profile, reranked_seeds, hits)
 
         return SearchResult(
             hits=hits,
@@ -248,11 +271,12 @@ class SearchService:
                 profile,
                 executed_mode=RetrievalMode.HYBRID_RERANK,
                 keyword=keyword,
-                embedding=embedding,
-                dense=dense,
+                embedding=hybrid_embedding,
+                dense=hybrid_dense,
                 fused_count=len(fused),
                 rerank_response=response,
-                final_count=len(hits),
+                final_count=matched_count,
+                context_only_count=context_count,
             ),
         )
 
@@ -287,14 +311,15 @@ class SearchService:
 
     async def _keyword(self, request: SearchRequest, profile: RetrievalProfileV1) -> CandidateBatch:
         try:
-            return await self._retrieval_store.keyword_candidates(
-                KeywordCandidateQuery(
-                    query=request.query,
-                    space_id=request.space_id,
-                    filters=request.filters,
-                    limit=profile.keyword_candidate_k,
+            async with asyncio.timeout(profile.keyword_timeout_seconds):
+                return await self._retrieval_store.keyword_candidates(
+                    KeywordCandidateQuery(
+                        query=request.query,
+                        space_id=request.space_id,
+                        filters=request.filters,
+                        limit=profile.keyword_candidate_k,
+                    )
                 )
-            )
         except TimeoutError as exc:
             raise RetrievalError(
                 RetrievalErrorCode.RETRIEVAL_TIMEOUT,
@@ -336,6 +361,89 @@ class SearchService:
                 retryable=True,
             ) from exc
         return embedding, dense
+
+    async def _hybrid_candidates(
+        self, request: SearchRequest, profile: RetrievalProfileV1
+    ) -> tuple[
+        CandidateBatch, QueryEmbedding | None, CandidateBatch | None, tuple[RetrievalErrorCode, ...]
+    ]:
+        keyword_task = asyncio.create_task(self._keyword(request, profile))
+        dense_task = asyncio.create_task(self._dense(request, profile))
+        try:
+            keyword_result, dense_result = await asyncio.gather(
+                keyword_task, dense_task, return_exceptions=True
+            )
+        except BaseException:
+            for task in (keyword_task, dense_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(keyword_task, dense_task, return_exceptions=True)
+            raise
+
+        if isinstance(keyword_result, BaseException):
+            if isinstance(keyword_result, asyncio.CancelledError):
+                raise keyword_result
+            raise keyword_result
+        if isinstance(dense_result, BaseException):
+            if isinstance(dense_result, asyncio.CancelledError):
+                raise dense_result
+            if not isinstance(dense_result, RetrievalError) or not self._can_fallback_embedding(
+                request, profile, dense_result
+            ):
+                raise dense_result
+            return keyword_result, None, None, (dense_result.code,)
+
+        embedding, dense = dense_result
+        return keyword_result, embedding, dense, ()
+
+    async def _expand_context(
+        self,
+        request: SearchRequest,
+        profile: RetrievalProfileV1,
+        seeds: tuple[RetrievalCandidate, ...],
+        matched_hits: tuple[SearchHit, ...],
+    ) -> tuple[tuple[SearchHit, ...], int]:
+        if profile.adjacent_window == 0 or not seeds:
+            return matched_hits, 0
+        contexts = await self._retrieval_store.context_candidates(
+            ContextCandidateQuery(
+                space_id=request.space_id,
+                filters=request.filters,
+                seeds=seeds,
+                adjacent_window=profile.adjacent_window,
+            )
+        )
+        matched_ids = {seed.chunk_id for seed in seeds}
+        seed_boundaries = {(seed.version_id, seed.document_id, seed.source_id) for seed in seeds}
+        document_counts: dict[object, int] = {}
+        for seed in seeds:
+            document_counts[seed.document_id] = document_counts.get(seed.document_id, 0) + 1
+        selected: list[RetrievalCandidate] = []
+        for candidate in sorted(
+            contexts, key=lambda item: (str(item.document_id), item.ordinal, str(item.chunk_id))
+        ):
+            if candidate.chunk_id in matched_ids:
+                continue
+            if (
+                candidate.version_id,
+                candidate.document_id,
+                candidate.source_id,
+            ) not in seed_boundaries:
+                continue
+            current = document_counts.get(candidate.document_id, 0)
+            if current >= profile.max_chunks_per_document:
+                continue
+            selected.append(candidate)
+            document_counts[candidate.document_id] = current + 1
+        context_hits = tuple(
+            _to_hit(
+                candidate,
+                final_rank=len(matched_hits) + index,
+                context_only=True,
+            )
+            for index, candidate in enumerate(selected, start=1)
+        )
+        return matched_hits + context_hits, len(context_hits)
 
     async def _rerank(
         self,
@@ -419,6 +527,7 @@ class SearchService:
         fused_count: int = 0,
         rerank_response: RerankResponse | None = None,
         final_count: int = 0,
+        context_only_count: int = 0,
         degradation_reasons: tuple[RetrievalErrorCode, ...] = (),
     ) -> SearchDiagnostics:
         keyword_analysis = analyze_keyword_query(request.query) if keyword is not None else None
@@ -479,6 +588,7 @@ class SearchService:
             ),
             source_filter_count=len(request.filters.source_ids),
             document_filter_count=len(request.filters.document_ids),
+            context_only_count=context_only_count,
         )
 
 
@@ -491,6 +601,8 @@ def _same_candidate_identity(left: RetrievalCandidate, right: RetrievalCandidate
         and left.source_key == right.source_key
         and left.chunk_hash == right.chunk_hash
         and left.locators == right.locators
+        and left.ordinal == right.ordinal
+        and left.metadata == right.metadata
     )
 
 
@@ -520,6 +632,7 @@ def _fused_hits(fused: tuple[FusedCandidate, ...], *, final_k: int) -> tuple[Sea
             dense_score=item.dense_score,
             fused_rank=item.fused_rank,
             fused_score=item.fused_score,
+            context_only=item.context_only,
         )
         for final_rank, item in enumerate(fused[:final_k], start=1)
     )
@@ -553,6 +666,35 @@ def _reranked_hits(
     )
 
 
+def _reranked_candidates(
+    fused: tuple[FusedCandidate, ...],
+    response: RerankResponse,
+    *,
+    final_k: int,
+) -> tuple[RetrievalCandidate, ...]:
+    selected = fused[: len(response.scores)]
+    scores = sorted(
+        response.scores,
+        key=lambda score: (-score.score, selected[score.index].fused_rank),
+    )
+    return tuple(selected[score.index].candidate for score in scores[:final_k])
+
+
+def _limit_document_quota(
+    fused: tuple[FusedCandidate, ...], max_chunks_per_document: int
+) -> tuple[FusedCandidate, ...]:
+    counts: dict[object, int] = {}
+    limited: list[FusedCandidate] = []
+    for item in fused:
+        document_id = item.candidate.document_id
+        current = counts.get(document_id, 0)
+        if current >= max_chunks_per_document:
+            continue
+        limited.append(item)
+        counts[document_id] = current + 1
+    return tuple(limited)
+
+
 def _to_hit(
     candidate: RetrievalCandidate,
     *,
@@ -565,6 +707,7 @@ def _to_hit(
     fused_score: float | None = None,
     rerank_rank: int | None = None,
     rerank_score: float | None = None,
+    context_only: bool = False,
 ) -> SearchHit:
     return SearchHit(
         chunk_id=candidate.chunk_id,
@@ -589,4 +732,5 @@ def _to_hit(
         fused_score=fused_score,
         rerank_rank=rerank_rank,
         rerank_score=rerank_score,
+        context_only=context_only,
     )

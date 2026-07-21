@@ -16,6 +16,7 @@ from domain.models import DocumentStatus
 from domain.retrieval import (
     CandidateBatch,
     CandidateChannel,
+    ContextCandidateQuery,
     DenseCandidateQuery,
     KeywordCandidateQuery,
     LocatorKind,
@@ -23,7 +24,7 @@ from domain.retrieval import (
     SearchFilters,
     SearchLocator,
 )
-from sqlalchemy import Select, and_, func, select, text
+from sqlalchemy import Select, and_, func, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..orm import ChunkModel, DocumentModel, DocumentVersionModel, SourceModel
@@ -107,6 +108,41 @@ class PostgresRetrievalStore:
                 index_version="pgvector-cosine-exact-v1",
             )
 
+    async def context_candidates(
+        self, query: ContextCandidateQuery
+    ) -> tuple[RetrievalCandidate, ...]:
+        ordinals_by_version: dict[UUID, set[int]] = {}
+        seed_ids = {seed.chunk_id for seed in query.seeds}
+        for seed in query.seeds:
+            ordinals = ordinals_by_version.setdefault(seed.version_id, set())
+            start = max(0, seed.ordinal - query.adjacent_window)
+            ordinals.update(range(start, seed.ordinal + query.adjacent_window + 1))
+            parent_ordinal = _metadata_int(seed.metadata, "parent_ordinal")
+            if parent_ordinal is not None:
+                ordinals.add(parent_ordinal)
+
+        version_windows = tuple(
+            and_(
+                ChunkModel.version_id == version_id,
+                ChunkModel.ordinal.in_(sorted(ordinals)),
+            )
+            for version_id, ordinals in sorted(
+                ordinals_by_version.items(), key=lambda item: str(item[0])
+            )
+        )
+        statement = (
+            self._published_candidates(query.space_id, query.filters)
+            .add_columns(literal(0.0).label("score"))
+            .where(or_(*version_windows), ChunkModel.id.not_in(seed_ids))
+            .order_by(DocumentModel.id.asc(), ChunkModel.ordinal.asc(), ChunkModel.id.asc())
+        )
+        batch = await self._execute_candidates(
+            statement,
+            channel=CandidateChannel.KEYWORD,
+            index_version="postgres-published-context-v1",
+        )
+        return batch.candidates
+
     async def compare_dense_paths(self, query: DenseCandidateQuery) -> DensePathComparison:
         """Compare the exact baseline with a forced IVFFlat execution path."""
         exact_statement = self._dense_statement(query)
@@ -168,6 +204,7 @@ class PostgresRetrievalStore:
                 ChunkModel.text.label("chunk_text"),
                 ChunkModel.chunk_hash.label("chunk_hash"),
                 ChunkModel.meta.label("chunk_meta"),
+                ChunkModel.ordinal.label("chunk_ordinal"),
             ).select_from(ChunkModel),
             chunk_version_id=ChunkModel.version_id,
             space_id=space_id,
@@ -228,6 +265,7 @@ class PostgresRetrievalStore:
                 ChunkModel.text.label("chunk_text"),
                 ChunkModel.chunk_hash.label("chunk_hash"),
                 ChunkModel.meta.label("chunk_meta"),
+                ChunkModel.ordinal.label("chunk_ordinal"),
                 (1.0 - distance).label("score"),
             )
             .where(ChunkModel.embedding.is_not(None), distance.is_not(None))
@@ -246,6 +284,7 @@ class PostgresRetrievalStore:
             shortlist.c.chunk_text,
             shortlist.c.chunk_hash,
             shortlist.c.chunk_meta,
+            shortlist.c.chunk_ordinal,
             shortlist.c.score,
         ).select_from(shortlist)
         return (
@@ -293,6 +332,8 @@ class PostgresRetrievalStore:
                     channel=channel,
                     rank=rank,
                     score=score,
+                    ordinal=int(row["chunk_ordinal"]),
+                    metadata=_metadata(row["chunk_meta"]),
                 )
             )
         return CandidateBatch(
@@ -355,6 +396,29 @@ def _locators(raw_meta: object) -> tuple[SearchLocator, ...]:
     if page_locator is not None:
         locators.append(page_locator)
     return tuple(locators)
+
+
+def _metadata(raw_meta: object) -> tuple[tuple[str, str], ...]:
+    if not isinstance(raw_meta, Mapping):
+        return ()
+    return tuple(
+        sorted(
+            (str(key), str(value))
+            for key, value in raw_meta.items()
+            if isinstance(value, (str, int))
+        )
+    )
+
+
+def _metadata_int(metadata: tuple[tuple[str, str], ...], key: str) -> int | None:
+    raw_value = dict(metadata).get(key)
+    if raw_value is None:
+        return None
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
 
 
 def _locator(

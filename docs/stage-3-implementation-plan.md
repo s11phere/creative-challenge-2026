@@ -475,6 +475,23 @@ docs/
 7. 控制每个文档的最大候选数和扩展窗口，避免单一长文档占满结果；多样性规则必须配置化
    并进入消融实验。
 
+**当前实现与验证记录（2026-07-21）**：
+- `SearchService` 在 Hybrid/Hybrid+Rerank 请求内并行执行 Keyword 与 Dense；两路分别受
+  `keyword_timeout_seconds`/`dense_timeout_seconds` 限制，取消时清理未完成任务；Embedding
+  失败仍按既有在线 Keyword fallback 策略处理。
+- `fuse_candidates` 使用加权 RRF，按 `chunk_id` 去重，并校验跨通道身份（含版本、来源、定位、
+  ordinal 和 metadata）；融合后执行 `max_chunks_per_document` 配额。
+- `RetrievalCandidate` 保留 chunk ordinal/结构 metadata；新增 `ContextCandidateQuery` 和
+  PostgreSQL 上下文查询，只读取当前已发布版本并复用 Space/source/document filter。应用层再次
+  校验 version/document/source 边界，扩展结果标记 `context_only`。
+- `SearchDiagnostics.candidate_counts.final` 只统计原始 matched 命中，`context_only_count` 单独
+  统计扩展块，避免上下文掩盖召回失败。
+- 单元测试 52 个通过；新增 PostgreSQL/pgvector 上下文集成测试 5 个通过，完整隔离依赖集成
+  回归 33 个通过（含父/邻接块、当前版本、文档、Space 和 Redis 边界）；`ruff check`、
+  `ruff format --check`、`mypy apps packages` 通过。
+- 阶段 0 仍为 `draft_pending_license_review`，上述仅为本地工程和安全边界验证，不声明正式
+  Recall@5 或阶段 3 质量门槛达标。
+
 **完成标准**：融合、去重、tie-break 和扩展均为纯确定性逻辑；Hybrid 相对单路结果的变化
 可以逐候选解释；扩展不会扩大安全边界。
 
