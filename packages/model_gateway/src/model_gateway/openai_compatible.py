@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
@@ -14,6 +15,7 @@ from opentelemetry.trace import SpanKind
 
 from .contracts import (
     CapabilityAlias,
+    CapabilityStatus,
     ChatRequest,
     ChatResponse,
     EmbeddingRequest,
@@ -29,14 +31,37 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("model_gateway.openai_compatible")
 
 
+@dataclass(frozen=True)
+class _CapabilityConfig:
+    endpoint: httpx.URL | None
+    model: str | None
+    api_key: str | None
+    status_code: str
+    error_code: ModelErrorCode
+
+    @property
+    def available(self) -> bool:
+        return self.endpoint is not None and self.model is not None
+
+
 class OpenAICompatibleGateway:
     def __init__(
         self,
         *,
-        endpoint: str,
-        fast_chat_model: str,
-        embedding_model: str,
+        endpoint: str | None = None,
+        fast_chat_model: str | None = None,
+        embedding_model: str | None = None,
         api_key: str | None = None,
+        fast_chat_endpoint: str | None = None,
+        embedding_endpoint: str | None = None,
+        fast_chat_api_key: str | None = None,
+        embedding_api_key: str | None = None,
+        fast_chat_status_code: str = "MODEL_CONFIGURATION_MISSING",
+        embedding_status_code: str = "MODEL_CONFIGURATION_MISSING",
+        fast_chat_error_code: ModelErrorCode = ModelErrorCode.UNAVAILABLE,
+        embedding_error_code: ModelErrorCode = ModelErrorCode.UNAVAILABLE,
+        provider: ModelProvider = ModelProvider.OPENAI_COMPATIBLE,
+        embedding_protocol: str = "openai-compatible",
         timeout_seconds: float = 15.0,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.1,
@@ -44,25 +69,66 @@ class OpenAICompatibleGateway:
     ) -> None:
         if timeout_seconds <= 0 or max_retries < 0 or retry_backoff_seconds < 0:
             raise ValueError("Model timeout must be positive and retry settings non-negative")
-        if not fast_chat_model or not embedding_model:
-            raise ValueError("Configured model names must not be empty")
-        self.endpoint = httpx.URL(endpoint.rstrip("/") + "/")
+        resolved_chat_endpoint = fast_chat_endpoint or endpoint
+        resolved_embedding_endpoint = embedding_endpoint or endpoint
+        self._capability_configs = {
+            CapabilityAlias.FAST_CHAT: self._capability_config(
+                resolved_chat_endpoint,
+                fast_chat_model,
+                fast_chat_api_key if fast_chat_api_key is not None else api_key,
+                fast_chat_status_code,
+                fast_chat_error_code,
+            ),
+            CapabilityAlias.EMBEDDING_ZH: self._capability_config(
+                resolved_embedding_endpoint,
+                embedding_model,
+                embedding_api_key if embedding_api_key is not None else api_key,
+                embedding_status_code,
+                embedding_error_code,
+            ),
+        }
+        self.endpoint = httpx.URL(endpoint.rstrip("/") + "/") if endpoint else None
         self.fast_chat_model = fast_chat_model
         self.embedding_model = embedding_model
+        if embedding_protocol not in {"openai-compatible", "tei"}:
+            raise ValueError("Unsupported embedding protocol")
+        self._provider = provider
+        self._embedding_protocol = embedding_protocol
         self.max_retries = max_retries
         self.retry_backoff_seconds = retry_backoff_seconds
         self.timeout_seconds = timeout_seconds
-        self._api_key = api_key
         self._owns_client = client is None
         self.client = client
 
     @property
     def status(self) -> GatewayStatus:
+        statuses = tuple(
+            CapabilityStatus(
+                capability=capability,
+                available=config.available,
+                code="MODEL_CAPABILITY_CONFIGURED" if config.available else config.status_code,
+            )
+            for capability, config in self._capability_configs.items()
+        )
+        capabilities = tuple(status.capability for status in statuses if status.available)
+        if len(capabilities) == 2:
+            code = "MODEL_PROVIDER_CONFIGURED"
+        elif capabilities == (CapabilityAlias.EMBEDDING_ZH,):
+            code = "MODEL_EMBEDDING_CONFIGURED"
+        elif capabilities == (CapabilityAlias.FAST_CHAT,):
+            code = "MODEL_CHAT_CONFIGURED"
+        else:
+            code = (
+                "MODEL_POLICY_DENIED"
+                if any(status.code == "MODEL_POLICY_DENIED" for status in statuses)
+                else "MODEL_CONFIGURATION_MISSING"
+            )
         return GatewayStatus(
-            available=True,
-            code="MODEL_PROVIDER_CONFIGURED",
-            provider=ModelProvider.OPENAI_COMPATIBLE,
-            capabilities=(CapabilityAlias.FAST_CHAT, CapabilityAlias.EMBEDDING_ZH),
+            available=bool(capabilities),
+            code=code,
+            provider=self._provider,
+            capabilities=capabilities,
+            capability_statuses=statuses,
         )
 
     async def __aenter__(self) -> OpenAICompatibleGateway:
@@ -84,20 +150,21 @@ class OpenAICompatibleGateway:
     ) -> ChatResponse:
         if capability is not CapabilityAlias.FAST_CHAT:
             raise self._unsupported(capability)
+        config = self._require_capability(capability)
         started_at = perf_counter()
         with tracer.start_as_current_span(
             "model.chat",
             kind=SpanKind.CLIENT,
             attributes={
                 "gen_ai.operation.name": "chat",
-                "gen_ai.provider.name": "openai-compatible",
+                "gen_ai.provider.name": self._provider.value,
                 "model.capability": capability.value,
             },
         ) as span:
             data, retries = await self._request_json(
                 "chat/completions",
                 {
-                    "model": self.fast_chat_model,
+                    "model": config.model,
                     "messages": [
                         {"role": message.role.value, "content": message.content}
                         for message in request.messages
@@ -109,8 +176,14 @@ class OpenAICompatibleGateway:
                 },
                 capability=capability,
             )
-            text, finish_reason = self._parse_chat(data, capability)
-            usage = self._parse_usage(data, embedding=False)
+            text, finish_reason = self._parse_chat(
+                data if isinstance(data, dict) else {},
+                capability,
+            )
+            usage = self._parse_usage(
+                data if isinstance(data, dict) else {},
+                embedding=False,
+            )
             latency_ms = (perf_counter() - started_at) * 1000
             span.set_attribute("gen_ai.usage.input_tokens", usage.input_tokens)
             span.set_attribute("gen_ai.usage.output_tokens", usage.output_tokens)
@@ -131,23 +204,39 @@ class OpenAICompatibleGateway:
     ) -> EmbeddingResponse:
         if capability is not CapabilityAlias.EMBEDDING_ZH:
             raise self._unsupported(capability)
+        config = self._require_capability(capability)
         started_at = perf_counter()
         with tracer.start_as_current_span(
             "model.embedding",
             kind=SpanKind.CLIENT,
             attributes={
                 "gen_ai.operation.name": "embeddings",
-                "gen_ai.provider.name": "openai-compatible",
+                "gen_ai.provider.name": self._provider.value,
                 "model.capability": capability.value,
             },
         ) as span:
             data, retries = await self._request_json(
-                "embeddings",
-                {"model": self.embedding_model, "input": list(request.texts)},
+                "embeddings" if self._embedding_protocol == "openai-compatible" else "embed",
+                (
+                    {"model": config.model, "input": list(request.texts)}
+                    if self._embedding_protocol == "openai-compatible"
+                    else {"inputs": list(request.texts)}
+                ),
                 capability=capability,
             )
-            vectors = self._parse_embeddings(data, len(request.texts), capability)
-            usage = self._parse_usage(data, embedding=True)
+            vectors = (
+                self._parse_embeddings(
+                    data if isinstance(data, dict) else {},
+                    len(request.texts),
+                    capability,
+                )
+                if self._embedding_protocol == "openai-compatible"
+                else self._parse_tei_embeddings(data, len(request.texts), capability)
+            )
+            usage = self._parse_usage(
+                data if isinstance(data, dict) else {},
+                embedding=True,
+            )
             latency_ms = (perf_counter() - started_at) * 1000
             span.set_attribute("gen_ai.usage.input_tokens", usage.input_tokens)
             self._log_success(capability, latency_ms, usage, retries)
@@ -164,16 +253,23 @@ class OpenAICompatibleGateway:
         payload: dict[str, Any],
         *,
         capability: CapabilityAlias,
-    ) -> tuple[dict[str, Any], int]:
+    ) -> tuple[dict[str, Any] | list[Any], int]:
+        config = self._require_capability(capability)
+        assert config.endpoint is not None
         client = self._client()
+        headers = {"Authorization": f"Bearer {config.api_key}"} if config.api_key else None
         for attempt in range(self.max_retries + 1):
             try:
-                response = await client.post(self.endpoint.join(path), json=payload)
+                response = await client.post(
+                    config.endpoint.join(path),
+                    json=payload,
+                    headers=headers,
+                )
                 error = self._http_error(response.status_code, capability)
                 if error is not None:
                     raise error
                 parsed = response.json()
-                if not isinstance(parsed, dict):
+                if not isinstance(parsed, (dict, list)):
                     raise self._invalid_response(capability)
                 return parsed, attempt
             except httpx.TimeoutException as exc:
@@ -205,7 +301,7 @@ class OpenAICompatibleGateway:
                 "model_request_retry",
                 extra={
                     "capability": capability.value,
-                    "provider": ModelProvider.OPENAI_COMPATIBLE.value,
+                    "provider": self._provider.value,
                     "retry_count": attempt + 1,
                     "error_type": error.code.value,
                 },
@@ -215,12 +311,43 @@ class OpenAICompatibleGateway:
 
     def _client(self) -> httpx.AsyncClient:
         if self.client is None:
-            headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else None
             self.client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self.timeout_seconds),
-                headers=headers,
             )
         return self.client
+
+    @staticmethod
+    def _capability_config(
+        endpoint: str | None,
+        model: str | None,
+        api_key: str | None,
+        status_code: str,
+        error_code: ModelErrorCode,
+    ) -> _CapabilityConfig:
+        configured_endpoint = httpx.URL(endpoint.rstrip("/") + "/") if endpoint and model else None
+        return _CapabilityConfig(
+            endpoint=configured_endpoint,
+            model=model if configured_endpoint is not None else None,
+            api_key=api_key,
+            status_code=status_code,
+            error_code=error_code,
+        )
+
+    def _require_capability(self, capability: CapabilityAlias) -> _CapabilityConfig:
+        config = self._capability_configs[capability]
+        if config.available:
+            return config
+        message = (
+            "The model capability is blocked by the data policy."
+            if config.error_code is ModelErrorCode.POLICY_DENIED
+            else "The model capability is not configured."
+        )
+        raise ModelGatewayError(
+            config.error_code,
+            message,
+            retryable=False,
+            capability=capability,
+        )
 
     @staticmethod
     def _http_error(status_code: int, capability: CapabilityAlias) -> ModelGatewayError | None:
@@ -333,6 +460,32 @@ class OpenAICompatibleGateway:
         return tuple(indexed_vectors[index] for index in range(expected_count))
 
     @classmethod
+    def _parse_tei_embeddings(
+        cls,
+        payload: dict[str, Any] | list[Any],
+        expected_count: int,
+        capability: CapabilityAlias,
+    ) -> tuple[tuple[float, ...], ...]:
+        values: Any = payload.get("embeddings") if isinstance(payload, dict) else payload
+        if not isinstance(values, list) or len(values) != expected_count:
+            raise cls._invalid_response(capability)
+        vectors: list[tuple[float, ...]] = []
+        for value in values:
+            if not isinstance(value, list) or not value:
+                raise cls._invalid_response(capability)
+            if any(
+                isinstance(item, bool)
+                or not isinstance(item, (int, float))
+                or not math.isfinite(float(item))
+                for item in value
+            ):
+                raise cls._invalid_response(capability)
+            vectors.append(tuple(float(item) for item in value))
+        if len({len(vector) for vector in vectors}) != 1:
+            raise cls._invalid_response(capability)
+        return tuple(vectors)
+
+    @classmethod
     def _parse_usage(cls, payload: dict[str, Any], *, embedding: bool) -> ModelUsage:
         usage = payload.get("usage", {})
         if not isinstance(usage, dict):
@@ -354,8 +507,8 @@ class OpenAICompatibleGateway:
             raise cls._invalid_response(capability)
         return value
 
-    @staticmethod
     def _log_success(
+        self,
         capability: CapabilityAlias,
         latency_ms: float,
         usage: ModelUsage,
@@ -365,7 +518,7 @@ class OpenAICompatibleGateway:
             "model_request_completed",
             extra={
                 "capability": capability.value,
-                "provider": ModelProvider.OPENAI_COMPATIBLE.value,
+                "provider": self._provider.value,
                 "duration_ms": round(latency_ms, 3),
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,

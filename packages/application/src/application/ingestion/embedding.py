@@ -7,11 +7,12 @@ single document version.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID, uuid4
 
 from domain.chunking import ChunkOutput as ChunkerOutput
+from domain.embedding import EmbeddingIdentity, compute_processing_config_hash
 from domain.models import (
     Chunk,
     Document,
@@ -66,11 +67,7 @@ class EmbeddingConfig:
     """Maximum allowed ratio of chunks whose text is empty or
     whitespace-only after embedding.  Exceeding this fails validation."""
 
-    embedding_dimensions: int = 768
-    """Expected vector dimensionality (fixed by ADR-005)."""
-
-    embedding_version: str = "1.0"
-    """Version label written into ``DocumentVersion.embedding_version``."""
+    embedding_identity: EmbeddingIdentity = field(default_factory=EmbeddingIdentity)
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +182,9 @@ class EmbeddingService:
                     f"for {len(batch)} texts (batch offset {i})"
                 )
 
-            vectors.extend(batch_vectors)
+            vectors.extend(cfg.embedding_identity.normalize_vectors(batch_vectors))
+
+        self._validate(vectors, chunk_outputs, cfg)
 
         # ------------------------------------------------------------------
         # INDEX: build Chunk entities and persist
@@ -198,6 +197,11 @@ class EmbeddingService:
 
         # Update version status to EMBEDDED
         version = version  # already the latest — update status in DB
+        processing_config = {
+            **version.processing_config,
+            **cfg.embedding_identity.processing_config(),
+        }
+        processing_config_hash = compute_processing_config_hash(processing_config)
         updated_version = await self._version_repo.update(
             DocumentVersion(
                 id=version.id,
@@ -207,19 +211,14 @@ class EmbeddingService:
                 parser_version=version.parser_version,
                 normalizer_version=version.normalizer_version,
                 chunker_version=version.chunker_version,
-                embedding_version=cfg.embedding_version,
-                processing_config_hash=version.processing_config_hash,
-                processing_config=version.processing_config,
+                embedding_version=cfg.embedding_identity.version,
+                processing_config_hash=processing_config_hash,
+                processing_config=processing_config,
                 status=DocumentStatus.EMBEDDED,
                 file_path=version.file_path,
                 created_at=version.created_at,
             )
         )
-
-        # ------------------------------------------------------------------
-        # VALIDATE: vector dimensions, empty text ratio, chunk count
-        # ------------------------------------------------------------------
-        self._validate(vectors, chunk_outputs, cfg)
 
         # ------------------------------------------------------------------
         # PUBLISH: atomic version switch
@@ -233,7 +232,7 @@ class EmbeddingService:
                 parser_version=updated_version.parser_version,
                 normalizer_version=updated_version.normalizer_version,
                 chunker_version=updated_version.chunker_version,
-                embedding_version=cfg.embedding_version,
+                embedding_version=cfg.embedding_identity.version,
                 processing_config_hash=updated_version.processing_config_hash,
                 processing_config=updated_version.processing_config,
                 status=DocumentStatus.PUBLISHED,
@@ -298,6 +297,12 @@ class EmbeddingService:
                 meta["end_page"] = str(co.end_page)
             if co.node_type:
                 meta["node_type"] = co.node_type
+            if co.parent_ordinal is not None:
+                meta["parent_ordinal"] = str(co.parent_ordinal)
+            if co.prev_ordinal is not None:
+                meta["prev_ordinal"] = str(co.prev_ordinal)
+            if co.next_ordinal is not None:
+                meta["next_ordinal"] = str(co.next_ordinal)
 
             chunks.append(
                 Chunk(
@@ -324,10 +329,10 @@ class EmbeddingService:
         """
         # --- Vector dimension ---
         for i, vec in enumerate(vectors):
-            if len(vec) != config.embedding_dimensions:
+            if len(vec) != config.embedding_identity.dimensions:
                 raise ValueError(
                     f"Chunk {i} embedding has {len(vec)} dimensions, "
-                    f"expected {config.embedding_dimensions} "
+                    f"expected {config.embedding_identity.dimensions} "
                     f"(fixed by ADR-005)"
                 )
 

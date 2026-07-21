@@ -64,11 +64,10 @@ SQL、API 和安全工程验证，但不得生成正式检索基线或宣称阶�
 
 ### 2.3 必须先关闭的工程缺口
 
-1. ModelGateway 当前要求 Chat 与 Embedding 同时配置，不能独立部署阶段 3 所需的
-   Embedding-only 本地服务。必须改为按能力独立配置、独立健康检查；不得部署无用 Chat
-   模型来满足配置校验。
-2. 当前 `Chunk.meta` 未持久化 `parent_ordinal`、`prev_ordinal`、`next_ordinal`，只能按 ordinal
-   推导相邻块，不能可靠执行父块扩展。阶段 3 必须补齐 metadata 映射并重建受影响版本。
+1. **已于 Step 2 关闭**：ModelGateway 已按 Chat/Embedding 能力独立配置和报告健康状态，
+   Embedding-only 本地服务不再要求部署 Chat 模型。
+2. **已于 Step 2 关闭实现缺口**：`Chunk.meta` 已映射非空的 `parent_ordinal`、
+   `prev_ordinal`、`next_ordinal`；待阶段 0 门禁关闭后再对冻结语料执行正式重建。
 3. 当前 `chunks` 没有 FTS 文档列和 GIN 索引，需要新的 Alembic revision；禁止修改既有迁移。
 4. 当前 IVFFlat 索引固定 `lists=100`，尚未与精确扫描比较召回率，也未验证 Space 过滤后的
    执行计划。阶段 3 必须先建立 exact baseline，再决定 probes 或索引参数。
@@ -195,6 +194,35 @@ docs/
 9. 建立评测配置 schema 和最小 CLI 骨架，报告中只保存 ID、版本、分数、排名、耗时和安全
    的失败分类。
 
+**当前实现与临时基线记录（2026-07-21）**：
+
+- 阶段 0 尚未关闭，manifest 仍为 `draft_pending_license_review`，且仓库中没有阶段 2 Step 9
+  正式验收记录。因此 `cases/evals/configs/retrieval-v1.yaml` 固定为 `provisional`、
+  `formal_runs_enabled: false`；当前只能做本地工程验证，不能生成正式质量基线。
+- manifest 当前包含 43 个来源，本地文件全部存在且原始字节 SHA-256 匹配；43 个均允许
+  `local_development`/`local_evaluation`，其中 9 个允许 `repository_fixture`，敏感度分布为
+  34 个 `private_local`、9 个 `public_demo`。
+- 临时数据快照为：corpus `v0` manifest SHA-256
+  `dd096e1aefc5b612124ed239d88fb035d0c42ee724eb52da7d8c72d12287d8b6`；dataset
+  `knowledge-qa-v0` 共 30 例，SHA-256
+  `e0947b3c028c562ad99ad00c44b78642c2a9dd53542784da7a3dcf7f0bd086c2`；development
+  20 例摘要 `4628f7192042a4eea03861026b003d776fda535d633d20e3d0146f22e199874b`；
+  holdout 10 例摘要 `67b34a4d071a8bc8512281701a2239467efb736e98dc639d93926d3f9d5fb2ff`；
+  dataset schema 摘要 `4949f3f4a9212f5fa02c915850f06a64bde501df0568e57fab582057a3b45e16`。
+- 当前切片为单文档事实 8、跨文档综合 8、版本/冲突 2、无答案 5、恶意文档 1、双语 3、
+  代码与自然语言 3。规模低于计划建议的 60～100 例；冻结前必须发布新 dataset version，
+  或正式接受 v0 的统计限制，不得原地修改已查看的 holdout。
+- 每个 `evidence[]` 独立计分，命中必须同时满足 `source_key`、原始字节 SHA-256 版本，以及
+  同类型一基闭区间 locator 重叠。Recall@5 按 gold evidence unit 微平均；MRR、nDCG@5 和
+  全证据覆盖率按有证据 case 宏平均；无证据 case 不进入这些指标分母。上下文扩展块不能用于
+  Recall 命中。evidence-unit nDCG 只计算每个证据单元的首次命中，折损为
+  `1 / log2(rank + 1)`，K 内未命中记 0。
+- 临时运行条件为 Windows 10.0.26200、Intel64 family 6 model 183、32 logical processors、
+  并发 1、预热 3 次、完整单次遍历、`retrieval_p95_budget_ms=1000`；正式冻结前必须在目标
+  部署环境复核。当前 CLI 仅允许
+  `scripts/evaluate_retrieval.py --config cases/evals/configs/retrieval-v1.yaml --split development --validate-only`，
+  且只输出 ID、版本、摘要、计数、协议和门禁原因，不输出问题、正文、引用片段或向量。
+
 **完成标准**：同一 fixture 的证据映射和指标结果确定性一致；development 与 holdout 无泄漏；
 配置摘要可唯一标识一次评测。
 
@@ -220,6 +248,32 @@ docs/
    - 无命中是成功空结果，不映射为系统错误。
 6. 用性质测试固定 RRF、去重、tie-break、top-k 截断和 filter 不可扩权等不变量。
 
+**当前实现与契约记录（2026-07-21）**：
+
+- R3-01 的工程实现已关闭；`packages/domain/src/domain/retrieval.py` 是检索输入、输出、错误和
+  Port 的唯一领域契约，不依赖 FastAPI、SQLAlchemy、ORM、模型 SDK 或具体 Provider。
+  `SearchFilters` 只允许 source/document IDs，不能覆盖请求 `space_id`；Application 在召回前
+  校验归属，后续 PostgreSQL Adapter 仍必须在 SQL 候选边界重复强制 Space、当前发布版本和
+  tombstone 条件。
+- `RetrievalStore` 只返回 Keyword/Dense 原始候选；Query Embedding 和 Reranker 分别通过
+  `QueryEmbedder`、`Reranker` Port 接入。查询向量必须为有限的 768 维值，模型版本必须与
+  活动 profile 完全一致。Diagnostics 记录请求/实际模式、候选数、阶段耗时、版本、filter
+  类型和降级原因；可记录的 `safe_summary` 只含 Chunk hash、字符数和 locator 数。
+- 稳定错误码为 `RETRIEVAL_SPACE_NOT_FOUND`、`RETRIEVAL_INVALID_FILTER`、
+  `RETRIEVAL_EMBEDDING_UNAVAILABLE`、`RETRIEVAL_EMBEDDING_DIMENSION_MISMATCH`、
+  `RETRIEVAL_TIMEOUT`、`RETRIEVAL_RERANKER_UNAVAILABLE`、
+  `RETRIEVAL_PROFILE_INCOMPATIBLE`、`RETRIEVAL_PROVIDER_POLICY_DENIED`。
+- Keyword 不调用 Embedding；Dense 的 Embedding 失败直接报错。Hybrid 只有在线 profile 明确
+  选择 `keyword_fallback` 时才能对 unavailable/timeout 降级，Provider 策略拒绝不能降级；
+  Reranker 只有在线 profile 明确选择 `fused_fallback` 时才能回退。`offline_evaluation` 中任何
+  降级都会使评测报错，无命中则返回成功空结果。
+- 加权 RRF 固定为
+  `(1 - fusion_alpha) / (rrf_k + keyword_rank) + fusion_alpha / (rrf_k + dense_rank)`；
+  以 `chunk_id` 去重，依次按 fused score、最佳单路 rank、稳定 Chunk ID 排序，输入列表顺序
+  不改变结果。Reranker 必须一一返回输入索引，不允许丢失、重复或越界。
+- 本步只关闭 R3-01 和 RRF 契约/性质测试；R3-04 的上下文扩展、参数消融和离线收益验证仍在
+  Step 6/9，且阶段 0、阶段 2 Step 9 门禁未关闭，因此不构成正式检索验收。
+
 **完成标准**：Domain 不依赖 FastAPI/SQLAlchemy/模型 SDK；fake Store/Embedder/Reranker 能执行
 完整 Application 用例；跨 Space filter 无法通过请求覆盖。
 
@@ -244,6 +298,31 @@ docs/
 8. 补齐 `parent_ordinal`、`prev_ordinal`、`next_ordinal` 到 Chunk metadata，并通过重建应用到
    已批准语料。
 9. 合同测试验证批量顺序、768 维、有限超时/重试、归一化、空输入、无效响应和离线状态。
+
+**当前实现与验证记录（2026-07-21）**：
+
+- ModelGateway 已支持能力级 endpoint、凭据、模型、健康状态及 TEI `/embed` 协议；Gateway
+  增加显式异步关闭契约，Worker 将其生命周期限制在单次 actor 事件循环，避免连续任务复用
+  已关闭的 HTTP client。
+- 可选 `embedding` profile 固定 TEI CPU 镜像
+  `cpu-1.9@sha256:c26a226262ad4ff3330fb30b76653c1bb65da2fcf413b92284545a010e0a8a48`
+  和 `BAAI/bge-base-zh-v1.5` revision
+  `f03589ceff5aac7111bd60cfc7d497ca17ecac65`。该模型仅作为阶段 0 门禁关闭前的部署烟测
+  基线，不替代第 4 项候选的正式同配置评测和默认模型选择。
+- `EmbeddingIdentity` 将 revision、768 维、查询/文档指令版本、归一化和精度写入
+  `embedding_version`、`processing_config` 及摘要；受控重建命令只创建候选版本，仍经
+  EMBED/INDEX/VALIDATE/PUBLISH 后原子切换当前版本。
+- 真实 CPU 部署首次权重下载约 152 秒；服务返回 HTTP 200，批量响应为 `2 x 768`、全部有限、
+  L2 范数为 1。保留模型卷后重启至健康约 5.94 秒，重启后响应仍为 768 维且归一化一致。
+- 隔离 Compose 全栈通过迁移和健康依赖；API 报告 `MODEL_EMBEDDING_CONFIGURED`，未配置 Chat
+  独立保持不可用且不阻断 ready。经 manifest SHA-256 校验的公开 TXT/Markdown fixture 已走通
+  API -> Redis -> Worker -> TEI -> PostgreSQL -> PUBLISH；修复 Gateway 生命周期后连续任务均为
+  `retry_count=0`。
+- 多 Chunk 实测发布 152 个非空 768 维向量，151 条前驱和 151 条后继关系全部按 ordinal
+  对齐。单块或无父块时对应 metadata 键保持缺省，不伪造不存在的关系。
+- 默认单元测试和 CI 仍使用 deterministic fake，不下载或调用真实模型。阶段 0 仍为
+  `draft_pending_license_review`，因此本记录只关闭 Step 2 的工程流程，不构成正式语料评测或
+  阶段 3 最终验收。
 
 **完成标准**：批准的公开 fixture 可在无外部推理请求的本地服务上稳定得到 768 维向量；
 模型版本可复现；重建失败不影响当前发布版本；CI 仍不下载或调用真实模型。

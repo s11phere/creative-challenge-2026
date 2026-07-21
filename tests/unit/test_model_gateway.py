@@ -331,6 +331,20 @@ async def test_local_endpoint_is_allowed_without_external_opt_in() -> None:
     await gateway.aclose()
 
 
+async def test_compose_tei_endpoint_is_allowed_without_external_opt_in() -> None:
+    gateway = create_model_gateway(
+        GatewayConfig(
+            provider=ModelProvider.TEXT_EMBEDDINGS_INFERENCE,
+            embedding_endpoint="http://tei:80",
+            embedding_model="BAAI/bge-base-zh-v1.5",
+        )
+    )
+
+    assert gateway.status.available is True
+    assert gateway.status.code == "MODEL_EMBEDDING_CONFIGURED"
+    await gateway.aclose()
+
+
 async def test_missing_provider_configuration_is_explicitly_unavailable() -> None:
     gateway = create_model_gateway(GatewayConfig(provider=ModelProvider.OPENAI_COMPATIBLE))
 
@@ -338,6 +352,86 @@ async def test_missing_provider_configuration_is_explicitly_unavailable() -> Non
     with pytest.raises(ModelGatewayError) as captured:
         await gateway.chat(chat_request())
     assert captured.value.code is ModelErrorCode.UNAVAILABLE
+
+
+async def test_embedding_only_configuration_does_not_require_chat_model() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "http://127.0.0.1:11434/v1/embeddings"
+        assert request.headers["authorization"] == "Bearer embedding-secret"
+        return httpx.Response(
+            200,
+            json={
+                "data": [{"index": 0, "embedding": [0.1, 0.2]}],
+                "usage": {"prompt_tokens": 1},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = create_model_gateway(
+        GatewayConfig(
+            provider=ModelProvider.OPENAI_COMPATIBLE,
+            embedding_endpoint="http://127.0.0.1:11434/v1",
+            embedding_api_key="embedding-secret",
+            embedding_model="embedding-model",
+        ),
+        client=client,
+    )
+
+    assert gateway.status.available is True
+    assert gateway.status.code == "MODEL_EMBEDDING_CONFIGURED"
+    assert gateway.status.capabilities == (CapabilityAlias.EMBEDDING_ZH,)
+    assert gateway.status.for_capability(CapabilityAlias.FAST_CHAT).available is False
+    response = await gateway.embed(EmbeddingRequest(texts=("synthetic",)))
+    assert response.vectors == ((0.1, 0.2),)
+    with pytest.raises(ModelGatewayError) as captured:
+        await gateway.chat(chat_request())
+    assert captured.value.code is ModelErrorCode.UNAVAILABLE
+    await client.aclose()
+
+
+async def test_text_embeddings_inference_provider_uses_embed_protocol() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "http://127.0.0.1:8080/embed"
+        assert request.content == b'{"inputs":["synthetic"]}'
+        return httpx.Response(200, json=[[0.1, 0.2]])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = create_model_gateway(
+        GatewayConfig(
+            provider=ModelProvider.TEXT_EMBEDDINGS_INFERENCE,
+            embedding_endpoint="http://127.0.0.1:8080",
+            embedding_model="BAAI/bge-base-zh-v1.5",
+        ),
+        client=client,
+    )
+
+    assert gateway.status.provider is ModelProvider.TEXT_EMBEDDINGS_INFERENCE
+    assert gateway.status.capabilities == (CapabilityAlias.EMBEDDING_ZH,)
+    response = await gateway.embed(EmbeddingRequest(texts=("synthetic",)))
+    assert response.vectors == ((0.1, 0.2),)
+    await client.aclose()
+
+
+async def test_endpoint_policy_is_evaluated_per_capability() -> None:
+    gateway = create_model_gateway(
+        GatewayConfig(
+            provider=ModelProvider.OPENAI_COMPATIBLE,
+            fast_chat_endpoint="https://models.example.test/v1",
+            fast_chat_model="chat-model",
+            embedding_endpoint="http://127.0.0.1:11434/v1",
+            embedding_model="embedding-model",
+        )
+    )
+
+    assert gateway.status.capabilities == (CapabilityAlias.EMBEDDING_ZH,)
+    chat_status = gateway.status.for_capability(CapabilityAlias.FAST_CHAT)
+    assert chat_status.available is False
+    assert chat_status.code == "MODEL_POLICY_DENIED"
+    with pytest.raises(ModelGatewayError) as captured:
+        await gateway.chat(chat_request())
+    assert captured.value.code is ModelErrorCode.POLICY_DENIED
+    assert isinstance(gateway, OpenAICompatibleGateway)
+    await gateway.aclose()
 
 
 async def test_disabled_provider_returns_explicit_unavailable_error() -> None:

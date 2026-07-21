@@ -45,7 +45,14 @@ async def test_ready_returns_degraded_without_dependencies(monkeypatch: MonkeyPa
     assert pg["code"] == "POSTGRESQL_UNREACHABLE"
     assert redis["healthy"] is False
     assert redis["code"] == "REDIS_UNREACHABLE"
-    assert body["checks"]["model"] == {"healthy": True, "code": "MODEL_FAKE_READY"}
+    assert body["checks"]["model"] == {
+        "healthy": True,
+        "code": "MODEL_FAKE_READY",
+        "capabilities": {
+            "fast_chat": {"healthy": True, "code": "MODEL_FAKE_READY"},
+            "embedding_zh": {"healthy": True, "code": "MODEL_FAKE_READY"},
+        },
+    }
     # Must not leak host or port in failure details
     assert "localhost" not in str(body["checks"]).lower()
 
@@ -78,7 +85,14 @@ async def test_ready_returns_success_when_dependencies_are_available(
     assert body["status"] == "ready"
     assert body["checks"]["postgresql"] == {"healthy": True, "code": "POSTGRESQL_OK"}
     assert body["checks"]["redis"] == {"healthy": True, "code": "REDIS_OK"}
-    assert body["checks"]["model"] == {"healthy": True, "code": "MODEL_FAKE_READY"}
+    assert body["checks"]["model"] == {
+        "healthy": True,
+        "code": "MODEL_FAKE_READY",
+        "capabilities": {
+            "fast_chat": {"healthy": True, "code": "MODEL_FAKE_READY"},
+            "embedding_zh": {"healthy": True, "code": "MODEL_FAKE_READY"},
+        },
+    }
 
 
 async def test_model_unavailable_does_not_degrade_local_readiness(
@@ -112,4 +126,8 @@ async def test_model_unavailable_does_not_degrade_local_readiness(
     assert response.json()["checks"]["model"] == {
         "healthy": False,
         "code": "MODEL_DISABLED",
+        "capabilities": {
+            "fast_chat": {"healthy": False, "code": "MODEL_DISABLED"},
+            "embedding_zh": {"healthy": False, "code": "MODEL_DISABLED"},
+        },
     }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .contracts import (
     CapabilityAlias,
+    CapabilityStatus,
     ChatRequest,
     ChatResponse,
     EmbeddingRequest,
@@ -29,6 +30,14 @@ class UnavailableModelGateway:
             code=status_code,
             provider=provider,
             capabilities=(),
+            capability_statuses=tuple(
+                CapabilityStatus(
+                    capability=capability,
+                    available=False,
+                    code=status_code,
+                )
+                for capability in (CapabilityAlias.FAST_CHAT, CapabilityAlias.EMBEDDING_ZH)
+            ),
         )
         self.error_code = error_code
         self.message = message
@@ -60,3 +69,6 @@ class UnavailableModelGateway:
         capability: CapabilityAlias = CapabilityAlias.EMBEDDING_ZH,
     ) -> EmbeddingResponse:
         raise self._error(capability)
+
+    async def aclose(self) -> None:
+        return None

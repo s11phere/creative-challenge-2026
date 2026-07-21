@@ -18,6 +18,7 @@ from application.ingestion.orchestrator import (
     IngestionOrchestrator,
 )
 from domain.blob_store import BlobStore
+from domain.embedding import EmbeddingIdentity
 from domain.models import IngestionTask, TaskOperation, TaskStatus
 from domain.parsing import ParseMetadata, ParseResult
 from infrastructure.blob_store import LocalFileBlobStore
@@ -59,13 +60,24 @@ logger = logging.getLogger(__name__)
 def _create_gateway() -> ModelGateway:
     """Create a ModelGateway from application settings."""
     api_key = settings.model_api_key.get_secret_value() if settings.model_api_key else None
+    fast_chat_api_key = (
+        settings.fast_chat_api_key.get_secret_value() if settings.fast_chat_api_key else None
+    )
+    embedding_api_key = (
+        settings.embedding_api_key.get_secret_value() if settings.embedding_api_key else None
+    )
     return create_model_gateway(
         GatewayConfig(
             provider=ModelProvider(settings.model_provider),
             endpoint=settings.model_endpoint,
             api_key=api_key,
+            fast_chat_endpoint=settings.fast_chat_endpoint,
+            fast_chat_api_key=fast_chat_api_key,
             fast_chat_model=settings.fast_chat_model,
+            embedding_endpoint=settings.embedding_endpoint,
+            embedding_api_key=embedding_api_key,
             embedding_model=settings.embedding_model,
+            embedding_protocol=settings.embedding_protocol,
             allow_external=settings.model_allow_external,
             timeout_seconds=settings.model_timeout_seconds,
             max_retries=settings.model_max_retries,
@@ -82,7 +94,6 @@ tracer = trace.get_tracer("worker.ingestion")
 # Dramatiq invokes actors from multiple threads, each with its own asyncio
 # event loop. A pooled asyncpg connection cannot safely cross those loops.
 database = Database(settings.database_url, poolclass=NullPool)
-gateway = _create_gateway()
 blob_store: BlobStore = LocalFileBlobStore()
 
 
@@ -290,17 +301,40 @@ def _run_ingestion_sync(task_id: str, canonical_trace_id: str) -> None:
     import asyncio  # noqa: PLC0415
 
     loop = asyncio.new_event_loop()  # noqa: RUF006
+    gateway = _create_gateway()
     asyncio.set_event_loop(loop)
     try:
-        loop.run_until_complete(_run_ingestion_async(task_id, canonical_trace_id))
+        loop.run_until_complete(_run_ingestion_async(task_id, canonical_trace_id, gateway))
     finally:
-        loop.close()
+        try:
+            loop.run_until_complete(gateway.aclose())
+        finally:
+            loop.close()
 
 
-async def _run_ingestion_async(task_id: str, _canonical_trace_id: str) -> None:
+async def _run_ingestion_async(
+    task_id: str,
+    _canonical_trace_id: str,
+    gateway: ModelGateway,
+) -> None:
     """Core async ingestion logic with session management."""
     tid = UUID(task_id)
-    cfg = IngestionConfig()
+    model_revision = settings.embedding_model_revision
+    if not model_revision:
+        model_revision = (
+            "fake-sha256-v1" if settings.model_provider == "fake" else settings.embedding_model
+        )
+    if not model_revision:
+        raise RuntimeError("EMBEDDING_MODEL_REVISION is required for non-fake embedding")
+    cfg = IngestionConfig(
+        embedding_identity=EmbeddingIdentity(
+            model_revision=model_revision,
+            query_instruction_version=settings.embedding_query_instruction_version,
+            document_instruction_version=settings.embedding_document_instruction_version,
+            normalization=settings.embedding_normalization,
+            precision=settings.embedding_precision,
+        )
+    )
 
     # ------------------------------------------------------------------
     # Phase 1: Run the pipeline in its own session

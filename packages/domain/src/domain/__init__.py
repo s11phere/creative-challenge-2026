@@ -32,6 +32,7 @@ from .chunking import (
     compute_chunk_hash,
     compute_chunker_config_hash,
 )
+from .embedding import EmbeddingIdentity, compute_processing_config_hash
 from .models import (
     Chunk,
     Document,
@@ -122,6 +123,7 @@ __all__ = [
     "DocumentVersion",
     "DocumentVersionRepository",
     "DenseCandidateQuery",
+    "EmbeddingIdentity",
     "HybridEmbeddingFailurePolicy",
     "IngestionTask",
     "IngestionTaskRepository",
@@ -186,4 +188,5 @@ __all__ = [
     "compute_blob_hash",
     "compute_chunk_hash",
     "compute_chunker_config_hash",
+    "compute_processing_config_hash",
 ]

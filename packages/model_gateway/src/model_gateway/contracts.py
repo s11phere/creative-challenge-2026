@@ -21,6 +21,7 @@ class ChatRole(StrEnum):
 class ModelProvider(StrEnum):
     FAKE = "fake"
     OPENAI_COMPATIBLE = "openai-compatible"
+    TEXT_EMBEDDINGS_INFERENCE = "text-embeddings-inference"
     DISABLED = "disabled"
 
 
@@ -97,11 +98,30 @@ class EmbeddingResponse:
 
 
 @dataclass(frozen=True)
+class CapabilityStatus:
+    capability: CapabilityAlias
+    available: bool
+    code: str
+
+
+@dataclass(frozen=True)
 class GatewayStatus:
     available: bool
     code: str
     provider: ModelProvider
     capabilities: tuple[CapabilityAlias, ...]
+    capability_statuses: tuple[CapabilityStatus, ...] = ()
+
+    def for_capability(self, capability: CapabilityAlias) -> CapabilityStatus:
+        for status in self.capability_statuses:
+            if status.capability is capability:
+                return status
+        available = capability in self.capabilities
+        return CapabilityStatus(
+            capability=capability,
+            available=available,
+            code=self.code if available else "MODEL_UNSUPPORTED_CAPABILITY",
+        )
 
 
 class ModelGatewayError(Exception):
@@ -138,3 +158,5 @@ class ModelGateway(Protocol):
         *,
         capability: CapabilityAlias = CapabilityAlias.EMBEDDING_ZH,
     ) -> EmbeddingResponse: ...
+
+    async def aclose(self) -> None: ...

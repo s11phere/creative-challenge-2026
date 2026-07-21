@@ -15,7 +15,6 @@ from model_gateway import (
     GatewayConfig,
     ModelGateway,
     ModelProvider,
-    OpenAICompatibleGateway,
     create_model_gateway,
 )
 from opentelemetry import trace
@@ -36,10 +35,14 @@ class DependencyCheck(BaseModel):
     code: str
 
 
+class ModelDependencyCheck(DependencyCheck):
+    capabilities: dict[str, DependencyCheck]
+
+
 class ReadinessChecks(BaseModel):
     postgresql: DependencyCheck
     redis: DependencyCheck
-    model: DependencyCheck
+    model: ModelDependencyCheck
 
 
 class ReadyResponse(BaseModel):
@@ -74,8 +77,7 @@ def create_app(
             yield
         finally:
             await database.dispose()
-            if isinstance(gateway, OpenAICompatibleGateway):
-                await gateway.aclose()
+            await gateway.aclose()
             await asyncio.to_thread(
                 observability.provider.force_flush,
                 int(settings.otel_export_timeout_seconds * 1000),
@@ -145,9 +147,16 @@ def _register_routes(app: FastAPI) -> None:
 
         pg_result, redis_result = await asyncio.gather(_check_postgres(), _check_redis())
         model_status = app.state.model_gateway.status
-        model_result = DependencyCheck(
+        model_result = ModelDependencyCheck(
             healthy=model_status.available,
             code=model_status.code,
+            capabilities={
+                capability.capability.value: DependencyCheck(
+                    healthy=capability.available,
+                    code=capability.code,
+                )
+                for capability in model_status.capability_statuses
+            },
         )
 
         all_healthy = pg_result.healthy and redis_result.healthy
@@ -166,13 +175,24 @@ def _register_routes(app: FastAPI) -> None:
 
 def _create_configured_model_gateway() -> ModelGateway:
     api_key = settings.model_api_key.get_secret_value() if settings.model_api_key else None
+    fast_chat_api_key = (
+        settings.fast_chat_api_key.get_secret_value() if settings.fast_chat_api_key else None
+    )
+    embedding_api_key = (
+        settings.embedding_api_key.get_secret_value() if settings.embedding_api_key else None
+    )
     return create_model_gateway(
         GatewayConfig(
             provider=ModelProvider(settings.model_provider),
             endpoint=settings.model_endpoint,
             api_key=api_key,
+            fast_chat_endpoint=settings.fast_chat_endpoint,
+            fast_chat_api_key=fast_chat_api_key,
             fast_chat_model=settings.fast_chat_model,
+            embedding_endpoint=settings.embedding_endpoint,
+            embedding_api_key=embedding_api_key,
             embedding_model=settings.embedding_model,
+            embedding_protocol=settings.embedding_protocol,
             allow_external=settings.model_allow_external,
             timeout_seconds=settings.model_timeout_seconds,
             max_retries=settings.model_max_retries,

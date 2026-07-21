@@ -37,7 +37,7 @@ Checked on 2026-07-18:
 | Docker daemon | Available during Step 7/8 Compose verification | Verify `docker version` before startup |
 | PostgreSQL / pgvector | Compose service verified | No host installation needed |
 | Redis | Compose service with AOF verified | No host installation needed |
-| Model endpoint | Not configured | Optional; fake is the default and external sending stays disabled |
+| Model endpoint | Pinned TEI CPU profile verified on 2026-07-21 | Fake remains the default; real model is opt-in |
 
 ## Windows Setup
 
@@ -106,6 +106,13 @@ endpoint requires an explicit deployment setting and a policy check in addition 
 
 Stage 1 defaults to `MODEL_PROVIDER=fake`. To use a local OpenAI-compatible endpoint, set
 `MODEL_PROVIDER=openai-compatible`, `MODEL_ENDPOINT`, `FAST_CHAT_MODEL`, and `EMBEDDING_MODEL`.
+Embedding-only operation is supported with `EMBEDDING_ENDPOINT` and `EMBEDDING_MODEL`; the
+chat model may be omitted. The optional Compose `embedding` profile provides a pinned
+Text Embeddings Inference CPU image and `BAAI/bge-base-zh-v1.5` revision. Configure
+`MODEL_PROVIDER=text-embeddings-inference`, `EMBEDDING_ENDPOINT=http://tei:80`, and the
+recorded `EMBEDDING_MODEL_REVISION` when using that profile. The exact `tei` service name is in the
+local endpoint allowlist; other DNS names still require `MODEL_ALLOW_EXTERNAL=true`. A host-run
+API/Worker can use the published service at `http://localhost:8080` instead.
 `MODEL_API_KEY` is optional for local endpoints and is loaded as a secret value. Public endpoints are
 rejected unless `MODEL_ALLOW_EXTERNAL=true` is also set. URL-embedded credentials and endpoint query
 parameters are always rejected. Default tests use the fake or a synthetic local HTTP stub and never

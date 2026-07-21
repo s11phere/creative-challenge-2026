@@ -2,6 +2,7 @@
 
 from .contracts import (
     CapabilityAlias,
+    CapabilityStatus,
     ChatMessage,
     ChatRequest,
     ChatResponse,
@@ -22,6 +23,7 @@ from .unavailable import UnavailableModelGateway
 
 __all__ = [
     "CapabilityAlias",
+    "CapabilityStatus",
     "ChatMessage",
     "ChatRequest",
     "ChatResponse",

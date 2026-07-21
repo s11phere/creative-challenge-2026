@@ -11,6 +11,11 @@ from .orchestrator import (
     IngestionOrchestrator,
     IngestionResult,
 )
+from .rebuild import (
+    EmbeddingRebuildService,
+    RebuildPlanItem,
+    RebuildPreparation,
+)
 from .source_registration import RegisteredSource, RegistrationResult, SourceRegistrationService
 
 __all__ = [
@@ -18,10 +23,13 @@ __all__ = [
     "EmbeddingConfig",
     "EmbeddingPipelineResult",
     "EmbeddingService",
+    "EmbeddingRebuildService",
     "IngestionConfig",
     "IngestionOrchestrator",
     "IngestionResult",
     "RegisteredSource",
+    "RebuildPlanItem",
+    "RebuildPreparation",
     "RegistrationResult",
     "SourceRegistrationService",
 ]

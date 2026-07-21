@@ -202,10 +202,36 @@
         "title": "LiveResponse",
         "type": "object"
       },
+      "ModelDependencyCheck": {
+        "properties": {
+          "capabilities": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DependencyCheck"
+            },
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "healthy": {
+            "title": "Healthy",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "healthy",
+          "code",
+          "capabilities"
+        ],
+        "title": "ModelDependencyCheck",
+        "type": "object"
+      },
       "ReadinessChecks": {
         "properties": {
           "model": {
-            "$ref": "#/components/schemas/DependencyCheck"
+            "$ref": "#/components/schemas/ModelDependencyCheck"
           },
           "postgresql": {
             "$ref": "#/components/schemas/DependencyCheck"

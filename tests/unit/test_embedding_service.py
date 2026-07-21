@@ -13,6 +13,7 @@ from application.ingestion.embedding import (
     EmbeddingService,
 )
 from domain.chunking import ChunkOutput
+from domain.embedding import EmbeddingIdentity
 from domain.models import (
     Chunk,
     Document,
@@ -279,9 +280,9 @@ class TestEmbeddingService:
         with pytest.raises(ValueError, match="Empty-text chunk ratio"):
             await service.embed_and_publish(doc, version, outputs, config=cfg)
 
-        # Chunks should still have been written (validation happens after)
+        # Validation happens before candidate artifacts are written.
         saved = await chunk_repo.get_by_version(version.id)
-        assert len(saved) == 3
+        assert saved == []
 
     async def test_empty_text_allowed_with_high_threshold(self, service) -> None:
         doc = _make_doc()
@@ -330,9 +331,31 @@ class TestEmbeddingService:
         version = _make_version(document_id=doc.id)
         outputs = _make_chunk_outputs(5)
 
-        cfg = EmbeddingConfig(batch_size=10, embedding_version="2.0")
+        cfg = EmbeddingConfig(
+            batch_size=10,
+            embedding_identity=EmbeddingIdentity(model_revision="synthetic-model-r2"),
+        )
         result = await service.embed_and_publish(doc, version, outputs, config=cfg)
         assert result.chunk_count == 5
+        assert result.version.embedding_version == cfg.embedding_identity.version
+        assert result.version.processing_config["embedding_model_revision"] == "synthetic-model-r2"
+
+    async def test_l2_normalization_is_persisted(self, service, chunk_repo) -> None:
+        doc = _make_doc()
+        version = _make_version(document_id=doc.id)
+        cfg = EmbeddingConfig(
+            embedding_identity=EmbeddingIdentity(
+                model_revision="synthetic-model-l2",
+                normalization="l2",
+            )
+        )
+
+        await service.embed_and_publish(doc, version, _make_chunk_outputs(1), config=cfg)
+
+        saved = await chunk_repo.get_by_version(version.id)
+        assert saved[0].embedding is not None
+        norm = sum(value * value for value in saved[0].embedding) ** 0.5
+        assert norm == pytest.approx(1.0)
 
     async def test_chunk_meta_preserved(self, service, chunk_repo) -> None:
         doc = _make_doc()
@@ -348,6 +371,9 @@ class TestEmbeddingService:
                 start_page=1,
                 end_page=1,
                 node_type="heading_section",
+                parent_ordinal=0,
+                prev_ordinal=0,
+                next_ordinal=2,
             ),
         )
 
@@ -358,3 +384,6 @@ class TestEmbeddingService:
         assert chunk.meta.get("heading_path") == "Introduction"
         assert chunk.meta.get("start_line") == "1"
         assert chunk.meta.get("node_type") == "heading_section"
+        assert chunk.meta.get("parent_ordinal") == "0"
+        assert chunk.meta.get("prev_ordinal") == "0"
+        assert chunk.meta.get("next_ordinal") == "2"

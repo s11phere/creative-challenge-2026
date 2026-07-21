@@ -9,12 +9,13 @@ task record without repeating completed work.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from domain.blob_store import BlobStore
 from domain.chunking import Chunker, ChunkerConfig, ChunkingResult
+from domain.embedding import EmbeddingIdentity, compute_processing_config_hash
 from domain.fingerprinting import compute_content_hash, compute_storage_key, normalize_stable_key
 from domain.models import (
     Document,
@@ -95,7 +96,7 @@ class IngestionConfig:
     chunk_overlap: int = 64
     min_chunk_size: int = 100
     embedding_batch_size: int = 32
-    embedding_version: str = "1.0"
+    embedding_identity: EmbeddingIdentity = field(default_factory=EmbeddingIdentity)
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +280,12 @@ class IngestionOrchestrator:
                 min_chunk_size=cfg.min_chunk_size,
             )
             chunking_result = await self._chunker.chunk(parsed_doc, config=chunker_config)
+            processing_config = {
+                "chunk_overlap": str(cfg.chunk_overlap),
+                "chunk_size": str(cfg.chunk_size),
+                "min_chunk_size": str(cfg.min_chunk_size),
+                **cfg.embedding_identity.processing_config(),
+            }
             # Write chunker identity back to the version record so the
             # version carries the actual processing config used.
             version = await self._version_repo.update(
@@ -291,8 +298,8 @@ class IngestionOrchestrator:
                     normalizer_version=version.normalizer_version,
                     chunker_version=chunking_result.chunker_version,
                     embedding_version=version.embedding_version,
-                    processing_config_hash=chunking_result.config_hash,
-                    processing_config=version.processing_config,
+                    processing_config_hash=compute_processing_config_hash(processing_config),
+                    processing_config=processing_config,
                     status=version.status,
                     file_path=version.file_path,
                     created_at=version.created_at,
@@ -317,7 +324,7 @@ class IngestionOrchestrator:
         if _STAGE_INDEX.get(task.stage, 0) <= _STAGE_INDEX[TaskStage.CHUNK]:
             embed_config = EmbeddingConfig(
                 batch_size=cfg.embedding_batch_size,
-                embedding_version=cfg.embedding_version,
+                embedding_identity=cfg.embedding_identity,
             )
             embed_result = await self._embedding_service.embed_and_publish(
                 document=document,
@@ -681,7 +688,7 @@ class IngestionOrchestrator:
         normalized_text = raw_bytes.decode("utf-8", errors="replace")
         new_content_hash = compute_content_hash(normalized_text)
         current_content_hash: str = current_version.content_hash
-        return new_content_hash == current_content_hash
+        return bool(new_content_hash == current_content_hash)
 
     async def delete_document(
         self,

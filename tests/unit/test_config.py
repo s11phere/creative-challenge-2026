@@ -34,6 +34,20 @@ def test_model_api_key_uses_secret_type() -> None:
     assert value not in repr(s)
 
 
+def test_capability_specific_api_keys_use_secret_type() -> None:
+    s = Settings(
+        fast_chat_api_key="synthetic-chat-secret",
+        embedding_api_key="synthetic-embedding-secret",
+    )
+
+    assert s.fast_chat_api_key is not None
+    assert s.embedding_api_key is not None
+    assert s.fast_chat_api_key.get_secret_value() == "synthetic-chat-secret"
+    assert s.embedding_api_key.get_secret_value() == "synthetic-embedding-secret"
+    assert "synthetic-chat-secret" not in repr(s)
+    assert "synthetic-embedding-secret" not in repr(s)
+
+
 def test_embedding_dimensions_are_not_runtime_configurable() -> None:
     assert "embedding_dimensions" not in Settings.model_fields
 

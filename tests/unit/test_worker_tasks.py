@@ -11,7 +11,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pytest import MonkeyPatch
-from worker import tasks
+from worker import ingestion_tasks, tasks
 from worker.tasks import (
     diagnostic_task,
     diagnostic_task_permanently_failed,
@@ -133,3 +133,40 @@ def test_enqueue_canonicalizes_trace_and_keeps_body_free(monkeypatch: MonkeyPatc
         "count",
         "requested_at",
     }
+
+
+def test_ingestion_gateway_lifetime_is_scoped_to_actor_loop(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class LoopScopedGateway:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    created: list[LoopScopedGateway] = []
+    used: list[LoopScopedGateway] = []
+
+    def create_gateway() -> LoopScopedGateway:
+        gateway = LoopScopedGateway()
+        created.append(gateway)
+        return gateway
+
+    async def run_ingestion(
+        _task_id: str,
+        _trace_id: str,
+        gateway: LoopScopedGateway,
+    ) -> None:
+        assert gateway.closed is False
+        used.append(gateway)
+
+    monkeypatch.setattr(ingestion_tasks, "_create_gateway", create_gateway)
+    monkeypatch.setattr(ingestion_tasks, "_run_ingestion_async", run_ingestion)
+
+    ingestion_tasks._run_ingestion_sync(str(uuid4()), "1" * 32)
+    ingestion_tasks._run_ingestion_sync(str(uuid4()), "2" * 32)
+
+    assert used == created
+    assert len(created) == 2
+    assert all(gateway.closed for gateway in created)

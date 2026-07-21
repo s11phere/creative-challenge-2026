@@ -11,6 +11,7 @@ from opentelemetry.trace import SpanKind
 
 from .contracts import (
     CapabilityAlias,
+    CapabilityStatus,
     ChatRequest,
     ChatResponse,
     EmbeddingRequest,
@@ -48,15 +49,19 @@ class FakeModelGateway:
 
     @property
     def status(self) -> GatewayStatus:
+        available = self.scenario is not FakeScenario.UNAVAILABLE
+        code = "MODEL_FAKE_READY" if available else "MODEL_FAKE_UNAVAILABLE"
         return GatewayStatus(
-            available=self.scenario is not FakeScenario.UNAVAILABLE,
-            code=(
-                "MODEL_FAKE_READY"
-                if self.scenario is not FakeScenario.UNAVAILABLE
-                else "MODEL_FAKE_UNAVAILABLE"
-            ),
+            available=available,
+            code=code,
             provider=ModelProvider.FAKE,
-            capabilities=(CapabilityAlias.FAST_CHAT, CapabilityAlias.EMBEDDING_ZH),
+            capabilities=(
+                (CapabilityAlias.FAST_CHAT, CapabilityAlias.EMBEDDING_ZH) if available else ()
+            ),
+            capability_statuses=tuple(
+                CapabilityStatus(capability=capability, available=available, code=code)
+                for capability in (CapabilityAlias.FAST_CHAT, CapabilityAlias.EMBEDDING_ZH)
+            ),
         )
 
     def _raise_scenario(self, capability: CapabilityAlias) -> None:
@@ -148,6 +153,9 @@ class FakeModelGateway:
                 capability=capability,
                 latency_ms=0.0,
             )
+
+    async def aclose(self) -> None:
+        return None
 
     def _embedding(self, text: str) -> tuple[float, ...]:
         seed = hashlib.sha256(text.encode()).digest()

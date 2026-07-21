@@ -1019,10 +1019,12 @@ class TestPublishedVersionConstraints:
         result = await orch.run_pipeline(task)
         assert result.status == TaskStatus.SUCCEEDED
 
-        # _FakeChunker returns config_hash="cfg_v1" — must be written back
         updated_version = await fakes["version_repo"].get(version.id)
         assert updated_version is not None
-        assert updated_version.processing_config_hash == "cfg_v1"
+        assert len(updated_version.processing_config_hash) == 64
+        assert updated_version.processing_config["chunk_size"] == "512"
+        assert updated_version.processing_config["embedding_dimensions"] == "768"
+        assert updated_version.processing_config["embedding_model_revision"] == "fake-sha256-v1"
 
 
 class TestCancellationBetweenStages:

@@ -73,11 +73,23 @@ class Settings(BaseSettings):
     ingestion_task_lease_seconds: int = Field(default=120, ge=30)
 
     # --- Model Gateway ---
-    model_provider: Literal["fake", "openai-compatible", "disabled"] = "fake"
+    model_provider: Literal[
+        "fake", "openai-compatible", "text-embeddings-inference", "disabled"
+    ] = "fake"
     model_endpoint: str | None = None
     model_api_key: SecretStr | None = None
+    fast_chat_endpoint: str | None = None
+    fast_chat_api_key: SecretStr | None = None
     fast_chat_model: str | None = None
+    embedding_endpoint: str | None = None
+    embedding_api_key: SecretStr | None = None
     embedding_model: str | None = None
+    embedding_model_revision: str | None = None
+    embedding_protocol: Literal["openai-compatible", "tei"] = "openai-compatible"
+    embedding_query_instruction_version: str = "none-v1"
+    embedding_document_instruction_version: str = "none-v1"
+    embedding_normalization: str = "none"
+    embedding_precision: str = "float32"
     model_allow_external: bool = False
     model_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     model_max_retries: int = Field(default=2, ge=0, le=5)

@@ -19,13 +19,18 @@ class GatewayConfig:
     provider: ModelProvider = ModelProvider.FAKE
     endpoint: str | None = None
     api_key: str | None = None
+    fast_chat_endpoint: str | None = None
+    fast_chat_api_key: str | None = None
     fast_chat_model: str | None = None
+    embedding_endpoint: str | None = None
+    embedding_api_key: str | None = None
     embedding_model: str | None = None
     allow_external: bool = False
     timeout_seconds: float = 15.0
     max_retries: int = 2
     retry_backoff_seconds: float = 0.1
     fake_scenario: FakeScenario = FakeScenario.NORMAL
+    embedding_protocol: str = "openai-compatible"
 
 
 def create_model_gateway(
@@ -42,30 +47,71 @@ def create_model_gateway(
             error_code=ModelErrorCode.UNAVAILABLE,
             message="The model provider is disabled.",
         )
-    if not config.endpoint or not config.fast_chat_model or not config.embedding_model:
-        return UnavailableModelGateway(
-            provider=config.provider,
-            status_code="MODEL_CONFIGURATION_MISSING",
-            error_code=ModelErrorCode.UNAVAILABLE,
-            message="The model provider is not configured.",
+    if config.provider is ModelProvider.TEXT_EMBEDDINGS_INFERENCE:
+        endpoint = config.embedding_endpoint or config.endpoint
+        status, error = _capability_configuration_status(
+            endpoint,
+            config.embedding_model,
+            allow_external=config.allow_external,
         )
-    if not _endpoint_allowed(config.endpoint, allow_external=config.allow_external):
-        return UnavailableModelGateway(
-            provider=config.provider,
-            status_code="MODEL_POLICY_DENIED",
-            error_code=ModelErrorCode.POLICY_DENIED,
-            message="The model provider is blocked by the data policy.",
+        return OpenAICompatibleGateway(
+            embedding_endpoint=endpoint if error is None else None,
+            embedding_model=config.embedding_model,
+            embedding_api_key=config.embedding_api_key or config.api_key,
+            embedding_status_code=status,
+            embedding_error_code=error or ModelErrorCode.UNAVAILABLE,
+            timeout_seconds=config.timeout_seconds,
+            max_retries=config.max_retries,
+            retry_backoff_seconds=config.retry_backoff_seconds,
+            client=client,
+            provider=ModelProvider.TEXT_EMBEDDINGS_INFERENCE,
+            embedding_protocol="tei",
         )
+    chat_endpoint = config.fast_chat_endpoint or config.endpoint
+    embedding_endpoint = config.embedding_endpoint or config.endpoint
+    chat_status, chat_error = _capability_configuration_status(
+        chat_endpoint,
+        config.fast_chat_model,
+        allow_external=config.allow_external,
+    )
+    embedding_status, embedding_error = _capability_configuration_status(
+        embedding_endpoint,
+        config.embedding_model,
+        allow_external=config.allow_external,
+    )
     return OpenAICompatibleGateway(
-        endpoint=config.endpoint,
+        endpoint=None,
+        fast_chat_endpoint=chat_endpoint if chat_error is None else None,
+        embedding_endpoint=embedding_endpoint if embedding_error is None else None,
         fast_chat_model=config.fast_chat_model,
         embedding_model=config.embedding_model,
         api_key=config.api_key,
+        fast_chat_api_key=config.fast_chat_api_key,
+        embedding_api_key=config.embedding_api_key,
+        fast_chat_status_code=chat_status,
+        embedding_status_code=embedding_status,
+        fast_chat_error_code=chat_error or ModelErrorCode.UNAVAILABLE,
+        embedding_error_code=embedding_error or ModelErrorCode.UNAVAILABLE,
+        provider=config.provider,
+        embedding_protocol=config.embedding_protocol,
         timeout_seconds=config.timeout_seconds,
         max_retries=config.max_retries,
         retry_backoff_seconds=config.retry_backoff_seconds,
         client=client,
     )
+
+
+def _capability_configuration_status(
+    endpoint: str | None,
+    model: str | None,
+    *,
+    allow_external: bool,
+) -> tuple[str, ModelErrorCode | None]:
+    if not endpoint or not model:
+        return "MODEL_CONFIGURATION_MISSING", ModelErrorCode.UNAVAILABLE
+    if not _endpoint_allowed(endpoint, allow_external=allow_external):
+        return "MODEL_POLICY_DENIED", ModelErrorCode.POLICY_DENIED
+    return "MODEL_CAPABILITY_CONFIGURED", None
 
 
 def _endpoint_allowed(endpoint: str, *, allow_external: bool) -> bool:
@@ -81,7 +127,7 @@ def _endpoint_allowed(endpoint: str, *, allow_external: bool) -> bool:
         ):
             return False
         host = parsed.hostname.lower()
-        if host in {"localhost", "host.docker.internal"}:
+        if host in {"localhost", "host.docker.internal", "tei"}:
             return True
         try:
             address = ipaddress.ip_address(host)

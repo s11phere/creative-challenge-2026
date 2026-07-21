@@ -71,8 +71,18 @@ services:
       MODEL_PROVIDER: ${MODEL_PROVIDER:-fake}
       MODEL_ENDPOINT: ${MODEL_ENDPOINT:-}
       MODEL_API_KEY: ${MODEL_API_KEY:-}
+      FAST_CHAT_ENDPOINT: ${FAST_CHAT_ENDPOINT:-}
+      FAST_CHAT_API_KEY: ${FAST_CHAT_API_KEY:-}
       FAST_CHAT_MODEL: ${FAST_CHAT_MODEL:-}
+      EMBEDDING_ENDPOINT: ${EMBEDDING_ENDPOINT:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_MODEL_REVISION: ${EMBEDDING_MODEL_REVISION:-}
+      EMBEDDING_PROTOCOL: ${EMBEDDING_PROTOCOL:-openai-compatible}
+      EMBEDDING_QUERY_INSTRUCTION_VERSION: ${EMBEDDING_QUERY_INSTRUCTION_VERSION:-none-v1}
+      EMBEDDING_DOCUMENT_INSTRUCTION_VERSION: ${EMBEDDING_DOCUMENT_INSTRUCTION_VERSION:-none-v1}
+      EMBEDDING_NORMALIZATION: ${EMBEDDING_NORMALIZATION:-none}
+      EMBEDDING_PRECISION: ${EMBEDDING_PRECISION:-float32}
       MODEL_ALLOW_EXTERNAL: ${MODEL_ALLOW_EXTERNAL:-false}
       MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-15}
       MODEL_MAX_RETRIES: ${MODEL_MAX_RETRIES:-2}
@@ -126,6 +136,25 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-json}
       OTLP_ENDPOINT: ${OTLP_ENDPOINT:-}
       OTEL_EXPORT_TIMEOUT_SECONDS: ${OTEL_EXPORT_TIMEOUT_SECONDS:-2}
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-fake}
+      MODEL_ENDPOINT: ${MODEL_ENDPOINT:-}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      FAST_CHAT_ENDPOINT: ${FAST_CHAT_ENDPOINT:-}
+      FAST_CHAT_API_KEY: ${FAST_CHAT_API_KEY:-}
+      FAST_CHAT_MODEL: ${FAST_CHAT_MODEL:-}
+      EMBEDDING_ENDPOINT: ${EMBEDDING_ENDPOINT:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_MODEL_REVISION: ${EMBEDDING_MODEL_REVISION:-}
+      EMBEDDING_PROTOCOL: ${EMBEDDING_PROTOCOL:-openai-compatible}
+      EMBEDDING_QUERY_INSTRUCTION_VERSION: ${EMBEDDING_QUERY_INSTRUCTION_VERSION:-none-v1}
+      EMBEDDING_DOCUMENT_INSTRUCTION_VERSION: ${EMBEDDING_DOCUMENT_INSTRUCTION_VERSION:-none-v1}
+      EMBEDDING_NORMALIZATION: ${EMBEDDING_NORMALIZATION:-none}
+      EMBEDDING_PRECISION: ${EMBEDDING_PRECISION:-float32}
+      MODEL_ALLOW_EXTERNAL: ${MODEL_ALLOW_EXTERNAL:-false}
+      MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-15}
+      MODEL_MAX_RETRIES: ${MODEL_MAX_RETRIES:-2}
+      MODEL_RETRY_BACKOFF_SECONDS: ${MODEL_RETRY_BACKOFF_SECONDS:-0.1}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -179,7 +208,28 @@ services:
     volumes:
       - ./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
 
+  tei:
+    profiles:
+      - embedding
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:c26a226262ad4ff3330fb30b76653c1bb65da2fcf413b92284545a010e0a8a48
+    command:
+      - --model-id
+      - BAAI/bge-base-zh-v1.5
+      - --revision
+      - f03589ceff5aac7111bd60cfc7d497ca17ecac65
+    ports:
+      - "${EMBEDDING_PORT:-8080}:80"
+    volumes:
+      - teidata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
 volumes:
   pgdata:
   redisdata:
   blobdata:
+  teidata:
