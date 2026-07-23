@@ -495,6 +495,7 @@ Docker Compose 编排，定义 5 个长期服务、1 个一次性迁移服务和
 | `project-implementation-plan.md` | 总实施计划 |
 | `stage-1-implementation-plan.md` | 阶段 1 详细实施计划与任务清单 |
 | `stage-1-acceptance.md` | 阶段 1 验收命令、结果、退出条件、外部确认和已知问题 |
+| `stage-4-implementation-plan.md` | 阶段 4 启动门禁、引用问答协议、分步执行与验收矩阵 |
 | `stage-5-implementation-plan.md` | 阶段 5 依赖门禁、分步计划、完成与暂缓状态 |
 | `stage-5-implementation-review.md` | 阶段 5 通用基础审查证据、未完成范围和审查决定 |
 | `troubleshooting.md` | 本地运行故障恢复和已知限制 |

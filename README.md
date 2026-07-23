@@ -137,6 +137,7 @@ git diff --exit-code -- docs/openapi.json
 - [阶段 2 实施计划](docs/stage-2-implementation-plan.md)
 - [阶段 3 实施计划](docs/stage-3-implementation-plan.md)
 - [阶段 3 验收记录](docs/stage-3-acceptance.md)
+- [阶段 4 实施计划](docs/stage-4-implementation-plan.md)
 - [阶段 5 实施计划](docs/stage-5-implementation-plan.md)
 - [阶段 5 实现审查记录](docs/stage-5-implementation-review.md)
 - [OpenAPI](docs/openapi.json)
