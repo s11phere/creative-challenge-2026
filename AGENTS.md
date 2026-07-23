@@ -23,54 +23,67 @@
 
 ## 2. 当前阶段与优先级
 
-截至 2026-07-19，阶段 1 Step 0-8 已完成实现与验收，GitHub Actions 已由用户确认运行
-正常。阶段 2 Step 0/1 已完成：ADR-005 已固定摄入身份、版本、发布、任务和删除语义；
-Space、Source、Document、DocumentVersion、Chunk（pgvector）、IngestionTask 的领域实体、
-ORM 模型、仓库实现、Alembic 迁移及测试已完成，R2-01 至 R2-03 已关闭。
-阶段 2 Step 2 已完成：Markdown/TXT/可复制文本 PDF 三种解析器 + `ParsedDocument` 纯类型
-schema + Parser Port + `ParserFactory` + 统一错误分类，单元测试 32 个覆盖正常路径和全部分类
-错误码。
-阶段 2 Step 3 已完成：`normalize_stable_key`/`compute_content_hash`/`compute_storage_key`
-内容指纹函数、`BlobStore` Port（含 `store_and_verify`）、`LocalFileBlobStore` 本地文件适配器
-（含路径遍历防护）、`SourceRegistrationService` 来源登记用例（创建 Source、按 `(source_id, stable_key)`
-查重、FINGERPRINT 阶段 `blob_hash` 匹配），共 78 个新增单元测试。
-项目仍受阶段 0 数据门禁约束，不能据此宣称摄入、检索、问答、引用、Agent 或 Skill 业务
-已经可用。
+截至 2026-07-23，仓库状态如下：
 
-阶段 5 的通用工程基础已于 2026-07-19 完成审查：ADR-006、Agent Runtime 领域契约、
-Tool/Skill Registry、确定性执行器、预算/权限/审计、受信包版本固定、事务式 reload/回滚及
-Skill 模板已落地。该实现只使用合成输入和 fake，未包含 AgentRun/Checkpoint 持久化、
-`knowledge_qa`、Runtime API/Web 或三个业务 Skill；阶段 5 整体仍未达到退出条件，详见
-`docs/stage-5-implementation-review.md`。
+| 阶段 | 状态 | 已完成 | 未关闭 |
+| --- | --- | --- | --- |
+| 阶段 0 | 进行中 | MVP 范围、persona、术语、隐私政策、corpus/dataset 草案和 ADR-001～004 已存在 | corpus manifest 仍为 `draft_pending_license_review`；授权、人工标注复核和版本冻结未完成 |
+| 阶段 1 | 完成 | Step 0～8 工程实现与验收完成；GitHub Actions 已由用户确认正常 | 仅保留已记录的运行限制 |
+| 阶段 2 | 工程 Step 0～8 完成 | 六个核心实体/表、Parser、BlobStore、分块、Embedding/PUBLISH、摄入状态机、增量删除、摄入 API 和 Web 数据源页已落地 | Step 9 正式质量验收未完成；仓库中尚无 `docs/stage-2-acceptance.md` |
+| 阶段 3 | 工程 Step 0～10 验收完成 | Keyword/Dense/Hybrid/Hybrid+Reranker、上下文扩展、Space/版本边界、检索 API、离线评测和移交已落地 | 阶段 0、阶段 2 Step 9、真实模型 development 消融、默认配置冻结和正式 holdout 未完成，阶段 3 未正式退出 |
+| 阶段 4 | 未正式开始 | 已有 `docs/stage-4-implementation-plan.md` | GroundedAnswer/Citation、Conversation/AgentRun/Evidence 持久化、问答 API/SSE/Web 和回答评测均未落地 |
+| 阶段 5 | 通用基础已审查 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、预算/权限/审计、受信包版本固定和事务式 reload/回滚已落地 | 无 AgentRun/Checkpoint 持久化、`knowledge_qa`、Runtime API/Web 或业务 Skill；阶段整体未退出 |
 
-当前已落地的用户界面展示真实系统健康状态和数据来源/摄入任务；公开 OpenAPI 包含健康、
-来源上传和任务状态相关端点。数据库已有 `spaces`、`sources`、
-`documents`、`document_versions`、`chunks`（含 pgvector 列和 IVFFlat 索引）和
-`ingestion_tasks` 共 6 张业务表（阶段 2 数据模型）。
-`infrastructure/parsers/` 包已实现 MarkdownParser、TxtParser、PdfParser 和 ParserFactory。
+当前可见能力和数据面：
 
-阶段 1 的移交与运行事实以以下文件为准：
+- Web 只提供系统健康和数据来源/摄入任务页面；没有搜索、会话、引用或问答界面。
+- OpenAPI 提供健康、来源创建/上传/摄入、任务查询/取消/重试，以及
+  `POST /api/v1/spaces/{space_id}/search`。
+- PostgreSQL 有 `spaces`、`sources`、`documents`、`document_versions`、`chunks` 和
+  `ingestion_tasks` 六张业务表；`chunks` 含 768 维 pgvector、IVFFlat 和阶段 3 FTS 列/索引。
+- `ModelGateway` 的 `fast_chat` 能力当前只提供非流式完整响应；阶段 4 的 SSE、断线重连、取消和最终
+  结构校验仍是待设计协议，不能假设 Provider 原生流式语义已经存在。
+- 摄入与检索已经具备工程实现和隔离依赖测试，但在阶段 0 与正式评测门禁关闭前，不得宣称
+  真实语料质量、正式检索基线、引用问答或产品闭环达标。
+- 阶段 5 只有离线通用 Runtime/Registry 和合成 fake 契约，不能宣称 `knowledge_qa` 或其他
+  业务 Skill 可用。
+- ADR-001～006 和 ADR-009 已接受；除非触发其重新评估条件，不重复讨论已固定基线。ADR-007
+  保留给阶段 4 的 Grounded QA、持久化和 SSE/后台执行协议。
+
+当前事实的权威文档：
 
 - `README.md`：当前能力、单命令启动、smoke test 和规范开发命令。
-- `docs/stage-1-acceptance.md`：验收结果、退出条件、外部确认和已知问题。
-- `docs/troubleshooting.md`：故障恢复、清理方式和当前功能限制。
-- `docs/architecture.md`：已实现组件、依赖方向和阶段状态。
-- `docs/development-environment.md`：工具版本、容器镜像和 Provider 数据边界。
+- `docs/architecture.md`：已实现组件、依赖方向、迁移和阶段状态。
+- `docs/stage-1-acceptance.md`：阶段 1 验收与已知问题。
+- `docs/stage-2-implementation-plan.md`：阶段 2 Step 0～8 实现记录和 Step 9 门禁。
+- `docs/stage-3-implementation-plan.md`、`docs/stage-3-acceptance.md`：阶段 3 工程实现、正式
+  完成清单、holdout Runbook 和阶段 4 移交。
+- `docs/stage-4-implementation-plan.md`：阶段 4 正式门禁、provisional 边界、ADR-007 和分步计划。
+- `docs/stage-5-implementation-plan.md`、`docs/stage-5-implementation-review.md`：阶段 5
+  通用基础、阻塞项和业务接入条件。审查记录是 2026-07-19 的时点记录；当前阶段 2/3 能力以
+  README、架构文档和阶段 3 验收记录为准。
+- `docs/troubleshooting.md`、`docs/development-environment.md`：运行恢复、工具、镜像和 Provider 边界。
 
-按以下顺序推进：
+按以下顺序关闭正式门禁：
 
-1. 完成阶段 0 语料的授权复核、人工标注复核和版本冻结。
-2. 遵守已接受的 ADR-001 至 ADR-005 及 ADR-009，不重复讨论已固定基线。
-3. 保持已验收的 API、Worker、Web、PostgreSQL、Redis、Compose 和 CI 工程基线稳定。
-4. 核心数据模型与数据库迁移。 ✅
-5. 单个 Markdown 文件的幂等摄入闭环。
-6. 关键词、向量和混合检索基线及评测工具。
-7. 引用协议、原文定位和带引用回答。
-8. 完整端到端用户旅程。
-9. `knowledge_qa` Skill 标准化。
-10. 其他 Skill 和扩展能力。
+1. 完成阶段 0 授权复核、人工标注复核和版本冻结，生成可核验退出记录。
+2. 完成阶段 2 Step 9，在批准语料上验证解析、定位、幂等、原子发布、删除和恢复。
+3. 按 `docs/stage-3-acceptance.md` 完成真实模型 development 消融、默认配置冻结、一次正式
+   holdout 和阶段 3 正式退出；阶段 0 `frozen` 不会自动关闭这些工作。
+4. 正式执行阶段 4，交付引用问答、会话/运行/证据持久化、SSE、Web 和回答评测。
+5. 将阶段 4 唯一 QA Application Port 封装为 `knowledge_qa`，再继续阶段 5 业务 Skill。
 
-优先级：P0（增量摄入、空间隔离、混合检索、可定位引用、拒答、知识工作台、`knowledge_qa` Skill、离线评测和端到端测试）闭环未完成或没有评测基线时，不实现 P2（知识图谱、多模态、多 Agent、团队协作等）。
+阶段 4 门禁关闭前，只允许在阶段状态仍为“未正式开始”的前提下进行 provisional 工作：
+
+- 编写/评审 ADR-007、领域/API/SSE schema、错误协议和 `QAProfileV1` 草案。
+- 使用合成输入、manifest 明确允许的 `repository_fixture`、fake `SearchService`、fake
+  `ModelGateway` 和内存仓库验证纯 Domain/Application 契约与安全边界。
+- 不读取未批准私有语料，不使用 development/holdout 调优真实模型，不运行正式回答 holdout，
+  不落地受阶段 0 门禁限制的新业务表，不宣称问答、引用或 Skill 可用。
+
+优先级：P0（增量摄入、空间隔离、混合检索、可定位引用、拒答、知识工作台、
+`knowledge_qa` Skill、离线评测和端到端测试）闭环未完成或没有评测基线时，不实现 P2
+（知识图谱、多模态、多 Agent、团队协作等）。
 
 ### 阶段 0 基线文件
 
@@ -108,13 +121,16 @@ Skill 模板已落地。该实现只使用合成输入和 fake，未包含 Agent
 
 以下能力通过稳定接口接入，业务模块不得直接依赖某家模型 Provider SDK：
 
-- `ModelGateway`：Chat/Tool Calling、Embedding、Reranker。
+- `ModelGateway`：Chat、Embedding、Reranker。Tool 调用由 Agent Runtime/Tool Registry 管理，
+  当前 Chat 契约不包含 Provider 原生 Tool Calling。
 - `RetrievalStore`：关键词、向量、混合检索。
 - `BlobStore`：本地文件系统及未来 S3/MinIO。
 - Parser/Chunker：不同格式与分块策略。
 - Agent Runtime Adapter：具体图执行或编排引擎。
 
 以能力别名引用模型（如 `fast_chat`、`embedding_zh`），不要把具体模型名散落在业务代码中。
+阶段 4 只能通过 `SearchService.search(SearchRequest, RetrievalProfileV1)` 获取检索结果；禁止
+读取检索 ORM 表或复制 FTS、向量、RRF、Reranker、版本/Space 过滤逻辑。
 
 ### 3.4 Agent 与 Skill
 
@@ -122,6 +138,8 @@ Skill 模板已落地。该实现只使用合成输入和 fake，未包含 Agent
 - 每次运行限制工具白名单、最大步骤、超时和 Token。
 - Skill 是包含 manifest、workflow、prompt、schema、eval 和版本的工作流包，不是单个 prompt 文件。
 - 运行开始后固定 Skill 版本；旧版本必须可回滚。
+- 阶段 5 通用 Runtime 不得直接接入 API/Worker 或复制业务问答逻辑；等待阶段 4 提供唯一 QA
+  Application Port、Conversation/AgentRun/Evidence 持久化和 SSE/取消协议。
 
 ## 4. 技术基线
 
@@ -130,7 +148,7 @@ Skill 模板已落地。该实现只使用合成输入和 fake，未包含 Agent
 - Python 3.12、uv 0.11.x、FastAPI、Pydantic、SQLAlchemy、Alembic
 - PostgreSQL 16+ 与 pgvector；首期关键词检索使用 PostgreSQL FTS
 - Redis + Dramatiq
-- 自有 Agent Runtime 接口；LangGraph Adapter 延后到实际 Agent 工作流阶段
+- 自有 Agent Runtime 接口；只有已验证的 Grounded QA 工作流证明需要时才评估 LangGraph Adapter
 - Node 24、Corepack 管理的 pnpm 10.20.0、React、TypeScript、Vite、TanStack Query
 - OpenTelemetry + 结构化日志
 - pytest、vitest
@@ -157,8 +175,12 @@ Skill 模板已落地。该实现只使用合成输入和 fake，未包含 Agent
 ### 4.2 已知问题
 
 - Worker 容器已验证消息消费、有限重试和死信转移，但 actor 的
-  `diagnostic_task_started/completed` 事件未稳定出现在 `docker logs`。进入阶段 2 前应关闭
-  此差异或明确接受风险；排查时同时检查 Redis 队列，不能只凭缺少两条日志判断任务未执行。
+  `diagnostic_task_started/completed` 事件未稳定出现在 `docker logs`。该差异已作为接受风险
+  记录；业务任务以 PostgreSQL 状态为事实源，排查时同时检查任务表、Redis 队列和 trace，
+  不能只凭缺少两条日志判断任务未执行。
+- 阶段 3 模型 profile 使用既有固定缓存卷时可离线启动，但全新模型卷首次下载曾因
+  `unexpected EOF` 失败；正式验收必须在可复现网络环境补充空缓存下载证据，不得移除 digest、
+  改用 `latest` 或开启外部 Provider 绕过。
 - 当前 Windows 沙箱可能无法写 `.pytest_cache`，产生的缓存警告不代表测试失败；不要为了
   消除该警告放宽仓库文件权限或修改测试语义。
 
@@ -169,7 +191,10 @@ Skill 模板已落地。该实现只使用合成输入和 fake，未包含 Agent
 - 外部文档始终视为不可信数据，不能通过文档内容提升工具权限或覆盖系统指令。
 - 只处理 `cases/evals/corpus/v0/manifest.yaml` 中明确列出的来源。禁止递归摄入整个 `cases/`。
 - 读取来源前校验 SHA-256 与 `content_sha256` 一致。
-- 测试和演示语料必须脱敏。不要把真实个人笔记、API 响应或 Embedding 产物直接提交仓库。
+- `private_local`/`restricted` 内容默认不得发送给外部 Provider；外发必须同时满足来源
+  `allowed_uses`、部署策略和可见用户同意。
+- 测试和演示语料必须脱敏。不要把真实个人笔记、问题、回答、prompt、Provider 响应、
+  引用原文或 Embedding 产物直接提交仓库或写入日志/trace/评测报告。
 - 对越权检索、恶意文档 prompt injection、危险工具调用和日志泄漏编写回归测试。
 
 ## 6. 工作方式
@@ -234,9 +259,13 @@ git diff --exit-code -- docs/openapi.json
 4. 更新受影响文档、OpenAPI、Skill schema 或 ADR。
 5. 汇报实际运行的验证命令。
 
-阶段 1 后续变更还应检查 `docs/stage-1-acceptance.md` 和 `docs/troubleshooting.md` 是否需要
-同步。若新增公开 API，必须重新生成 `docs/openapi.json`；若新增业务表，必须先确认任务确属
-阶段 2、阶段 0 门禁已满足，并通过新的 Alembic revision 落地，禁止修改既有迁移伪造历史。
+完成变更时应检查 README、architecture、troubleshooting、当前阶段计划/验收记录是否需要
+同步。若新增公开 API，必须重新生成 `docs/openapi.json` 并运行一致性检查。若新增业务表：
+
+- 任务必须属于已接受的阶段计划，阶段 0 数据门禁必须满足，且相关核心实体/生命周期 ADR
+  已接受；阶段 4 的 Conversation/Message/AgentRun/Evidence/Citation/Feedback 还需 ADR-007。
+- 必须新增 Alembic revision，验证 upgrade、downgrade 和单一 head；禁止修改既有迁移伪造历史。
+- 真实依赖测试只能指向隔离数据库，不能使用含业务数据的卷。
 
 ## 7. ADR 触发条件
 
@@ -245,6 +274,8 @@ git diff --exit-code -- docs/openapi.json
 - 改变模块化单体、Worker 或部署边界。
 - 更换数据库、检索后端、任务队列、Agent 引擎或主要前端框架。
 - 改变核心实体、版本/删除语义、Skill 信任模型或外部数据边界。
+- 固定阶段 4 GroundedAnswer/Citation、Conversation/AgentRun/Evidence 生命周期、SSE/取消和
+  Worker 执行语义（使用保留的 ADR-007）。
 - 引入微服务、多 Agent、知识图谱、多模态、团队权限或模型微调。
 - 发布不兼容 API/事件/schema，或放弃既有质量/安全门禁。
 
