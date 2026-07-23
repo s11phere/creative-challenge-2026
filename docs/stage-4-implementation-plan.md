@@ -286,8 +286,9 @@ Space、Document、DocumentVersion 和 locator 归属，再返回最小必要片
   绝不计为 `refuse`。`formal_runs_enabled: false` 由 schema 强制，无法通过这份配置启动正式运行。
 - 已复核数据集元数据：30 例中 25 个 answer、5 个 refuse；包含单文档 8、跨文档 8、版本/冲突 2、
   无答案 5、恶意文档 1、双语 3 和代码/自然语言 3。未修改 holdout、split、gold claim 或 evidence。
-- 已验证：`tests/unit/test_qa_step0_baseline.py` 覆盖 profile/config schema、所有输入 hash、正式
-  运行被拒绝，以及所需 answer/refuse/单文档/跨文档/版本冲突/恶意文档/双语切片存在性。
+- 已验证：`tests/unit/test_qa_step0_baseline.py` 覆盖 profile/config schema、正式运行被拒绝，以及
+  可用受控输入的 hash 与所需数据集切片；Git 未分发的阶段 0 manifest/dataset 仅在配置仍为
+  provisional 且正式运行关闭时允许缺失，干净 CI checkout 不再被误判为输入损坏。
 - 未关闭决策：R4-01 的纯领域部分已在 Step 1 完成，仍等待 JSON transport schema 和兼容测试；
   R4-02、R4-03、R4-06、R4-07 等待阶段 0 门禁关闭后再进行持久化/执行实现和隔离集成验证；
   R4-04、R4-05、R4-08、R4-09 分别等待 development 对比、结构化生成、正式 profile/model 冻结
