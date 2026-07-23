@@ -6,6 +6,8 @@ cases/*
 cases/evals/*
 !cases/evals/configs/
 !cases/evals/configs/**
+!cases/evals/prompts/
+!cases/evals/prompts/**
 
 # Environment
 .env

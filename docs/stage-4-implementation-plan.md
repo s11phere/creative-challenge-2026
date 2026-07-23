@@ -269,6 +269,27 @@ Space、Document、DocumentVersion 和 locator 归属，再返回最小必要片
 **完成标准**：同一输入可由不同实现者得到相同的 answer/refuse/conflict/failed 判断；配置摘要
 唯一标识一次运行；正式运行在门禁未满足时被机器拒绝。
 
+#### 2026-07-23 provisional 实现与验证总结
+
+- 已核对：阶段 0 manifest 仍为 `draft_pending_license_review`；`docs/stage-2-acceptance.md`
+  不存在；`docs/stage-3-acceptance.md` 明确阶段 3 未正式退出。因此阶段 4 保持“未正式开始”，
+  不读取语料正文、不运行正式回答 holdout，新增业务表和 API/SSE 实现继续受阻。
+- 已完成：接受 ADR-007，固定唯一 QA Application Port、Conversation/Message/AgentRun/Evidence/
+  Citation/Feedback 的归属边界、不可变 citation 生命周期、Worker/取消/重试、SSE v1 及隐私
+  规则。该 ADR 是协议决定，不解除任何阶段门禁。
+- 已完成：新增 `QAProfileV1` provisional 配置、JSON Schema、受哈希固定的 provisional prompt
+  contract，以及 `qa-eval-config-v1`。配置固定 corpus/dataset/schema、development 20 例和
+  holdout 10 例的摘要，以及 answer/refuse/conflict/failed 的分母规则；`failed` 明确单独报告，
+  绝不计为 `refuse`。`formal_runs_enabled: false` 由 schema 强制，无法通过这份配置启动正式运行。
+- 已复核数据集元数据：30 例中 25 个 answer、5 个 refuse；包含单文档 8、跨文档 8、版本/冲突 2、
+  无答案 5、恶意文档 1、双语 3 和代码/自然语言 3。未修改 holdout、split、gold claim 或 evidence。
+- 已验证：`tests/unit/test_qa_step0_baseline.py` 覆盖 profile/config schema、所有输入 hash、正式
+  运行被拒绝，以及所需 answer/refuse/单文档/跨文档/版本冲突/恶意文档/双语切片存在性。
+- 未关闭决策：R4-01 等待 Step 1 的领域契约和状态机；R4-02、R4-03、R4-06、R4-07 等待阶段 0
+  门禁关闭后再进行持久化/执行实现和隔离集成验证；R4-04、R4-05、R4-08、R4-09 分别等待
+  development 对比、结构化生成、正式 profile/model 冻结和反馈审核实现。v0 的 30 例统计限制
+  尚未接受或扩充，必须在读取回答 holdout 前由负责人作版本化决定。
+
 ### Step 1：建立问答领域契约与状态机
 
 1. 定义 `QuestionInput`、`QueryPlan`、`EvidenceCandidate`、`Claim`、`Citation`、

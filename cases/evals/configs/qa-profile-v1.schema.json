@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "qa-profile-v1.schema.json",
+  "title": "QAProfileV1 provisional configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "status",
+    "retrieval",
+    "query",
+    "context",
+    "generation",
+    "verification",
+    "runtime"
+  ],
+  "properties": {
+    "schema_version": {"const": "qa-profile-v1"},
+    "profile_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"},
+    "status": {"const": "provisional"},
+    "retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile_reference", "final_k"],
+      "properties": {
+        "profile_reference": {"const": "stage3-default-pending-formal-freeze"},
+        "final_k": {"type": "integer", "minimum": 1, "maximum": 20}
+      }
+    },
+    "query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_question_chars", "max_history_messages", "max_subqueries", "rewrite_enabled"],
+      "properties": {
+        "max_question_chars": {"type": "integer", "minimum": 1, "maximum": 20000},
+        "max_history_messages": {"type": "integer", "minimum": 0, "maximum": 50},
+        "max_subqueries": {"type": "integer", "minimum": 1, "maximum": 5},
+        "rewrite_enabled": {"const": false}
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_evidence_items", "max_input_tokens", "max_tokens_per_evidence", "max_chunks_per_document"],
+      "properties": {
+        "max_evidence_items": {"type": "integer", "minimum": 1, "maximum": 50},
+        "max_input_tokens": {"type": "integer", "minimum": 1},
+        "max_tokens_per_evidence": {"type": "integer", "minimum": 1},
+        "max_chunks_per_document": {"type": "integer", "minimum": 1}
+      }
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_alias", "prompt_template_id", "structured_output_schema", "max_output_tokens", "max_repair_attempts"],
+      "properties": {
+        "capability_alias": {"const": "fast_chat"},
+        "prompt_template_id": {"const": "grounded-qa-v1-provisional"},
+        "structured_output_schema": {"const": "grounded-answer-v1"},
+        "max_output_tokens": {"type": "integer", "minimum": 1},
+        "max_repair_attempts": {"type": "integer", "minimum": 0, "maximum": 1}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcomes", "require_citation_per_claim", "require_same_space", "require_current_version", "reject_unknown_evidence_ids"],
+      "properties": {
+        "outcomes": {
+          "type": "array",
+          "const": ["answer", "refuse", "conflict", "failed"]
+        },
+        "require_citation_per_claim": {"const": true},
+        "require_same_space": {"const": true},
+        "require_current_version": {"const": true},
+        "reject_unknown_evidence_ids": {"const": true}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeout_seconds", "max_model_calls", "external_provider_mode"],
+      "properties": {
+        "timeout_seconds": {"type": "integer", "minimum": 1},
+        "max_model_calls": {"type": "integer", "minimum": 1, "maximum": 2},
+        "external_provider_mode": {"const": "denied_until_policy_and_consent"}
+      }
+    }
+  }
+}

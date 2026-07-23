@@ -541,10 +541,12 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | 004 | Local-First Data Boundary | 本地优先，外部模型显式选择 |
 | 005 | Ingestion Identity, Versioning, Publication, And Deletion | 固定摄入身份、双哈希、处理版本、原子发布、任务可靠性和删除语义 |
 | 006 | Skill Manifest Versioning And Trust Model | 固定 Skill manifest、摘要、受信目录、权限、恢复和回滚语义 |
+| 007 | Grounded QA Persistence, Citation, Execution, And SSE Semantics | 固定唯一 QA Port、引用生命周期、运行/取消、Worker 和 SSE 语义；仅协议已接受 |
 | 009 | Redis / Dramatiq Task Delivery | 队列选型 Redis + Dramatiq，状态存 DB |
 
-ADR-007/008 仍为保留编号。阶段 4 必须通过 ADR-007 固定 GroundedAnswer/Citation、
-Conversation/AgentRun/Evidence、SSE/取消和后台执行语义；当前尚未接受或落地。
+ADR-007 已接受，但只固定 Stage 4 的 GroundedAnswer/Citation、Conversation/AgentRun/Evidence、
+SSE/取消和后台执行协议。ADR-008 仍为保留编号；阶段 4 的持久化、SSE、API 和业务实现仍须等待
+阶段 0、阶段 2 Step 9 和阶段 3 正式退出门禁。
 
 ### 其他文档
 
