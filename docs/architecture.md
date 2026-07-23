@@ -215,6 +215,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/embedding.py` | `EmbeddingIdentity`、处理配置摘要和 768 维版本边界 |
 | `src/domain/retrieval.py` | SearchRequest/SearchResult、`RetrievalProfileV1`、候选/诊断/locator、`RetrievalStore`、QueryEmbedder 和 Reranker Port |
 | `src/domain/grounded_qa.py` | provisional GroundedAnswer/Claim/Evidence/Citation/Refusal/Conflict 契约、稳定拒答/错误、取消 Port、不可重开 attempt/retry、引用校验和 QA 状态投影 |
+| `src/domain/qa_persistence.py` | provisional Conversation/Message/Run/Attempt/Evidence/Citation/Feedback、版本/用量与 Repository Port；不依赖数据库实现 |
 
 **约束**：
 - 零外部依赖（不依赖 FastAPI、SQLAlchemy、任何 SDK）
@@ -246,6 +247,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/qa/query_planning.py` | 确定性问题分类、有界改写回退、Space/filter 不变的多查询检索和去重 |
 | `src/application/qa/context_builder.py` | 系统/问题/历史/不可信 Evidence 隔离、配额裁剪和稳定上下文摘要 |
 | `src/application/qa/generation.py` | `fast_chat` 非流式结构化生成、JSON schema 解析、一次修复、空证据拒答、显式取消、细分模型故障、冲突/发布竞态校验和安全版本/用量结果 |
+| `src/application/qa/persistence.py` | provisional 内存 Grounded QA Repository；验证 Space/owner、幂等、attempt、取消、usage、Evidence/Feedback 和原子终态发布 |
 
 **依赖**：`domain`、`model-gateway`、`jsonschema`
 
@@ -531,7 +533,8 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 
 当前只有上述 6 张业务表，没有 Conversation、Message、AgentRun、Evidence、Citation、Feedback
 或 Checkpoint 表。阶段 4/5 新表必须等待阶段 0 门禁、ADR-007 和新的 Alembic revision；禁止
-修改既有 revision 伪造历史。
+修改既有 revision 伪造历史。`docs/stage-4-persistence-design.md` 仅记录门禁后的候选表、约束、
+索引和事务评审，不代表迁移已创建或数据库能力可用。
 
 ---
 
@@ -566,6 +569,7 @@ SSE/取消和后台执行协议。ADR-008 仍为保留编号；阶段 4 的持�
 | `stage-3-implementation-plan.md` | 阶段 3 检索、评测协议、分步实现和正式门禁 |
 | `stage-3-acceptance.md` | 阶段 3 工程验收、正式完成清单、holdout Runbook 和阶段 4 移交 |
 | `stage-4-implementation-plan.md` | 阶段 4 启动门禁、引用问答协议、分步执行与验收矩阵 |
+| `stage-4-persistence-design.md` | 阶段 4 provisional 持久化表、约束、索引、事务和门禁后迁移验收设计 |
 | `stage-5-implementation-plan.md` | 阶段 5 依赖门禁、分步计划、完成与暂缓状态 |
 | `stage-5-implementation-review.md` | 阶段 5 通用基础审查证据、未完成范围和审查决定 |
 | `troubleshooting.md` | 本地运行故障恢复和已知限制 |
@@ -715,7 +719,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
 | **阶段 2** | **🟡 工程 Step 0～8 完成** | **摄入闭环代码已落地；Step 9 正式质量验收和 `stage-2-acceptance.md` 尚未完成** |
 | **阶段 3** | **🟡 工程 Step 0～10 验收完成** | **检索 API、离线评测和安全边界已落地；阶段 0、阶段 2 Step 9、真实模型定版及正式 holdout 未关闭，阶段未正式退出** |
-| 阶段 4 | ❌ 未正式开始 | Step 0～5 的 provisional 配置、领域、Evidence/Citation、查询/上下文、结构化生成及拒答/冲突/故障纯契约已落地；持久化 QA Port、Worker/SSE、API/Web、真实模型验证和回答评测未落地 |
+| 阶段 4 | ❌ 未正式开始 | Step 0～6 的 provisional 配置、领域、Evidence/Citation、查询/上下文、生成/故障语义及内存持久化契约已落地；ORM/Alembic/PostgreSQL、Worker/SSE、API/Web、真实模型验证和回答评测未落地 |
 | **阶段 5** | **🟡 通用基础已审查** | **Step 0～4 和 Step 9 通用部分通过；业务 Skill/API/持久化/验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅

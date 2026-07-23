@@ -506,6 +506,24 @@ Space、Document、DocumentVersion 和 locator 归属，再返回最小必要片
 **完成标准**：数据库约束阻止跨 Space 归属和重复业务事实；故障不会暴露部分终态；迁移往返、
 幂等重入和并发状态转换通过隔离 PostgreSQL 测试。
 
+#### 2026-07-23 provisional 实现与验证总结
+
+- 已执行：阶段 0 门禁仍未关闭，因此跳过 ORM、业务表、Alembic revision、PostgreSQL upgrade/
+  downgrade 和真实集成测试；按门禁允许范围审阅并保留内存 Repository 与迁移设计评审。
+- 已完成：新增 `ConversationRecord`、`MessageRecord`、`QARunRecord`/`QAAttempt`、`EvidenceRecord`、
+  `CitationRecord`、`FeedbackRecord` 及 `QARunVersions`、`QARunUsage`/phase timing；Repository Port
+  固定 Space/owner、attempt、版本、取消、错误、Token/耗时和 `pending_review` 归属。没有复制
+  阶段 5 Registry/Checkpoint，也没有保存 Evidence 正文或日志内容。
+- 已完成：`InMemoryGroundedQARepository` 使用单锁模拟事务边界，验证消息/Run/Feedback 幂等、跨
+  Space 拒绝、失败 attempt 创建新 ID、终态不可重开、Evidence/Citation 不可变、取消与发布竞态、
+  usage 单调更新，以及 answer/claims/citations 原子发布和一致重放。非 `valid` Citation、重复
+  Citation ID、单来源 Conflict 和跨尝试 Evidence 均不会写入部分终态。
+- 已完成：迁移设计记录见 `docs/stage-4-persistence-design.md`，列出候选表、复合 Space 外键、
+  幂等/唯一索引、claim/Evidence 关系、事务顺序和门禁关闭后的 upgrade/downgrade/并发验收清单。
+- 已验证：Step 6 内存持久化测试 11 passed；受影响 Domain/Application 测试 48 passed，mypy
+  73 个源文件通过，Ruff format/check 通过。完整 PostgreSQL、迁移往返和保留卷重启未执行，不能
+  宣称数据库约束或生产持久化已可用。
+
 ### Step 7：提供问答 API、SSE、取消与重试
 
 1. 通过版本化 HTTP 端点创建/查询 Conversation、提交问题、查询 Run、取消、重试和反馈。

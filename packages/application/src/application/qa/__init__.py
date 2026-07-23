@@ -27,6 +27,7 @@ from .generation import (
     StructuredOutputError,
     VerificationMetrics,
 )
+from .persistence import InMemoryGroundedQARepository
 from .profile import (
     QAGenerationProfileV1,
     QAPlanningProfileV1,
@@ -60,6 +61,7 @@ __all__ = [
     "GenerationUsage",
     "GroundedAnswerGenerator",
     "GroundedConfidence",
+    "InMemoryGroundedQARepository",
     "MergedSearchResult",
     "QAGenerationProfileV1",
     "QAPlanningProfileV1",
