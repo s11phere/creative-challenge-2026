@@ -12,6 +12,7 @@ from domain.grounded_qa import (
     EvidenceCandidate,
     GroundedAnswer,
     InvalidQATransitionError,
+    QAAttempt,
     QAContractError,
     QAError,
     QAErrorCode,
@@ -22,7 +23,10 @@ from domain.grounded_qa import (
     QueryPlan,
     QuestionInput,
     Refusal,
+    RefusalCode,
     RefusalReason,
+    is_retryable_qa_error,
+    next_qa_attempt,
     project_qa_status,
     transition_qa_status,
     validate_answer_citations,
@@ -152,6 +156,39 @@ def test_result_payloads_keep_refusal_conflict_and_failure_distinct() -> None:
             error_code=QAErrorCode.RETRIEVAL_FAILED,
         )
     assert QAError(QAErrorCode.MODEL_FAILED, "Model unavailable.").code is QAErrorCode.MODEL_FAILED
+
+
+def test_refusal_code_and_retry_attempts_are_stable_and_terminal_safe() -> None:
+    refusal = Refusal(RefusalReason.INSUFFICIENT_EVIDENCE, "No evidence.")
+    assert refusal.code is RefusalCode.INSUFFICIENT_EVIDENCE
+    assert refusal.code.value == "REFUSED_INSUFFICIENT_EVIDENCE"
+
+    first = QAAttempt(run_id=UUID(int=100), attempt_id=UUID(int=101))
+    transient = QAError(QAErrorCode.MODEL_RATE_LIMITED, "Rate limited.", retryable=True)
+    second = next_qa_attempt(first, transient, attempt_id=UUID(int=102))
+    assert is_retryable_qa_error(transient) is True
+    assert second.run_id == first.run_id
+    assert second.number == 2
+    assert second.previous_attempt_id == first.attempt_id
+    assert second.attempt_id != first.attempt_id
+    assert (
+        is_retryable_qa_error(
+            QAError(QAErrorCode.DATABASE_FAILED, "Database unavailable.", retryable=True)
+        )
+        is True
+    )
+
+    for error in (
+        QAError(QAErrorCode.MODEL_AUTHENTICATION_FAILED, "Authentication failed."),
+        QAError(QAErrorCode.STRUCTURED_RESPONSE_INVALID, "Invalid response."),
+        QAError(QAErrorCode.CANCELLED, "Cancelled."),
+    ):
+        assert is_retryable_qa_error(error) is False
+        with pytest.raises(QAContractError, match="not eligible"):
+            next_qa_attempt(first, error)
+
+    with pytest.raises(QAContractError, match="retry limit"):
+        next_qa_attempt(second, transient, max_attempts=2)
 
 
 def test_qa_lifecycle_is_terminal_safe_and_maps_refusal_separately() -> None:

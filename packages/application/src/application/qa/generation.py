@@ -16,6 +16,7 @@ from domain.grounded_qa import (
     ConflictNotice,
     EvidenceCandidate,
     GroundedAnswer,
+    QACancellationProbe,
     QAContractError,
     QAError,
     QAErrorCode,
@@ -188,6 +189,7 @@ class GroundedAnswerGenerator:
         prompt_contract: str,
         corpus_version: str,
         dataset_version: str,
+        cancellation: QACancellationProbe | None = None,
     ) -> None:
         if not prompt_contract.strip():
             raise QAContractError("QA prompt contract must not be blank")
@@ -198,6 +200,7 @@ class GroundedAnswerGenerator:
         self._verifier = verifier
         self._profile = profile
         self._prompt_contract = prompt_contract
+        self._cancellation = cancellation
         self._identity = GenerationIdentity(
             profile_id=profile.profile_id,
             retrieval_profile_reference=profile.retrieval_profile_reference,
@@ -217,8 +220,17 @@ class GroundedAnswerGenerator:
     ) -> GenerationResult:
         if question.question != context.question:
             raise QAError(QAErrorCode.INVALID_INPUT, "Question and context do not match.")
+        await self._check_cancelled()
         evidence = tuple(item.candidate for item in context.evidence)
+        if not evidence:
+            return GenerationResult(
+                result=_insufficient_evidence_result("No evidence is available for this question."),
+                identity=self._identity,
+                verification=VerificationMetrics(0.0, 0.0, GroundedConfidence.LIMITED),
+                usage=GenerationUsage(0, 0, 0, 0, 0.0),
+            )
         await self._verify_for_generation(space_id=question.space_id, evidence=evidence)
+        await self._check_cancelled()
 
         responses: list[ChatResponse] = []
         draft: StructuredQADraft | None = None
@@ -229,8 +241,10 @@ class GroundedAnswerGenerator:
                 if attempt == 0
                 else self._repair_request(candidate_text or "")
             )
+            await self._check_cancelled()
             response = await self._chat(request)
             responses.append(response)
+            await self._check_cancelled()
             candidate_text = response.text
             try:
                 if response.finish_reason not in {None, "stop"}:
@@ -245,6 +259,7 @@ class GroundedAnswerGenerator:
                     ) from None
         assert draft is not None
 
+        await self._check_cancelled()
         result, verification = await self._materialize(
             draft=draft,
             space_id=question.space_id,
@@ -272,13 +287,15 @@ class GroundedAnswerGenerator:
                 )
         except TimeoutError as exc:
             raise QAError(
-                QAErrorCode.TIMEOUT,
+                QAErrorCode.TIMED_OUT,
                 "QA generation exceeded the active timeout.",
                 retryable=True,
             ) from exc
         except ModelGatewayError as exc:
             code = {
-                ModelErrorCode.TIMEOUT: QAErrorCode.TIMEOUT,
+                ModelErrorCode.TIMEOUT: QAErrorCode.TIMED_OUT,
+                ModelErrorCode.RATE_LIMITED: QAErrorCode.MODEL_RATE_LIMITED,
+                ModelErrorCode.AUTHENTICATION: QAErrorCode.MODEL_AUTHENTICATION_FAILED,
                 ModelErrorCode.POLICY_DENIED: QAErrorCode.POLICY_DENIED,
             }.get(exc.code, QAErrorCode.MODEL_FAILED)
             raise QAError(
@@ -299,10 +316,7 @@ class GroundedAnswerGenerator:
     ) -> tuple[QAResult, VerificationMetrics]:
         if isinstance(draft, StructuredRefusalDraft):
             return (
-                QAResult(
-                    outcome=QAOutcome.REFUSE,
-                    refusal=Refusal(RefusalReason.INSUFFICIENT_EVIDENCE, draft.message),
-                ),
+                _insufficient_evidence_result(draft.message),
                 VerificationMetrics(None, None, None),
             )
 
@@ -321,7 +335,15 @@ class GroundedAnswerGenerator:
 
         if isinstance(draft, StructuredConflictDraft):
             selected = tuple(evidence_by_id[evidence_id] for evidence_id in draft.evidence_ids)
+            if len({candidate.source_id for candidate in selected}) < 2:
+                return (
+                    _insufficient_evidence_result(
+                        "The available evidence does not establish a multi-source conflict."
+                    ),
+                    VerificationMetrics(0.0, 1.0, GroundedConfidence.LIMITED),
+                )
             await self._verify_for_generation(space_id=space_id, evidence=selected)
+            await self._check_cancelled()
             return (
                 QAResult(
                     outcome=QAOutcome.CONFLICT,
@@ -353,12 +375,8 @@ class GroundedAnswerGenerator:
             or citation_completeness_rate < self._profile.min_citation_completeness_rate
         ):
             return (
-                QAResult(
-                    outcome=QAOutcome.REFUSE,
-                    refusal=Refusal(
-                        RefusalReason.INSUFFICIENT_EVIDENCE,
-                        "The available evidence does not support a complete answer.",
-                    ),
+                _insufficient_evidence_result(
+                    "The available evidence does not support a complete answer."
                 ),
                 verification,
             )
@@ -375,6 +393,7 @@ class GroundedAnswerGenerator:
             citations=citations,
             limitations=draft.limitations,
         )
+        await self._check_cancelled()
         try:
             await self._verifier.validate_for_publication(
                 space_id=space_id,
@@ -398,6 +417,10 @@ class GroundedAnswerGenerator:
                 QAErrorCode.CITATION_INVALID,
                 "Evidence failed the generation integrity check.",
             ) from exc
+
+    async def _check_cancelled(self) -> None:
+        if self._cancellation is not None and await self._cancellation.is_cancel_requested():
+            raise QAError(QAErrorCode.CANCELLED, "QA generation was cancelled.")
 
     def _initial_request(self, context: ContextBundle) -> ChatRequest:
         system = "\n".join((*context.system_rules, self._prompt_contract))
@@ -466,6 +489,13 @@ def _citation_from_evidence(candidate: EvidenceCandidate) -> Citation:
         locator=candidate.locators[0],
         excerpt_sha256=candidate.excerpt_sha256,
         status=CitationStatus.VALID,
+    )
+
+
+def _insufficient_evidence_result(message: str) -> QAResult:
+    return QAResult(
+        outcome=QAOutcome.REFUSE,
+        refusal=Refusal(RefusalReason.INSUFFICIENT_EVIDENCE, message),
     )
 
 

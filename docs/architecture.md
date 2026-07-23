@@ -214,7 +214,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/chunking.py` | 结构分块输入输出、`ChunkerConfig`、Chunk identity/hash 和 `Chunker` Port |
 | `src/domain/embedding.py` | `EmbeddingIdentity`、处理配置摘要和 768 维版本边界 |
 | `src/domain/retrieval.py` | SearchRequest/SearchResult、`RetrievalProfileV1`、候选/诊断/locator、`RetrievalStore`、QueryEmbedder 和 Reranker Port |
-| `src/domain/grounded_qa.py` | provisional GroundedAnswer/Claim/Evidence/Citation/Refusal/Conflict 契约、稳定错误、引用身份校验和 QA 状态投影 |
+| `src/domain/grounded_qa.py` | provisional GroundedAnswer/Claim/Evidence/Citation/Refusal/Conflict 契约、稳定拒答/错误、取消 Port、不可重开 attempt/retry、引用校验和 QA 状态投影 |
 
 **约束**：
 - 零外部依赖（不依赖 FastAPI、SQLAlchemy、任何 SDK）
@@ -245,7 +245,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/qa/profile.py` | provisional QA profile 的查询、历史、Evidence、生成和完整性阈值投影 |
 | `src/application/qa/query_planning.py` | 确定性问题分类、有界改写回退、Space/filter 不变的多查询检索和去重 |
 | `src/application/qa/context_builder.py` | 系统/问题/历史/不可信 Evidence 隔离、配额裁剪和稳定上下文摘要 |
-| `src/application/qa/generation.py` | `fast_chat` 非流式结构化生成、JSON schema 解析、一次修复、服务端 Citation 构造、支持率门禁和安全版本/用量结果 |
+| `src/application/qa/generation.py` | `fast_chat` 非流式结构化生成、JSON schema 解析、一次修复、空证据拒答、显式取消、细分模型故障、冲突/发布竞态校验和安全版本/用量结果 |
 
 **依赖**：`domain`、`model-gateway`、`jsonschema`
 
@@ -715,7 +715,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
 | **阶段 2** | **🟡 工程 Step 0～8 完成** | **摄入闭环代码已落地；Step 9 正式质量验收和 `stage-2-acceptance.md` 尚未完成** |
 | **阶段 3** | **🟡 工程 Step 0～10 验收完成** | **检索 API、离线评测和安全边界已落地；阶段 0、阶段 2 Step 9、真实模型定版及正式 holdout 未关闭，阶段未正式退出** |
-| 阶段 4 | ❌ 未正式开始 | Step 0～4 的 provisional 配置、领域、Evidence/Citation、查询/上下文和结构化生成纯契约已落地；完整 QA Port、持久化、SSE、Web、真实模型验证和回答评测未落地 |
+| 阶段 4 | ❌ 未正式开始 | Step 0～5 的 provisional 配置、领域、Evidence/Citation、查询/上下文、结构化生成及拒答/冲突/故障纯契约已落地；持久化 QA Port、Worker/SSE、API/Web、真实模型验证和回答评测未落地 |
 | **阶段 5** | **🟡 通用基础已审查** | **Step 0～4 和 Step 9 通用部分通过；业务 Skill/API/持久化/验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅

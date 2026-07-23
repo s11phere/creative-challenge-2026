@@ -465,6 +465,29 @@ Space、Document、DocumentVersion 和 locator 归属，再返回最小必要片
 **完成标准**：无答案、冲突、模型故障、检索故障、取消和超时可由 API/Web/评测无歧义区分；
 错误响应和日志不泄漏正文、prompt 或 Provider 响应。
 
+#### 2026-07-23 provisional 实现与验证总结
+
+- 已完成：`Refusal` 增加稳定的 `REFUSED_INSUFFICIENT_EVIDENCE` code；空 Evidence、context-only
+  独占支持、低于完整性阈值和只有单一来源却建议 conflict 均返回该业务拒答，不调用或降级为
+  无引用自由文本。合法 conflict 必须引用至少两个不同来源的本次运行 Evidence，并原样保留双方 ID。
+- 已完成：模型 unavailable、timeout、rate limit、authentication 和 policy denied 分别映射为
+  `QA_MODEL_FAILED`、`QA_TIMED_OUT`、`QA_MODEL_RATE_LIMITED`、
+  `QA_MODEL_AUTHENTICATION_FAILED` 和 `QA_POLICY_DENIED`；Retrieval、Blob Storage 和 Database
+  仍有独立错误码。Provider 原始错误消息不进入 QA 安全消息。
+- 已完成：新增 `QACancellationProbe`，在模型调用前后及最终发布前检查显式取消；取消返回
+  `QA_CANCELLED`，超时返回 `QA_TIMED_OUT`，二者均不是拒答。结构化失败仍只返回
+  `QA_STRUCTURED_RESPONSE_INVALID`，没有自由文本回退。
+- 已完成：新增纯领域 `QAAttempt` 与 retry 判定。只有显式 `retryable` 且属于 transient 白名单的
+  retrieval/model/rate-limit/storage/database/timeout 故障可创建新 attempt ID；鉴权、策略、无证据、
+  conflict、结构/引用错误和取消不可重试，原终态状态机仍不可重开。attempt 持久化等待 Step 6。
+- 已完成：生成前和发布前继续读取可变 Citation target；deterministic fake 证明来源在模型响应后
+  被撤下时返回 `QA_CITATION_INVALID`，不会发布旧 Evidence。聚焦 Domain/Application 测试
+  37 passed，覆盖空证据、双来源/单来源冲突、错误分流、消息脱敏、取消、重试和撤下竞态；完整
+  backend 为 536 passed、41 skipped，Ruff format/check 和 71 个源文件的 mypy 均通过。
+- 未执行：阶段 0 门禁未关闭，且 Conversation/AgentRun/Evidence 持久化、Worker 和 API/SSE/Web
+  尚未落地，因此本步只完成可执行的 provisional 语义。数据库错误 Adapter、持久取消、真实并发
+  删除竞态及 API/Web/评测映射留待 Step 6～9；不宣称产品端已经可观察这些终态。
+
 ### Step 6：落地会话、运行、引用与反馈持久化
 
 1. 按 ADR-007 落地最小业务实体和 Repository Port，不提前复制阶段 5 的 Registry/Checkpoint 表。

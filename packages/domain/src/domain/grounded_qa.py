@@ -83,15 +83,23 @@ class RefusalReason(StrEnum):
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
 
+class RefusalCode(StrEnum):
+    INSUFFICIENT_EVIDENCE = "REFUSED_INSUFFICIENT_EVIDENCE"
+
+
 class QAErrorCode(StrEnum):
     INVALID_INPUT = "QA_INVALID_INPUT"
     SPACE_DENIED = "QA_SPACE_DENIED"
     RETRIEVAL_FAILED = "QA_RETRIEVAL_FAILED"
     MODEL_FAILED = "QA_MODEL_FAILED"
+    MODEL_RATE_LIMITED = "QA_MODEL_RATE_LIMITED"
+    MODEL_AUTHENTICATION_FAILED = "QA_MODEL_AUTHENTICATION_FAILED"
     STRUCTURED_RESPONSE_INVALID = "QA_STRUCTURED_RESPONSE_INVALID"
     CITATION_INVALID = "QA_CITATION_INVALID"
     STORAGE_FAILED = "QA_STORAGE_FAILED"
+    DATABASE_FAILED = "QA_DATABASE_FAILED"
     TIMEOUT = "QA_TIMEOUT"
+    TIMED_OUT = "QA_TIMED_OUT"
     CANCELLED = "QA_CANCELLED"
     POLICY_DENIED = "QA_POLICY_DENIED"
 
@@ -111,6 +119,12 @@ class QAError(Exception):
         super().__init__(message)
         self.code = code
         self.retryable = retryable
+
+
+class QACancellationProbe(Protocol):
+    """Read the explicit cancellation request without coupling Domain to persistence."""
+
+    async def is_cancel_requested(self) -> bool: ...
 
 
 def normalize_question(question: str) -> str:
@@ -310,10 +324,18 @@ class GroundedAnswer:
 class Refusal:
     reason: RefusalReason
     message: str
+    code: RefusalCode = RefusalCode.INSUFFICIENT_EVIDENCE
 
     def __post_init__(self) -> None:
         if not self.message.strip():
             raise QAContractError("Refusal message must not be blank")
+        if (
+            self.reason is RefusalReason.INSUFFICIENT_EVIDENCE
+            and self.code is not RefusalCode.INSUFFICIENT_EVIDENCE
+        ):
+            raise QAContractError(
+                "Insufficient evidence refusals require their stable refusal code"
+            )
 
 
 @dataclass(frozen=True)
@@ -353,6 +375,66 @@ class QAResult:
 
 
 type QAResultPayload = GroundedAnswer | Refusal | ConflictNotice
+
+
+@dataclass(frozen=True)
+class QAAttempt:
+    """A new immutable execution identity for a retry; persistence is deferred to Step 6."""
+
+    run_id: UUID
+    number: int = 1
+    attempt_id: UUID = field(default_factory=uuid4)
+    previous_attempt_id: UUID | None = None
+
+    def __post_init__(self) -> None:
+        if self.number < 1:
+            raise QAContractError("QA attempt number must be positive")
+        if self.number == 1 and self.previous_attempt_id is not None:
+            raise QAContractError("The first QA attempt cannot have a predecessor")
+        if self.number > 1 and self.previous_attempt_id is None:
+            raise QAContractError("A retry QA attempt must identify its predecessor")
+        if self.attempt_id == self.previous_attempt_id:
+            raise QAContractError("A retry must create a distinct QA attempt identity")
+
+
+_RETRYABLE_QA_ERROR_CODES = frozenset(
+    {
+        QAErrorCode.RETRIEVAL_FAILED,
+        QAErrorCode.MODEL_FAILED,
+        QAErrorCode.MODEL_RATE_LIMITED,
+        QAErrorCode.STORAGE_FAILED,
+        QAErrorCode.DATABASE_FAILED,
+        QAErrorCode.TIMEOUT,
+        QAErrorCode.TIMED_OUT,
+    }
+)
+
+
+def is_retryable_qa_error(error: QAError) -> bool:
+    """Retry only explicit transient dependencies, never semantic or terminal outcomes."""
+    return error.retryable and error.code in _RETRYABLE_QA_ERROR_CODES
+
+
+def next_qa_attempt(
+    attempt: QAAttempt,
+    error: QAError,
+    *,
+    attempt_id: UUID | None = None,
+    max_attempts: int = 2,
+) -> QAAttempt:
+    """Create, rather than reopen, a retry attempt for one approved transient failure."""
+    if max_attempts < 1:
+        raise QAContractError("QA retry limit must be positive")
+    if not is_retryable_qa_error(error):
+        raise QAContractError("QA error is not eligible for retry")
+    if attempt.number >= max_attempts:
+        raise QAContractError("QA retry limit has been reached")
+    return QAAttempt(
+        run_id=attempt.run_id,
+        number=attempt.number + 1,
+        attempt_id=attempt_id or uuid4(),
+        previous_attempt_id=attempt.attempt_id,
+    )
 
 
 def validate_answer_citations(
@@ -465,8 +547,13 @@ __all__ = [
     "QueryRewriter",
     "QuestionInput",
     "QuestionType",
+    "QAAttempt",
+    "QACancellationProbe",
     "Refusal",
+    "RefusalCode",
     "RefusalReason",
+    "is_retryable_qa_error",
+    "next_qa_attempt",
     "normalize_question",
     "project_qa_status",
     "transition_qa_status",

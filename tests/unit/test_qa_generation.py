@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -34,6 +36,8 @@ from model_gateway import (
     ChatResponse,
     FakeModelGateway,
     FakeScenario,
+    ModelErrorCode,
+    ModelGatewayError,
     ModelUsage,
 )
 
@@ -53,10 +57,19 @@ class FakeTargets:
         self.calls += 1
         return self._snapshots.get(query)
 
+    def update(self, candidate: EvidenceCandidate, **changes: Any) -> None:
+        self._snapshots[_query(candidate)] = replace(self._snapshots[_query(candidate)], **changes)
+
 
 class ScriptedChatGateway:
-    def __init__(self, responses: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        responses: tuple[str, ...],
+        *,
+        after_chat: Callable[[], None] | None = None,
+    ) -> None:
         self._responses = iter(responses)
+        self._after_chat = after_chat
         self.requests: list[ChatRequest] = []
 
     async def chat(
@@ -67,13 +80,45 @@ class ScriptedChatGateway:
     ) -> ChatResponse:
         self.requests.append(request)
         assert capability is CapabilityAlias.FAST_CHAT
-        return ChatResponse(
+        response = ChatResponse(
             text=next(self._responses),
             finish_reason="stop",
             usage=ModelUsage(input_tokens=3, output_tokens=4),
             capability=CapabilityAlias.FAST_CHAT,
             latency_ms=1.5,
         )
+        if self._after_chat is not None:
+            self._after_chat()
+        return response
+
+    def set_after_chat(self, callback: Callable[[], None]) -> None:
+        self._after_chat = callback
+
+
+class ErrorChatGateway:
+    def __init__(self, error: ModelGatewayError) -> None:
+        self._error = error
+        self.requests: list[ChatRequest] = []
+
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        self.requests.append(request)
+        assert capability is CapabilityAlias.FAST_CHAT
+        raise self._error
+
+
+class FakeCancellation:
+    def __init__(self, *, cancelled: bool = False) -> None:
+        self.cancelled = cancelled
+        self.calls = 0
+
+    async def is_cancel_requested(self) -> bool:
+        self.calls += 1
+        return self.cancelled
 
 
 def _candidate(index: int, *, matched: bool = True) -> EvidenceCandidate:
@@ -187,6 +232,7 @@ def _generator(
     *,
     gateway: Any,
     evidence: tuple[EvidenceCandidate, ...],
+    cancellation: FakeCancellation | None = None,
 ) -> tuple[GroundedAnswerGenerator, FakeTargets]:
     targets = FakeTargets(evidence)
     generator = GroundedAnswerGenerator(
@@ -197,6 +243,7 @@ def _generator(
         prompt_contract=PROMPT_PATH.read_text(encoding="utf-8"),
         corpus_version="v0-provisional",
         dataset_version="knowledge-qa-v0-provisional",
+        cancellation=cancellation,
     )
     return generator, targets
 
@@ -301,6 +348,21 @@ async def test_context_only_support_below_threshold_becomes_a_refusal() -> None:
 
 
 @pytest.mark.asyncio
+async def test_empty_evidence_refuses_with_a_stable_code_before_model_invocation() -> None:
+    gateway = ScriptedChatGateway(())
+    generator, targets = _generator(gateway=gateway, evidence=())
+
+    generated = await generator.generate(question=_question(), context=_context(()))
+
+    assert generated.result.outcome is QAOutcome.REFUSE
+    assert generated.result.refusal is not None
+    assert generated.result.refusal.code.value == "REFUSED_INSUFFICIENT_EVIDENCE"
+    assert generated.usage.model_calls == 0
+    assert gateway.requests == []
+    assert targets.calls == 0
+
+
+@pytest.mark.asyncio
 async def test_known_conflict_preserves_both_server_evidence_ids() -> None:
     evidence = (_candidate(1), _candidate(2))
     gateway = ScriptedChatGateway(
@@ -319,6 +381,23 @@ async def test_known_conflict_preserves_both_server_evidence_ids() -> None:
 
 
 @pytest.mark.asyncio
+async def test_single_source_conflict_becomes_an_insufficient_evidence_refusal() -> None:
+    first = _candidate(1)
+    evidence = (first, replace(_candidate(2), source_id=first.source_id))
+    gateway = ScriptedChatGateway(
+        (_conflict_payload(evidence[0].evidence_id, evidence[1].evidence_id),)
+    )
+    generator, targets = _generator(gateway=gateway, evidence=evidence)
+
+    generated = await generator.generate(question=_question(), context=_context(evidence))
+
+    assert generated.result.outcome is QAOutcome.REFUSE
+    assert generated.result.refusal is not None
+    assert generated.result.refusal.code.value == "REFUSED_INSUFFICIENT_EVIDENCE"
+    assert targets.calls == 2
+
+
+@pytest.mark.asyncio
 async def test_model_failure_remains_distinct_from_grounded_refusal() -> None:
     evidence = (_candidate(1),)
     generator, _targets = _generator(
@@ -331,3 +410,93 @@ async def test_model_failure_remains_distinct_from_grounded_refusal() -> None:
 
     assert error.value.code is QAErrorCode.MODEL_FAILED
     assert error.value.retryable is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model_code", "retryable", "expected"),
+    (
+        (ModelErrorCode.TIMEOUT, True, QAErrorCode.TIMED_OUT),
+        (ModelErrorCode.RATE_LIMITED, True, QAErrorCode.MODEL_RATE_LIMITED),
+        (ModelErrorCode.AUTHENTICATION, False, QAErrorCode.MODEL_AUTHENTICATION_FAILED),
+        (ModelErrorCode.POLICY_DENIED, False, QAErrorCode.POLICY_DENIED),
+    ),
+)
+async def test_model_failure_codes_remain_distinct_and_safe(
+    model_code: ModelErrorCode,
+    retryable: bool,
+    expected: QAErrorCode,
+) -> None:
+    evidence = (_candidate(1),)
+    gateway = ErrorChatGateway(
+        ModelGatewayError(
+            model_code,
+            "provider response must never be exposed",
+            retryable=retryable,
+            capability=CapabilityAlias.FAST_CHAT,
+        )
+    )
+    generator, _targets = _generator(gateway=gateway, evidence=evidence)
+
+    with pytest.raises(QAError) as error:
+        await generator.generate(question=_question(), context=_context(evidence))
+
+    assert error.value.code is expected
+    assert error.value.retryable is retryable
+    assert "provider response" not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_explicit_cancellation_before_the_model_call_publishes_nothing() -> None:
+    evidence = (_candidate(1),)
+    cancellation = FakeCancellation(cancelled=True)
+    gateway = ScriptedChatGateway((_answer_payload(evidence[0].evidence_id),))
+    generator, targets = _generator(
+        gateway=gateway,
+        evidence=evidence,
+        cancellation=cancellation,
+    )
+
+    with pytest.raises(QAError) as error:
+        await generator.generate(question=_question(), context=_context(evidence))
+
+    assert error.value.code is QAErrorCode.CANCELLED
+    assert gateway.requests == []
+    assert targets.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_cancellation_after_model_response_blocks_publication() -> None:
+    evidence = (_candidate(1),)
+    cancellation = FakeCancellation()
+    gateway = ScriptedChatGateway(
+        (_answer_payload(evidence[0].evidence_id),),
+        after_chat=lambda: setattr(cancellation, "cancelled", True),
+    )
+    generator, targets = _generator(
+        gateway=gateway,
+        evidence=evidence,
+        cancellation=cancellation,
+    )
+
+    with pytest.raises(QAError) as error:
+        await generator.generate(question=_question(), context=_context(evidence))
+
+    assert error.value.code is QAErrorCode.CANCELLED
+    assert len(gateway.requests) == 1
+    assert targets.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_source_withdrawal_before_publication_blocks_old_evidence() -> None:
+    evidence = (_candidate(1),)
+    gateway = ScriptedChatGateway((_answer_payload(evidence[0].evidence_id),))
+    generator, targets = _generator(gateway=gateway, evidence=evidence)
+    gateway.set_after_chat(lambda: targets.update(evidence[0], source_withdrawn=True))
+
+    with pytest.raises(QAError) as error:
+        await generator.generate(question=_question(), context=_context(evidence))
+
+    assert error.value.code is QAErrorCode.CITATION_INVALID
+    assert len(gateway.requests) == 1
+    assert targets.calls == 2
