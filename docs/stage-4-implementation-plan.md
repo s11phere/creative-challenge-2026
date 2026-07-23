@@ -105,7 +105,8 @@ Question + Conversation context
 
 ### 2.4 必须关闭的工程缺口
 
-1. 尚无阶段 4 专用的 GroundedAnswer、Claim、Evidence、Citation、Refusal 和 Conflict 领域契约。
+1. 已有 provisional 的 GroundedAnswer、Claim、Evidence、Citation、Refusal、Conflict 纯领域契约
+   和确定性状态机；JSON transport schema、兼容规则和 Application 编排仍未落地。
 2. 尚无从 SearchHit 到可持久引用、再到原文片段的受控解析服务。
 3. 尚无查询分类/改写、上下文预算和多轮会话裁剪策略。
 4. `ModelGateway.chat()` 只返回完整响应；SSE delta、取消、断线重连和最终结构校验尚无统一协议。
@@ -285,10 +286,11 @@ Space、Document、DocumentVersion 和 locator 归属，再返回最小必要片
   无答案 5、恶意文档 1、双语 3 和代码/自然语言 3。未修改 holdout、split、gold claim 或 evidence。
 - 已验证：`tests/unit/test_qa_step0_baseline.py` 覆盖 profile/config schema、所有输入 hash、正式
   运行被拒绝，以及所需 answer/refuse/单文档/跨文档/版本冲突/恶意文档/双语切片存在性。
-- 未关闭决策：R4-01 等待 Step 1 的领域契约和状态机；R4-02、R4-03、R4-06、R4-07 等待阶段 0
-  门禁关闭后再进行持久化/执行实现和隔离集成验证；R4-04、R4-05、R4-08、R4-09 分别等待
-  development 对比、结构化生成、正式 profile/model 冻结和反馈审核实现。v0 的 30 例统计限制
-  尚未接受或扩充，必须在读取回答 holdout 前由负责人作版本化决定。
+- 未关闭决策：R4-01 的纯领域部分已在 Step 1 完成，仍等待 JSON transport schema 和兼容测试；
+  R4-02、R4-03、R4-06、R4-07 等待阶段 0 门禁关闭后再进行持久化/执行实现和隔离集成验证；
+  R4-04、R4-05、R4-08、R4-09 分别等待 development 对比、结构化生成、正式 profile/model 冻结
+  和反馈审核实现。v0 的 30 例统计限制尚未接受或扩充，必须在读取回答 holdout 前由负责人作
+  版本化决定。
 
 ### Step 1：建立问答领域契约与状态机
 
@@ -305,6 +307,25 @@ Space、Document、DocumentVersion 和 locator 归属，再返回最小必要片
 
 **完成标准**：Domain 不依赖 FastAPI、Pydantic、SQLAlchemy、Dramatiq 或模型 SDK；状态迁移、
 非法引用、重复 Evidence ID、未引用 claim 和终态不可重开均有确定性测试。
+
+#### 2026-07-23 provisional 实现与验证总结
+
+- 已完成：新增 `domain.grounded_qa`，提供 `QuestionInput`、`QueryPlan`、`EvidenceCandidate`、
+  `Claim`、`Citation`、`GroundedAnswer`、`Refusal`、`ConflictNotice`、`QAResult` 及版本 1 枚举。
+  Citation 固定 Evidence、Space、source/document/version/chunk、locator、状态和 excerpt SHA-256；
+  claim 必须引用当前回答发布的 Evidence ID，重复/未知/跨 Space/身份不一致引用均确定性拒绝。
+- 已完成：定义 QA 生命周期和稳定 `QA_*` 错误码。answer/refuse/conflict/failed 使用互斥 payload；
+  `INSUFFICIENT_EVIDENCE` 是唯一 provisional refusal reason，检索、模型、结构、存储、超时、取消
+  和策略错误不能伪装成拒答。
+- 已完成：QA 状态通过 `project_qa_status` 投影既有 `AgentRun`，复用其预算、步骤和终态；没有新增
+  第二个 Run 实体、预算类型、框架或基础设施依赖。CREATED/QUEUED/RUNNING/VERIFYING/
+  COMPLETED/REFUSED/FAILED/CANCEL_REQUESTED/CANCELLED/TIMED_OUT 的非法迁移和终态重开被拒绝。
+- 已验证：`tests/unit/test_grounded_qa_domain.py` 与既有 Agent Runtime/Retrieval 领域回归共
+  37 passed；Ruff format/check 通过；`mypy packages/domain` 通过（11 个源文件）。pytest 仅有
+  已记录的 Windows `.pytest_cache` 权限警告。
+- 未关闭：R4-01 的 JSON transport schema 与兼容测试留给结构化生成/API 步骤；citation 对当前
+  发布版本、tombstone、Blob/hash 和 locator 边界的二次校验属于 Step 2。本步未访问 corpus
+  正文、数据库、Provider 或 holdout，阶段 4 状态仍为“未正式开始”。
 
 ### Step 2：实现证据绑定、引用解析与安全二次校验
 

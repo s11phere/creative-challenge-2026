@@ -214,6 +214,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/chunking.py` | 结构分块输入输出、`ChunkerConfig`、Chunk identity/hash 和 `Chunker` Port |
 | `src/domain/embedding.py` | `EmbeddingIdentity`、处理配置摘要和 768 维版本边界 |
 | `src/domain/retrieval.py` | SearchRequest/SearchResult、`RetrievalProfileV1`、候选/诊断/locator、`RetrievalStore`、QueryEmbedder 和 Reranker Port |
+| `src/domain/grounded_qa.py` | provisional GroundedAnswer/Claim/Evidence/Citation/Refusal/Conflict 契约、稳定错误、引用身份校验和 QA 状态投影 |
 
 **约束**：
 - 零外部依赖（不依赖 FastAPI、SQLAlchemy、任何 SDK）
@@ -709,7 +710,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
 | **阶段 2** | **🟡 工程 Step 0～8 完成** | **摄入闭环代码已落地；Step 9 正式质量验收和 `stage-2-acceptance.md` 尚未完成** |
 | **阶段 3** | **🟡 工程 Step 0～10 验收完成** | **检索 API、离线评测和安全边界已落地；阶段 0、阶段 2 Step 9、真实模型定版及正式 holdout 未关闭，阶段未正式退出** |
-| 阶段 4 | ❌ 未正式开始 | 已有实施计划；只允许合成输入/公开 fixture 的 provisional 契约工作，引用问答、持久化、SSE、Web 和回答评测未落地 |
+| 阶段 4 | ❌ 未正式开始 | ADR-007、provisional 配置和纯领域契约已落地；Application 问答、持久化、SSE、Web 和回答评测未落地 |
 | **阶段 5** | **🟡 通用基础已审查** | **Step 0～4 和 Step 9 通用部分通过；业务 Skill/API/持久化/验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
