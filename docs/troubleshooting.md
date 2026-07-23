@@ -109,7 +109,10 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 ## 当前功能限制
 
 - 已有阶段 2 的 6 张核心业务表、摄入流水线和 Worker 消费者；当前支持上传文件，尚无目录监听。
-- 没有搜索、问答、会话或引用业务能力。
+- 阶段 3 的 Keyword/Dense/Hybrid/Hybrid+Reranker 检索 API 已可用；Web 搜索界面、问答、会话和引用业务能力尚未实现。
+- 阶段 3 评测配置仍为 provisional：阶段 0 语料授权/标注复核和阶段 2 Step 9 正式验收未关闭时，holdout 会被拒绝，工程 fixture 结果不能作为质量基线。
+- 需要检索时先确认 Space 存在、Document 有当前 published version，且查询模式所需的 Embedding/Reranker 能力已配置；无命中是成功的空列表，不是系统故障。
+- 模型服务不可用不会阻断 PostgreSQL/Redis 管理面 ready；Dense 会返回明确 Provider 错误，Hybrid 只有 profile 明确允许时才可降级为 Keyword。
 - 已有离线 Agent Runtime、Tool/Skill Registry、声明式执行器和 Skill 模板；它们仅以合成
   fake 验证，不含业务 Skill、HTTP API、Web 入口或 PostgreSQL 运行/检查点持久化。
 - Registry 的活动版本和生命周期事件当前只在进程内；进程重启恢复、旧版本引用清理和

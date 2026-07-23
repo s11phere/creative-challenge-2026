@@ -1,7 +1,7 @@
 # 项目架构概览
 
 > 本文档描述 "Agent 驱动的个人知识仓库" 项目的整体架构、各组件职责与协作关系。
-> 更新于阶段 2 Step 1 和阶段 5 通用 Runtime/Registry 实现审查完成时（2026-07-19）。
+> 更新于阶段 3 Step 10 工程验收和阶段 5 通用 Runtime/Registry 实现审查完成时（2026-07-23）。
 
 ---
 
@@ -643,7 +643,8 @@ docker compose -f deploy/compose.yaml down --volumes               # 永久删�
 | 阶段 0 | 🔶 进行中 | 语料授权复核、标注复核未完成 |
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
 | **阶段 2** | **🟡 工程实现已合并** | **Step 0-8 代码已落地；正式质量验收和已知缺陷修复仍进行中** |
-| 阶段 3/4 | ❌ 未开始 | 检索、引用问答、Conversation/AgentRun/Evidence 和 SSE 协议尚未落地 |
+| **阶段 3** | **🟡 工程验收完成** | **Keyword/Dense/Hybrid/Hybrid+Reranker、检索 API、离线评测和安全边界已落地；阶段 0 门禁关闭前不宣称正式质量达标** |
+| 阶段 4 | ❌ 未开始 | 引用问答、Conversation/AgentRun/Evidence 和 SSE 协议尚未落地 |
 | **阶段 5** | **🟡 通用基础已审查** | **Step 0～4 和 Step 9 通用部分通过；业务 Skill/API/持久化/验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
@@ -659,7 +660,15 @@ docker compose -f deploy/compose.yaml down --volumes               # 永久删�
 - **Step 7**：增量维护（内容不变跳过、路径更新）+ 原子删除 + 异步清理 + 9 个测试。
 - **Step 8**：摄入 API（8 个端点：创建/列举来源、上传、触发摄入、状态查询、取消、重试）+ Web 数据源页面（来源列表、任务进度、上传/重试/取消 UI）。
 
+阶段 3 已完成工程验收：
+
+- **Step 0-1**：冻结评测协议和 `RetrievalStore`/`SearchResult`/诊断契约，固定 Space、当前发布版本、tombstone 和 768 维边界。
+- **Step 2-7**：本地 Embedding 能力配置、FTS/pgvector 双路召回、加权 RRF、去重与相邻块扩展、可选 Reranker 及故障降级策略。
+- **Step 8**：`POST /api/v1/spaces/{space_id}/search`、OpenAPI、日志和 trace 的隐私边界。
+- **Step 9**：版本化离线评测 CLI、报告 schema、失败归因和 provisional 门禁；正式 holdout 被明确阻断。
+- **Step 10**：隔离依赖、检索模式、安全边界和文档移交的验收记录见 `docs/stage-3-acceptance.md`。
+
 阶段 5 通用基础审查见 `docs/stage-5-implementation-review.md`。该并行实现不改变主推进顺序：
-仍应先完成阶段 2 摄入、阶段 3 检索和阶段 4 引用问答，再接入阶段 5 业务 Skill。
+仍应先完成阶段 4 引用问答，再接入阶段 5 业务 Skill。
 
 GitHub Actions 已由用户确认运行正常。阶段 0 数据授权、人工标注复核和版本冻结仍为等待状态。

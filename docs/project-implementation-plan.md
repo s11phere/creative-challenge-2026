@@ -535,6 +535,8 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 
 详细启动门禁、技术决策、分步执行和验收矩阵见
 [《阶段 3 实施计划：混合检索与评测基线》](stage-3-implementation-plan.md)。
+阶段 0 关闭后的正式收尾顺序、阶段 2 Step 9 交接要求和一次性 holdout Runbook 见
+[《阶段 3 验收记录》](stage-3-acceptance.md)。
 
 **任务**：
 

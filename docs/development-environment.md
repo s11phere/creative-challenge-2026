@@ -117,3 +117,14 @@ API/Worker can use the published service at `http://localhost:8080` instead.
 rejected unless `MODEL_ALLOW_EXTERNAL=true` is also set. URL-embedded credentials and endpoint query
 parameters are always rejected. Default tests use the fake or a synthetic local HTTP stub and never
 call a real or paid model.
+
+## Stage 3 Retrieval Validation
+
+阶段 3 的检索默认使用 PostgreSQL FTS 与 pgvector exact 路径；IVFFlat 只作为对比实验，未通过
+正式质量门槛前不会替换 exact 默认值。`MODEL_PROVIDER=fake` 可运行确定性工程测试；需要本地
+Embedding 时启用 Compose 的 `embedding` profile，需要本地精排时额外启用 `reranker` profile。
+两个模型服务均使用固定镜像 digest 和固定模型 revision，不能改为 `latest` 或通过公网外发。
+
+检索 API 和离线评测的完整验收命令、环境、报告摘要和当前门禁见
+[`docs/stage-3-acceptance.md`](stage-3-acceptance.md)。评测报告只写入被忽略的 `tmp/`，不得
+提交查询正文、文档正文、向量或 Provider 载荷。

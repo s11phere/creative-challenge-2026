@@ -607,11 +607,11 @@ development 消融与 holdout 证据；每个失败 case 可定位到具体阶�
 
 **当前实现与实际验证记录（2026-07-22）：**
 
-- Added a versioned evaluation schema/config covering corpus and dataset SHA-256, development/holdout split hashes, Keyword, Dense exact/IVFFlat, Hybrid, and Hybrid+Reranker experiments.
-- `scripts/evaluate_retrieval.py` now supports `--validate-only`, `--prepare-corpus`, repeatable `--experiment`, `--quiet`, isolated database enforcement via `EVALUATION_DATABASE_ISOLATED=1`, formal holdout blocking, safe run metadata, failure attribution, and a recursive privacy scan.
-- Reports contain only case/source/version/locator/rank/score/latency/error metadata. Query text, document text, quotes, vectors, secrets, and provider payloads are rejected and reports are written under ignored `tmp/retrieval-eval-*.json` paths.
-- Development evaluation on isolated PostgreSQL/Redis completed with 38 Markdown/TXT/PDF sources published and 5 code sources recorded as parser failures. With the deterministic fake embedding: Keyword Recall@5=0, Dense exact=0.1081, Hybrid=0.1081, Hybrid+Reranker=0.1081. IVFFlat encountered an infrastructure failure and was attributed as such rather than counted as a quality pass.
-- All reports remain `formal_run_eligible=false`; holdout execution was rejected with exit code 4. The 20 evaluation/CLI/evidence unit tests passed. This closes the Step 9 engineering flow only; it is not a Stage 0, formal holdout, or retrieval-quality acceptance.
+- 已建立版本化评测 schema/config，覆盖语料与数据集 SHA-256、development/holdout 划分摘要，以及 Keyword、Dense exact/IVFFlat、Hybrid 和 Hybrid+Reranker 实验。
+- `scripts/evaluate_retrieval.py` 已支持 `--validate-only`、`--prepare-corpus`、可重复使用的 `--experiment`、`--quiet`、通过 `EVALUATION_DATABASE_ISOLATED=1` 强制隔离数据库、正式 holdout 门禁、安全运行元数据、失败归因和递归隐私扫描。
+- 报告只包含用例/来源/版本/定位/排名/分数/耗时/错误元数据。查询文本、文档正文、引文、向量、密钥和 Provider 载荷会被拒绝；报告写入被 Git 忽略的 `tmp/retrieval-eval-*.json` 路径。
+- 在隔离 PostgreSQL/Redis 上完成 development 评测：38 个 Markdown/TXT/PDF 来源发布成功，5 个代码来源记录为解析失败。使用确定性 fake Embedding 时，Keyword Recall@5=0，Dense exact=0.1081，Hybrid=0.1081，Hybrid+Reranker=0.1081。IVFFlat 遇到基础设施失败，已归因为基础设施问题，没有计入质量通过。
+- 所有报告仍为 `formal_run_eligible=false`；holdout 执行因门禁被拒绝并返回退出码 4。20 个评测/CLI/证据单元测试通过。本记录只关闭 Step 9 的工程流程，不代表阶段 0、正式 holdout 或检索质量验收已完成。
 
 ### Step 10：集成验收与文档移交
 
@@ -630,6 +630,21 @@ development 消融与 holdout 证据；每个失败 case 可定位到具体阶�
 
 **完成标准**：所有阶段退出条件均由保存的命令和报告支持，阶段 4 可以仅通过 Application
 Port 获取有版本、分数、Space、来源和 locator 的证据候选。
+
+**当前实现与实际验证记录（2026-07-23）：**
+
+- 已新增 `docs/stage-3-acceptance.md`，集中记录 Step 10 的环境、命令、验收矩阵、评测摘要、
+  未关闭门禁和阶段 4 移交约束；README、architecture、development-environment 和
+  troubleshooting 已同步到阶段 3 的真实状态。
+- 规范检查通过：`ruff format --check`（122 个文件）、`ruff check`、`mypy apps packages`、
+  默认测试 `479 passed, 41 skipped`、隔离 PostgreSQL/Redis 集成测试 `40 passed`；前端
+  lint/typecheck/test（12 passed）/build 和 OpenAPI 一致性也通过。
+- 基础 Compose 冷启动、健康检查、HTTP 代理、SQL 注入样例的错误协议、日志 marker 隐私和
+  PostgreSQL/Redis 保留卷重启已通过。模型 profile 首次下载受 Hugging Face `unexpected EOF`
+  阻塞，但用既有固定 revision 缓存禁网启动 Embedding/Reranker 均报告 Ready；详细输出见
+  `docs/stage-3-acceptance.md`。
+- 阶段 0 语料门禁、阶段 2 Step 9 正式验收和阶段 3 holdout 仍未关闭。本步完成工程集成与文档
+  移交，不把 fixture 或 fake 模型结果宣称为正式 Recall、Reranker 净收益或 P95 质量结论。
 
 ## 6. 配置与版本策略
 
@@ -775,3 +790,69 @@ Compose 或模型服务变更还必须验证空缓存首次启动、已有缓存
 
 阶段 4 在此基础上实现查询改写、上下文预算、带引用回答、引用校验和拒答；不得在问答用例
 内部复制阶段 3 的 SQL、融合、精排或过滤逻辑。
+
+## 11. 阶段 0 关闭后的正式完成顺序
+
+阶段 0 关闭只解除真实语料门禁，不等于阶段 3 自动达标。必须严格按以下顺序推进；任何一项
+失败都保持阶段 3 为“工程完成、正式质量未通过”，不得直接运行或选择性重跑 holdout。
+
+### 11.1 接收并验证阶段 0 交付物
+
+1. 获取阶段 0 正式退出记录（建议固定为 `docs/stage-0-acceptance.md`），确认授权/数据权利、
+   敏感级别、`allowed_uses`、人工标注复核和版本冻结均有责任人及日期。
+2. 确认 `cases/evals/corpus/v0/manifest.yaml` 的 `status` 已变为 `frozen`，逐个来源重新校验
+   原始字节 SHA-256；只处理 manifest 允许列表，禁止递归读取 `cases/`。
+3. 在查看任何 holdout 结果前冻结 dataset version、development/holdout 划分、evidence locator
+   规则和指标口径。当前 v0 只有 30 例，必须在冻结记录中明确：发布新 dataset version 扩充到
+   60～100 例，或由负责人书面接受统计限制；不能原地修改已查看的用例。
+4. 将 corpus、dataset、schema 和 split 摘要写入评测配置，并保留一次只读的 SHA-256 校验输出。
+
+### 11.2 先关闭阶段 2 Step 9 正式验收
+
+1. 对冻结 manifest 的全部 P0 来源执行真实解析、定位、摄入、幂等重入、修改重建、原子发布、
+   删除撤下、失败重试和取消流程；每次读取仍校验 SHA-256。
+2. 生成阶段 2 解析质量报告：成功率达到冻结阈值（当前建议至少 95%），记录 Markdown/TXT/PDF
+   分格式结果、失败分类、定位覆盖率、parser/normalizer/chunker 版本和耗时。
+3. 当前已有 5 个代码来源在工程评测中记录为 parser failure。正式验收前必须将其从批准 P0
+   语料中按 manifest 规则排除、增加合规 parser，或由负责人记录其不属于 P0；不能只从分母中
+   静默删除。
+4. 新增并签署 `docs/stage-2-acceptance.md`，内容必须是实际通过结论而不是仅有文件。评测脚本
+   当前只检查该路径存在，正式启用前应由人工确认其状态、语料摘要和命令结果。
+
+### 11.3 在 development 上完成真实模型与检索定版
+
+1. 解决本地 Embedding/Reranker 的空缓存首次启动、缓存后离线启动、健康检查和固定 revision
+   校验；模型服务失败不得被 fake 结果替代。私有语料仍禁止发送到外部 Provider。
+2. 关闭 R3-02～R3-06：确认 FTS 中文/双语切片、Embedding 模型与指令/归一化/精度、RRF 与
+   上下文参数、Reranker 开关/降级、指标和 P95 预算。计划列出的 gte/Qwen3/E5 候选与当前
+   `bge-base-zh-v1.5` 部署 smoke 不等价，必须按同一协议比较或更新记录说明选择理由。
+3. 在冻结 development 上依次运行 Keyword、Dense exact、Dense approximate、Hybrid、
+   Hybrid+Reranker，并只使用预注册的有限参数集合；输出 per-case 阶段候选、失败归因、语言/安全
+   切片、P50/P95 及模型/SQL/融合/精排分段耗时。
+4. 修复或明确处理 IVFFlat 的基础设施失败，至少得到可解释的 exact/approx overlap、lists、
+   probes、shortlist 和 ANALYZE 结果；不能把未运行的 approximate 路径当作完成。
+5. 只激活一个 Embedding 版本和一个默认 `RetrievalProfileV1`。若 Reranker 没有相对最佳单路
+   基线的可复现净收益，先更新总实施计划的退出门槛，再决定默认关闭，不能静默改变门槛。
+
+### 11.4 冻结配置并运行一次正式 holdout
+
+1. 冻结最佳 development 配置、模型 revision、索引参数、目标机器、并发、预热次数和报告
+   schema；记录 `config_hash`，将 `retrieval-v1.yaml` 从 `provisional` 切换为 `frozen`，并在
+   `gates` 中确认 `formal_runs_enabled: true`、阶段 2 验收路径有效。
+2. 在隔离 PostgreSQL/Redis 上设置 `EVALUATION_DATABASE_ISOLATED=1`，先执行 `--validate-only`，
+   再执行一次完整 holdout，并使用该次校验得到的 `config_hash` 作为
+   `--confirm-holdout <config_hash>`；不允许按 case 选择性重跑。
+3. 只有同时满足以下结果才可宣称阶段 3 正式通过：Recall@5 至少 85%；Hybrid+Reranker 相对最佳
+   单路基线有预注册且可复现的提升；P95 在预算内；跨 Space/撤下/非当前版本违规为 0；报告、
+   失败分类和隐私扫描完整。
+4. 若 holdout 因配置、模型、索引或基础设施降级而作废，保存作废原因，不把部分结果拼成通过；
+   修复后创建新 config/dataset version 并重新走 development 冻结流程。
+
+### 11.5 完成记录和移交
+
+将正式 report v1、人工摘要、Stage 0/Stage 2/Stage 3 退出记录、模型/profile/index 摘要和
+复现实命令归档到 `cases/evals/reports/`（只保留安全元数据），更新
+`docs/stage-3-acceptance.md`、README、architecture、development-environment 和
+troubleshooting；最后才把阶段状态从“工程验收完成”改为“阶段 3 正式完成”，并向阶段 4
+移交稳定 Search Application Port。详细核对表见 `docs/stage-3-acceptance.md` 的“阶段 0
+关闭后的正式完成清单”。

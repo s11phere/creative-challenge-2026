@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-**阶段 2 Step 0-8 工程实现已完成并通过本地验证；阶段 0 数据门禁和阶段 2 Step 9 正式质量验收尚未完成。阶段 5 通用 Agent Runtime/Skill 基础已并行通过审查。**
+**阶段 2 Step 0-8 与阶段 3 Step 0-10 的工程实现已完成并通过本地验证；阶段 0 数据门禁、阶段 2 Step 9 正式质量验收和阶段 3 正式 holdout 质量验收尚未完成。阶段 5 通用 Agent Runtime/Skill 基础已并行通过审查。**
 
 已交付的核心能力：
 
@@ -13,13 +13,17 @@
 |------|------|
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ Step 0-8 | ADR-005 数据模型与约束迁移；Markdown/TXT/PDF 解析器；指纹去重与 BlobStore；结构感知分块；Embedding + INDEX + 原子 PUBLISH 管线；Orchestrator 状态机与幂等重入；增量维护与异步删除；摄入 API（上传/触发/状态/取消/重试）和 Web 数据源管理页面。93 个单元测试覆盖 |
+| 阶段 3 ✅ 工程 Step 0-10 | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测、集成验收与移交文档；正式质量门禁仍待阶段 0 关闭 |
 | 阶段 5 🟡 通用基础 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、版本固定、预算/权限/审计、事务式 reload/回滚和 Skill 模板已通过审查 |
 
-当前 Web 展示系统健康状态和数据来源管理，尚未实现搜索、会话、引用或问答功能。
+当前 Web 展示系统健康状态和数据来源管理；检索能力已通过 HTTP API 提供，Web 搜索界面、会话、引用和问答仍属于后续阶段。
 阶段 5 当前只有离线通用 Runtime/Registry 和合成 fake 契约；没有业务 Skill、Runtime API、
 运行/检查点持久化或 Web Skill 入口，不能据此宣称 `knowledge_qa` 可用或阶段 5 整体完成。
-阶段 0 的语料授权复核、人工标注复核和版本冻结仍未关闭，阶段 2 Step 9（质量验收）
-同样尚未关闭，项目状态为”工程进行中，等待阶段 0 数据门禁”。
+阶段 0 的语料授权复核、人工标注复核和版本冻结仍未关闭，阶段 2 Step 9（质量验收）以及阶段 3
+正式 holdout 仍受该门禁阻塞；项目状态为“工程已推进，等待阶段 0 数据门禁”。详见
+[阶段 3 验收记录](docs/stage-3-acceptance.md)。
+阶段 0 完成后不要直接运行 holdout；必须先按验收记录中的正式完成清单完成阶段 2 Step 9、真实模型
+development 消融、默认配置冻结和一次性 holdout。
 
 ## 快速启动
 
@@ -132,6 +136,7 @@ git diff --exit-code -- docs/openapi.json
 - [阶段 1 实施计划](docs/stage-1-implementation-plan.md)
 - [阶段 2 实施计划](docs/stage-2-implementation-plan.md)
 - [阶段 3 实施计划](docs/stage-3-implementation-plan.md)
+- [阶段 3 验收记录](docs/stage-3-acceptance.md)
 - [阶段 5 实施计划](docs/stage-5-implementation-plan.md)
 - [阶段 5 实现审查记录](docs/stage-5-implementation-review.md)
 - [OpenAPI](docs/openapi.json)
