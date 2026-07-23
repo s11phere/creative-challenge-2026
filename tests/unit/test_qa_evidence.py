@@ -209,6 +209,7 @@ async def test_generation_and_publication_recheck_current_target() -> None:
 
     targets.snapshot = replace(targets.snapshot, current_version_id=OTHER_VERSION_ID)
     answer = GroundedAnswer(
+        text="Supported",
         claims=(Claim("c1", "Supported", (EVIDENCE_ID,)),),
         citations=(_citation(),),
     )
@@ -229,6 +230,7 @@ async def test_context_only_evidence_cannot_be_the_only_claim_support() -> None:
     )
     evidence = tuple(item.candidate for item in bound)
     answer = GroundedAnswer(
+        text="Unsupported by a matched hit",
         claims=(Claim("c1", "Unsupported by a matched hit", (EVIDENCE_ID,)),),
         citations=(_citation(),),
     )

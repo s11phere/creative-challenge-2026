@@ -427,6 +427,29 @@ Space、Document、DocumentVersion 和 locator 归属，再返回最小必要片
 **完成标准**：模型无法伪造 Evidence、绕过 Space 或发布 schema 非法回答；相同 fake 输入得到
 确定性结果；失败不会留下可读取的伪终态答案。
 
+#### 2026-07-23 provisional 实现与验证总结
+
+- 已完成：新增公开的 `grounded-answer-v1` JSON Schema，严格区分 answer/refuse/conflict，模型只
+  能返回 answer、claims、limitations 和本次运行的 Evidence ID。解析仅使用 `json.loads` 与
+  Draft 2020-12 schema，不接受 Markdown fence，也不使用字符串或正则猜测引用。最终 answer
+  必须等于按顺序连接的 claim 文本，防止在 claims 外夹带未校验事实。
+- 已完成：`QAGenerationProfileV1` 固定 `fast_chat`、`fake-fast-chat-v1` identity、prompt/schema
+  version、temperature 0、2048 输出 Token、45 秒 chat timeout、一次修复和两次模型调用上限。
+  claim 支持率与 Citation 完整率阈值均为 1.0，R4-05 provisional 规则固定为低于阈值即拒答；
+  confidence 只由确定性校验结果产生，不读取模型自报值。`qa-v1.yaml` 已同步新的 profile hash。
+- 已完成：`GroundedAnswerGenerator` 在生成前和发布前复用 `EvidenceVerifier`，只从服务端 Evidence
+  构造 Citation，拒绝未知 ID、跨 Space、失效版本、不可解析 locator 和 context-only 独占支持。
+  结构错误最多修复一次；再次失败返回 `QA_STRUCTURED_RESPONSE_INVALID`，引用违规返回
+  `QA_CITATION_INVALID`，模型/timeout/policy 错误保持独立，不产生可读取的部分回答。
+- 已完成：结果携带 profile/retrieval/model/prompt/schema/corpus/dataset 版本以及模型调用、修复、
+  Token 和延迟计数，不携带原始 prompt、模型响应或 Evidence 正文。当前没有持久化这些字段；
+  Step 6 仍受阶段 0 门禁约束。
+- 已验证：deterministic fake 覆盖合法回答、prompt injection 信任边界、一次修复、二次失败、未知
+  Evidence、低支持拒答、双 Evidence 冲突和模型故障分离；聚焦测试 32 passed。未调用真实模型、
+  未读取 corpus 正文、未运行 development/holdout、未新增表或公开 API，阶段 4 仍为“未正式开始”。
+- 未关闭：真实 Adapter 共用契约和回答质量仍须在前置门禁关闭后用 development 验证；正式
+  model/profile/config hash 与 R4-08 未冻结，R4-05 因此只完成 provisional 工程路径，不构成质量证据。
+
 ### Step 5：实现拒答、来源冲突和故障语义
 
 1. 证据为空、低于最低支持门槛或无法覆盖关键 claim 时返回 `REFUSED_INSUFFICIENT_EVIDENCE`。

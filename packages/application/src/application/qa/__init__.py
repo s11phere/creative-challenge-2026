@@ -17,7 +17,22 @@ from .evidence import (
     EvidenceVerifier,
     compute_excerpt_sha256,
 )
-from .profile import QAPlanningProfileV1, load_qa_planning_profile
+from .generation import (
+    GenerationIdentity,
+    GenerationResult,
+    GenerationUsage,
+    GroundedAnswerGenerator,
+    GroundedConfidence,
+    StructuredAnswerParser,
+    StructuredOutputError,
+    VerificationMetrics,
+)
+from .profile import (
+    QAGenerationProfileV1,
+    QAPlanningProfileV1,
+    load_qa_generation_profile,
+    load_qa_planning_profile,
+)
 from .query_planning import (
     MergedSearchResult,
     QASearchCoordinator,
@@ -40,7 +55,13 @@ __all__ = [
     "ConversationTurn",
     "EvidenceBindingService",
     "EvidenceVerifier",
+    "GenerationIdentity",
+    "GenerationResult",
+    "GenerationUsage",
+    "GroundedAnswerGenerator",
+    "GroundedConfidence",
     "MergedSearchResult",
+    "QAGenerationProfileV1",
     "QAPlanningProfileV1",
     "QASearchCoordinator",
     "QueryPlanner",
@@ -49,8 +70,12 @@ __all__ = [
     "QueryRetrievalDiagnostic",
     "SYSTEM_RULES",
     "SearchServicePort",
+    "StructuredAnswerParser",
+    "StructuredOutputError",
+    "VerificationMetrics",
     "classify_question",
     "compute_excerpt_sha256",
     "conservative_token_count",
+    "load_qa_generation_profile",
     "load_qa_planning_profile",
 ]

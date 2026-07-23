@@ -44,6 +44,52 @@ class QAPlanningProfileV1:
             raise QAContractError("QA rewrite timeout must be finite and positive")
 
 
+@dataclass(frozen=True)
+class QAGenerationProfileV1:
+    profile_id: str = "grounded-qa-provisional-v1"
+    retrieval_profile_reference: str = "stage3-default-pending-formal-freeze"
+    capability_alias: str = "fast_chat"
+    model_identity: str = "fake-fast-chat-v1"
+    prompt_template_id: str = "grounded-qa-v1-provisional"
+    structured_output_schema: str = "grounded-answer-v1"
+    temperature: float = 0.0
+    max_output_tokens: int = 2_048
+    max_repair_attempts: int = 1
+    timeout_seconds: float = 45.0
+    min_claim_support_rate: float = 1.0
+    min_citation_completeness_rate: float = 1.0
+    below_threshold_outcome: str = "refuse"
+    max_model_calls: int = 2
+
+    def __post_init__(self) -> None:
+        identities = (
+            self.profile_id,
+            self.retrieval_profile_reference,
+            self.model_identity,
+            self.prompt_template_id,
+            self.structured_output_schema,
+        )
+        if any(not value for value in identities):
+            raise QAContractError("QA generation identities must not be blank")
+        if self.capability_alias != "fast_chat":
+            raise QAContractError("QA generation must use the fast_chat capability")
+        if self.temperature != 0.0:
+            raise QAContractError("Provisional QA generation temperature must be zero")
+        if self.max_output_tokens < 1:
+            raise QAContractError("QA output token limit must be positive")
+        if self.max_repair_attempts not in {0, 1}:
+            raise QAContractError("QA generation allows at most one repair attempt")
+        if self.max_model_calls != 1 + self.max_repair_attempts:
+            raise QAContractError("QA model call budget must equal the initial call plus repairs")
+        if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+            raise QAContractError("QA chat timeout must be finite and positive")
+        rates = (self.min_claim_support_rate, self.min_citation_completeness_rate)
+        if any(not math.isfinite(value) or not 0 <= value <= 1 for value in rates):
+            raise QAContractError("QA verification rates must be finite values from zero to one")
+        if self.below_threshold_outcome != "refuse":
+            raise QAContractError("Provisional below-threshold answers must become refusals")
+
+
 def load_qa_planning_profile(data: Mapping[str, object]) -> QAPlanningProfileV1:
     """Load only the trusted planning fields from a schema-validated QA profile."""
     if data.get("schema_version") != "qa-profile-v1":
@@ -63,6 +109,32 @@ def load_qa_planning_profile(data: Mapping[str, object]) -> QAPlanningProfileV1:
         max_tokens_per_evidence=_integer(context, "max_tokens_per_evidence"),
         max_evidence_per_source=_integer(context, "max_evidence_per_source"),
         max_chunks_per_document=_integer(context, "max_chunks_per_document"),
+    )
+
+
+def load_qa_generation_profile(data: Mapping[str, object]) -> QAGenerationProfileV1:
+    """Load trusted generation and verification fields after schema validation."""
+    if data.get("schema_version") != "qa-profile-v1":
+        raise QAContractError("Unsupported QA profile schema version")
+    retrieval = _mapping(data, "retrieval")
+    generation = _mapping(data, "generation")
+    verification = _mapping(data, "verification")
+    runtime = _mapping(data, "runtime")
+    return QAGenerationProfileV1(
+        profile_id=_string(data, "profile_id"),
+        retrieval_profile_reference=_string(retrieval, "profile_reference"),
+        capability_alias=_string(generation, "capability_alias"),
+        model_identity=_string(generation, "model_identity"),
+        prompt_template_id=_string(generation, "prompt_template_id"),
+        structured_output_schema=_string(generation, "structured_output_schema"),
+        temperature=_number(generation, "temperature"),
+        max_output_tokens=_integer(generation, "max_output_tokens"),
+        max_repair_attempts=_integer(generation, "max_repair_attempts"),
+        timeout_seconds=_number(generation, "timeout_seconds"),
+        min_claim_support_rate=_number(verification, "min_claim_support_rate"),
+        min_citation_completeness_rate=_number(verification, "min_citation_completeness_rate"),
+        below_threshold_outcome=_string(verification, "below_threshold_outcome"),
+        max_model_calls=_integer(runtime, "max_model_calls"),
     )
 
 
@@ -101,4 +173,9 @@ def _boolean(values: Mapping[str, object], key: str) -> bool:
     return value
 
 
-__all__ = ["QAPlanningProfileV1", "load_qa_planning_profile"]
+__all__ = [
+    "QAGenerationProfileV1",
+    "QAPlanningProfileV1",
+    "load_qa_generation_profile",
+    "load_qa_planning_profile",
+]

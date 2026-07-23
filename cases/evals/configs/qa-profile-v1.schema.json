@@ -56,19 +56,22 @@
     "generation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["capability_alias", "prompt_template_id", "structured_output_schema", "max_output_tokens", "max_repair_attempts"],
+      "required": ["capability_alias", "model_identity", "prompt_template_id", "structured_output_schema", "temperature", "max_output_tokens", "max_repair_attempts", "timeout_seconds"],
       "properties": {
         "capability_alias": {"const": "fast_chat"},
+        "model_identity": {"const": "fake-fast-chat-v1"},
         "prompt_template_id": {"const": "grounded-qa-v1-provisional"},
         "structured_output_schema": {"const": "grounded-answer-v1"},
+        "temperature": {"const": 0.0},
         "max_output_tokens": {"type": "integer", "minimum": 1},
-        "max_repair_attempts": {"type": "integer", "minimum": 0, "maximum": 1}
+        "max_repair_attempts": {"type": "integer", "minimum": 0, "maximum": 1},
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 60}
       }
     },
     "verification": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["outcomes", "require_citation_per_claim", "require_same_space", "require_current_version", "reject_unknown_evidence_ids"],
+      "required": ["outcomes", "require_citation_per_claim", "require_same_space", "require_current_version", "reject_unknown_evidence_ids", "min_claim_support_rate", "min_citation_completeness_rate", "below_threshold_outcome"],
       "properties": {
         "outcomes": {
           "type": "array",
@@ -77,7 +80,10 @@
         "require_citation_per_claim": {"const": true},
         "require_same_space": {"const": true},
         "require_current_version": {"const": true},
-        "reject_unknown_evidence_ids": {"const": true}
+        "reject_unknown_evidence_ids": {"const": true},
+        "min_claim_support_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "min_citation_completeness_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "below_threshold_outcome": {"const": "refuse"}
       }
     },
     "runtime": {

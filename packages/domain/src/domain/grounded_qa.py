@@ -284,14 +284,17 @@ class CitationResolution:
 
 @dataclass(frozen=True)
 class GroundedAnswer:
+    text: str
     claims: tuple[Claim, ...]
     citations: tuple[Citation, ...]
     answer_id: UUID = field(default_factory=uuid4)
     limitations: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.claims or not self.citations:
-            raise QAContractError("Grounded answers require claims and citations")
+        if not self.text.strip() or not self.claims or not self.citations:
+            raise QAContractError("Grounded answers require text, claims, and citations")
+        if any(not limitation.strip() for limitation in self.limitations):
+            raise QAContractError("Grounded answer limitations must not be blank")
         claim_ids = tuple(claim.claim_id for claim in self.claims)
         citation_evidence_ids = tuple(citation.evidence_id for citation in self.citations)
         if len(claim_ids) != len(set(claim_ids)):

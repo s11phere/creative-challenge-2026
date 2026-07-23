@@ -69,6 +69,7 @@ def _citation(*, evidence_id: UUID = EVIDENCE_ID, space_id: UUID = SPACE_ID) -> 
 
 def _answer(*, evidence_id: UUID = EVIDENCE_ID) -> GroundedAnswer:
     return GroundedAnswer(
+        text="Supported fact",
         claims=(Claim(claim_id="c1", text="Supported fact", evidence_ids=(evidence_id,)),),
         citations=(_citation(evidence_id=evidence_id),),
     )
@@ -95,6 +96,7 @@ def test_grounded_answer_rejects_unreferenced_claim_and_duplicate_evidence_ids()
         Claim(claim_id="c1", text="Duplicated", evidence_ids=(EVIDENCE_ID, EVIDENCE_ID))
     with pytest.raises(QAContractError, match="only cite evidence"):
         GroundedAnswer(
+            text="Fact",
             claims=(Claim(claim_id="c1", text="Fact", evidence_ids=(EVIDENCE_ID,)),),
             citations=(_citation(evidence_id=UUID(int=99)),),
         )
@@ -111,6 +113,7 @@ def test_citation_validation_rejects_forged_or_cross_space_identity() -> None:
     with pytest.raises(QAContractError, match="requested Space"):
         validate_answer_citations(
             GroundedAnswer(
+                text="Fact",
                 claims=(Claim(claim_id="c1", text="Fact", evidence_ids=(EVIDENCE_ID,)),),
                 citations=(_citation(space_id=UUID(int=99)),),
             ),
