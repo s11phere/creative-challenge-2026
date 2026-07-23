@@ -31,22 +31,25 @@
     "query": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["max_question_chars", "max_history_messages", "max_subqueries", "rewrite_enabled"],
+      "required": ["max_question_chars", "max_history_messages", "max_subqueries", "rewrite_timeout_seconds", "rewrite_enabled"],
       "properties": {
         "max_question_chars": {"type": "integer", "minimum": 1, "maximum": 20000},
         "max_history_messages": {"type": "integer", "minimum": 0, "maximum": 50},
         "max_subqueries": {"type": "integer", "minimum": 1, "maximum": 5},
+        "rewrite_timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 30},
         "rewrite_enabled": {"const": false}
       }
     },
     "context": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["max_evidence_items", "max_input_tokens", "max_tokens_per_evidence", "max_chunks_per_document"],
+      "required": ["max_evidence_items", "max_input_tokens", "max_history_tokens", "max_tokens_per_evidence", "max_evidence_per_source", "max_chunks_per_document"],
       "properties": {
         "max_evidence_items": {"type": "integer", "minimum": 1, "maximum": 50},
         "max_input_tokens": {"type": "integer", "minimum": 1},
+        "max_history_tokens": {"type": "integer", "minimum": 0},
         "max_tokens_per_evidence": {"type": "integer", "minimum": 1},
+        "max_evidence_per_source": {"type": "integer", "minimum": 1},
         "max_chunks_per_document": {"type": "integer", "minimum": 1}
       }
     },

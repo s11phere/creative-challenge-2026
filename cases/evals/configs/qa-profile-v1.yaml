@@ -8,11 +8,14 @@ query:
   max_question_chars: 4000
   max_history_messages: 12
   max_subqueries: 3
+  rewrite_timeout_seconds: 5
   rewrite_enabled: false
 context:
   max_evidence_items: 10
   max_input_tokens: 12000
+  max_history_tokens: 2000
   max_tokens_per_evidence: 1200
+  max_evidence_per_source: 4
   max_chunks_per_document: 3
 generation:
   capability_alias: fast_chat

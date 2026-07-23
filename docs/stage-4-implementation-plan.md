@@ -107,8 +107,10 @@ Question + Conversation context
 
 1. 已有 provisional 的 GroundedAnswer、Claim、Evidence、Citation、Refusal、Conflict 纯领域契约
    和确定性状态机；JSON transport schema、兼容规则和 Application 编排仍未落地。
-2. 尚无从 SearchHit 到可持久引用、再到原文片段的受控解析服务。
-3. 尚无查询分类/改写、上下文预算和多轮会话裁剪策略。
+2. 已有 provisional 的 SearchHit -> Evidence -> Citation -> 最小原文片段服务及 Port；PostgreSQL
+   target Adapter、正式 retention 数据和批准语料定位验收仍未落地。
+3. 已有 provisional 的查询分类/改写回退、多查询合并、上下文预算和多轮裁剪；真实 development
+   对比、正式默认参数及模型改写 Adapter 仍未落地。
 4. `ModelGateway.chat()` 只返回完整响应；SSE delta、取消、断线重连和最终结构校验尚无统一协议。
 5. 尚无 Conversation/Message/AgentRun/Evidence/Feedback 的持久化归属、不可变边界和保留策略。
 6. 尚无问答 API、对话工作台、证据查看器和引用高亮。
@@ -344,6 +346,28 @@ Space、Document、DocumentVersion 和 locator 归属，再返回最小必要片
 **完成标准**：有效 fixture 的 Citation 100% 回到声明的版本和位置；跨 Space、撤下来源和伪造
 引用违规为 0；解析失败返回稳定状态而不是错误原文。
 
+#### 2026-07-23 provisional 实现与验证总结
+
+- 已完成：`EvidenceBindingService` 将 `SearchHit` 按稳定 rank 映射为服务端分配的 Evidence ID，
+  固定 Space/source/document/version/chunk/locator 和规范化 excerpt SHA-256，并保留
+  `matched/context_only`。重复 Chunk、rank 或 Evidence ID 被拒绝。
+- 已完成：`EvidenceVerifier` 在生成前和发布前分别查询 `CitationTargetPort`，重复校验 Space、
+  target 身份、当前发布版本、Chunk 和 locator，覆盖检索后版本切换的 TOCTOU 竞态。ADR-007
+  已固定：`context_only` 可辅助或共同支撑，但不能成为任何 claim 的唯一证据，也不计为 retrieval
+  gold hit。
+- 已完成：`CitationResolver` 从固定 DocumentVersion 的 Blob key 读取原始字节并重新校验
+  `blob_hash`；文本按明确 encoding 和一基闭区间行号提取，PDF 通过既有 `Parser` Port 按一基单页
+  提取。缺失/越界/格式不匹配/摘要不一致/路径遍历返回 `invalid` 或 `unavailable`，不猜测位置。
+- 已完成：历史 Citation 区分 `valid`、`source_updated`、`withdrawn`、`deleted`、
+  `retention_expired`、`unavailable` 和 `invalid`。`source_updated` 只解析固定旧版本；撤下、删除、
+  过期和不可用状态不读取 Blob、不返回片段，也不重定向到相似文本或新版本。
+- 已验证：`tests/unit/test_qa_evidence.py` 与领域、BlobStore、Parser 回归共 61 passed；新增模块
+  Ruff format/check 通过；精确 mypy 3 个源文件和规范 `mypy apps packages` 67 个源文件均通过。
+  pytest 仅有已记录的 Windows `.pytest_cache` 权限警告。
+- 未关闭：当前 `CitationTargetPort` 只用合成内存快照验证；PostgreSQL Adapter、真实 retention
+  事实源和批准 `repository_fixture` 的 locator golden 验收需等待相应数据/迁移门禁。本步未读取
+  corpus 正文、未新增表或 API，也未运行 Provider/holdout；阶段 4 仍为“未正式开始”。
+
 ### Step 3：实现查询分类、改写和上下文构建
 
 1. 建立确定性的输入规范化、长度限制、语言/代码切片和问题类型分类。
@@ -358,6 +382,29 @@ Space、Document、DocumentVersion 和 locator 归属，再返回最小必要片
 
 **完成标准**：相同输入和 profile 产生相同 Evidence 顺序及上下文摘要；预算永不超限；改写不能
 扩大 Space/filter；prompt injection fixture 不能改变系统策略。
+
+#### 2026-07-23 provisional 实现与验证总结
+
+- 已完成：新增 `QAPlanningProfileV1` 受信配置投影，补齐改写 timeout、历史 Token、单来源
+  Evidence 和单文档 Chunk 预算；`qa-v1.yaml` 已更新 profile SHA-256，现有 schema/hash 门禁测试
+  继续通过。Token 预算采用 UTF-8 字节数作为确定性保守上界，不依赖 Provider tokenizer。
+- 已完成：`QueryPlanner` 复用检索层规范化与中英/混合/代码切片，确定性分类 factual/
+  comparison/procedural/synthesis。默认只保留原问题；可选 rewriter 有最大查询数和 timeout，重复、
+  原问题、空白、越界、异常或超时均回退原问题，诊断只含长度、计数和安全 reason，不含问题正文。
+- 已完成：`QASearchCoordinator` 对每个查询只调用 `SearchService.search(...)`，从同一不可变
+  `SearchRequest` 复制 Space、filters、mode 和 execution context；多查询结果按 matched、查询序号、
+  rank 和 Chunk ID 确定性去重，身份冲突立即失败，并保留每个查询的检索诊断而不记录查询文本。
+- 已完成：`ContextBuilder` 将系统规则、问题、会话历史和 Evidence 分离；Evidence 使用稳定
+  `untrusted_document` 边界和服务端 ID。历史按最近消息裁剪，Evidence 按总量、总 Token、历史、
+  单来源、单文档和单块预算选择；超长块整块跳过，不截断/拼接 locator 或改变 Evidence 映射。
+  相同输入/profile 产生相同顺序和不含正文的 safe summary hash。
+- 已验证：改写成功/超时/非法回退、分类、Space/filter 不扩张、多查询去重、历史/来源/文档/块预算、
+  整块裁剪和文档 prompt injection 隔离均有 deterministic fake 测试；Step 0～3 相关测试 36 passed，
+  Ruff format/check 通过，规范 `mypy apps packages` 70 个源文件通过。pytest 仅有已记录的
+  Windows `.pytest_cache` 权限警告。
+- 未执行：阶段 0、阶段 2 Step 9 和阶段 3 正式退出未关闭，不能使用 development 问题和真实模型
+  比较原问题/改写收益。R4-04 因此保持未关闭，`rewrite_enabled: false` 不变；本步没有读取 corpus
+  正文、调用 Provider、运行 holdout、增加表或公开 API，阶段 4 仍为“未正式开始”。
 
 ### Step 4：实现结构化回答生成与完整性校验
 

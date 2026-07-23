@@ -77,7 +77,9 @@ def _answer(*, evidence_id: UUID = EVIDENCE_ID) -> GroundedAnswer:
 def test_question_and_query_plan_keep_a_normalized_original_query() -> None:
     question = QuestionInput(question="  C++\n vector? ", space_id=SPACE_ID, caller_id="user-1")
     plan = QueryPlan(
-        original_question=question.question, queries=(question.question, "vector growth")
+        original_question=question.question,
+        queries=(question.question, "vector growth"),
+        rewrite_applied=True,
     )
 
     assert question.question == "C++ vector?"

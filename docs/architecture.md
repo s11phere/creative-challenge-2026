@@ -241,6 +241,10 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/retrieval/reranker.py` | ModelGateway Reranker Adapter 和响应映射 |
 | `src/application/retrieval/profile.py` | 版本化 `RetrievalProfileV1` 配置解析 |
 | `src/application/retrieval/evaluation.py` | Evidence/locator 映射、检索指标、失败分类和报告输入 |
+| `src/application/qa/evidence.py` | provisional SearchHit/Evidence 绑定、生成前/发布前归属校验、历史 Citation 状态和最小原文解析 |
+| `src/application/qa/profile.py` | provisional QA profile 的查询、历史和 Evidence 预算投影 |
+| `src/application/qa/query_planning.py` | 确定性问题分类、有界改写回退、Space/filter 不变的多查询检索和去重 |
+| `src/application/qa/context_builder.py` | 系统/问题/历史/不可信 Evidence 隔离、配额裁剪和稳定上下文摘要 |
 
 **依赖**：`domain`
 
@@ -710,7 +714,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
 | **阶段 2** | **🟡 工程 Step 0～8 完成** | **摄入闭环代码已落地；Step 9 正式质量验收和 `stage-2-acceptance.md` 尚未完成** |
 | **阶段 3** | **🟡 工程 Step 0～10 验收完成** | **检索 API、离线评测和安全边界已落地；阶段 0、阶段 2 Step 9、真实模型定版及正式 holdout 未关闭，阶段未正式退出** |
-| 阶段 4 | ❌ 未正式开始 | ADR-007、provisional 配置和纯领域契约已落地；Application 问答、持久化、SSE、Web 和回答评测未落地 |
+| 阶段 4 | ❌ 未正式开始 | Step 0～3 的 provisional 配置、领域、Evidence/Citation、查询与上下文纯契约已落地；生成、完整 QA 编排、持久化、SSE、Web 和回答评测未落地 |
 | **阶段 5** | **🟡 通用基础已审查** | **Step 0～4 和 Step 9 通用部分通过；业务 Skill/API/持久化/验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅

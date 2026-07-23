@@ -57,6 +57,10 @@ run. Publication revalidates Space and the Source -> Document -> DocumentVersion
 locator bounds, Evidence ownership, and current-version status to close retrieval/publication races.
 The model may select only server-assigned Evidence IDs and cannot emit storage identities.
 
+Retrieval hits marked `context_only` may be included to explain surrounding material and may
+co-support a claim, but they cannot be the sole support for any claim and never count as retrieval
+gold hits. At least one `matched` Evidence ID is required for every published claim.
+
 A historical citation never moves to a newer version. Source withdrawal changes its resolution
 status to `withdrawn`; retention cleanup may change it to `unavailable`. Both preserve the original
 identity and are distinct from `invalid`, which means the stored ownership, digest, or locator cannot

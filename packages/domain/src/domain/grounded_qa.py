@@ -6,10 +6,12 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Protocol
 from uuid import UUID, uuid4
 
 from .agent_runtime import AgentRun, RunStatus, RunStep
-from .retrieval import SearchLocator
+from .parsing import ParseMetadata
+from .retrieval import KeywordLanguageSlice, KeywordQueryKind, SearchLocator
 
 MAX_QUESTION_CHARS = 4_000
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -48,6 +50,20 @@ class QAEvent(StrEnum):
     TIMEOUT = "timeout"
 
 
+class QuestionType(StrEnum):
+    FACTUAL = "factual"
+    COMPARISON = "comparison"
+    PROCEDURAL = "procedural"
+    SYNTHESIS = "synthesis"
+
+
+class QueryFallbackReason(StrEnum):
+    REWRITER_UNAVAILABLE = "rewriter_unavailable"
+    TIMEOUT = "timeout"
+    INVALID_RESPONSE = "invalid_response"
+    EMPTY_RESPONSE = "empty_response"
+
+
 class CitationStatus(StrEnum):
     VALID = "valid"
     SOURCE_UPDATED = "source_updated"
@@ -56,6 +72,11 @@ class CitationStatus(StrEnum):
     RETENTION_EXPIRED = "retention_expired"
     UNAVAILABLE = "unavailable"
     INVALID = "invalid"
+
+
+class CitationContentKind(StrEnum):
+    TEXT = "text"
+    PDF = "pdf"
 
 
 class RefusalReason(StrEnum):
@@ -122,6 +143,11 @@ class QuestionInput:
 class QueryPlan:
     original_question: str
     queries: tuple[str, ...]
+    language_slice: KeywordLanguageSlice = KeywordLanguageSlice.OTHER
+    query_kind: KeywordQueryKind = KeywordQueryKind.NATURAL_LANGUAGE
+    question_type: QuestionType = QuestionType.FACTUAL
+    rewrite_applied: bool = False
+    fallback_reason: QueryFallbackReason | None = None
 
     def __post_init__(self) -> None:
         original = normalize_question(self.original_question)
@@ -130,8 +156,16 @@ class QueryPlan:
             raise QAContractError("Query plan must retain the original question as its first query")
         if len(queries) != len(set(queries)):
             raise QAContractError("Query plan queries must be unique")
+        if self.rewrite_applied != (len(queries) > 1):
+            raise QAContractError("Query plan rewrite flag must match its query count")
+        if self.rewrite_applied and self.fallback_reason is not None:
+            raise QAContractError("A successful rewrite cannot have a fallback reason")
         object.__setattr__(self, "original_question", original)
         object.__setattr__(self, "queries", queries)
+
+
+class QueryRewriter(Protocol):
+    async def rewrite(self, question: QuestionInput, *, max_queries: int) -> tuple[str, ...]: ...
 
 
 @dataclass(frozen=True)
@@ -189,6 +223,63 @@ class Citation:
     def __post_init__(self) -> None:
         if not _SHA256.fullmatch(self.excerpt_sha256):
             raise QAContractError("Citation excerpt_sha256 must be lowercase SHA-256")
+
+
+@dataclass(frozen=True)
+class CitationTargetQuery:
+    space_id: UUID
+    source_id: UUID
+    document_id: UUID
+    version_id: UUID
+    chunk_id: UUID
+
+
+@dataclass(frozen=True)
+class CitationTargetSnapshot:
+    query: CitationTargetQuery
+    current_version_id: UUID | None
+    locators: tuple[SearchLocator, ...]
+    blob_hash: str
+    storage_key: str
+    content_kind: CitationContentKind
+    metadata: ParseMetadata
+    source_withdrawn: bool = False
+    document_deleted: bool = False
+    retention_expired: bool = False
+    chunk_available: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.locators:
+            raise QAContractError("Citation target must preserve at least one locator")
+        if not _SHA256.fullmatch(self.blob_hash):
+            raise QAContractError("Citation target blob_hash must be lowercase SHA-256")
+        if not self.storage_key:
+            raise QAContractError("Citation target storage_key must not be blank")
+
+
+class CitationTargetPort(Protocol):
+    async def get_target(self, query: CitationTargetQuery) -> CitationTargetSnapshot | None: ...
+
+
+@dataclass(frozen=True)
+class CitationResolution:
+    citation: Citation
+    status: CitationStatus
+    excerpt: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            self.status
+            in {
+                CitationStatus.WITHDRAWN,
+                CitationStatus.DELETED,
+                CitationStatus.RETENTION_EXPIRED,
+                CitationStatus.UNAVAILABLE,
+                CitationStatus.INVALID,
+            }
+            and self.excerpt is not None
+        ):
+            raise QAContractError("Unavailable citation states must not expose an excerpt")
 
 
 @dataclass(frozen=True)
@@ -346,7 +437,12 @@ def project_qa_status(
 
 __all__ = [
     "Citation",
+    "CitationContentKind",
+    "CitationResolution",
     "CitationStatus",
+    "CitationTargetPort",
+    "CitationTargetQuery",
+    "CitationTargetSnapshot",
     "Claim",
     "ConflictNotice",
     "EvidenceCandidate",
@@ -362,7 +458,10 @@ __all__ = [
     "QAResultPayload",
     "QAStatus",
     "QueryPlan",
+    "QueryFallbackReason",
+    "QueryRewriter",
     "QuestionInput",
+    "QuestionType",
     "Refusal",
     "RefusalReason",
     "normalize_question",
