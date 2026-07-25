@@ -88,6 +88,55 @@ Hybrid 和 Hybrid+Reranker 均为 0.1081；IVFFlat 因基础设施错误归因�
 报告 `formal_run_eligible=false`，holdout 因阶段 0/阶段 2 Step 9 门禁被拒绝。上述结果只说明
 评测流程和失败分类可运行，不是 MVP 的 85% Recall@5 质量结论。
 
+### 2026-07-25 Qwen3 development 全量消融（provisional）
+
+在未读取、未执行 holdout 的前提下，对 `knowledge-qa-v0` 的全部 20 个 development case
+执行了本地真实模型消融。语料仍处于 `draft_pending_license_review`，阶段 2 Step 9 也未正式
+验收，因此本节只能用于 provisional 默认方案选择，不能关闭 R3-02～R3-06 或宣称阶段 3
+正式退出。原始报告和向量缓存包含继承自 `private_local` 的派生数据，仅保存在被忽略的 `tmp/`，
+没有提交问题、正文、locator 明细或向量。
+
+实验固定模型与处理身份如下：
+
+- Parser/Chunker `1.1`，共生成 2,349 个 Chunk；修复 Markdown 嵌套列表、blockquote 和规范化
+  多行节点 locator 后，37 个 evidence unit 的 locator 覆盖从 `34/37` 提升到 `37/37`。
+- Embedding 为 `Qwen/Qwen3-Embedding-0.6B`，revision
+  `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`，输出 768 维 float32，并对文档/查询向量执行
+  L2 归一化。查询指令 identity 为 `qwen3-web-search-v1`，文档不加前缀，identity 为
+  `qwen3-document-no-prefix-v1`。
+- Reranker 为 `BAAI/bge-reranker-base`，revision
+  `2cfc18c9415c912f9d8155881c133215df768a70`。
+
+development 的候选与最终结果如下：
+
+| 方案 | Recall | MRR | nDCG | 全证据覆盖 | must-exclude | 失败率 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Dense@5 | 75.68% | 0.7176 | 0.5862 | 55.56% | 0 | 0% |
+| Dense@30（候选阶段） | 97.30% | 0.7176 | 0.6313 | 94.44% | 0 | 0% |
+| Keyword@5 | 0% | 0 | 0 | 0% | 0 | 0% |
+| Hybrid + 每文档最多 3 块 @5 | 75.68% | 0.7176 | 0.5870 | 55.56% | 0 | 0% |
+| Hybrid + quota + Reranker@10 -> @5 | **75.68%** | **0.8167** | **0.6284** | **55.56%** | **0** | **0%** |
+
+最终 provisional 方案为：Parser/Chunker `1.1` -> Qwen3 Dense@30 -> 每文档最多 3 块 ->
+BGE Reranker 重排前 10 -> 返回前 5。Dense@30 在 37 个 evidence unit 中命中 36 个；唯一未进入
+候选集的是 `qa-009` 的 SVM evidence unit（dense rank 70）。Parser 修复前后 Dense Recall@5
+从 64.86% 提升到 75.68%，Dense Recall@30 从 89.19% 提升到 97.30%。
+
+`fusion_alpha` 的预注册值 `0.35/0.5/0.65` 在本次数据上完全持平，因为 Keyword 召回为 0；
+当前采用 `0.35` 只是稳定的 provisional 选择，不能解释为已证明的融合权重优势。最终 Recall@5
+仍低于正式门槛 85%，且没有有效 P50/P95 在线延迟数据，所以不得切换配置状态为 `frozen`，
+`formal_runs_enabled` 继续保持 `false`。
+
+资源测试显示 Qwen3 使用 TEI 的 `max-batch-tokens=512`、`max-client-batch-size=4`、
+`max-batch-requests=1`、`RAYON_NUM_THREADS=8` 时吞吐最好；修复后语料编码约 1.151 Chunk/s，
+内存约 3.2～3.3 GiB。Reranker 约占 7.9 GiB；离线报告生成时应与 Qwen3 串行运行以降低峰值
+内存。扩大 Qwen3 batch 或并发在本机反而降低吞吐，因此 Compose 保留上述实测限制。
+
+仓库已将新建 Space、空 profile 和完全等于旧生成默认值的 Space 更新为上述检索 profile，Search
+API 的缺省模式改为 `hybrid_rerank`，Compose `embedding` profile 改为固定 revision 的 Qwen3。
+真实在线环境还必须配置对应 instruction identity 与 L2 normalization，并以新的
+`embedding_version` 全量重建候选 DocumentVersion；在重建并发布前，旧向量不会与新查询向量混用。
+
 ## 退出条件与未关闭项
 
 已完成：检索四种模式、固定 profile/Embedding/索引版本、Search Application Port、稳定错误

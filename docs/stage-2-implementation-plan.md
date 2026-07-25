@@ -253,6 +253,13 @@ cases/
 - 248 个单元测试全部通过（原有 207 个 + 新增 41 个），21 个集成测试跳过（需 `RUN_INTEGRATION=1`）。
 - 覆盖场景：空文本、短文本、段落分组、Markdown 结构分块（标题边界）、段落/代码块/列表元素识别、超大单段切分、重叠、不同 chunk_size/overlap 组合、确定性验证（相同输入重复运行产出相同 chunk_hash 和 ordinal）、配置变化产生不同 config_hash。
 
+2026-07-25 纠错记录：
+
+- 修复 Markdown 嵌套列表递归起点偏移导致列表后的正文被跳过，以及 blockquote 文本未进入结构树的问题。
+- 超长结构节点的规范化文本无法逐行映射时，分块保守继承原节点行号范围，避免生成错误的精确 locator。
+- `StructureChunker.CHUNKER_VERSION` 升至 `1.1`，使既有 `1.0` 索引与修复后的输出可审计区分；已有数据需要受控重建，不能在同一处理身份下混用。
+- provisional development 探针中，37 个证据单元的 locator 覆盖由 34 个恢复为 37 个，chunk 数由 1,589 增至 2,349。该结果只证明缺失内容恢复，不关闭阶段 2 Step 9 或任何正式语料门禁。
+
 ### 步骤 5：Embedding 与索引发布
 
 - `EMBED` 阶段通过 ModelGateway `embedding_zh` 能力别名批量向量化，CI 用确定性 fake。

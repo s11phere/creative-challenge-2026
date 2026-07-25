@@ -52,7 +52,7 @@ class SearchApiRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: Annotated[str, Field(min_length=1, max_length=MAX_SEARCH_QUERY_CHARS)]
-    mode: RetrievalMode = RetrievalMode.HYBRID
+    mode: RetrievalMode = RetrievalMode.HYBRID_RERANK
     filters: SearchFiltersRequest = Field(default_factory=SearchFiltersRequest)
 
     @field_validator("query")
@@ -224,6 +224,7 @@ async def search_space(
                     GatewayQueryTextEmbedder(gateway),
                     config=QueryEmbeddingConfig(
                         identity=identity,
+                        query_prefix=settings.query_embedding_prefix(),
                         timeout_seconds=settings.retrieval_timeout_seconds,
                     ),
                 ),

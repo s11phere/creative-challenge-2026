@@ -71,10 +71,20 @@ class RetrievalProfile:
 
     chunk_size: int = 512
     chunk_overlap: int = 64
-    top_k: int = 10
-    rerank_k: int = 5
-    fusion_alpha: float = 0.5
-    extra: dict[str, str] = field(default_factory=dict)
+    top_k: int = 5
+    rerank_k: int = 10
+    fusion_alpha: float = 0.35
+    extra: dict[str, str] = field(
+        default_factory=lambda: {
+            "keyword_candidate_k": "30",
+            "dense_candidate_k": "30",
+            "fusion_candidate_k": "30",
+            "rrf_k": "60",
+            "reranker_enabled": "true",
+            "adjacent_window": "1",
+            "max_chunks_per_document": "3",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

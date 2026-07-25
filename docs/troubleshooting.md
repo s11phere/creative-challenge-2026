@@ -111,6 +111,10 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 - 已有阶段 2 的 6 张核心业务表、摄入流水线和 Worker 消费者；当前支持上传文件，尚无目录监听。
 - 阶段 3 的 Keyword/Dense/Hybrid/Hybrid+Reranker 检索 API 已可用；Web 搜索界面、问答、会话和引用业务能力尚未实现。
 - 阶段 3 评测配置仍为 provisional：阶段 0 语料授权/标注复核和阶段 2 Step 9 正式验收未关闭时，holdout 会被拒绝，工程 fixture 结果不能作为质量基线。
+- 2026-07-25 development 消融选出的 provisional 链路需要 Qwen3 Embedding 与 BGE Reranker；
+  两者同时常驻约需 11 GiB 以上内存。内存不足时先停止 Qwen3 再运行离线 Reranker，或反向串行；
+  不要降低模型 revision、混用旧向量或用 fake 结果替代。扩大 Qwen3 batch/并发在当前 CPU 上不会
+  加速，Compose 已保留实测较快的限制。
 - 需要检索时先确认 Space 存在、Document 有当前 published version，且查询模式所需的 Embedding/Reranker 能力已配置；无命中是成功的空列表，不是系统故障。
 - 模型服务不可用不会阻断 PostgreSQL/Redis 管理面 ready；Dense 会返回明确 Provider 错误，Hybrid 只有 profile 明确允许时才可降级为 Keyword。
 - 已有离线 Agent Runtime、Tool/Skill Registry、声明式执行器和 Skill 模板；它们仅以合成

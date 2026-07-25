@@ -52,6 +52,32 @@ def test_profile_resolver_uses_server_identity_and_allowlisted_space_values() ->
     assert not hasattr(profile, "model_name")
 
 
+def test_profile_resolver_uses_provisional_reranked_defaults() -> None:
+    profile = RetrievalProfileResolver(EmbeddingIdentity()).resolve(Space())
+
+    assert profile.dense_candidate_k == 30
+    assert profile.max_chunks_per_document == 3
+    assert profile.reranker_enabled is True
+    assert profile.rerank_k == 10
+    assert profile.final_k == 5
+    assert profile.fusion_alpha == 0.35
+
+
+def test_profile_resolver_preserves_missing_legacy_reranker_flag() -> None:
+    legacy = Space(
+        retrieval_profile=RetrievalProfile(
+            top_k=7,
+            rerank_k=8,
+            fusion_alpha=0.6,
+            extra={},
+        )
+    )
+
+    profile = RetrievalProfileResolver(EmbeddingIdentity()).resolve(legacy)
+
+    assert profile.reranker_enabled is False
+
+
 @pytest.mark.parametrize(
     "extra",
     [

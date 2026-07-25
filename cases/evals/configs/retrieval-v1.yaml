@@ -51,7 +51,7 @@ experiments:
       dense_candidate_k: 30
       fusion_candidate_k: 30
       rrf_k: 60
-      fusion_alpha: 0.5
+      fusion_alpha: 0.35
       reranker_enabled: false
       rerank_k: 10
       final_k: 5
@@ -78,7 +78,6 @@ experiments:
     profile:
       <<: *baseline_profile
       reranker_enabled: true
-      rerank_k: 5
 gates:
   formal_manifest_status: frozen
   stage_2_step_9_acceptance_path: docs/stage-2-acceptance.md

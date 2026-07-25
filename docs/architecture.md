@@ -490,7 +490,7 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | **worker** | 本地构建 | 依赖 migrate 成功、Redis 健康 | 进程检查 |
 | **web** | 本地构建 (nginx) | 依赖 API 健康，同源代理 `/api` | `/healthz` |
 | **otel-collector** (可选) | `otel/opentelemetry-collector-contrib` | 需 `--profile otel` 启动 | — |
-| **tei** (可选) | 固定 digest 的 TEI CPU 镜像 | `--profile embedding`；固定 `bge-base-zh-v1.5` revision 和命名缓存卷 | `/health` |
+| **tei** (可选) | 固定 digest 的 TEI CPU 镜像 | `--profile embedding`；固定 `Qwen3-Embedding-0.6B` revision、实测 CPU batch 限制和命名缓存卷 | `/health` |
 | **reranker** (可选) | 固定 digest 的 TEI CPU 镜像 | `--profile reranker`；固定 `bge-reranker-base` revision 和命名缓存卷 | `/health` |
 
 基础 API/Worker/Web 在模型 profile 未启用或模型故障时仍应保持管理面可用；Dense/Reranker

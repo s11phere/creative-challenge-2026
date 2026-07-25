@@ -154,7 +154,7 @@ def analyze_keyword_query(query: str) -> KeywordQueryAnalysis:
 class SearchRequest:
     query: str
     space_id: UUID
-    mode: RetrievalMode = RetrievalMode.HYBRID
+    mode: RetrievalMode = RetrievalMode.HYBRID_RERANK
     filters: SearchFilters = SearchFilters()
     execution_context: SearchExecutionContext = SearchExecutionContext.ONLINE
 
@@ -169,8 +169,8 @@ class RetrievalProfileV1:
     dense_candidate_k: int = 30
     fusion_candidate_k: int = 30
     rrf_k: int = 60
-    fusion_alpha: float = 0.5
-    reranker_enabled: bool = False
+    fusion_alpha: float = 0.35
+    reranker_enabled: bool = True
     rerank_k: int = 10
     final_k: int = 5
     adjacent_window: int = 1

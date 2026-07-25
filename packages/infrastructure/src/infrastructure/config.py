@@ -105,6 +105,7 @@ class Settings(BaseSettings):
 
     def active_embedding_identity(self, *, allow_unconfigured: bool = False) -> EmbeddingIdentity:
         """Return the one identity shared by ingestion and online retrieval."""
+        self.query_embedding_prefix()
         model_revision = self.embedding_model_revision
         if not model_revision:
             model_revision = (
@@ -122,6 +123,20 @@ class Settings(BaseSettings):
             normalization=self.embedding_normalization,
             precision=self.embedding_precision,
         )
+
+    def query_embedding_prefix(self) -> str:
+        """Resolve a reviewed query instruction from its versioned identity."""
+        prefixes = {
+            "none-v1": "",
+            "qwen3-web-search-v1": (
+                "Instruct: Given a web search query, retrieve relevant passages that answer "
+                "the query\nQuery: "
+            ),
+        }
+        try:
+            return prefixes[self.embedding_query_instruction_version]
+        except KeyError as exc:
+            raise ValueError("Unsupported EMBEDDING_QUERY_INSTRUCTION_VERSION") from exc
 
     @property
     def redis_url(self) -> str:
