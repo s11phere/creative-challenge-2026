@@ -278,8 +278,9 @@ docs/
   `(1 - fusion_alpha) / (rrf_k + keyword_rank) + fusion_alpha / (rrf_k + dense_rank)`；
   以 `chunk_id` 去重，依次按 fused score、最佳单路 rank、稳定 Chunk ID 排序，输入列表顺序
   不改变结果。Reranker 必须一一返回输入索引，不允许丢失、重复或越界。
-- 本步只关闭 R3-01 和 RRF 契约/性质测试；R3-04 的上下文扩展、参数消融和离线收益验证仍在
-  Step 6/9，且阶段 0、阶段 2 Step 9 门禁未关闭，因此不构成正式检索验收。
+- 本步当时只关闭 R3-01 和 RRF 契约/性质测试；R3-04 的上下文扩展、参数消融和离线收益验证仍在
+  Step 6/9，且当时阶段 0、阶段 2 Step 9 门禁未关闭，因此不构成正式检索验收。两项上游门禁
+  已在 2026-07-28 关闭，但不会追溯性地把本步变成正式检索验收。
 
 **完成标准**：Domain 不依赖 FastAPI/SQLAlchemy/模型 SDK；fake Store/Embedder/Reranker 能执行
 完整 Application 用例；跨 Space filter 无法通过请求覆盖。
@@ -649,7 +650,7 @@ Port 获取有版本、分数、Space、来源和 locator 的证据候选。
   阻塞，但用既有固定 revision 缓存禁网启动 Embedding/Reranker 均报告 Ready；详细输出见
   `docs/stage-3-acceptance.md`。
 - 阶段 0 语料门禁已按 `docs/stage-0-acceptance.md` 关闭并限定为 `internal_team_only`；阶段 2
-  Step 9 正式验收和阶段 3 holdout 仍未关闭。本步完成工程集成与文档移交，不把 fixture 或 fake
+  Step 9 已按 `docs/stage-2-acceptance.md` 关闭，阶段 3 真实模型定版和 holdout 仍未关闭。本步完成工程集成与文档移交，不把 fixture 或 fake
   模型结果宣称为正式 Recall、Reranker 净收益或 P95 质量结论。
 
 ## 6. 配置与版本策略
@@ -814,6 +815,8 @@ Compose 或模型服务变更还必须验证空缓存首次启动、已有缓存
 4. 将 corpus、dataset、schema 和 split 摘要写入评测配置，并保留一次只读的 SHA-256 校验输出。
 
 ### 11.2 先关闭阶段 2 Step 9 正式验收
+
+**状态**：已于 2026-07-28 完成。冻结 manifest 的 74 个 P0 来源解析/定位/分块成功率 100%，隔离 E2E 与完整工程回归通过；见 `docs/stage-2-acceptance.md`。
 
 1. 对冻结 manifest 的全部 P0 来源执行真实解析、定位、摄入、幂等重入、修改重建、原子发布、
    删除撤下、失败重试和取消流程；每次读取仍校验 SHA-256。

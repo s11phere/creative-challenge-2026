@@ -499,7 +499,7 @@ Docker Compose 编排，定义 5 个长期服务、1 个一次性迁移服务和
 
 ADR-007 已接受，但只固定 Stage 4 的 GroundedAnswer/Citation、Conversation/AgentRun/Evidence、
 SSE/取消和后台执行协议。ADR-008 仍为保留编号；阶段 4 的持久化、SSE、API 和业务实现仍须等待
-阶段 2 Step 9、阶段 3 正式退出门禁及对应实现评审。
+阶段 3 正式退出门禁及对应实现评审；阶段 2 Step 9 已按 `docs/stage-2-acceptance.md` 关闭。
 
 ### 其他文档
 
@@ -656,8 +656,8 @@ docker compose -f deploy/compose.yaml down --volumes               # 永久删�
 |------|------|------|
 | 阶段 0 | ✅ 内部冻结完成 | `manifest.status=frozen`、`distribution_scope=internal_team_only`；退出记录见 `docs/stage-0-acceptance.md`，不代表公开再分发授权 |
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
-| **阶段 2** | **🟡 工程 Step 0～8 完成** | **摄入闭环代码已落地；Step 9 正式质量验收和 `stage-2-acceptance.md` 尚未完成** |
-| **阶段 3** | **🟡 工程 Step 0～10 验收完成** | **检索 API、离线评测和安全边界已落地；阶段 2 Step 9、真实模型定版及正式 holdout 未关闭，阶段未正式退出** |
+| **阶段 2** | **✅ 正式完成** | **Step 0～9 完成；冻结 manifest 的 74 个 P0 来源成功率 100%，退出记录见 `docs/stage-2-acceptance.md`** |
+| **阶段 3** | **🟡 工程 Step 0～10 验收完成** | **检索 API、离线评测和安全边界已落地；真实模型定版及正式 holdout 未关闭，阶段未正式退出** |
 | 阶段 4 | ❌ 未正式开始 | Step 0～6 的 provisional 配置、领域、Evidence/Citation、查询/上下文、生成/故障语义及内存持久化契约已落地；ORM/Alembic/PostgreSQL、Worker/SSE、API/Web、真实模型验证和回答评测未落地 |
 | **阶段 5** | **🟡 通用基础已审查** | **Step 0～4 和 Step 9 通用部分通过；业务 Skill/API/持久化/验收仍阻塞** |
 
@@ -673,6 +673,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 永久删�
 - **Step 6**：`IngestionOrchestrator` 状态机（`discover` → `parse` → `chunk` → `embed` → `publish`）+ Dramatiq actor + 幂等重入 + 取消 + 死信处理 + 34 个测试。
 - **Step 7**：增量维护（内容不变跳过、路径更新）+ 原子删除 + 异步清理 + 9 个测试。
 - **Step 8**：摄入 API（8 个端点：创建/列举来源、上传、触发摄入、状态查询、取消、重试）+ Web 数据源页面（来源列表、任务进度、上传/重试/取消 UI）。
+- **Step 9**：冻结 manifest 中 Markdown 35/35、TXT 9/9、PDF 30/30 通过 SHA-256、解析、1-based 定位与分块门禁；隔离依赖、迁移、API/Worker/Web 和 Compose E2E 通过。
 
 阶段 3 已完成工程验收：
 
@@ -685,6 +686,6 @@ docker compose -f deploy/compose.yaml down --volumes               # 永久删�
 阶段 5 通用基础审查见 `docs/stage-5-implementation-review.md`。该并行实现不改变主推进顺序：
 仍应先完成阶段 4 引用问答，再接入阶段 5 业务 Skill。
 
-阶段 0 已按 `docs/stage-0-acceptance.md` 交接，不能因此直接运行 holdout；仍须按
-`docs/stage-3-acceptance.md` 完成阶段 2 Step 9、真实模型 development 消融、默认配置冻结和一次性正式
+阶段 0 和阶段 2 已分别按 `docs/stage-0-acceptance.md`、`docs/stage-2-acceptance.md` 交接，不能因此直接运行 holdout；仍须按
+`docs/stage-3-acceptance.md` 完成真实模型 development 消融、默认配置冻结和一次性正式
 holdout。GitHub Actions 已由用户确认运行正常；阶段 0 当前仅允许组员内部使用。

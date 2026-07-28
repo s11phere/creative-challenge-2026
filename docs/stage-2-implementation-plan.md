@@ -1,6 +1,6 @@
 # 阶段 2 实施计划：知识摄入 MVP
 
-> 文档状态：Draft v9 — 工程实现完成；Stage 0 已按 `docs/stage-0-acceptance.md` 内部冻结，正式质量验收待 Step 9 记录更新 (2026-07-19 / 2026-07-28)
+> 文档状态：Accepted v10 — Step 0-9 与正式质量验收完成，退出记录见 `docs/stage-2-acceptance.md` (2026-07-28)
 >
 > 适用范围：`docs/project-implementation-plan.md` 中的阶段 2
 >
@@ -21,7 +21,7 @@ DISCOVER -> FINGERPRINT -> PARSE -> NORMALIZE -> ENRICH
 
 阶段 2 Step 0（技术决策）和 Step 1（数据模型基础及 R2-01～03 修正）已于 2026-07-18 完成。后续先完成单个 Markdown 文件的端到端幂等摄入，再在同一 Parser 契约下扩展 TXT 和可复制文本 PDF，避免三个格式同时推进时掩盖版本、发布和重试语义的问题。
 
-阶段 2 的工程实现（Step 0-8 全部代码、测试与集成验证）已于 2026-07-19 完成并通过本地验收。Stage 0 已在内部范围冻结；正式质量验收仍需在隔离环境按冻结 manifest 执行，并单独记录解析成功率、E2E 旅程和回归基线。当前 manifest 没有允许提交到仓库的 PDF fixture；原始 PDF 仍只在本地受控目录保存。
+阶段 2 的工程实现（Step 0-8）已于 2026-07-19 完成。Step 9 于 2026-07-28 在隔离环境按冻结 manifest 正式验收：74 个 P0 来源解析、定位和分块全部成功，隔离依赖、迁移、API/Worker/Web 与 Compose E2E 通过。退出证据见 `docs/stage-2-acceptance.md`；原始 PDF 和派生报告仍只在本地受控目录保存。
 
 ## 2. 启动条件与当前缺口
 
@@ -376,11 +376,13 @@ cases/
 
 **完成标准**：阶段 0 已批准语料解析成功率达到冻结阈值；重复导入不新增版本或块；失败任务可定位和重试；报告和端到端旅程可复现。
 
+**状态**：已于 2026-07-28 完成。冻结 manifest 的 35 个 Markdown、9 个 TXT 和 30 个可复制文本 PDF 全部通过 SHA-256、统一结构、1-based 定位和非空分块校验，成功率 100%；隔离 PostgreSQL/Redis、完整 Compose、真实 API/Worker 上传、重复上传、保留卷重启及全套回归通过。详见 `docs/stage-2-acceptance.md`。
+
 ## 6. 执行依赖与状态
 
 | 步骤 | 必须先满足 | 状态 |
 | --- | --- | --- |
-| 0. 决策与 ADR-005 | 已接受 ADR-001、002、004、009 | 工程实现完成；阶段 0 已按冻结记录交接，阶段 2 Step 9 仍待正式验收 |
+| 0. 决策与 ADR-005 | 已接受 ADR-001、002、004、009 | 完成 |
 | 1. 数据模型基础 | 无 | 工程实现完成；R2-01～03 已关闭 |
 | 2. Parser 与 ParsedDocument | ADR-005 中双哈希、定位和处理版本语义确定 | 工程实现完成；Markdown/TXT/可复制文本 PDF 三种 parser 已实现，32 个单元测试通过 |
 | 3. 指纹与来源登记 | ADR-005 中 stable key、Blob 和并发幂等语义确定 | 工程实现完成 |
@@ -389,7 +391,7 @@ cases/
 | 6. Worker 与状态机 | 单进程 Markdown 管道通过；任务字段迁移完成 | 工程实现完成 |
 | 7. 增量与删除 | Worker 重入、发布和 tombstone 语义通过 | 工程实现完成 |
 | 8. API 与数据源页面 | Application 摄入用例和 Space 隔离完成 | 工程实现完成 |
-| 9. 质量报告与验收 | 阶段 0 门禁关闭；P0 合规语料冻结 | 待办 |
+| 9. 质量报告与验收 | 阶段 0 门禁关闭；P0 合规语料冻结 | 完成；见 `docs/stage-2-acceptance.md` |
 
 执行时先完成 Markdown 垂直链路，再接入 TXT 和 PDF；每一步只有在其完成标准和受影响测试通过后才进入下一个依赖步骤。
 

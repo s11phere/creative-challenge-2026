@@ -29,8 +29,8 @@
 | --- | --- | --- | --- |
 | 阶段 0 | 内部冻结完成 | MVP 范围、persona、术语、隐私政策、corpus/dataset、ADR-001～004 和退出记录已存在 | 仅允许组员内部开发/评测；不代表公开再分发授权 |
 | 阶段 1 | 完成 | Step 0～8 工程实现与验收完成；GitHub Actions 已由用户确认正常 | 仅保留已记录的运行限制 |
-| 阶段 2 | 工程 Step 0～8 完成 | 六个核心实体/表、Parser、BlobStore、分块、Embedding/PUBLISH、摄入状态机、增量删除、摄入 API 和 Web 数据源页已落地 | Step 9 正式质量验收未完成；仓库中尚无 `docs/stage-2-acceptance.md` |
-| 阶段 3 | 工程 Step 0～10 验收完成 | Keyword/Dense/Hybrid/Hybrid+Reranker、上下文扩展、Space/版本边界、检索 API、离线评测和移交已落地 | 阶段 2 Step 9、真实模型 development 消融、默认配置冻结和正式 holdout 未完成，阶段 3 未正式退出 |
+| 阶段 2 | 正式完成 | Step 0～8 工程闭环和 Step 9 冻结语料验收完成；74 个 P0 来源解析/定位/分块成功率 100%，隔离依赖和 Compose E2E 通过 | 仅保留 `internal_team_only` 分发边界和已记录运行限制 |
+| 阶段 3 | 工程 Step 0～10 验收完成 | Keyword/Dense/Hybrid/Hybrid+Reranker、上下文扩展、Space/版本边界、检索 API、离线评测和移交已落地 | 真实模型 development 消融、默认配置冻结和正式 holdout 未完成，阶段 3 未正式退出 |
 | 阶段 4 | 未正式开始 | 已有 `docs/stage-4-implementation-plan.md` | GroundedAnswer/Citation、Conversation/AgentRun/Evidence 持久化、问答 API/SSE/Web 和回答评测均未落地 |
 | 阶段 5 | 通用基础已审查 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、预算/权限/审计、受信包版本固定和事务式 reload/回滚已落地 | 无 AgentRun/Checkpoint 持久化、`knowledge_qa`、Runtime API/Web 或业务 Skill；阶段整体未退出 |
 
@@ -47,8 +47,8 @@
   `ingestion_tasks` 六张业务表；`chunks` 含 768 维 pgvector、IVFFlat 和阶段 3 FTS 列/索引。
 - `ModelGateway` 的 `fast_chat` 能力当前只提供非流式完整响应；阶段 4 的 SSE、断线重连、取消和最终
   结构校验仍是待设计协议，不能假设 Provider 原生流式语义已经存在。
-- 摄入与检索已经具备工程实现和隔离依赖测试，但在正式评测门禁关闭前，不得宣称
-  真实语料质量、正式检索基线、引用问答或产品闭环达标。
+- 摄入已按 `docs/stage-2-acceptance.md` 完成内部冻结语料正式验收；检索仍未关闭真实模型与
+  holdout 门禁，不得宣称正式检索基线、引用问答或产品闭环达标。
 - 阶段 5 只有离线通用 Runtime/Registry 和合成 fake 契约，不能宣称 `knowledge_qa` 或其他
   业务 Skill 可用。
 - ADR-001～006 和 ADR-009 已接受；除非触发其重新评估条件，不重复讨论已固定基线。ADR-007
@@ -65,7 +65,7 @@
 按以下顺序推进：
 
 1. 阶段 0 已按 `docs/stage-0-acceptance.md` 交接并冻结内部语料边界。
-2. 完成阶段 2 Step 9，在批准语料上验证解析、定位、幂等、原子发布、删除和恢复。
+2. 阶段 2 已按 `docs/stage-2-acceptance.md` 完成解析、定位、幂等、原子发布、删除和恢复验收。
 3. 按 `docs/stage-3-acceptance.md` 完成真实模型 development 消融、默认配置冻结、一次正式
    holdout 和阶段 3 正式退出；阶段 0 `frozen` 不会自动关闭这些工作。
 4. 正式执行阶段 4，交付引用问答、会话/运行/证据持久化、SSE、Web 和回答评测。

@@ -2,8 +2,8 @@
 
 > 验收日期：2026-07-23
 >
-> 结论：阶段 3 Step 10 的工程集成验收与文档移交完成；阶段 0 已按
-> `docs/stage-0-acceptance.md` 在内部范围冻结，但阶段 2 Step 9 正式质量验收和阶段 3
+> 结论：阶段 3 Step 10 的工程集成验收与文档移交完成；阶段 0 和阶段 2 已分别按
+> `docs/stage-0-acceptance.md`、`docs/stage-2-acceptance.md` 正式交接，但阶段 3 的真实模型定版和
 > holdout 质量门槛仍未关闭，因此本记录不宣称阶段 3 正式退出。
 
 ## 验收范围
@@ -142,8 +142,7 @@ API 的缺省模式改为 `hybrid_rerank`，Compose `embedding` profile 改为�
 已完成：检索四种模式、固定 profile/Embedding/索引版本、Search Application Port、稳定错误
 协议、OpenAPI、隐私日志边界和阶段 4 移交文档。
 
-未完成：阶段 2 Step 9 正式验收；冻结 holdout 上的
-Recall@5、Reranker 净收益和 P95 预算证明；在全新阶段 3 模型卷上完成真实模型首次下载并验证
+未完成：冻结 holdout 上的 Recall@5、Reranker 净收益和 P95 预算证明；在全新阶段 3 模型卷上完成真实模型首次下载并验证
 Compose profile（既有固定缓存卷的禁网启动已通过，但不能替代全新卷的首次下载证据）。
 
 ## 阶段 0 关闭后的正式完成清单
@@ -155,7 +154,7 @@ Compose profile（既有固定缓存卷的禁网启动已通过，但不能替�
 | 顺序 | 必须完成的工作 | 通过证据 | 阻塞时的处理 |
 | --- | --- | --- | --- |
 | 1. 门禁交接 | 阶段 0 退出记录、manifest `status=frozen`、内部分发范围、敏感度/allowed uses、人工标注、source SHA-256 | `docs/stage-0-acceptance.md` + manifest/hash 校验输出（已完成） | 保持 provisional，不读未批准来源 |
-| 2. 阶段 2 正式验收 | 全部批准 P0 来源的解析、定位、摄入、幂等、修改、原子发布、删除、失败恢复；解析成功率至少 95% | `docs/stage-2-acceptance.md`、解析质量报告和隔离 E2E 输出 | 先修 parser/数据边界；不能仅删除失败样本 |
+| 2. 阶段 2 正式验收（已完成） | 全部批准 P0 来源的解析、定位、摄入、幂等、修改、原子发布、删除、失败恢复；解析成功率至少 95% | `docs/stage-2-acceptance.md`、100% 解析质量报告和隔离 E2E 输出 | 已关闭 |
 | 3. 评测集冻结 | 冻结 dataset、schema、development/holdout、evidence locator 和指标；v0 的 30 例必须明确接受统计限制或发布新版本扩充到 60～100 例 | corpus/dataset/schema/split SHA-256 与决策记录 | 新增用例只能产生新 dataset version，不能修改已查看 holdout |
 | 4. 真实模型定版 | 空缓存/缓存后离线启动、固定 revision、768 维、指令、归一化、精度、Provider 策略；解决当前 `bge-base-zh-v1.5` 与计划候选模型记录不一致 | 本地模型 smoke、离线启动日志、R3-03/R3-05 决策 | 无法复现时不得以 fake 结果开启正式评测 |
 | 5. Development 消融 | Keyword、Dense exact/approx、Hybrid、Hybrid+Reranker 和预注册参数集合；记录每 case 阶段、语言/安全切片、失败分类、P50/P95 分段耗时 | `retrieval-report-v1` development 报告和复现实命令 | IVFFlat 失败需修复并重测，或明确 exact 默认及计划后果 |
@@ -199,8 +198,8 @@ identity、索引版本、错误码和降级语义均由 `packages/domain` 与 `
 
 ## 外部确认与已知限制
 
-- 阶段 0 和阶段 2 Step 9 的正式门禁需由项目负责人确认后，才能按上方清单把
-  `retrieval-v1.yaml` 从 provisional 切换到正式运行并执行一次 holdout。
+- 阶段 0 和阶段 2 Step 9 的正式门禁已关闭；仍需完成真实模型 development 消融和默认配置
+  冻结，才能按上方清单把 `retrieval-v1.yaml` 从 provisional 切换到正式运行并执行一次 holdout。
 - Docker Engine、私有模型缓存和真实批准语料不在本次仓库变更中；没有实际输出的命令不得标记
   为通过。
 - Web 目前仍是数据源管理界面；搜索 API 已交付，问答和引用 UI 留给阶段 4。

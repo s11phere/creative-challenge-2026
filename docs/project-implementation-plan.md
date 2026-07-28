@@ -495,6 +495,8 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 
 ### 阶段 2：知识摄入 MVP（第 2-4 周）
 
+> 当前状态（2026-07-28）：正式完成。Step 0～9 与冻结语料、隔离依赖和 Compose E2E 验收通过，退出记录见 `stage-2-acceptance.md`。
+
 **目标**：稳定导入并增量维护首批格式。
 
 详细决策门禁、分步执行方案和遗留修正项见[《阶段 2 实施计划：知识摄入 MVP》](stage-2-implementation-plan.md)。
@@ -531,6 +533,7 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 | 摄入状态机（Step 6） | `IngestionOrchestrator`（`discover→parse→chunk→embed→publish` 五阶段）+ Dramatiq actor + 幂等重入 + 取消 + 死信处理 + 进度上报；34 个测试 |
 | 增量维护（Step 7） | `is_content_unchanged`（blob_hash 跳过）/ `delete_document`（tombstone + 级联取消任务）/ `update_document_path` / `run_cleanup`（回收孤立的 Blob 文件和版本）；9 个测试 |
 | 摄入 API 与前端（Step 8） | 8 个 REST 端点（创建/列举来源、上传、触发摄入、状态查询、取消、重试）+ Web 数据源页面（来源列表、任务进度条、上传/重试/取消按钮） |
+| 正式质量验收（Step 9） | 冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%；幂等、原子发布、删除恢复、Space 隔离、迁移、API/Worker/Web 和 Compose E2E 通过 |
 
 ### 阶段 3：混合检索与评测基线（第 4-5 周）
 
@@ -538,7 +541,7 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 
 详细启动门禁、技术决策、分步执行和验收矩阵见
 [《阶段 3 实施计划：混合检索与评测基线》](stage-3-implementation-plan.md)。
-阶段 0 关闭后的正式收尾顺序、阶段 2 Step 9 交接要求和一次性 holdout Runbook 见
+阶段 0/2 关闭后的正式收尾顺序和一次性 holdout Runbook 见
 [《阶段 3 验收记录》](stage-3-acceptance.md)。
 
 **任务**：
