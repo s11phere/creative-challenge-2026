@@ -9,10 +9,10 @@ from uuid import UUID
 from application.retrieval import (
     GatewayQueryTextEmbedder,
     GatewayReranker,
-    QueryEmbeddingConfig,
     QueryEmbeddingService,
     RetrievalProfileResolver,
     SearchService,
+    query_embedding_config,
 )
 from domain.retrieval import (
     MAX_SEARCH_QUERY_CHARS,
@@ -222,8 +222,8 @@ async def search_space(
                 retrieval_store=PostgresRetrievalStore(session),
                 query_embedder=QueryEmbeddingService(
                     GatewayQueryTextEmbedder(gateway),
-                    config=QueryEmbeddingConfig(
-                        identity=identity,
+                    config=query_embedding_config(
+                        identity,
                         timeout_seconds=settings.retrieval_timeout_seconds,
                     ),
                 ),

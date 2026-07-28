@@ -25,6 +25,15 @@ from model_gateway import (
     ModelGatewayError,
 )
 
+QWEN3_WEB_SEARCH_QUERY_PREFIX = (
+    "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "
+)
+
+_QUERY_PREFIXES = {
+    "none-v1": "",
+    "qwen3-web-search-v1": QWEN3_WEB_SEARCH_QUERY_PREFIX,
+}
+
 
 class QueryTextEmbedder(Protocol):
     """Structural port for a ModelGateway-backed text embedding adapter."""
@@ -41,7 +50,7 @@ class GatewayQueryTextEmbedder:
     async def embed(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
         try:
             response = await self._gateway.embed(
-                EmbeddingRequest(texts=texts),
+                EmbeddingRequest(texts=texts, dimensions=RETRIEVAL_EMBEDDING_DIMENSIONS),
                 capability=CapabilityAlias.EMBEDDING_ZH,
             )
         except ModelGatewayError as exc:
@@ -76,6 +85,26 @@ class QueryEmbeddingConfig:
             raise ValueError("A query prefix requires a versioned query instruction identity")
         if self.timeout_seconds <= 0 or not math.isfinite(self.timeout_seconds):
             raise ValueError("Query embedding timeout must be finite and positive")
+
+
+def query_embedding_config(
+    identity: EmbeddingIdentity,
+    *,
+    timeout_seconds: float = 15.0,
+) -> QueryEmbeddingConfig:
+    """Build query configuration from a closed, versioned instruction registry."""
+
+    try:
+        query_prefix = _QUERY_PREFIXES[identity.query_instruction_version]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported query instruction version: {identity.query_instruction_version}"
+        ) from exc
+    return QueryEmbeddingConfig(
+        identity=identity,
+        query_prefix=query_prefix,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 class QueryEmbeddingService:

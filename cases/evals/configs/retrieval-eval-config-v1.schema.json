@@ -43,9 +43,15 @@
     "protocol": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["evidence_match", "metrics", "recall_k", "ndcg_k", "no_evidence_policy", "safety_slices"],
+      "required": ["evidence_match", "included_source_formats", "metrics", "recall_k", "ndcg_k", "no_evidence_policy", "safety_slices"],
       "properties": {
         "evidence_match": {"const": "source_key+source_version+locator_overlap-v1"},
+        "included_source_formats": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["markdown", "text", "pdf", "code_python", "code_cpp", "code_c", "code_sql", "notebook"]}
+        },
         "metrics": {
           "type": "array",
           "minItems": 7,

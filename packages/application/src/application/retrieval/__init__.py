@@ -7,6 +7,7 @@ from application.retrieval.dense import (
     QueryEmbeddingConfig,
     QueryEmbeddingService,
     QueryTextEmbedder,
+    query_embedding_config,
 )
 from application.retrieval.evaluation import (
     AggregateRetrievalMetrics,
@@ -49,6 +50,7 @@ __all__ = [
     "QueryEmbeddingConfig",
     "QueryEmbeddingService",
     "QueryTextEmbedder",
+    "query_embedding_config",
     "aggregate_retrieval_metrics",
     "canonical_config_hash",
     "classify_retrieval_failure",

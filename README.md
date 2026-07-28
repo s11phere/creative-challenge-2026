@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成并通过本地验证，但真实模型定版和正式 holdout 质量验收尚未完成。阶段 5 通用 Agent Runtime/Skill 基础已并行通过审查。**
+**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，冻结语料 development 已复核但未达到 Recall/Reranker/P95 门禁，因此默认配置未冻结且正式 holdout 未执行。阶段 5 通用 Agent Runtime/Skill 基础已并行通过审查。**
 
 已交付的核心能力：
 
@@ -13,7 +13,7 @@
 |------|------|
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
-| 阶段 3 ✅ 工程 Step 0-10 | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测、集成验收与移交文档；正式质量门禁仍待真实模型 development 消融、默认配置冻结和正式 holdout |
+| 阶段 3 🟡 工程 Step 0-10 | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；真实模型 development 最佳 Dense Recall@5 为 51.90%，未达到 85%，默认配置未冻结且正式 holdout 未执行 |
 | 阶段 5 🟡 通用基础 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、版本固定、预算/权限/审计、事务式 reload/回滚和 Skill 模板已通过审查 |
 
 当前 Web 展示系统健康状态和数据来源管理；检索能力已通过 HTTP API 提供，Web 搜索界面、会话、引用和问答仍属于后续阶段。
@@ -22,7 +22,7 @@
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
 [Stage 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
 [Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；必须先完成真实模型
-development 消融、默认配置冻结，再按阶段 3 Runbook 执行一次性 holdout。
+development 改进并关闭 Recall/Reranker/P95 门禁、冻结默认配置，再按阶段 3 Runbook 执行一次性 holdout。
 
 ## 快速启动
 

@@ -412,6 +412,32 @@ async def test_text_embeddings_inference_provider_uses_embed_protocol() -> None:
     await client.aclose()
 
 
+async def test_text_embeddings_inference_requests_explicit_dimensions() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.content == b'{"inputs":["synthetic"],"dimensions":768}'
+        return httpx.Response(200, json=[[0.0] * 768])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = create_model_gateway(
+        GatewayConfig(
+            provider=ModelProvider.TEXT_EMBEDDINGS_INFERENCE,
+            embedding_endpoint="http://127.0.0.1:8080",
+            embedding_model="Qwen/Qwen3-Embedding-0.6B",
+        ),
+        client=client,
+    )
+
+    response = await gateway.embed(EmbeddingRequest(texts=("synthetic",), dimensions=768))
+
+    assert len(response.vectors[0]) == 768
+    await client.aclose()
+
+
+def test_embedding_request_rejects_non_positive_dimensions() -> None:
+    with pytest.raises(ValueError, match="dimensions must be positive"):
+        EmbeddingRequest(texts=("synthetic",), dimensions=0)
+
+
 async def test_endpoint_policy_is_evaluated_per_capability() -> None:
     gateway = create_model_gateway(
         GatewayConfig(

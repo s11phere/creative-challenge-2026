@@ -423,6 +423,13 @@ async def test_keyword_baseline_covers_language_code_and_stable_ranking(
         )
         assert [candidate.chunk_id for candidate in english_result.candidates] == [english.chunk_id]
 
+        partial_english_result = await store.keyword_candidates(
+            _keyword_query("transaction retry absentterm", space.id)
+        )
+        assert [candidate.chunk_id for candidate in partial_english_result.candidates] == [
+            english.chunk_id
+        ]
+
         chinese_result = await store.keyword_candidates(
             _keyword_query("\u5e76\u53d1\u63a7\u5236", space.id)
         )

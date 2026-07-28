@@ -52,6 +52,13 @@ def test_embedding_dimensions_are_not_runtime_configurable() -> None:
     assert "embedding_dimensions" not in Settings.model_fields
 
 
+def test_embedding_batch_size_is_bounded_and_configurable() -> None:
+    assert Settings().embedding_batch_size == 32
+    assert Settings(embedding_batch_size=4).embedding_batch_size == 4
+    with pytest.raises(ValueError, match="greater than or equal to 1"):
+        Settings(embedding_batch_size=0)
+
+
 async def test_application_lifespan_rejects_missing_production_secrets(
     monkeypatch: MonkeyPatch,
 ) -> None:

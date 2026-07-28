@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from domain.retrieval import (
     ContextCandidateQuery,
     DenseCandidateQuery,
     KeywordCandidateQuery,
+    KeywordQueryAnalysis,
     LocatorKind,
     RetrievalCandidate,
     SearchFilters,
@@ -71,7 +73,7 @@ class PostgresRetrievalStore:
         self._ivfflat_probes = ivfflat_probes
 
     async def keyword_candidates(self, query: KeywordCandidateQuery) -> CandidateBatch:
-        tsquery = func.websearch_to_tsquery("simple", query.query)
+        tsquery = func.websearch_to_tsquery("simple", _disjunctive_fts_query(query.analysis))
         rank_score = func.ts_rank_cd(ChunkModel.search_vector, tsquery).label("score")
         statement = (
             self._published_candidates(query.space_id, query.filters)
@@ -376,8 +378,18 @@ class PostgresRetrievalStore:
         previous: list[tuple[str, str]] = []
         try:
             for name, value in values.items():
-                previous_value = await self._session.scalar(select(func.current_setting(name)))
-                assert previous_value is not None
+                previous_value = await self._session.scalar(
+                    select(func.current_setting(name, True))
+                )
+                if previous_value is None and name.startswith("ivfflat."):
+                    # pgvector registers IVFFlat GUCs when its library is first loaded in
+                    # each PostgreSQL backend. Planner settings run before the vector SQL.
+                    await self._session.execute(text("SELECT '[0]'::vector"))
+                    previous_value = await self._session.scalar(
+                        select(func.current_setting(name, True))
+                    )
+                if previous_value is None:
+                    raise RuntimeError(f"PostgreSQL planner setting is unavailable: {name}")
                 previous.append((name, previous_value))
                 await self._session.execute(select(func.set_config(name, value, True)))
             yield
@@ -396,6 +408,16 @@ def _locators(raw_meta: object) -> tuple[SearchLocator, ...]:
     if page_locator is not None:
         locators.append(page_locator)
     return tuple(locators)
+
+
+_FTS_TERM = re.compile(r"[A-Za-z0-9]+|[\u3400-\u9fff]+")
+_MAX_FTS_TERMS = 32
+
+
+def _disjunctive_fts_query(analysis: KeywordQueryAnalysis) -> str:
+    """Build a bounded websearch query that recalls any normalized lexical term."""
+    terms = tuple(dict.fromkeys(_FTS_TERM.findall(analysis.normalized_query)))[:_MAX_FTS_TERMS]
+    return " OR ".join(terms) if terms else analysis.normalized_query
 
 
 def _metadata(raw_meta: object) -> tuple[tuple[str, str], ...]:

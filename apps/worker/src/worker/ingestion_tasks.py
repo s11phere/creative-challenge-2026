@@ -20,6 +20,7 @@ from application.ingestion.orchestrator import (
 from domain.blob_store import BlobStore
 from domain.models import IngestionTask, TaskOperation, TaskStatus
 from domain.parsing import ParseMetadata, ParseResult
+from domain.retrieval import RETRIEVAL_EMBEDDING_DIMENSIONS
 from infrastructure.blob_store import LocalFileBlobStore
 from infrastructure.chunkers import StructureChunker
 from infrastructure.config import settings
@@ -125,7 +126,7 @@ class _GatewayTextEmbedder:
 
     async def embed(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
         response = await self._gateway.embed(
-            EmbeddingRequest(texts=texts),
+            EmbeddingRequest(texts=texts, dimensions=RETRIEVAL_EMBEDDING_DIMENSIONS),
             capability=CapabilityAlias.EMBEDDING_ZH,
         )
         return response.vectors
@@ -324,7 +325,10 @@ async def _run_ingestion_async(
 ) -> None:
     """Core async ingestion logic with session management."""
     tid = UUID(task_id)
-    cfg = IngestionConfig(embedding_identity=settings.active_embedding_identity())
+    cfg = IngestionConfig(
+        embedding_batch_size=settings.embedding_batch_size,
+        embedding_identity=settings.active_embedding_identity(),
+    )
 
     # ------------------------------------------------------------------
     # Phase 1: Run the pipeline in its own session

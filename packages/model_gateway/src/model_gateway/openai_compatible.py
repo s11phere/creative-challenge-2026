@@ -235,9 +235,24 @@ class OpenAICompatibleGateway:
             data, retries = await self._request_json(
                 "embeddings" if self._embedding_protocol == "openai-compatible" else "embed",
                 (
-                    {"model": config.model, "input": list(request.texts)}
+                    {
+                        "model": config.model,
+                        "input": list(request.texts),
+                        **(
+                            {"dimensions": request.dimensions}
+                            if request.dimensions is not None
+                            else {}
+                        ),
+                    }
                     if self._embedding_protocol == "openai-compatible"
-                    else {"inputs": list(request.texts)}
+                    else {
+                        "inputs": list(request.texts),
+                        **(
+                            {"dimensions": request.dimensions}
+                            if request.dimensions is not None
+                            else {}
+                        ),
+                    }
                 ),
                 capability=capability,
             )

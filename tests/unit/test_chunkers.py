@@ -14,6 +14,7 @@ from domain.parsing import (
     ParseMetadata,
     ParseSuccess,
     StructNode,
+    StructNodeType,
 )
 from infrastructure.chunkers.structure_chunker import StructureChunker
 from infrastructure.parsers.markdown_parser import MarkdownParser
@@ -67,6 +68,30 @@ class TestStructureChunker:
         doc = _make_doc("   \n\n  \n")
         result = await chunker.chunk(doc)
         assert result.total_ordinals == 0
+
+    async def test_structured_empty_nodes_are_not_emitted(self, chunker) -> None:
+        doc = _make_doc(
+            "Visible content",
+            (
+                StructNode(
+                    node_type=StructNodeType.RAW_TEXT,
+                    text="   ",
+                    start_line=1,
+                    end_line=1,
+                ),
+                StructNode(
+                    node_type=StructNodeType.PARAGRAPH,
+                    text="Visible content",
+                    start_line=2,
+                    end_line=2,
+                ),
+            ),
+        )
+
+        result = await chunker.chunk(doc)
+
+        assert [chunk.text for chunk in result.chunks] == ["Visible content"]
+        assert [chunk.ordinal for chunk in result.chunks] == [0]
 
     async def test_default_config(self, chunker) -> None:
         doc = _make_doc("Hello, world.")

@@ -21,6 +21,37 @@
   digest 和模型 revision 固定；`MODEL_ALLOW_EXTERNAL=false`。
 - 评测配置为 `provisional`，报告只写入被忽略的 `tmp/retrieval-eval-*.json`。
 
+## 2026-07-29 冻结语料 development 复核（未通过）
+
+阶段 0 和阶段 2 正式交接后，使用冻结 `knowledge-qa-v0`、本地 Qwen3 Embedding 与
+BGE Reranker 重新执行了完整 development 消融。评测协议显式固定
+`included_source_formats=[markdown,text,pdf]`，与 MVP/阶段 2 的 P0 Parser 边界一致；依赖
+Code/Notebook P1 来源的 16 个 development case 不进入 P0 指标，无证据安全 case 仍全部执行。
+validation 记录原始 development 127 例、P0 纳入 111 例；配置保持 `provisional`，config hash 为
+`f244a026b1a54769425334f3aee28424c9ca669ae7fb0c09c0ee25bd5e8b1a4c`。
+
+准备阶段修复了三个真实缺陷：新 PostgreSQL backend 在首次向量 SQL 前未注册
+`ivfflat.probes`；自然语言 FTS 把全部词项以 AND 组合导致 Keyword Recall 为 0；结构分块器会把
+空白结构节点生成空 Chunk 并发送给 TEI。修复后隔离评测库有 74 个 P0 published 版本、6085 个
+Chunk，向量完整率为 6085/6085；三个此前 pending 的 Markdown 来源均恢复发布。IVFFlat 不再出现
+100% infrastructure failure，Keyword Recall@5 从 0 提升到 30%。
+
+最终同 bundle development 报告为 `tmp/stage3-development-final-p0.json`：
+
+| 路径 | Recall@5 | MRR | P95 | failure rate | must-exclude |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Keyword | 30.00% | 0.2917 | 86.5 ms | 0% | 0 |
+| Dense exact | **51.90%** | **0.4822** | 455.0 ms | 0% | 0 |
+| Dense IVFFlat | 44.29% | 0.4191 | 454.2 ms | 0% | 0 |
+| Hybrid | 42.86% | 0.4106 | 452.2 ms | 0% | 0 |
+| Hybrid + BGE Reranker（top 10 -> top 5） | 48.57% | 0.4662 | 3523.9 ms | 0% | 0 |
+
+结论：development 正式复核已执行，但阶段 3 质量门禁未通过。最佳 Recall@5 低于 85%；Reranker
+相对最佳单路 Dense 没有净收益，且 P95 超过 1000 ms 预算。深度诊断显示 P0 Dense 候选
+Recall@100 为 90.48%，说明下一轮需要版本化改进候选到最终 top 5 的排序/查询策略，而不是继续
+无边界调整 RRF 权重。`retrieval-v1.yaml` 必须保持 `status: provisional` 和
+`formal_runs_enabled: false`，本轮未执行、读取或选择性重跑 holdout，阶段 3 仍未正式退出。
+
 ## 实际命令与结果
 
 ### 工程与契约检查

@@ -28,12 +28,12 @@ from application.ingestion import IngestionConfig, IngestionOrchestrator, Source
 from application.retrieval import (
     GatewayQueryTextEmbedder,
     GatewayReranker,
-    QueryEmbeddingConfig,
     QueryEmbeddingService,
     RetrievalEvaluationCase,
     RetrievalEvaluationObservation,
     RetrievalEvaluationResult,
     SearchService,
+    query_embedding_config,
     run_retrieval_evaluation,
 )
 from application.retrieval.evaluation import (
@@ -215,6 +215,9 @@ def validate_evaluation_config(
     split_ids: dict[str, set[str]] = {"development": set(), "holdout": set()}
     split_questions: dict[str, set[str]] = {"development": set(), "holdout": set()}
     category_counts: Counter[str] = Counter()
+    included_split_counts: Counter[str] = Counter()
+    excluded_format_split_counts: Counter[str] = Counter()
+    included_source_formats = frozenset(config["protocol"]["included_source_formats"])
     evidenced_case_count = 0
     no_evidence_case_count = 0
     for line_number, raw_line in enumerate(raw_lines, start=1):
@@ -237,6 +240,7 @@ def validate_evaluation_config(
         category_counts[case["category"]] += 1
         evidenced_case_count += int(bool(case["evidence"]))
         no_evidence_case_count += int(not case["evidence"])
+        evidence_formats: set[str] = set()
         for evidence in case["evidence"]:
             source_entry = source_by_key.get(evidence["source_key"])
             if source_entry is None:
@@ -248,6 +252,11 @@ def validate_evaluation_config(
                 raise EvaluationConfigError(
                     f"Case {case_id} evidence version differs from manifest"
                 )
+            evidence_formats.add(str(source["format"]))
+        if evidence_formats.issubset(included_source_formats):
+            included_split_counts[split] += 1
+        else:
+            excluded_format_split_counts[split] += 1
 
     if split_ids["development"] & split_ids["holdout"]:
         raise EvaluationConfigError("Development and holdout case IDs overlap")
@@ -289,6 +298,12 @@ def validate_evaluation_config(
             "cases_sha256": dataset_config["cases_sha256"],
             "case_count": len(raw_lines),
             "split_counts": {split: len(ids) for split, ids in sorted(split_ids.items())},
+            "included_split_counts": {
+                split: included_split_counts[split] for split in sorted(split_ids)
+            },
+            "excluded_format_split_counts": {
+                split: excluded_format_split_counts[split] for split in sorted(split_ids)
+            },
             "category_counts": dict(sorted(category_counts.items())),
             "evidenced_case_count": evidenced_case_count,
             "no_evidence_case_count": no_evidence_case_count,
@@ -319,10 +334,19 @@ def _manifest_sources(config: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def _load_cases(config: Mapping[str, Any], split: str) -> tuple[RetrievalEvaluationCase, ...]:
     path = _resolve_repository_path(config["dataset"]["cases_path"])
+    included_source_formats = frozenset(config["protocol"]["included_source_formats"])
+    source_formats = {
+        str(item["source_key"]): str(item["format"]) for item in _manifest_sources(config)
+    }
     cases: list[RetrievalEvaluationCase] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         raw = json.loads(line)
         if raw["split"] != split:
+            continue
+        if any(
+            source_formats[item["source_key"]] not in included_source_formats
+            for item in raw["evidence"]
+        ):
             continue
         evidence = tuple(
             EvidenceUnit(
@@ -397,7 +421,10 @@ async def _prepare_corpus(
     gateway: ModelGateway,
     identity: EmbeddingIdentity,
     blob_root: Path,
+    source_keys: frozenset[str] | None = None,
 ) -> dict[str, Any]:
+    if source_keys is not None:
+        sources = tuple(item for item in sources if str(item["source_key"]) in source_keys)
     failures = _unsupported_source_failures(sources)
     succeeded = 0
     skipped = 0
@@ -475,12 +502,26 @@ async def _prepare_corpus(
             try:
                 await orchestrator.run_pipeline(
                     task,
-                    config=IngestionConfig(embedding_identity=identity),
+                    config=IngestionConfig(
+                        embedding_batch_size=settings.embedding_batch_size,
+                        embedding_identity=identity,
+                    ),
                 )
                 await session.commit()
                 succeeded += 1
             except Exception as exc:
+                diagnostic = type(exc).__name__
+                if isinstance(exc, RetrievalError):
+                    diagnostic = f"{diagnostic}:{exc.code.value}"
+                print(
+                    f"evaluation preparation failure source={source_key} diagnostic={diagnostic}",
+                    file=sys.stderr,
+                )
                 try:
+                    # A database/provider exception can leave the session in
+                    # a failed transaction. Roll back before recording the
+                    # task failure so one source cannot poison later sources.
+                    await session.rollback()
                     await orchestrator.handle_pipeline_error(
                         task, ValueError("evaluation preparation failed")
                     )
@@ -553,8 +594,8 @@ async def _execute_case(
                 ),
                 query_embedder=QueryEmbeddingService(
                     GatewayQueryTextEmbedder(gateway),
-                    config=QueryEmbeddingConfig(
-                        identity=identity,
+                    config=query_embedding_config(
+                        identity,
                         timeout_seconds=settings.retrieval_timeout_seconds,
                     ),
                 ),
@@ -835,6 +876,7 @@ async def _run_experiment(
     *,
     prepare: bool,
     blob_root: Path,
+    prepare_source_keys: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     identity = settings.active_embedding_identity()
     database = Database(settings.database_url)
@@ -853,6 +895,7 @@ async def _run_experiment(
                 gateway=gateway,
                 identity=identity,
                 blob_root=blob_root,
+                source_keys=prepare_source_keys,
             )
         cases = list(_load_cases(config, split))
         for case in cases[: int(config["runtime"]["warmup_queries"])]:
@@ -902,6 +945,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--prepare-corpus",
         action="store_true",
         help="Ingest manifest sources into the isolated evaluation database",
+    )
+    parser.add_argument(
+        "--prepare-source",
+        action="append",
+        help="Limit --prepare-corpus to one manifest source_key; repeatable",
     )
     parser.add_argument(
         "--experiment", action="append", help="Run only the named experiment; repeatable"
@@ -958,6 +1006,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                         experiment,
                         prepare=args.prepare_corpus,
                         blob_root=(REPOSITORY_ROOT / args.blob_root).resolve(),
+                        prepare_source_keys=(
+                            frozenset(args.prepare_source) if args.prepare_source else None
+                        ),
                     )
                 )
             )

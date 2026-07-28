@@ -169,6 +169,18 @@ class EmbeddingService:
         chunk_texts = [c.text for c in chunk_outputs]
         vectors: list[tuple[float, ...]] = []
 
+        # Model gateway contracts reject every empty request item. Empty
+        # chunks indicate a parser/chunker contract violation, regardless of
+        # their ratio within the document.
+        if not chunk_texts:
+            raise ValueError("Embedding input must contain at least one non-empty chunk")
+        empty_count = sum(1 for text in chunk_texts if not text.strip())
+        if empty_count:
+            raise ValueError(
+                "Embedding input contains empty-text chunks "
+                f"({empty_count}/{len(chunk_texts)} chunks empty)"
+            )
+
         total_tokens = 0
         total_latency = 0.0
 

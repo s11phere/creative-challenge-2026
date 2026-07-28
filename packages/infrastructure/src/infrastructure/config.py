@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     ingestion_task_min_backoff_ms: int = Field(default=5_000, ge=1_000)
     ingestion_task_heartbeat_interval_s: int = Field(default=30, ge=5)
     ingestion_task_lease_seconds: int = Field(default=120, ge=30)
+    embedding_batch_size: int = Field(default=32, ge=1)
 
     # --- Model Gateway ---
     model_provider: Literal[

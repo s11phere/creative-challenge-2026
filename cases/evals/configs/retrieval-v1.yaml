@@ -20,6 +20,10 @@ dataset:
       content_sha256: ec56aa778587f0b66b78a2aa2d55dad04e187930f1b75423bb42b5d31a077b28
 protocol:
   evidence_match: source_key+source_version+locator_overlap-v1
+  included_source_formats:
+    - markdown
+    - text
+    - pdf
   metrics:
     - evidence_recall
     - mrr
@@ -78,7 +82,6 @@ experiments:
     profile:
       <<: *baseline_profile
       reranker_enabled: true
-      rerank_k: 5
 gates:
   formal_manifest_status: frozen
   stage_2_step_9_acceptance_path: docs/stage-2-acceptance.md

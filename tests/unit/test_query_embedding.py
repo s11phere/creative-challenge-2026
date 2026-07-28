@@ -8,9 +8,11 @@ from dataclasses import dataclass, field
 
 import pytest
 from application.retrieval.dense import (
+    QWEN3_WEB_SEARCH_QUERY_PREFIX,
     QueryEmbeddingBatchRunner,
     QueryEmbeddingConfig,
     QueryEmbeddingService,
+    query_embedding_config,
 )
 from domain.embedding import EmbeddingIdentity
 from domain.retrieval import QueryEmbedding, RetrievalError, RetrievalErrorCode
@@ -63,6 +65,27 @@ async def test_query_embedding_applies_instruction_identity_and_l2_normalization
 def test_query_prefix_requires_a_versioned_instruction_identity() -> None:
     with pytest.raises(ValueError, match="versioned query instruction"):
         QueryEmbeddingConfig(query_prefix="query: ")
+
+
+def test_query_embedding_config_resolves_versioned_instruction() -> None:
+    identity = EmbeddingIdentity(query_instruction_version="qwen3-web-search-v1")
+
+    config = query_embedding_config(identity, timeout_seconds=2.5)
+
+    assert config.identity is identity
+    assert config.query_prefix == QWEN3_WEB_SEARCH_QUERY_PREFIX
+    assert config.timeout_seconds == 2.5
+
+
+def test_query_embedding_config_resolves_no_instruction_to_empty_prefix() -> None:
+    assert query_embedding_config(EmbeddingIdentity()).query_prefix == ""
+
+
+def test_query_embedding_config_rejects_unknown_instruction_version() -> None:
+    identity = EmbeddingIdentity(query_instruction_version="unknown-v1")
+
+    with pytest.raises(ValueError, match="Unsupported query instruction version: unknown-v1"):
+        query_embedding_config(identity)
 
 
 @pytest.mark.parametrize(

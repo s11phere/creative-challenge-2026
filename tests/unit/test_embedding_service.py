@@ -277,14 +277,14 @@ class TestEmbeddingService:
         )
 
         cfg = EmbeddingConfig(max_empty_text_ratio=0.1)
-        with pytest.raises(ValueError, match="Empty-text chunk ratio"):
+        with pytest.raises(ValueError, match="contains empty-text chunks"):
             await service.embed_and_publish(doc, version, outputs, config=cfg)
 
         # Validation happens before candidate artifacts are written.
         saved = await chunk_repo.get_by_version(version.id)
         assert saved == []
 
-    async def test_empty_text_allowed_with_high_threshold(self, service) -> None:
+    async def test_empty_text_is_rejected_even_with_high_threshold(self, service) -> None:
         doc = _make_doc()
         version = _make_version(document_id=doc.id)
         outputs = (
@@ -292,21 +292,20 @@ class TestEmbeddingService:
             ChunkOutput(ordinal=1, text="valid", chunk_hash="v1"),
         )
 
-        cfg = EmbeddingConfig(max_empty_text_ratio=0.6)  # 50% empty is OK
-        result = await service.embed_and_publish(doc, version, outputs, config=cfg)
-        assert result.chunk_count == 2
+        cfg = EmbeddingConfig(max_empty_text_ratio=0.6)
+        with pytest.raises(ValueError, match="contains empty-text chunks"):
+            await service.embed_and_publish(doc, version, outputs, config=cfg)
 
-    async def test_zero_chunks(self, service, version_repo) -> None:
+    async def test_zero_chunks_are_rejected(self, service, version_repo) -> None:
         doc = _make_doc()
         version = _make_version(document_id=doc.id)
 
-        result = await service.embed_and_publish(doc, version, ())
-        assert result.chunk_count == 0
+        with pytest.raises(ValueError, match="at least one non-empty chunk"):
+            await service.embed_and_publish(doc, version, ())
 
-        # Version should still be published
+        # The candidate version is not published on validation failure.
         updated = await version_repo.get(version.id)
-        assert updated is not None
-        assert updated.status == DocumentStatus.PUBLISHED
+        assert updated is None
 
     async def test_idempotent_rerun(self, service, chunk_repo) -> None:
         """Re-running with same inputs overwrites previous chunks."""

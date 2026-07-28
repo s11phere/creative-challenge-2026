@@ -11,6 +11,7 @@ import pytest
 from application.ingestion.orchestrator import (
     CancelledError,
     IngestionOrchestrator,
+    _normalize_parsed_document,
 )
 from domain.blob_store import BlobStore
 from domain.chunking import (
@@ -32,7 +33,15 @@ from domain.models import (
     TaskStage,
     TaskStatus,
 )
-from domain.parsing import ParsedDocument, ParseError, ParseMetadata, Parser, ParseSuccess
+from domain.parsing import (
+    ParsedDocument,
+    ParseError,
+    ParseMetadata,
+    Parser,
+    ParseSuccess,
+    StructNode,
+    StructNodeType,
+)
 from domain.repositories import (
     ChunkRepository,
     DocumentVersionRepository,
@@ -345,6 +354,26 @@ class TestStageNeeded:
     def test_discover_never_needed(self) -> None:
         task = _make_task(source_id=uuid4(), stage=TaskStage.DISCOVER)
         assert not IngestionOrchestrator._stage_needed(task, TaskStage.DISCOVER)
+
+
+def test_normalize_parsed_document_removes_nul_recursively() -> None:
+    document = ParsedDocument(
+        text="head\x00tail",
+        structure=(
+            StructNode(
+                node_type=StructNodeType.DOCUMENT,
+                text="container\x00",
+                children=(StructNode(text="leaf\x00text"),),
+            ),
+        ),
+        total_lines=1,
+    )
+
+    normalized = _normalize_parsed_document(document)
+
+    assert normalized.text == "headtail"
+    assert normalized.structure[0].text == "container"
+    assert normalized.structure[0].children[0].text == "leaftext"
 
 
 class TestIngestionPipeline:

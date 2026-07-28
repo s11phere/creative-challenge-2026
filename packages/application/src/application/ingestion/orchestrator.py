@@ -26,7 +26,14 @@ from domain.models import (
     TaskStage,
     TaskStatus,
 )
-from domain.parsing import ParseMetadata, Parser, ParseSuccess, compute_blob_hash
+from domain.parsing import (
+    ParsedDocument,
+    ParseMetadata,
+    Parser,
+    ParseSuccess,
+    StructNode,
+    compute_blob_hash,
+)
 from domain.repositories import (
     ChunkRepository,
     DocumentRepository,
@@ -64,6 +71,33 @@ _STAGE_INDEX = {s: i for i, s in enumerate(_STAGE_ORDER)}
 
 class CancelledError(Exception):
     """Raised when an ingestion task has been requested to cancel."""
+
+
+def _strip_nul(node: StructNode) -> StructNode:
+    """Remove PostgreSQL-incompatible NULs while preserving node locations."""
+
+    return StructNode(
+        node_type=node.node_type,
+        text=node.text.replace("\x00", ""),
+        level=node.level,
+        start_line=node.start_line,
+        end_line=node.end_line,
+        start_page=node.start_page,
+        end_page=node.end_page,
+        language=node.language,
+        children=tuple(_strip_nul(child) for child in node.children),
+    )
+
+
+def _normalize_parsed_document(document: ParsedDocument) -> ParsedDocument:
+    """Normalize parser output before hashing, chunking, and persistence."""
+
+    return ParsedDocument(
+        metadata=document.metadata,
+        text=document.text.replace("\x00", ""),
+        structure=tuple(_strip_nul(node) for node in document.structure),
+        total_lines=document.total_lines,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +266,7 @@ class IngestionOrchestrator:
         parse_result = await self._parser.parse(raw=raw_bytes, metadata=parse_meta)
         if not isinstance(parse_result, ParseSuccess):
             raise ValueError(f"Parse failed: {parse_result.message} (code={parse_result.code})")
-        parsed_doc = parse_result.document
+        parsed_doc = _normalize_parsed_document(parse_result.document)
         if self._stage_needed(task, TaskStage.PARSE):
             task = await self._update_task_stage(task, TaskStage.PARSE, 0.15)
             await self._task_repo.checkpoint()

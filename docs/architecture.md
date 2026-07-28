@@ -683,6 +683,11 @@ docker compose -f deploy/compose.yaml down --volumes               # 永久删�
 - **Step 9**：版本化离线评测 CLI、报告 schema、失败归因和 provisional 门禁；正式 holdout 被明确阻断。
 - **Step 10**：隔离依赖、检索模式、安全边界和文档移交的验收记录见 `docs/stage-3-acceptance.md`。
 
+2026-07-29 冻结语料 development 已在 P0 Markdown/TXT/PDF 范围复核：74 个 published 版本和
+6085 个向量完整，Keyword/IVFFlat 基础设施缺陷已关闭，但最佳 Dense Recall@5 仅 51.90%，
+Reranker 无净收益且超出 P95 预算。因此阶段 3 保持工程完成、正式质量未通过，配置未冻结且
+holdout 未执行。
+
 阶段 5 通用基础审查见 `docs/stage-5-implementation-review.md`。该并行实现不改变主推进顺序：
 仍应先完成阶段 4 引用问答，再接入阶段 5 业务 Skill。
 

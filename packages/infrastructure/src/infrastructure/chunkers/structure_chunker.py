@@ -76,6 +76,8 @@ def _extract_segments(
                 segments.extend(_extract_segments(node.children, heading_path))
 
         elif node.node_type in _CONTENT_NODE_TYPES:
+            if not node.text.strip():
+                continue
             path_str = " > ".join(h[0] for h in heading_path)
             segments.append(
                 _Segment(

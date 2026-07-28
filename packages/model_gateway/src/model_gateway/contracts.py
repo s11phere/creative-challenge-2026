@@ -66,10 +66,13 @@ class ChatRequest:
 @dataclass(frozen=True)
 class EmbeddingRequest:
     texts: tuple[str, ...]
+    dimensions: int | None = None
 
     def __post_init__(self) -> None:
         if not self.texts or any(not text for text in self.texts):
             raise ValueError("Embedding request must contain non-empty texts")
+        if self.dimensions is not None and self.dimensions < 1:
+            raise ValueError("Embedding dimensions must be positive")
 
 
 @dataclass(frozen=True)

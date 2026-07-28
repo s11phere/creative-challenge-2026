@@ -30,6 +30,7 @@ def _write_validation_fixture(root: Path, monkeypatch: MonkeyPatch) -> tuple[dic
                     {
                         "source_key": "test_space/source",
                         "path": "evals/source.txt",
+                        "format": "text",
                         "allowed_uses": ["local_evaluation", "repository_fixture"],
                         "sensitivity": "public_demo",
                         "content_sha256": source_hash,
@@ -99,6 +100,7 @@ def _write_validation_fixture(root: Path, monkeypatch: MonkeyPatch) -> tuple[dic
         },
         "protocol": {
             "evidence_match": "source_key+source_version+locator_overlap-v1",
+            "included_source_formats": ["text"],
             "metrics": [
                 "evidence_recall",
                 "mrr",
@@ -177,6 +179,11 @@ def test_fixture_config_validates_as_provisional(tmp_path: Path, monkeypatch: Mo
     assert summary["corpus"]["source_count"] == 1
     assert summary["corpus"]["repository_fixture_count"] == 1
     assert summary["dataset"]["split_counts"] == {"development": 1, "holdout": 1}
+    assert summary["dataset"]["included_split_counts"] == {"development": 1, "holdout": 1}
+    assert summary["dataset"]["excluded_format_split_counts"] == {
+        "development": 0,
+        "holdout": 0,
+    }
     assert summary["dataset"]["evidenced_case_count"] == 1
     assert summary["dataset"]["no_evidence_case_count"] == 1
 

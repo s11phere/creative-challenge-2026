@@ -110,10 +110,12 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 
 - 已有阶段 2 的 6 张核心业务表、摄入流水线和 Worker 消费者；当前支持上传文件，尚无目录监听。
 - 阶段 3 的 Keyword/Dense/Hybrid/Hybrid+Reranker 检索 API 已可用；Web 搜索界面、问答、会话和引用业务能力尚未实现。
-- 阶段 3 评测配置仍为 provisional：阶段 2 Step 9 正式验收未关闭时，holdout 会被拒绝，工程
-  fixture 结果不能作为质量基线；阶段 0 语料已冻结为 `internal_team_only`，仍须遵守 manifest
-  的允许用途和外部 Provider 策略。
-- 2026-07-25 development 消融选出的 provisional 链路需要 Qwen3 Embedding 与 BGE Reranker；
+- 阶段 3 评测配置仍为 provisional：阶段 0 和阶段 2 已正式关闭，但 2026-07-29 冻结语料
+  development 的最佳 Dense Recall@5 只有 51.90%，BGE Reranker 没有净收益且 P95 为
+  3523.9 ms，因此 holdout 仍被配置门禁拒绝。不要手工打开 `formal_runs_enabled`。
+- P0 检索评测只纳入 Markdown/TXT/PDF 证据来源；Code/Notebook 属于 P1。validation 会同时记录
+  原始与纳入 case 数，无证据安全 case 不得因格式过滤而跳过。
+- Qwen3 Embedding 与 BGE Reranker 同时运行时，
   两者同时常驻约需 11 GiB 以上内存。内存不足时先停止 Qwen3 再运行离线 Reranker，或反向串行；
   不要降低模型 revision、混用旧向量或用 fake 结果替代。扩大 Qwen3 batch/并发在当前 CPU 上不会
 加速，Compose 已保留实测较快的限制。
