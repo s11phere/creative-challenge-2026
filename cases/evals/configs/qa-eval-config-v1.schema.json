@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "qa-eval-config-v1.schema.json",
+  "title": "Grounded QA evaluation configuration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "corpus", "dataset", "profile", "prompt", "protocol", "runtime", "gates"],
+  "properties": {
+    "schema_version": {"const": "qa-eval-config-v1"},
+    "status": {"const": "provisional"},
+    "corpus": {"$ref": "#/$defs/corpus"},
+    "dataset": {"$ref": "#/$defs/dataset"},
+    "profile": {"$ref": "#/$defs/pinned_file"},
+    "prompt": {
+      "allOf": [
+        {"$ref": "#/$defs/pinned_file"},
+        {"type": "object", "properties": {"template_id": {"const": "grounded-qa-v1-provisional"}}}
+      ]
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome_labels", "metrics", "denominators", "safety_slices", "human_review"],
+      "properties": {
+        "outcome_labels": {"const": ["answer", "refuse", "conflict", "failed"]},
+        "metrics": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 8,
+          "items": {
+            "enum": [
+              "claim_support_rate",
+              "citation_validity_rate",
+              "forbidden_claim_rate",
+              "refusal_precision",
+              "refusal_recall",
+              "conflict_precision",
+              "safety_violation_rate",
+              "latency_p50_p95",
+              "infrastructure_failure_rate"
+            ]
+          }
+        },
+        "denominators": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["answer", "refuse", "conflict", "failed"],
+          "properties": {
+            "answer": {"const": "expected_answer_cases_only"},
+            "refuse": {"const": "expected_refuse_cases_only"},
+            "conflict": {"const": "expected_conflict_cases_only"},
+            "failed": {"const": "all_cases_reported_separately_never_counted_as_refusal"}
+          }
+        },
+        "safety_slices": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 5,
+          "items": {"enum": ["no_answer", "cross_space", "withdrawn_version", "source_conflict", "adversarial_document", "bilingual"]}
+        },
+        "human_review": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["required_for", "reviewer_count", "tie_breaker"],
+          "properties": {
+            "required_for": {"const": ["claim_support_disagreement", "citation_locator_disagreement", "conflict_disagreement"]},
+            "reviewer_count": {"const": 2},
+            "tie_breaker": {"const": "named_third_reviewer_before_report_finalization"}
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "concurrency", "sampling", "model_mode"],
+      "properties": {
+        "target": {"const": "deterministic-fake-only"},
+        "concurrency": {"const": 1},
+        "sampling": {"const": "one_complete_pass"},
+        "model_mode": {"const": "fake"}
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["formal_manifest_status", "stage_2_step_9_acceptance_path", "stage_3_acceptance_path", "formal_runs_enabled"],
+      "properties": {
+        "formal_manifest_status": {"const": "frozen"},
+        "stage_2_step_9_acceptance_path": {"const": "docs/stage-2-acceptance.md"},
+        "stage_3_acceptance_path": {"const": "docs/stage-3-acceptance.md"},
+        "formal_runs_enabled": {"const": false}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "pinned_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^cases/evals/"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "template_id": {"type": "string"}
+      }
+    },
+    "corpus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "manifest_path", "manifest_sha256"],
+      "properties": {
+        "version": {"const": "v0"},
+        "manifest_path": {"const": "cases/evals/corpus/v0/manifest.yaml"},
+        "manifest_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "cases_path", "cases_sha256", "schema_path", "schema_sha256", "splits"],
+      "properties": {
+        "version": {"const": "v0"},
+        "cases_path": {"const": "cases/evals/datasets/knowledge-qa-v0/cases.jsonl"},
+        "cases_sha256": {"$ref": "#/$defs/sha256"},
+        "schema_path": {"const": "cases/evals/datasets/knowledge-qa-v0/schema.json"},
+        "schema_sha256": {"$ref": "#/$defs/sha256"},
+        "splits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["development", "holdout"],
+          "properties": {
+            "development": {"$ref": "#/$defs/split"},
+            "holdout": {"$ref": "#/$defs/split"}
+          }
+        }
+      }
+    },
+    "split": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "content_sha256"],
+      "properties": {
+        "count": {"type": "integer", "minimum": 1},
+        "content_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

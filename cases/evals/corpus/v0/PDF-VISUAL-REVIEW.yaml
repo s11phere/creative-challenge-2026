@@ -1,0 +1,170 @@
+# Human-readable formula transcriptions for PDF evidence whose embedded font
+# mapping is not semantically trustworthy. The quote remains the exact output
+# of the fixed PyMuPDF protocol; this file records the visual correction.
+protocol: python3.12-pymupdf-1.28.0-Page.get_text-text-nfkc-whitespace-v1
+reviewed_at: 2026-07-28
+entries:
+  - case_id: qa-197
+    evidence_index: 1
+    source_key: math/linear-algebra-2
+    page: 8
+    status: verified
+    transcription: |
+      K = { p/q | p, q ∈ Z, q ≠ 0 }.
+      Q(√2) = { a + b√2 | a, b ∈ Q }.
+    notes: The fraction braces in the extracted quote are control-character glyphs; the page renders them as ordinary set braces.
+
+  - case_id: qa-267
+    evidence_index: 2
+    source_key: physics/electrodynamics
+    page: 6
+    status: verified
+    transcription: |
+      ρ_b = −∇·P⃗;  Σ_b = P⃗·n̂;  j⃗_m = ∇×M⃗;  K⃗_m = M⃗×n̂.
+      n̂·(D⃗₂−D⃗₁) = Σ_f;  n̂·(B⃗₂−B⃗₁) = 0;
+      n̂×(H⃗₂−H⃗₁) = K⃗_f;  n̂×(E⃗₂−E⃗₁) = 0.
+      ∂ρ/∂t + ∇·j⃗ = 0;  Q = ∫ρ d³r;  dQ/dt = −∮j⃗·dσ⃗.
+    notes: Vector arrows and the surface-integral symbol were confirmed from the rendered page.
+
+  - case_id: qa-253
+    evidence_index: 1
+    source_key: physics/electrodynamics
+    page: 9
+    status: verified
+    transcription: |
+      f⃗ = ε₀(∇×E⃗)×E⃗ − μ₀⁻¹[½∇(B⃗²) − (B⃗·∇)B⃗]
+          − ε₀[½∇(E⃗²) − (E⃗·∇)E⃗] − ε₀ ∂(E⃗×B⃗)/∂t.
+      Tᵢⱼ = ε₀(EᵢEⱼ − ½δᵢⱼE²) + μ₀⁻¹(BᵢBⱼ − ½δᵢⱼB²).
+    notes: Parentheses and square brackets are visually ordinary delimiters; the extracted controls are font glyphs.
+
+  - case_id: qa-266
+    evidence_index: 1
+    source_key: physics/electrodynamics
+    page: 9
+    status: verified
+    transcription: |
+      g⃗ = c⁻²S⃗;  f⃗ + ∂g⃗/∂t = ∇·T⃗.
+      ∇·E⃗ = ρ/ε;  ∇×E⃗ = 0;  E⃗ = −∇ϕ ⇒ ∇²ϕ = −ρ/ε.
+      ϕ = (4πε₀)⁻¹∭ ρ(r⃗′) d³r′ / |r⃗−r⃗′|.
+    notes: The stress-tensor and multipole expressions were checked against the page image.
+
+  - case_id: qa-264
+    evidence_index: 1
+    source_key: physics/electrodynamics
+    page: 16
+    status: verified
+    transcription: |
+      E_s + E′_s = E″_s.
+      B_s sin i + B′_s sin i = B″_s sin i′.
+      μ⁻¹(B_s cos i − B′_s cos i) = μ′⁻¹B″_s cos i′.
+      E′_s = (n cos i − n′ cos i′)/(n cos i + n′ cos i′) E_s.
+      E″_s = 2n cos i/(n cos i + n′ cos i′) E_s.
+    notes: The arrows in the figure labels are not part of the displayed boundary equations.
+
+  - case_id: qa-261
+    evidence_index: 1
+    source_key: physics/electrodynamics
+    page: 44
+    status: verified
+    transcription: |
+      F^{μν} = [[0, E_x/c, E_y/c, E_z/c],
+                [−E_x/c, 0, B_z, −B_y],
+                [−E_y/c, −B_z, 0, B_x],
+                [−E_z/c, B_y, −B_x, 0]].
+      G^{μν} = [[0, B_x, B_y, B_z],
+                [−B_x, 0, −E_z/c, E_y/c],
+                [−B_y, E_z/c, 0, −E_x/c],
+                [−B_z, −E_y/c, E_x/c, 0]].
+      F^{μν}F_{μν} = 2(B² − E²/c²),
+      G^{μν}G_{μν} = 2(−B² + E²/c²),
+      F^{μν}G_{μν} = −(4/c) E⃗·B⃗.
+    notes: Matrix parentheses and all signs were transcribed from the rendered page.
+
+  - case_id: qa-263
+    evidence_index: 2
+    source_key: physics/quantum
+    page: 23
+    status: verified
+    transcription: |
+      dO/dt = ∂O/∂t + {O,H},
+      {O,H} = Σᵢ(∂O/∂rᵢ · ∂H/∂pᵢ − ∂O/∂pᵢ · ∂H/∂rᵢ),
+      {A,B} → −(i/ℏ)[Â,B̂].
+      Ĥ = p̂²/(2m) + V(x̂),  d⟨x̂⟩/dt = (i/ℏ)⟨[Ĥ,x̂]⟩ = ⟨p̂⟩/m.
+      d⟨p̂⟩/dt = −⟨(∂V(x)/∂x)x̂⟩.
+    notes: Poisson and commutator brackets, hats, and the derivative parentheses were visually confirmed.
+
+  - case_id: qa-271
+    evidence_index: 1
+    source_key: physics/quantum
+    page: 23
+    status: verified
+    transcription: |
+      {A,B} → −(i/ℏ)[Â,B̂];  Ĥ = p̂²/(2m) + V(x̂).
+      d⟨x̂⟩/dt = ⟨p̂⟩/m;  d⟨p̂⟩/dt = −⟨(∂V(x)/∂x)x̂⟩.
+      iℏ ∂ψ(r⃗,t)/∂t = Ĥψ(r⃗,t).
+    notes: This is the page-23 evidence for the operator-time-evolution claim; page-9 evidence is unaffected.
+
+  - case_id: qa-265
+    evidence_index: 2
+    source_key: physics/quantum
+    page: 62
+    status: verified
+    transcription: |
+      (∂/∂x, ∂/∂y, ∂/∂z) = (∂/∂r, ∂/∂θ, ∂/∂ϕ) ∂(r,θ,ϕ)/∂(x,y,z).
+      e⃗_r = ∂r⃗/∂r;  e⃗_θ = r⁻¹∂r⃗/∂θ;  e⃗_ϕ = (r sin θ)⁻¹∂r⃗/∂ϕ;
+      e⃗_r×e⃗_θ = e⃗_ϕ.
+      p̂⃗ = −iℏ∇ = −iℏ(e⃗_r∂_r + e⃗_θ r⁻¹∂_θ + e⃗_ϕ(r sin θ)⁻¹∂_ϕ).
+      L̂_z = −iℏ∂_ϕ;  L̂_± = ±ℏe^{±iϕ}(∂_θ + i cot θ ∂_ϕ).
+      L̂² = −ℏ²[ (sin θ)⁻¹∂_θ(sin θ ∂_θ) + (sin²θ)⁻¹∂²_ϕ ].
+    notes: Coordinate Jacobian brackets, operator hats, vector arrows, and angular derivatives were checked visually.
+
+  - case_id: qa-255
+    evidence_index: 1
+    source_key: physics/statmech
+    page: 17
+    status: verified
+    transcription: |
+      Ω({n_k}) = N! / ∏_k n_k!;  n_k ∝ e^{−α−βε_k}.
+      f(r⃗,p⃗) ∝ exp[(p²/(2m) + ϕ(r⃗))/(k_B T)] (as printed in the source).
+      n(r⃗) ∝ e^{−ϕ(r⃗)/(k_B T)};
+      Σ_ε n_ε = N,  Σ_ε n_ε ε = E;
+      n_ε = ω_ε e^{−α−βε}.
+    notes: The positive sign in the f exponent is present in the source image and was not silently changed.
+
+  - case_id: qa-267
+    evidence_index: 4
+    source_key: physics/statmech
+    page: 30
+    status: verified
+    transcription: |
+      ρ_eq(q⃗,p⃗) = ρ(H(q⃗,p⃗));
+      dp = (d q⃗ d p⃗)/(h^{dN}) ρ(q⃗,p⃗);
+      ∫(d q⃗ d p⃗)/(h^{dN}) ρ(q⃗,p⃗) = 1.
+      (1/T)∫₀ᵀ dt ρ(q⃗,p⃗,t) = ρ̄(q⃗,p⃗);
+      ρ(q⃗,p⃗) ∝ δ(H(q⃗,p⃗)−E);
+      Ω = h^{−dN}∫d q⃗ d p⃗ δ(H(q⃗,p⃗)−E).
+    notes: Bracket-like control glyphs in the extraction are ordinary grouping delimiters in the rendered equations.
+
+  - case_id: qa-266
+    evidence_index: 2
+    source_key: physics/mathphys2
+    page: 24
+    status: verified
+    transcription: |
+      ∭_V [u(r⃗)∇²v(r⃗) − v(r⃗)∇²u(r⃗)] d r⃗ = ∬_Σ [u∇v − v∇u]·dΣ.
+      ∇²G(r⃗;r⃗′) = −δ(r⃗−r⃗′)/ε₀;
+      [α∂G/∂n + βG]_Σ = 0;
+      G₀(r⃗;r⃗′) = 1/(4πε₀|r⃗−r⃗′|).
+      ∇²G(r⃗;r⃗′) + k²G(r⃗;r⃗′) = −δ(r⃗−r⃗′)/ε₀.
+    notes: Green-identity brackets, delta symbols, and vector-prime notation were transcribed from the page image.
+
+  - case_id: qa-268
+    evidence_index: 2
+    source_key: physics/mathphys2
+    page: 24
+    status: verified
+    transcription: |
+      G(x,y;x′,y′) = −(1/(2πε₀)) ln(√((x−x′)² + (y−y′)²) + g(x,y;x′,y′)).
+      G(r⃗;r⃗′) = G(r⃗′;r⃗);
+      G(r⃗;r⃗′) = (1/(4πε₀)) e^{ik|r⃗−r⃗′|}/|r⃗−r⃗′|.
+    notes: The square-root, delta, and vector delimiters are visually legible despite control-character extraction.

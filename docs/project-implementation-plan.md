@@ -458,6 +458,9 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 
 **目标**：把抽象目标变为可验证场景。
 
+当前状态：Stage 0 交付物已按 `docs/stage-0-acceptance.md` 在内部组间范围冻结；后续阶段仍需
+分别完成各自的工程质量验收，不因 Stage 0 冻结自动通过。
+
 **任务**：
 
 - 选取 30-50 份脱敏真实材料，包含 Markdown、PDF、代码和中英文内容。
@@ -521,7 +524,7 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 | 迁移 | `a1b2c3d4e5f6` 创建 6 张表；`b2c3d4e5f6a7` 补齐身份、版本、任务字段与约束，可降级/升级 |
 | 配置 | ADR-005 固定 pgvector 维度为 768；维度变化必须通过 ADR、迁移和全量重建 |
 | 测试 | 50 个相关领域/ORM/配置/ModelGateway 单元测试 + 21 个数据模型/本地依赖集成测试 |
-| 解析器（Step 2） | `ParsedDocument` schema（`StructNode`含标题层级/代码块/列表/行号/页码 + `Parser` Protocol）、MarkdownParser（`markdown-it-py`）、TxtParser（编码回退）、PdfParser（`pypdf`，扫描件返回 `scanned_pdf`）+ `ParserFactory`（扩展名/MIME 校验 + 大小限制）、7+1 类错误码；32 个单元测试 |
+| 解析器（Step 2） | `ParsedDocument` schema（`StructNode`含标题层级/代码块/列表/行号/页码 + `Parser` Protocol）、MarkdownParser（`markdown-it-py`）、TxtParser（编码回退）、PdfParser（固定 `PyMuPDF==1.28.0`，扫描件返回 `scanned_pdf`）+ `ParserFactory`（扩展名/MIME 校验 + 大小限制）、7+1 类错误码；32 个单元测试 |
 | 内容指纹与 BlobStore（Step 3） | `normalize_stable_key` / `compute_content_hash` / `compute_storage_key` 指纹函数、`BlobStore` Port（`store_and_verify` SHA-256 校验）、`LocalFileBlobStore`（路径遍历防护）、`SourceRegistrationService`（创建 Source、`(source_id, stable_key)` 查重、FINGERPRINT 阶段 `blob_hash` 匹配）；78 个新增单元测试 |
 | 结构感知分块（Step 4） | `StructureChunker`（按 StructNode 层级分块，含最小/最大块大小约束、标题路径传播、块偏移定位）+ `Chunker` Port + 统一 `ChunkOutput` schema；41 个测试 |
 | Embedding 与索引发布（Step 5） | `EmbeddingService` 流水线（INDEX→VALIDATE→原子 PUBLISH）+ `default_publish_versions` 用例 + `ModelGateway` 适配 + 9 个测试 |

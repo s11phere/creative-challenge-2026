@@ -1,0 +1,45 @@
+schema_version: qa-profile-v1
+profile_id: grounded-qa-provisional-v1
+status: provisional
+retrieval:
+  profile_reference: stage3-default-pending-formal-freeze
+  final_k: 5
+query:
+  max_question_chars: 4000
+  max_history_messages: 12
+  max_subqueries: 3
+  rewrite_timeout_seconds: 5
+  rewrite_enabled: false
+context:
+  max_evidence_items: 10
+  max_input_tokens: 12000
+  max_history_tokens: 2000
+  max_tokens_per_evidence: 1200
+  max_evidence_per_source: 4
+  max_chunks_per_document: 3
+generation:
+  capability_alias: fast_chat
+  model_identity: fake-fast-chat-v1
+  prompt_template_id: grounded-qa-v1-provisional
+  structured_output_schema: grounded-answer-v1
+  temperature: 0.0
+  max_output_tokens: 2048
+  max_repair_attempts: 1
+  timeout_seconds: 45
+verification:
+  outcomes:
+    - answer
+    - refuse
+    - conflict
+    - failed
+  require_citation_per_claim: true
+  require_same_space: true
+  require_current_version: true
+  reject_unknown_evidence_ids: true
+  min_claim_support_rate: 1.0
+  min_citation_completeness_rate: 1.0
+  below_threshold_outcome: refuse
+runtime:
+  timeout_seconds: 60
+  max_model_calls: 2
+  external_provider_mode: denied_until_policy_and_consent

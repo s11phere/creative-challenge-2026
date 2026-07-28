@@ -3,21 +3,21 @@ status: provisional
 corpus:
   version: v0
   manifest_path: cases/evals/corpus/v0/manifest.yaml
-  manifest_sha256: dd096e1aefc5b612124ed239d88fb035d0c42ee724eb52da7d8c72d12287d8b6
+  manifest_sha256: 53d6f863060dd7d5e6affb0abda64348f0b498995b3d1cda5ef80f0e576ca738
   required_allowed_use: local_evaluation
 dataset:
   version: v0
   cases_path: cases/evals/datasets/knowledge-qa-v0/cases.jsonl
-  cases_sha256: e0947b3c028c562ad99ad00c44b78642c2a9dd53542784da7a3dcf7f0bd086c2
+  cases_sha256: 19b58c1471ff69b748233c61470cb19ce38c74d0bf6b83c4555cde18d7456fda
   schema_path: cases/evals/datasets/knowledge-qa-v0/schema.json
   schema_sha256: 4949f3f4a9212f5fa02c915850f06a64bde501df0568e57fab582057a3b45e16
   splits:
     development:
-      count: 20
-      content_sha256: 4628f7192042a4eea03861026b003d776fda535d633d20e3d0146f22e199874b
+      count: 127
+      content_sha256: 6e870ee94cb64367d111557a2d1fdfc0d3f8b231e2d60cde7e7118e3881e239c
     holdout:
-      count: 10
-      content_sha256: 67b34a4d071a8bc8512281701a2239467efb736e98dc639d93926d3f9d5fb2ff
+      count: 149
+      content_sha256: ec56aa778587f0b66b78a2aa2d55dad04e187930f1b75423bb42b5d31a077b28
 protocol:
   evidence_match: source_key+source_version+locator_overlap-v1
   metrics:

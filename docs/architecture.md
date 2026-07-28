@@ -234,7 +234,9 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/infrastructure/orm.py` | 6 个 SQLAlchemy ORM 模型；含双哈希、处理版本、任务恢复字段、重试安全约束及 pgvector `Vector(768)`/cosine IVFFlat 索引 |
 | `src/infrastructure/repositories.py` | 仓库实现：6 个 repository 类的完整 CRUD，含 domain ↔ ORM 映射 |
 | `src/infrastructure/blob_store.py` | 本地文件 BlobStore 适配器：写入/读取/删除/存在检测、`store_and_verify`（SHA-256 校验）、路径遍历防护 |
-| `src/infrastructure/parsers/` | 文档解析器包：MarkdownParser（`markdown-it-py`）、TxtParser（编码回退）、PdfParser（`pypdf`，可复制文本/扫描件分类）、ParserFactory（扩展名+MIME校验+大小限制） |
+| `src/infrastructure/parsers/` | 文档解析器包：MarkdownParser（`markdown-it-py`）、TxtParser（编码回退）、PdfParser（固定 `PyMuPDF==1.28.0`，可复制文本/扫描件分类）、ParserFactory（扩展名+MIME校验+大小限制） |
+| `src/infrastructure/chunkers/structure_chunker.py` | 结构感知分块、标题路径传播、父/邻接 metadata 和 locator 保留 |
+| `src/infrastructure/retrieval/postgres_store.py` | 当前发布集合上的 PostgreSQL FTS、pgvector exact/IVFFlat、上下文候选和诊断 |
 
 **`config.py` 详解**：
 
@@ -470,6 +472,14 @@ Docker Compose 编排，定义 5 个长期服务、1 个一次性迁移服务和
 | `versions/328a3caa2960_enable_pgvector.py` | **初始迁移**：启用 `vector` 扩展 |
 | `versions/a1b2c3d4e5f6_create_core_tables.py` | **阶段 2 迁移**：创建 `spaces`、`sources`、`documents`、`document_versions`、`chunks`（含 IVFFlat 向量索引）、`ingestion_tasks` 6 张表 |
 | `versions/b2c3d4e5f6a7_complete_ingestion_identity.py` | **阶段 2 修正迁移**：补齐双哈希、处理版本、tombstone、Chunk/Task 幂等与恢复字段、外键和约束，并兼容回填旧数据 |
+| `versions/c3d4e5f6a7b8_seed_default_space.py` | **阶段 2 数据迁移**：幂等创建开发/API 使用的默认 Space |
+| `versions/d4e5f6a7b8c9_add_chunk_fts.py` | **阶段 3 迁移**：增加持久生成的 Chunk FTS 文档列和 GIN 索引，并保留 pgvector 索引 |
+
+当前只有上述 6 张业务表，没有 Conversation、Message、AgentRun、Evidence、Citation、Feedback
+或 Checkpoint 表。阶段 0 数据门禁已按 `docs/stage-0-acceptance.md` 满足；阶段 4/5 新表仍必须
+等待 ADR-007 约束、对应阶段计划和新的 Alembic revision；禁止
+修改既有 revision 伪造历史。`docs/stage-4-persistence-design.md` 仅记录门禁后的候选表、约束、
+索引和事务评审，不代表迁移已创建或数据库能力可用。
 
 ---
 
@@ -486,6 +496,10 @@ Docker Compose 编排，定义 5 个长期服务、1 个一次性迁移服务和
 | 005 | Ingestion Identity, Versioning, Publication, And Deletion | 固定摄入身份、双哈希、处理版本、原子发布、任务可靠性和删除语义 |
 | 006 | Skill Manifest Versioning And Trust Model | 固定 Skill manifest、摘要、受信目录、权限、恢复和回滚语义 |
 | 009 | Redis / Dramatiq Task Delivery | 队列选型 Redis + Dramatiq，状态存 DB |
+
+ADR-007 已接受，但只固定 Stage 4 的 GroundedAnswer/Citation、Conversation/AgentRun/Evidence、
+SSE/取消和后台执行协议。ADR-008 仍为保留编号；阶段 4 的持久化、SSE、API 和业务实现仍须等待
+阶段 2 Step 9、阶段 3 正式退出门禁及对应实现评审。
 
 ### 其他文档
 
@@ -640,11 +654,11 @@ docker compose -f deploy/compose.yaml down --volumes               # 永久删�
 
 | 阶段 | 状态 | 说明 |
 |------|------|------|
-| 阶段 0 | 🔶 进行中 | 语料授权复核、标注复核未完成 |
+| 阶段 0 | ✅ 内部冻结完成 | `manifest.status=frozen`、`distribution_scope=internal_team_only`；退出记录见 `docs/stage-0-acceptance.md`，不代表公开再分发授权 |
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
-| **阶段 2** | **🟡 工程实现已合并** | **Step 0-8 代码已落地；正式质量验收和已知缺陷修复仍进行中** |
-| **阶段 3** | **🟡 工程验收完成** | **Keyword/Dense/Hybrid/Hybrid+Reranker、检索 API、离线评测和安全边界已落地；阶段 0 门禁关闭前不宣称正式质量达标** |
-| 阶段 4 | ❌ 未开始 | 引用问答、Conversation/AgentRun/Evidence 和 SSE 协议尚未落地 |
+| **阶段 2** | **🟡 工程 Step 0～8 完成** | **摄入闭环代码已落地；Step 9 正式质量验收和 `stage-2-acceptance.md` 尚未完成** |
+| **阶段 3** | **🟡 工程 Step 0～10 验收完成** | **检索 API、离线评测和安全边界已落地；阶段 2 Step 9、真实模型定版及正式 holdout 未关闭，阶段未正式退出** |
+| 阶段 4 | ❌ 未正式开始 | Step 0～6 的 provisional 配置、领域、Evidence/Citation、查询/上下文、生成/故障语义及内存持久化契约已落地；ORM/Alembic/PostgreSQL、Worker/SSE、API/Web、真实模型验证和回答评测未落地 |
 | **阶段 5** | **🟡 通用基础已审查** | **Step 0～4 和 Step 9 通用部分通过；业务 Skill/API/持久化/验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
@@ -671,4 +685,6 @@ docker compose -f deploy/compose.yaml down --volumes               # 永久删�
 阶段 5 通用基础审查见 `docs/stage-5-implementation-review.md`。该并行实现不改变主推进顺序：
 仍应先完成阶段 4 引用问答，再接入阶段 5 业务 Skill。
 
-GitHub Actions 已由用户确认运行正常。阶段 0 数据授权、人工标注复核和版本冻结仍为等待状态。
+阶段 0 已按 `docs/stage-0-acceptance.md` 交接，不能因此直接运行 holdout；仍须按
+`docs/stage-3-acceptance.md` 完成阶段 2 Step 9、真实模型 development 消融、默认配置冻结和一次性正式
+holdout。GitHub Actions 已由用户确认运行正常；阶段 0 当前仅允许组员内部使用。

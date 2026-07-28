@@ -1,0 +1,147 @@
+QuickNotes v1.0.0 Release Notes
+================================
+Date: 2024-12-15
+Build: 20241215.1
+Codename: "First Light"
+
+QuickNotes is a lightweight, local-first note-taking application designed for
+knowledge workers who value simplicity and data ownership. All data is stored
+locally; no account registration or internet connection is required.
+
+────────────────────────────────────────────────────────────
+1. EDITING & MARKDOWN
+────────────────────────────────────────────────────────────
+
+- Markdown Engine: Standard Markdown (CommonMark specification) with live
+  side-by-side preview. GFM extensions like task lists, strikethrough, and
+  autolinks are NOT supported.
+- Code Blocks: Fenced code blocks with syntax highlighting for 4 languages:
+  Python, JavaScript, C++, and HTML. Language tag is required for highlighting.
+- Tables: Basic table syntax without column alignment options. Table headers
+  are bolded automatically.
+- Images: External image links via standard ![](url) syntax. Local image
+  embedding and clipboard paste are NOT supported.
+- Line Wrapping: Hard word-wrap at 80 characters. This is not configurable.
+- Indentation: Tab characters only, fixed at 4-space visual width per tab.
+  Spaces for indentation are not supported.
+- Undo History: In-memory per-session undo stack (up to 100 operations).
+  Undo history is discarded when closing a note or quitting the application.
+- Auto-Save: Notes are saved to disk every 5 minutes. Unsaved changes between
+  auto-save intervals are lost if the application crashes.
+- Session Restore: Not available. The application always starts with a blank
+  workspace showing the welcome screen.
+- Spell Checking: Not available.
+
+────────────────────────────────────────────────────────────
+2. ORGANIZATION & NAVIGATION
+────────────────────────────────────────────────────────────
+
+- Tagging System: Hierarchical tags using the '/' delimiter, e.g. #work/project.
+  Tags appear in the sidebar tag tree. Tag autocomplete requires exact prefix
+  match—typing "#pro" will NOT suggest "#work/project".
+- Wiki-Style Links: [[internal links]] between notes using the note filename
+  (without .md extension). Links are bidirectional: the target note automatically
+  shows a "Linked mentions" section listing all notes that link to it.
+- File Explorer: Basic tree view with create, rename, and delete operations.
+  Files are sorted alphabetically (A-Z). Folders are always listed first.
+- Note Sorting: Alphabetical by filename. The sort order is fixed and cannot
+  be changed by the user.
+- Maximum Open Tabs: No explicit limit. All tabs remain in memory.
+
+────────────────────────────────────────────────────────────
+3. SEARCH
+────────────────────────────────────────────────────────────
+
+- Full-Text Search: Instant search across the currently open note only, with
+  keyword highlighting. Results update as you type.
+- Case Sensitivity: Search is case-insensitive by default. Case-sensitive
+  search is not supported.
+- Regular Expressions: Not supported.
+- Search Operators: Not supported. All search terms are treated as literal
+  substring matches.
+- Global Search: Not available. Searching across all notes requires opening
+  each note individually.
+
+────────────────────────────────────────────────────────────
+4. APPEARANCE & UI
+────────────────────────────────────────────────────────────
+
+- Themes: Three built-in themes—Light (default), Dark, and Sepia. The default
+  theme on first launch is Light, regardless of the operating system setting.
+- Font: System monospace font—Consolas on Windows, Menlo on macOS, Ubuntu Mono
+  on Linux. The font family and size are fixed and cannot be customized.
+- Custom CSS: Not supported.
+- Window Mode: Single main window only. Multiple notes open as tabs within
+  this single window. Detaching tabs into separate windows is not supported.
+- Minimap: Not available.
+- Typewriter Mode: Not available.
+
+────────────────────────────────────────────────────────────
+5. IMPORT & EXPORT
+────────────────────────────────────────────────────────────
+
+- Import Formats: Plain text (.txt) and Markdown (.md) files only. Drag and
+  drop the file into the QuickNotes window, or use File > Import.
+- Export Format: Markdown (.md) only. YAML frontmatter (if present) is
+  stripped during export.
+- Batch Export: Not available. Each note must be exported individually.
+- PDF Export: Not available.
+
+────────────────────────────────────────────────────────────
+6. STORAGE & BACKUP
+────────────────────────────────────────────────────────────
+
+- Storage Location: All notes are stored as .md files in ~/.quicknotes/.
+  The directory structure mirrors the file tree: subfolders in the app
+  correspond to subdirectories on disk.
+- Backup: Manual only. Users must copy the ~/.quicknotes/ directory themselves
+  to create a backup. There is no built-in backup or versioning mechanism.
+- File Watching: Not supported. Changes made to note files by external
+  programs (e.g., editing in VS Code) are not detected until the note is
+  manually reloaded via File > Reload.
+- Config File: Settings are stored in ~/.quicknotes/config.ini in INI format.
+  The file is human-readable plain text.
+
+────────────────────────────────────────────────────────────
+7. KEYBOARD SHORTCUTS
+────────────────────────────────────────────────────────────
+
+  Ctrl+S            Save current note
+  Ctrl+F            Find in current note
+  Ctrl+N            New note
+  Ctrl+W            Close current tab
+  Ctrl+P            Quick file open (fuzzy-search note by filename)
+  Ctrl+B            Toggle bold
+  Ctrl+I            Toggle italic
+  Ctrl+Z            Undo
+  Ctrl+Y            Redo
+  F11               Toggle fullscreen
+
+────────────────────────────────────────────────────────────
+8. SYSTEM REQUIREMENTS & LIMITATIONS
+────────────────────────────────────────────────────────────
+
+- Operating Systems: Windows 10 (build 1809+), macOS 12 (Monterey+), Linux
+  (Ubuntu 20.04+, Debian 11+, Fedora 36+)
+- Disk Space: 100 MB for the application, plus space for notes
+- RAM: 2 GB recommended
+- Maximum Note Size: 50,000 characters per note. Notes exceeding this limit
+  will display a warning and cannot be edited until split.
+- Maximum File Name Length: 120 characters
+
+Known Limitations:
+- No end-to-end encryption
+- No mobile version (desktop only)
+- No real-time collaboration features
+- No cloud synchronization
+- Export limited to Markdown format only
+- Search does not support regular expressions
+- No automatic backup (manual copy only)
+- No spell checking
+- Limited code syntax highlighting (4 languages)
+- No session restore after application crash or unexpected quit
+- No image paste from clipboard
+- No file watching for external changes
+- Undo history is lost when closing a note
+- Hard line-wrap at 80 characters is not configurable
+- Font family and size are not customizable

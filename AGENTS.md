@@ -23,25 +23,16 @@
 
 ## 2. 当前阶段与优先级
 
-截至 2026-07-19，阶段 1 Step 0-8 已完成实现与验收，GitHub Actions 已由用户确认运行
-正常。阶段 2 Step 0/1 已完成：ADR-005 已固定摄入身份、版本、发布、任务和删除语义；
-Space、Source、Document、DocumentVersion、Chunk（pgvector）、IngestionTask 的领域实体、
-ORM 模型、仓库实现、Alembic 迁移及测试已完成，R2-01 至 R2-03 已关闭。
-阶段 2 Step 2 已完成：Markdown/TXT/可复制文本 PDF 三种解析器 + `ParsedDocument` 纯类型
-schema + Parser Port + `ParserFactory` + 统一错误分类，单元测试 32 个覆盖正常路径和全部分类
-错误码。
-阶段 2 Step 3 已完成：`normalize_stable_key`/`compute_content_hash`/`compute_storage_key`
-内容指纹函数、`BlobStore` Port（含 `store_and_verify`）、`LocalFileBlobStore` 本地文件适配器
-（含路径遍历防护）、`SourceRegistrationService` 来源登记用例（创建 Source、按 `(source_id, stable_key)`
-查重、FINGERPRINT 阶段 `blob_hash` 匹配），共 78 个新增单元测试。
-项目仍受阶段 0 数据门禁约束，不能据此宣称摄入、检索、问答、引用、Agent 或 Skill 业务
-已经可用。
+截至 2026-07-28，仓库状态如下：
 
-阶段 5 的通用工程基础已于 2026-07-19 完成审查：ADR-006、Agent Runtime 领域契约、
-Tool/Skill Registry、确定性执行器、预算/权限/审计、受信包版本固定、事务式 reload/回滚及
-Skill 模板已落地。该实现只使用合成输入和 fake，未包含 AgentRun/Checkpoint 持久化、
-`knowledge_qa`、Runtime API/Web 或三个业务 Skill；阶段 5 整体仍未达到退出条件，详见
-`docs/stage-5-implementation-review.md`。
+| 阶段 | 状态 | 已完成 | 未关闭 |
+| --- | --- | --- | --- |
+| 阶段 0 | 内部冻结完成 | MVP 范围、persona、术语、隐私政策、corpus/dataset、ADR-001～004 和退出记录已存在 | 仅允许组员内部开发/评测；不代表公开再分发授权 |
+| 阶段 1 | 完成 | Step 0～8 工程实现与验收完成；GitHub Actions 已由用户确认正常 | 仅保留已记录的运行限制 |
+| 阶段 2 | 工程 Step 0～8 完成 | 六个核心实体/表、Parser、BlobStore、分块、Embedding/PUBLISH、摄入状态机、增量删除、摄入 API 和 Web 数据源页已落地 | Step 9 正式质量验收未完成；仓库中尚无 `docs/stage-2-acceptance.md` |
+| 阶段 3 | 工程 Step 0～10 验收完成 | Keyword/Dense/Hybrid/Hybrid+Reranker、上下文扩展、Space/版本边界、检索 API、离线评测和移交已落地 | 阶段 2 Step 9、真实模型 development 消融、默认配置冻结和正式 holdout 未完成，阶段 3 未正式退出 |
+| 阶段 4 | 未正式开始 | 已有 `docs/stage-4-implementation-plan.md` | GroundedAnswer/Citation、Conversation/AgentRun/Evidence 持久化、问答 API/SSE/Web 和回答评测均未落地 |
+| 阶段 5 | 通用基础已审查 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、预算/权限/审计、受信包版本固定和事务式 reload/回滚已落地 | 无 AgentRun/Checkpoint 持久化、`knowledge_qa`、Runtime API/Web 或业务 Skill；阶段整体未退出 |
 
 当前已落地的用户界面展示真实系统健康状态和数据来源/摄入任务；公开 OpenAPI 包含健康、
 来源上传和任务状态相关端点。数据库已有 `spaces`、`sources`、
@@ -49,7 +40,21 @@ Skill 模板已落地。该实现只使用合成输入和 fake，未包含 Agent
 `ingestion_tasks` 共 6 张业务表（阶段 2 数据模型）。
 `infrastructure/parsers/` 包已实现 MarkdownParser、TxtParser、PdfParser 和 ParserFactory。
 
-阶段 1 的移交与运行事实以以下文件为准：
+- Web 只提供系统健康和数据来源/摄入任务页面；没有搜索、会话、引用或问答界面。
+- OpenAPI 提供健康、来源创建/上传/摄入、任务查询/取消/重试，以及
+  `POST /api/v1/spaces/{space_id}/search`。
+- PostgreSQL 有 `spaces`、`sources`、`documents`、`document_versions`、`chunks` 和
+  `ingestion_tasks` 六张业务表；`chunks` 含 768 维 pgvector、IVFFlat 和阶段 3 FTS 列/索引。
+- `ModelGateway` 的 `fast_chat` 能力当前只提供非流式完整响应；阶段 4 的 SSE、断线重连、取消和最终
+  结构校验仍是待设计协议，不能假设 Provider 原生流式语义已经存在。
+- 摄入与检索已经具备工程实现和隔离依赖测试，但在正式评测门禁关闭前，不得宣称
+  真实语料质量、正式检索基线、引用问答或产品闭环达标。
+- 阶段 5 只有离线通用 Runtime/Registry 和合成 fake 契约，不能宣称 `knowledge_qa` 或其他
+  业务 Skill 可用。
+- ADR-001～006 和 ADR-009 已接受；除非触发其重新评估条件，不重复讨论已固定基线。ADR-007
+  保留给阶段 4 的 Grounded QA、持久化和 SSE/后台执行协议。
+
+当前事实的权威文档：
 
 - `README.md`：当前能力、单命令启动、smoke test 和规范开发命令。
 - `docs/stage-1-acceptance.md`：验收结果、退出条件、外部确认和已知问题。
@@ -59,16 +64,12 @@ Skill 模板已落地。该实现只使用合成输入和 fake，未包含 Agent
 
 按以下顺序推进：
 
-1. 完成阶段 0 语料的授权复核、人工标注复核和版本冻结。
-2. 遵守已接受的 ADR-001 至 ADR-005 及 ADR-009，不重复讨论已固定基线。
-3. 保持已验收的 API、Worker、Web、PostgreSQL、Redis、Compose 和 CI 工程基线稳定。
-4. 核心数据模型与数据库迁移。 ✅
-5. 单个 Markdown 文件的幂等摄入闭环。
-6. 关键词、向量和混合检索基线及评测工具。
-7. 引用协议、原文定位和带引用回答。
-8. 完整端到端用户旅程。
-9. `knowledge_qa` Skill 标准化。
-10. 其他 Skill 和扩展能力。
+1. 阶段 0 已按 `docs/stage-0-acceptance.md` 交接并冻结内部语料边界。
+2. 完成阶段 2 Step 9，在批准语料上验证解析、定位、幂等、原子发布、删除和恢复。
+3. 按 `docs/stage-3-acceptance.md` 完成真实模型 development 消融、默认配置冻结、一次正式
+   holdout 和阶段 3 正式退出；阶段 0 `frozen` 不会自动关闭这些工作。
+4. 正式执行阶段 4，交付引用问答、会话/运行/证据持久化、SSE、Web 和回答评测。
+5. 将阶段 4 唯一 QA Application Port 封装为 `knowledge_qa`，再继续阶段 5 业务 Skill。
 
 优先级：P0（增量摄入、空间隔离、混合检索、可定位引用、拒答、知识工作台、`knowledge_qa` Skill、离线评测和端到端测试）闭环未完成或没有评测基线时，不实现 P2（知识图谱、多模态、多 Agent、团队协作等）。
 
@@ -80,6 +81,7 @@ Skill 模板已落地。该实现只使用合成输入和 fake，未包含 Agent
 - `cases/docs/product/personas-and-stories.md`：persona 与验收故事。
 - `cases/docs/glossary.md`：领域术语统一定义。
 - `cases/docs/privacy/demo-data-policy.md`：语料分类、脱敏和演示规则。
+- `docs/stage-0-acceptance.md`：Stage 0 内部冻结、哈希和分发边界的退出记录。
 - `docs/adr/001-*.md` 至 `004-*.md`：已接受架构决策。
 - `cases/evals/corpus/v0/manifest.yaml`：评测语料的唯一允许列表。
 - `cases/evals/corpus/v0/fixtures/`：确定性测试 fixture。

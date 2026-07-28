@@ -28,8 +28,8 @@ Tool/Skill 契约、Registry、版本固定、预算、权限、检查点接口�
   及 SSE/取消协议；不得由阶段 5 重复建立平行模型。
 - `summarize_document`、`compare_sources` 和 `create_review_cards` 在 `knowledge_qa` 闭环稳定
   前只允许完成契约和确定性 fixture，不计为可用 Skill。
-- 阶段 0 数据门禁关闭前，只能使用最小合成输入和 manifest 明确允许
-  `repository_fixture` 的来源做工程验证，不能据此宣称真实语料上的 Skill 质量达标。
+- Stage 0 已按 `docs/stage-0-acceptance.md` 以 `internal_team_only` 范围冻结；仍只能在完成
+  阶段 2/3 正式质量门禁后宣称真实语料上的 Skill 质量达标。
 
 阶段 5 采用单 Agent、确定性有限状态机。不会引入多 Agent、自主开放式规划、第二套任务
 队列或直接绑定具体 Agent 框架。

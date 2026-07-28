@@ -1,0 +1,1180 @@
+schema_version: '1.0'
+corpus_version: v0
+status: frozen
+path_base: cases_root
+distribution_scope: internal_team_only
+freeze_record: docs/stage-0-acceptance.md
+description: 内部组间受控评测语料。仅限已获访问权限的组员本地开发与评测，不公开发布、不上传原始语料或派生内容到外部服务。
+hashing:
+  source: sha256 of raw file bytes
+  excerpt: sha256 of UTF-8 text after Unicode NFKC and whitespace collapsing
+spaces:
+- id: omnistudio
+  name: OmniStudio 开源项目
+  description: 一个基于 Qt 的跨平台知识管理与代码编辑桌面应用。包含 AI 辅助编程、WikiLink 笔记、
+    Markdown/代码编辑器、PDF 阅读等功能。GPLv3 开源。
+  sources:
+  - source_key: omnistudio/readme
+    path: omnistudio/README.md
+    format: markdown
+    language: zh
+    license: gplv3
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_with_gplv3
+    content_sha256: 6e3d9fb761414ce84e65290bb1663e554a06cdde3a2b7bd30bd1643c35105591
+  - source_key: omnistudio/arch
+    path: omnistudio/ARCHITECTURE.md
+    format: markdown
+    language: en
+    license: gplv3
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_with_gplv3
+    content_sha256: ee4df8e5b3b6b9bb5ea2550ccd90898e5ba173e7c16145725a72f0026fdc3d5a
+  - source_key: omnistudio/claude
+    path: omnistudio/CLAUDE.md
+    format: markdown
+    language: en
+    license: gplv3
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_with_gplv3
+    content_sha256: 4d33277461371472f9a8732fdf688ae8e253e8f9a6fd69b4aaaa4398e0387a33
+  - source_key: omnistudio/main
+    path: omnistudio/main.cpp
+    format: code_cpp
+    language: en
+    license: gplv3
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_with_gplv3
+    content_sha256: 94b51822b199c37c07add929a5c799da02f4f80a96ea3b5a8d44699aba001aac
+  - source_key: omnistudio/ai-request-handler
+    path: omnistudio/ai/airequesthandler.cpp
+    format: code_cpp
+    language: mixed
+    license: gplv3
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_with_gplv3
+    content_sha256: 6093810e09b62ecb442c9886980166f1b667ea7226b6ffe154b7fd5b88b9aa0b
+- id: cs229
+  name: CS229 机器学习公开课
+  description: Stanford CS229 公开课资料（Andrew Ng 讲授）。包含决策树、损失函数、正则化等讲义
+    PDF，以及 sklearn 决策树实现、Python ML 工具代码和训练数据。用于模拟学习者个人知识库中
+    的课程笔记与代码实践。
+  sources:
+  - source_key: cs229/readme
+    path: cs229/README.md
+    format: markdown
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    content_sha256: 93efc12f94b1d937ae86c0426b8f1fe19894ccafd508ebfd275e133a7bdd562b
+  - source_key: cs229/dt-notes
+    path: cs229/cs229-notes-dt.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    content_sha256: e89b0fcdab89fbcc78037de0bcc04a83ca54139ab4675a5876933e910d4ba784
+  - source_key: cs229/loss-functions
+    path: cs229/loss-functions.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    content_sha256: d1a31e6b88f9bb4646b3f1d34dae1d6d282ca0c8a4c8291fb24d8df51956f500
+  - source_key: cs229/regularization
+    path: cs229/regularization.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    content_sha256: 528d6f1bf307ce9063457b87cc45deb31329564cacc2f1ee5f04d9c3c86ae431
+  - source_key: cs229/dt-demo
+    path: cs229/decision_tree_demo.ipynb
+    format: notebook
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    content_sha256: 3d4be4498cf4542db29ead55ed567f0fe181b3e1ec3ac28982cdd93313f77540
+  - source_key: cs229/utils
+    path: cs229/utils.py
+    format: code_python
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    content_sha256: 67adfd8d67f962feb4eea2d37ab4184dc30fa2bc6250a50f18a2c07fcb9e7579
+  - source_key: cs229/random-classifier
+    path: cs229/random_classifier.py
+    format: code_python
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    content_sha256: fa4969d20e9d4583dd57e05940a6fee7c3562c242077a295762fa72322c3224c
+  - source_key: cs229/train-data
+    path: cs229/train_data.txt
+    format: text
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    content_sha256: 2ee4c842d7c701c179cfa0e07cfa8e878ca4845d8348a4ee54fc1eb7def4a6de
+  - source_key: cs229/adversarial-ml-blog
+    path: evals/corpus/v0/fixtures/cs229-adversarial-ml-blog.md
+    format: markdown
+    language: en
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    trust_level: untrusted_adversarial_fixture
+    content_sha256: 529ff7e0e76b29854a14a19208fb437e8d0e9ed2bb4a81cfcce566a25a5fd20a
+- id: quicknotes
+  name: QuickNotes 产品文档
+  description: 虚构的本地笔记应用 QuickNotes 的公开文档 fixture。包含多版更新日志
+    (v1.0/v2.0)、FAQ 和一份不可信的安全分析报告。所有内容均为 CC0 fixture，
+    用于测试版本冲突、拒答和对抗性文档场景。
+  sources:
+  - source_key: quicknotes/changelog-v1
+    path: evals/corpus/v0/fixtures/quicknotes-changelog-v1.txt
+    format: text
+    language: en
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    document_key: quicknotes/changelog
+    version: '1.0.0'
+    lifecycle_status: superseded
+    content_sha256: be6f12f6536e0e355f154e681eac421a3b08615554ecb136acc184a939150784
+  - source_key: quicknotes/changelog-v2
+    path: evals/corpus/v0/fixtures/quicknotes-changelog-v2.txt
+    format: text
+    language: en
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    document_key: quicknotes/changelog
+    version: '2.0.0'
+    lifecycle_status: current
+    supersedes: '1.0.0'
+    content_sha256: b611183864271adec6b8b356d5087e3508c0a5b36adb8c5588cf846092f1f04d
+  - source_key: quicknotes/faq
+    path: evals/corpus/v0/fixtures/quicknotes-faq.md
+    format: markdown
+    language: en
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: f82cb5a54e27a38c34425d44dc07662a968a315f7959465562540d81ec69f98b
+  - source_key: quicknotes/security-blog
+    path: evals/corpus/v0/fixtures/quicknotes-adversarial.md
+    format: markdown
+    language: en
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    trust_level: untrusted_adversarial_fixture
+    content_sha256: d7e7e2757dac9b2df25897d74b5e42e83971890685cc1c76e861bf4e92929a5d
+- id: dsa
+  name: 数据结构与算法笔记
+  description: 本科计算机专业数据结构与算法课程的学习笔记。涵盖二叉树、哈希表、图、
+    排序算法、算法题总结等核心主题。含 Markdown 笔记、Python/C++ 代码实现、
+    复杂度速查表。所有内容均为学生个人整理的学习笔记。
+  sources:
+  - source_key: dsa/binary-tree
+    path: dsa/二叉树.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 785b0fe824311c8036601f99d0b9a1ef381944a84ab0703b4dd12080b0643986
+  - source_key: dsa/hash-table
+    path: dsa/哈希表.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 532fa4326c8f5535ee411d85333caf2548bf0acf24cd2ffcbae7958a1224fe44
+  - source_key: dsa/graph
+    path: dsa/图.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 7671102195df5780f9115cde7fd39bad1fcd0bdace89f3e9b6a8907918e7650b
+  - source_key: dsa/sorting
+    path: dsa/排序.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: b3201fb09d3b2e925157e689a917824abaef9e42a10d7bb9d7af51093f03e34c
+  - source_key: dsa/algo-problems
+    path: dsa/算法题总结.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: d260442ee340da19685235a2e395889aa948edc16b5eadc765b8daadb9915c08
+  - source_key: dsa/sorting-py
+    path: dsa/sorting-algorithms.py
+    format: code_python
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 1dbfc50760337332aee5c5e3b0bb998fcce4a354df3944eba175aaef7d909ab0
+  - source_key: dsa/bintree-cpp
+    path: dsa/binary-tree-ops.cpp
+    format: code_cpp
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 100125ad2189a54a6afffe1dd251bc8c62667cb875abd8afe138c8cae29a8140
+  - source_key: dsa/complexity-cheatsheet
+    path: dsa/ds-complexity-cheatsheet.txt
+    format: text
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 7b5cd78892ac442a3259fde77be9be0baab332ed1f6fb62c7c3e52934b54c2d0
+- id: cpp
+  name: C++ 编程笔记
+  description: 本科计算机专业 C++ 课程的学习笔记。涵盖 C++ 变量与类、对象模型、
+    Effective C++ 最佳实践、STL 源码剖析。含 Markdown 笔记、C++ RAII/智能指针示例代码、
+    迭代器 traits 实现、核心概念速查表。所有内容均为学生个人整理的学习笔记。
+  sources:
+  - source_key: cpp/primer-basics
+    path: cpp/C++变量与类.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 6d491c363c2eca076ea18cdecd37493fd61b3f63ffbf21286319625b49f652fb
+  - source_key: cpp/object-model
+    path: cpp/C++对象模型.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 14a46d6dff72b8d886f8dd0fb850b6ecb4af154e28a15028725edab5686c9a03
+  - source_key: cpp/effective-cpp
+    path: cpp/EffectiveC++-习惯与构造.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: d3c9f21d314d21020846b6cdc6e984ee8dd34e5b3efb018f2ca6c2ae168c3f8e
+  - source_key: cpp/stl-allocator
+    path: cpp/STL源码剖析-分配器与容器.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: ba3f5d1000e36f473c93a7f2038604c81b938ae77b5250e28fef8b1089919f2a
+  - source_key: cpp/smart-ptr
+    path: cpp/cpp-smart-ptr-raii.cpp
+    format: code_cpp
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 61e45f949fe1fa53c4b2f9b56b93c4f7e6e80839b099a5165aa26f1d58315476
+  - source_key: cpp/iterator-traits
+    path: cpp/stl-iterator-traits.cpp
+    format: code_cpp
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 6ac1f0d63cc2c92d962fdd8986fd763671e803fd28a80b39fb91166d369b6961
+  - source_key: cpp/ref-cheatsheet
+    path: cpp/cpp-ref-cheatsheet.txt
+    format: text
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 8cb70e62762f497d8fa4c483e7f17a99ae85c8884463ad810e26a00d8bf607dd
+- id: os
+  name: 操作系统笔记
+  description: 本科计算机专业操作系统课程的学习笔记。涵盖进程与线程、并发与死锁（信号量、
+    管程、死锁预防/避免/检测）、Linux内核块I/O层与磁盘调度算法、UNIX环境高级编程文件I/O。
+    含Markdown笔记、CPU调度算法Python实现、UNIX文件I/O C代码示例、操作系统核心概念速查表。
+    所有内容均为学生个人整理的学习笔记。
+  sources:
+  - source_key: os/process-threads
+    path: os/操作系统-进程与线程.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: f1bd9a9f00675197903ab627098a98c58a4c3691aa38cd089bcef48073daeb74
+  - source_key: os/concurrency-deadlock
+    path: os/操作系统-并发与死锁.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: ed813f63c8f2696dec50dcdd517d5673fcfaed7e73404e732b8a01b20f245827
+  - source_key: os/kernel-blockio
+    path: os/Linux内核-块IO层.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: cfae402b9d9bb46cc7b3eef1364af9385658ffac4bf8b9760fba5db271ea40e2
+  - source_key: os/apue-fileio
+    path: os/UNIX环境高级编程-文件IO与IPC.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 25afae6c4ad6eecd8ce888fd03d8947ee0e60c612566177990f06114332ebd33
+  - source_key: os/scheduling-demo
+    path: os/os-scheduling-demo.py
+    format: code_python
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: ced4ede14fb507a9ae8f25d85696c27233691dbee9be3542b0d57647bf7764b2
+  - source_key: os/fileio-demo
+    path: os/apue-fileio-demo.c
+    format: code_c
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 73d62927e5aa808ffe1c46608a29cc2c0b6e2d2a94bc452e4325ffcc6581679e
+  - source_key: os/ref-cheatsheet
+    path: os/os-ref-cheatsheet.txt
+    format: text
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 7785fac619ed6ff45187e42b67e123c700b4fce44c9cce7ca870ad16eba91da4
+- id: net
+  name: 计算机网络笔记
+  description: 本科计算机专业计算机网络课程的学习笔记。涵盖应用层（HTTP/FTP/SMTP/DNS/P2P）、
+    传输层（UDP/TCP/可靠数据传输/拥塞控制/流量控制）、UNIX网络编程（套接字基础/TCP套接字/I/O复用）。
+    含Markdown笔记、Python TCP/UDP回射程序、C语言I/O复用select/poll/epoll演示代码、
+    计算机网络核心概念速查表。所有内容均为学生个人整理的学习笔记。
+  sources:
+  - source_key: net/app-layer
+    path: net/计算机网络-应用层.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 8ae68faed068757c413fb373c2cdbabc05ce618b04ce87f87167c9ccfce645fe
+  - source_key: net/transport-layer
+    path: net/计算机网络-传输层.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: a75f467b464e43b00d9037db209e6a27f8f832d496b53d93c17164f5b2392d77
+  - source_key: net/socket-basics
+    path: net/UNIX网络编程-套接字基础.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: a41afd4764e100c413321ec4612e449c49c774ca75afec3dcb5956b0b002097d
+  - source_key: net/tcp-socket
+    path: net/UNIX网络编程-TCP套接字.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 1be076f584466da5bc0350e22058be61abc1b2cfd3ec5f29a587d4b9771b78f9
+  - source_key: net/iomux
+    path: net/UNIX网络编程-IO复用.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 2a3f5a67d7823be3d94d78cdbe0378473b1be88f825e286f97c20a9129215def
+  - source_key: net/tcp-echo
+    path: net/net-tcp-echo.py
+    format: code_python
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 81da7bfce25ae0265dcf73bb04341d741fb2cb863d76bd5db3172c8bf1e75cb8
+  - source_key: net/select-epoll
+    path: net/net-select-epoll-demo.c
+    format: code_c
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 52ac24dfc30ea44ed981884212184fc27cf4e85b5d918e370b8acecda9457b28
+  - source_key: net/ref-cheatsheet
+    path: net/net-ref-cheatsheet.txt
+    format: text
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 12ca1fe7b6573d5b7514bd14c81562fea939c968f6c976bade87e4ff79120fa4
+- id: db
+  name: 数据库笔记
+  description: 本科计算机专业数据库课程的学习笔记，内容来源于《王道程序员求职宝典》数据库章节。
+    涵盖数据模型（三层结构）、关系模型完整性约束、主键与外键、事务ACID特性、索引策略、视图、
+    SQL语句（DDL/DQL/DML）、DROP TABLE选项、例题解析。含Markdown笔记、SQL练习代码、
+    Python SQLite演示、数据库核心概念速查表。所有内容均为学生个人整理的学习笔记。
+  sources:
+  - source_key: db/db-concepts
+    path: db/数据库-基本概念.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: a93cdf8913ed8b54cb413ac2baf1bef26accb9da4c2cc2a8764eb7a4395dc27d
+  - source_key: db/db-sql
+    path: db/数据库-SQL语句.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 30bc1da25e4acb78cc6f7731ced608a9e2049162fcbbed4d508005a6e18c96d2
+  - source_key: db/db-exercises
+    path: db/数据库-例题.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: cd1d8147742182ec3afb517a19a8b3c30bb60f84a7e48e4997b16399320351c2
+  - source_key: db/sql-practice
+    path: db/db-sql-practice.sql
+    format: code_sql
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 67334eb5373e3f936cda760279a1aadc57ae0b66147f04e6e451de26021aec6e
+  - source_key: db/python-sqlite
+    path: db/db-python-sqlite.py
+    format: code_python
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: c454d7393bfbc525fb3e36d72f326fab330cb3bf192c8df0b06976206534e7c9
+  - source_key: db/ref-cheatsheet
+    path: db/db-ref-cheatsheet.txt
+    format: text
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 5fcf977a96913c9baf8bb9977ad753d0b2deeb2a7d606d46ef19e69996164a70
+- id: math
+  name: 数学笔记
+  description: 本科计算机专业数学课程的学习笔记。涵盖概率论与数理统计（概率极限定理、
+    点估计MLE/矩估计/UMVUE、置信区间、假设检验N-P引理/UMP/GLRT、一元线性回归）、
+    数学分析（实数系基本拓扑、数列与级数收敛、连续性紧致性、微分中值定理）。
+    含中文概率论复习笔记、英文Rudin数学分析摘录、线性代数中英文PDF讲义、
+    Python概率统计演示代码、数学公式速查表。所有内容均为学生个人整理的学习笔记。
+  sources:
+  - source_key: math/prob-notes
+    path: math/概率论-复习笔记.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 64a9a4d1c4512cf4ce7adb4117d1bf705f537ceab8e65ec12ca9e699db2f3399
+  - source_key: math/analysis-reals
+    path: math/数学分析-实数系.md
+    format: markdown
+    language: en
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 0d029b321d41d7d82f6f5fd4c441fb3698705f7ad79dedcdd54df766c593903a
+  - source_key: math/analysis-sequences
+    path: math/数学分析-数列与级数.md
+    format: markdown
+    language: en
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 1a1fb84b3c4908546e4c5c5bc702d0cf79cc3f500e71d4e63521e83014bbda81
+  - source_key: math/analysis-continuity
+    path: math/数学分析-连续性与导数.md
+    format: markdown
+    language: en
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: d057a6259f71f9f4648c9587c67ab4eae7b03a3f8e6d6732529c2f8353f4685d
+  - source_key: math/linear-algebra-2
+    path: math/线性代数A(II)-笔记.pdf
+    format: pdf
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: e36fc863c614a43139ed8a79176422f615aa15b04c8364dd31b87239b5fd505e
+  - source_key: math/linear-algebra-en
+    path: math/Linear-Algebra-Notes.pdf
+    format: pdf
+    language: en
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 07dbebc536007ccd7030848b04687027951f7bf91b945c0fd3a753e6de4279f8
+  - source_key: math/rudin
+    path: math/Rudin-Mathematical-Analysis.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    content_sha256: 1a2d080e18e4677c89c05511e86ea635b2ecedb11d312946da0d8056b08540fc
+  - source_key: math/prob-demo
+    path: math/prob-stats-demo.py
+    format: code_python
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: a5840e10b7f7dfaf2a17b21f56d9c8bade49aec938efc5d79ca8b291e2a78e65
+  - source_key: math/cheatsheet
+    path: math/math-ref-cheatsheet.txt
+    format: text
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: cdb9dc1e84f75b767fd039393d9c6e9b9973fd426318b97a3cccbca67f404363
+
+- id: papers
+  name: VLA论文文献集
+  description: 计算机专业本科生撰写VLA/机器人领域综述时收集的论文文献集。涵盖三大方向：
+    VLA基础模型（π₀.₅/π*₀.₆/π₀.₇系列、StarVLA框架、BehaviorVLA行为表征、
+    Static-Dynamic VLA、MEM多尺度记忆）、世界模型（DDP-WM解耦动态预测、DiLA解耦潜动作）、
+    手部运动重建（WiLoR/HaWoR/UniHand/StableHand/ViDiHand）、
+    灵巧操作系统（EgoSteer）、评估基准（BeTTER）、运动数据（MotionLib）。
+    所有论文均来自arXiv 2024-2026。模拟学生系统阅读某一研究方向文献、撰写综述的场景。
+  sources:
+  - source_key: papers/behaviorvla
+    path: papers/2605.22671v1.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "BehaviorVLA: From Abstraction to Instantiation — Learning Behavioral Representations for VLA (ICML 2026 Spotlight)"
+    content_sha256: ecd204badb6170666f1304d40825b8365ec483595ce1959a89b04cf5b15e387f
+  - source_key: papers/better
+    path: papers/2604.18000v1.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "BeTTER: Unveiling VLA Embodied Reasoning Hallucination via Benchmark (2026)"
+    content_sha256: 29ce084af6ec4d3971fa5646b9fbb5ba3ddaaf5386766b52977194273996980f
+  - source_key: papers/ddp-wm
+    path: papers/2602.01780v4.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "DDP-WM: Disentangled Dynamics Prediction for Efficient World Models (Sun Yat-sen Univ, 2026)"
+    content_sha256: 7a62d6d28fe2993d1fab79c7222b36b15049949d15e41c7c8bc4acc711f1f296
+  - source_key: papers/dila
+    path: papers/2605.15725v1.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "DiLA: Disentangled Latent Action World Models (ICML 2026)"
+    content_sha256: 34b3d1b9bd509b1f0e63dd7a508c186fc7cb29ae96fef716768ab777826b7742
+  - source_key: papers/egosteer
+    path: papers/EgoSteer.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "EgoSteer: A Full-Stack System for Steerable Dexterous Manipulation (PKU, 2026)"
+    content_sha256: cd5ca5d7bd0302c261c8b2a59695216a1a1e1daccb9216f40024e938c53ecd39
+  - source_key: papers/hawor
+    path: papers/2501.02973v1.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "HaWoR: World-Space Hand Motion Reconstruction from Egocentric Videos (SJTU/Imperial, 2025)"
+    content_sha256: 80a9af98df1e98ddb9d634fe420a0add21d72e6b824292d513459a869de225f9
+  - source_key: papers/mem
+    path: papers/Mem.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "MEM: Multi-Scale Embodied Memory for VLA Models (2026)"
+    content_sha256: 63413aa32bb2b070ae0a0cbc5d5a2eb77686308725e48f15bcaa338bd3d644aa
+  - source_key: papers/motionlib
+    path: papers/2410.03311v3.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "MotionLib: Scaling Up Large Motion Models with Million-Level Human Motion (ICML 2025)"
+    content_sha256: c9ec1281d74bd796b3b241caa49e0193ee4a344b1b6dd6a6b934f3f91bf069cf
+  - source_key: papers/pi05
+    path: papers/2504.16054v1.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "pi05: A Vision-Language-Action Model with Open-World Generalization (Physical Intelligence, 2025)"
+    content_sha256: 6a1029fd8ab6944b74cf22f5e5d30e60bc15699d964b2900af799b807a34b64c
+  - source_key: papers/pi06
+    path: papers/2511.14759v2.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "pi*0.6: A VLA that Learns from Experience via RECAP (Physical Intelligence, 2025)"
+    content_sha256: 9f4f5a3070ad9549ea7687ea54baa19858820dbcc0834cc805212d68fd6c8cb3
+  - source_key: papers/pi07
+    path: papers/2604.15483v2.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "pi0.7: A Steerable Generalist Robotic Foundation Model with Emergent Capabilities (Physical Intelligence, 2026)"
+    content_sha256: 54843c88fbabf6bce53ab2ee94cafc9a55c3d5639f7b74c5e8ad24485fe6863b
+  - source_key: papers/stablehand
+    path: papers/2605.18553v1.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "StableHand: Quality-Aware Flow Matching for World-Space Two-Hand Motion (2026)"
+    content_sha256: 5586120a5962be6fd1febf2e4d538139b8b05bad809004294af55c536f1a5c07
+  - source_key: papers/starvla
+    path: papers/2604.05014v1.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "StarVLA: A Lego-like Codebase for VLA Model Development (HKUST, 2026)"
+    content_sha256: 88a0d78d9f310294e2733c29073b9edb974b8eb9ebcaa2104939773f9315ee14
+  - source_key: papers/static-dynamic
+    path: papers/2602.03983v1.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: Efficient Long-Horizon VLA Models via Static-Dynamic Decoupling (2026)
+    content_sha256: 0bbda74f253ea82243931b72ae9dbc8cb04326e2d366c6de33db13735308af15
+  - source_key: papers/unihand
+    path: papers/2602.21631v1.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "UniHand: Towards a Unified Model for Diverse and Controllable 4D Hand Motion (ICLR 2026)"
+    content_sha256: 60300281da88ee1b042199ca212d675b2c776450689e68b789292aa986f3dc4d
+  - source_key: papers/vidihand
+    path: papers/2606.30308v2.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "ViDiHand: The Surprising Effectiveness of Video Diffusion in Hand Motion Reconstruction (2026)"
+    content_sha256: a33795748a94174da2081ae68f70b38bd8a214511756b3feee55310dce60a607
+  - source_key: papers/wilor
+    path: papers/2409.12259v2.pdf
+    format: pdf
+    language: en
+    license: undetermined
+    sensitivity: private_local
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    redistribution: review_required
+    description: "WiLoR: End-to-end 3D Hand Localization and Reconstruction in-the-wild (2024)"
+    content_sha256: 366fead08db2a3d7e9e3b6fc4cbd85df2d8fa1d1a155f70a5ddc537018e68579
+- id: devtools
+  name: 开发工具链笔记
+  description: 本科计算机专业学生整理的开发工具链学习笔记。涵盖 Docker 容器技术内幕
+    （Namespace 隔离、Cgroups 资源控制、构造容器与镜像的 Go 实现）、
+    Linux 常用命令（文件管理、文本处理、性能分析、网络工具、开发调试）、
+    Git 版本控制（仓库、分支管理、合并策略、工作现场保存）。
+    全部为中文笔记含 Go/bash 代码示例。模拟学生整理开发工具知识体系的场景。
+  sources:
+  - source_key: devtools/docker
+    path: devtools/docker-internals.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 82b12e59195dca5250a0e1ebc357b39838ac1acd5e227e81b4c5a4a0d0ec4182
+  - source_key: devtools/linux
+    path: devtools/linux-commands.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 04d612e5ddca22623c97cbada4b6b0c7e4a089e30352b20fc8356517edab57a7
+  - source_key: devtools/git
+    path: devtools/git-guide.md
+    format: markdown
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    content_sha256: 4f14222e6cc90f267bc3df92d48743cba3fbfe2f66e5fd8c2c7ec1e1871d034c
+- id: physics
+  name: 理论物理笔记
+  description: 本科物理专业理论物理课程的学习笔记，覆盖四大力学（理论力学、电动力学、
+    量子力学、统计力学）以及数学物理方法。全部为中文笔记（含数学公式与英文术语），
+    从LaTeX源文件编译的PDF。共7份PDF文件，272页。模拟物理专业学生考前复习四大力学的场景。
+  sources:
+  - source_key: physics/electrodynamics
+    path: physics/Electrodynamics-Notes.pdf
+    format: pdf
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    description: 电动力学笔记（46页）— Maxwell方程组、静电/静磁、电磁波、运动电荷辐射、狭义相对论
+    content_sha256: be12df9985414f7cb9c68eaf269630c9dba74d80623503cb3c97bf53bfcd5556
+  - source_key: physics/optics
+    path: physics/Optics-Notes.pdf
+    format: pdf
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    description: 光学笔记（30页）— 几何光学、干涉、衍射、偏振、成像系统、薄膜光学
+    content_sha256: ea8a80259e396f8d82f95340efd6181ab5f714d1361ee1aa862add53d1c374de
+  - source_key: physics/quantum
+    path: physics/Quantum-Mechanics-Notes.pdf
+    format: pdf
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    description: 量子力学笔记（83页）— 形式理论、一维问题、谐振子、角动量、全同粒子
+    content_sha256: 381702fc3e8b0ef24b36d9155625744a50959f560ba61f0aa92b5421843a9057
+  - source_key: physics/statmech
+    path: physics/Statistical-Mechanics-Notes.pdf
+    format: pdf
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    description: 统计力学笔记（39页）— 热力学基础、近独立粒子系统、系综理论
+    content_sha256: d0f028bffff420c4ce6f657c4f2cdb73513364bb978c1d71fc57268f14e14627
+  - source_key: physics/theorymech
+    path: physics/Theoretical-Mechanics-Notes.pdf
+    format: pdf
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    description: 理论力学笔记（28页）— Lagrange/Hamilton力学、正则变换、H-J理论、相对论力学
+    content_sha256: 7361484f11508ba350dda7d7ab88e2ddbb3980755f402651a4c9c7c937e09e5a
+  - source_key: physics/mathphys1
+    path: physics/math-physics-methods-1.pdf
+    format: pdf
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    description: 数学物理方法（上）（18页）— 复变函数、留数定理、Fourier/Laplace变换、ODE级数解
+    content_sha256: 222cec3dd6229560dbb1f081b8d513b2f55c5abd07826c2a0df3228de25d2e36
+  - source_key: physics/mathphys2
+    path: physics/math-physics-methods-2.pdf
+    format: pdf
+    language: zh
+    license: cc0-1.0
+    sensitivity: public_demo
+    allowed_uses:
+    - local_development
+    - local_evaluation
+    - repository_fixture
+    redistribution: permitted_cc0
+    description: 数学物理方法（下）（28页）— 分离变量、球谐函数、Bessel函数、Green函数、变分法
+    content_sha256: a0c11c542354dc0696ea06f94243265879016497a0c236fb50c582531ebb40a5

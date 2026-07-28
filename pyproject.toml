@@ -6,6 +6,7 @@ dependencies = [
     "agent-runtime",
     "api",
     "jsonschema>=4.23,<5",
+    "PyMuPDF==1.28.0",
     "pyyaml>=6,<7",
     "worker",
 ]
@@ -71,4 +72,5 @@ dev = [
     "alembic",
     "ruff>=0.9",
     "mypy>=1.14",
+    "pypdf==6.14.2",
 ]

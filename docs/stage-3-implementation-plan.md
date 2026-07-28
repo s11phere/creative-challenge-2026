@@ -8,6 +8,10 @@
 
 ## 1. 结论摘要
 
+当前状态（2026-07-28）：Stage 0 已按 `docs/stage-0-acceptance.md` 以
+`internal_team_only` 范围冻结。阶段 3 的正式模型、配置、development 消融和 holdout
+门禁仍未关闭；本计划中的历史 provisional 结果不得视为正式质量结论。
+
 阶段 3 的目标是用可复现数据证明检索链路有效，而不是实现回答生成、引用绑定或
 `knowledge_qa` Skill。阶段 2 已经提供已发布 `DocumentVersion`、带定位信息的 `Chunk`、
 768 维 pgvector 列、摄入状态机和原子发布边界；阶段 3 在这些入口之上实现关键词、向量、
@@ -42,8 +46,9 @@ SearchRequest
 
 正式执行阶段 3 前必须满足：
 
-1. 阶段 0 完成语料授权复核、人工标注复核和版本冻结，
-   `cases/evals/corpus/v0/manifest.yaml` 不再处于 `draft_pending_license_review`。
+1. 阶段 0 已完成内部冻结，`cases/evals/corpus/v0/manifest.yaml` 为
+   `status: frozen` 且 `distribution_scope: internal_team_only`；退出记录为
+   `docs/stage-0-acceptance.md`。
 2. 阶段 2 Step 9 完成正式质量验收，P0 格式解析、幂等摄入、原子发布、删除撤下和失败恢复
    在批准语料上通过。
 3. 每次读取评测来源前校验原始字节 SHA-256，且只处理 manifest 允许列表。
@@ -196,7 +201,7 @@ docs/
 9. 建立评测配置 schema 和最小 CLI 骨架，报告中只保存 ID、版本、分数、排名、耗时和安全
    的失败分类。
 
-**当前实现与临时基线记录（2026-07-21）**：
+**历史实现与临时基线快照（2026-07-21，阶段 0 冻结前）**：
 
 - 阶段 0 尚未关闭，manifest 仍为 `draft_pending_license_review`，且仓库中没有阶段 2 Step 9
   正式验收记录。因此 `cases/evals/configs/retrieval-v1.yaml` 固定为 `provisional`、
@@ -250,7 +255,7 @@ docs/
    - 无命中是成功空结果，不映射为系统错误。
 6. 用性质测试固定 RRF、去重、tie-break、top-k 截断和 filter 不可扩权等不变量。
 
-**当前实现与契约记录（2026-07-21）**：
+**历史实现与契约快照（2026-07-21，阶段 0 冻结前）**：
 
 - R3-01 的工程实现已关闭；`packages/domain/src/domain/retrieval.py` 是检索输入、输出、错误和
   Port 的唯一领域契约，不依赖 FastAPI、SQLAlchemy、ORM、模型 SDK 或具体 Provider。
@@ -301,7 +306,7 @@ docs/
    已批准语料。
 9. 合同测试验证批量顺序、768 维、有限超时/重试、归一化、空输入、无效响应和离线状态。
 
-**当前实现与验证记录（2026-07-21）**：
+**历史实现与验证快照（2026-07-21，阶段 0 冻结前）**：
 
 - ModelGateway 已支持能力级 endpoint、凭据、模型、健康状态及 TEI `/embed` 协议；Gateway
   增加显式异步关闭契约，Worker 将其生命周期限制在单次 actor 事件循环，避免连续任务复用
@@ -349,7 +354,7 @@ docs/
 7. 为迁移回填、当前版本切换、删除撤下、跨 Space 和并发发布/检索编写真实 PostgreSQL
    集成测试。
 
-**当前实现与验证记录（2026-07-21）**：
+**历史实现与验证快照（2026-07-21，阶段 0 冻结前）**：
 
 - Alembic revision `d4e5f6a7b8c9` 为 `chunks.search_vector` 增加基于 PostgreSQL `simple`
   配置的持久生成列，并创建 `idx_chunks_search_vector` GIN 索引；ORM metadata 与迁移保持一致。
@@ -387,7 +392,7 @@ docs/
 5. 预先定义升级触发条件：若 Keyword 路径导致混合检索无法满足门槛，再在相同 Port 下比较
    受控分词方案或 PGroonga；更换关键词后端或新增数据库扩展前更新 ADR-002 或新增 ADR。
 
-**当前实现与验证记录（2026-07-21）**：
+**历史实现与验证快照（2026-07-21，阶段 0 冻结前）**：
 
 - 查询入口契约使用 Unicode NFKC、空白折叠和前后去空白，保留 `C++`、`std::vector`、
   `snake_case_identifier` 等技术符号与标识符；原始或规范化查询超过 512 字符、或规范化后为空
@@ -427,7 +432,7 @@ docs/
    比较。
 6. 比较 exact 与活动近似索引，记录 Recall@K、延迟和结果重合，不只记录 SQL 执行时间。
 
-**当前实现与验证记录（2026-07-21）**：
+**历史实现与验证快照（2026-07-21，阶段 0 冻结前）**：
 
 - `QueryEmbeddingService` 是 provider-neutral `QueryEmbedder` 实现：它通过 TextEmbedder 适配
   ModelGateway，先规范化 query，再可选追加受版本约束的 query prefix；返回恰好一个、768 维、
@@ -475,7 +480,7 @@ docs/
 7. 控制每个文档的最大候选数和扩展窗口，避免单一长文档占满结果；多样性规则必须配置化
    并进入消融实验。
 
-**当前实现与验证记录（2026-07-21）**：
+**历史实现与验证快照（2026-07-21，阶段 0 冻结前）**：
 - `SearchService` 在 Hybrid/Hybrid+Rerank 请求内并行执行 Keyword 与 Dense；两路分别受
   `keyword_timeout_seconds`/`dense_timeout_seconds` 限制，取消时清理未完成任务；Embedding
   失败仍按既有在线 Keyword fallback 策略处理。
@@ -511,7 +516,7 @@ docs/
    退出条件；应先用评测证据更新 `docs/project-implementation-plan.md` 的门槛和后果，再决定
    是否以默认关闭 Reranker 的 Hybrid 配置退出。
 
-**当前实现与验证记录（2026-07-21）**：
+**历史实现与验证快照（2026-07-21，阶段 0 冻结前）**：
 - ModelGateway 新增 `reranker_multilingual` 能力 alias、provider-neutral `RerankRequest`/
   `RerankResponse`/`RerankScore`（含 model version、usage、latency），Fake、Unavailable 和
   OpenAI-compatible/TEI HTTP Adapter 均实现同一契约。
@@ -548,7 +553,7 @@ docs/
 5. 为 FTS、query embedding、vector SQL、fusion 和 rerank 建立独立 span，限制低基数属性。
 6. 新增公开 API 后重新生成 `docs/openapi.json`，运行 schema diff 和 API 隔离集成测试。
 
-**当前实现与验证记录（2026-07-22）**：
+**历史实现与验证快照（2026-07-22，阶段 0 冻结前）**：
 
 - 新增 `POST /api/v1/spaces/{space_id}/search`。请求只允许 `query`、四种已定义的
   `mode` 和 `source_ids`/`document_ids` 缩小过滤；Pydantic 使用领域层的 NFKC、空白折叠和
@@ -605,7 +610,7 @@ docs/
 **完成标准**：同一冻结配置可重复得到相同通过/失败结论；默认模型和 profile 的选择有
 development 消融与 holdout 证据；每个失败 case 可定位到具体阶段。
 
-**当前实现与实际验证记录（2026-07-22）：**
+**历史实现与实际验证快照（2026-07-22，阶段 0 冻结前）：**
 
 - 已建立版本化评测 schema/config，覆盖语料与数据集 SHA-256、development/holdout 划分摘要，以及 Keyword、Dense exact/IVFFlat、Hybrid 和 Hybrid+Reranker 实验。
 - `scripts/evaluate_retrieval.py` 已支持 `--validate-only`、`--prepare-corpus`、可重复使用的 `--experiment`、`--quiet`、通过 `EVALUATION_DATABASE_ISOLATED=1` 强制隔离数据库、正式 holdout 门禁、安全运行元数据、失败归因和递归隐私扫描。
@@ -631,7 +636,7 @@ development 消融与 holdout 证据；每个失败 case 可定位到具体阶�
 **完成标准**：所有阶段退出条件均由保存的命令和报告支持，阶段 4 可以仅通过 Application
 Port 获取有版本、分数、Space、来源和 locator 的证据候选。
 
-**当前实现与实际验证记录（2026-07-23）：**
+**历史实现与实际验证快照（2026-07-23，阶段 0 冻结前的移交记录）：**
 
 - 已新增 `docs/stage-3-acceptance.md`，集中记录 Step 10 的环境、命令、验收矩阵、评测摘要、
   未关闭门禁和阶段 4 移交约束；README、architecture、development-environment 和
@@ -643,8 +648,9 @@ Port 获取有版本、分数、Space、来源和 locator 的证据候选。
   PostgreSQL/Redis 保留卷重启已通过。模型 profile 首次下载受 Hugging Face `unexpected EOF`
   阻塞，但用既有固定 revision 缓存禁网启动 Embedding/Reranker 均报告 Ready；详细输出见
   `docs/stage-3-acceptance.md`。
-- 阶段 0 语料门禁、阶段 2 Step 9 正式验收和阶段 3 holdout 仍未关闭。本步完成工程集成与文档
-  移交，不把 fixture 或 fake 模型结果宣称为正式 Recall、Reranker 净收益或 P95 质量结论。
+- 阶段 0 语料门禁已按 `docs/stage-0-acceptance.md` 关闭并限定为 `internal_team_only`；阶段 2
+  Step 9 正式验收和阶段 3 holdout 仍未关闭。本步完成工程集成与文档移交，不把 fixture 或 fake
+  模型结果宣称为正式 Recall、Reranker 净收益或 P95 质量结论。
 
 ## 6. 配置与版本策略
 

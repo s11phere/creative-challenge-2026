@@ -2,8 +2,8 @@
 
 > 验收日期：2026-07-18
 >
-> 结论：阶段 1 工程实现与验收完成，GitHub Actions 由用户确认运行正常；项目继续受阶段 0
-> 数据门禁约束。
+> 结论（2026-07-18 当时）：阶段 1 工程实现与验收完成，GitHub Actions 由用户确认运行正常；
+> 当时项目继续受阶段 0 数据门禁约束。阶段 0 后续已按 `docs/stage-0-acceptance.md` 内部冻结。
 
 ## 验收范围
 
@@ -49,7 +49,7 @@ git diff --exit-code -- docs/openapi.json
 
 | 条件 | 结论 |
 | --- | --- |
-| 阶段状态不越过数据门禁 | 通过：明确记录“阶段 1 工程完成，等待阶段 0 数据门禁” |
+| 阶段状态不越过数据门禁 | 通过：当时明确记录“阶段 1 工程完成，等待阶段 0 数据门禁” |
 | 单命令 Compose 启动 | 通过 |
 | live/ready 成功与失败语义 | 通过 |
 | API/数据库 trace 关联 | 通过 |
@@ -71,5 +71,5 @@ git diff --exit-code -- docs/openapi.json
 ## 移交结论
 
 未参与初始化的开发者可以按根 README 创建 `.env`、单命令启动本地栈并完成 smoke test。
-进入阶段 2 前仍须按阶段 0 基线完成语料授权、人工标注复核和版本冻结，并关闭 Worker 容器
-actor 日志差异或明确接受其风险。
+阶段 0 已由 `docs/stage-0-acceptance.md` 以 `internal_team_only` 范围冻结；进入阶段 2 正式质量验收前，
+仍须关闭 Worker 容器 actor 日志差异或明确接受其风险。

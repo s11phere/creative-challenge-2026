@@ -1,0 +1,246 @@
+QuickNotes v2.0.0 Release Notes
+================================
+Date: 2025-06-20
+Build: 20250620.3
+Codename: "Horizon"
+
+QuickNotes v2.0 is a major update bringing encryption, extended export
+capabilities, GFM markdown support, and significant workflow improvements
+while maintaining our commitment to local-first data ownership.
+
+────────────────────────────────────────────────────────────
+1. EDITING & MARKDOWN
+────────────────────────────────────────────────────────────
+
+- Markdown Engine: Upgraded from CommonMark to GitHub Flavored Markdown (GFM).
+  Newly supported: task lists (- [ ] / - [x]), strikethrough (~~text~~),
+  autolinks (bare URLs are auto-linked), and footnotes ([^1] syntax).
+- Code Blocks: Syntax highlighting expanded from 4 to 15+ languages: Python,
+  JavaScript, TypeScript, C++, HTML, CSS, Rust, Go, Java, SQL, Bash, YAML,
+  JSON, XML, and Markdown. Language tag is optional; when omitted, the engine
+  attempts auto-detection.
+- Tables: Full GFM table support with column alignment (:---, :---:, ---:).
+  Tables without alignment markers default to left-aligned.
+- Images: Local image embedding via clipboard paste (Ctrl+Shift+V) and
+  drag-and-drop from file manager. Images are stored in an assets/ subdirectory
+  relative to the note.
+- Line Wrapping: Soft word-wrap (configurable). Default is now soft-wrap at
+  the editor width. Users can toggle hard-wrap in Settings > Editor.
+- Indentation: Spaces are now supported. Default indentation is 4 spaces;
+  tab size is configurable (2/4/8 spaces per tab). The Insert Spaces setting
+  replaces tabs with spaces.
+- Undo History: Persistent undo history stored per-note on disk. Undo stack
+  survives closing a note and restarting the application. Stack depth is
+  configurable (default: 200 operations).
+- Auto-Save: Interval reduced from 5 minutes to 30 seconds. Additionally,
+  notes are saved on focus loss (switching tabs, minimizing window). A "Saving…"
+  indicator appears in the status bar during auto-save.
+- Session Restore: On startup, QuickNotes reopens all notes that were open
+  when the application was last closed, restoring cursor position and scroll
+  offset for each note. This can be disabled in Settings > General.
+- Spell Checking: Multilingual spell check with dictionaries for English (US,
+  UK), German, French, Spanish, and Chinese (simplified). Misspelled words
+  are underlined with a red wavy line. Right-click for suggestions.
+- Word Count & Reading Time: Displayed in the status bar for the current note.
+
+────────────────────────────────────────────────────────────
+2. ORGANIZATION & NAVIGATION
+────────────────────────────────────────────────────────────
+
+- Tagging System: Tag hierarchy delimiter changed from '/' to ':'.
+  v1.0 tag example: #work/project
+  v2.0 tag example: #work:project
+  Existing tags are NOT auto-converted during migration. Users must update
+  tags manually or use the provided migration script (Tools > Migrate Tags).
+- Tag Autocomplete: Fuzzy matching is now supported. Typing "#pro" will
+  suggest "#work:project" in the autocomplete dropdown.
+- Wiki-Style Links: Now supports display text syntax:
+  [[note-filename|Display Text]]. The old [[note]] syntax continues to work.
+- File Explorer: Sort order is now configurable—alphabetical (A-Z),
+  alphabetical (Z-A), or by last modified date (newest first). Default sort
+  order changed from alphabetical A-Z to last modified date (newest first).
+- Note Sorting: Changed from alphabetical to last modified date (newest first).
+  This affects the file explorer and the quick file open (Ctrl+Shift+O) results.
+- Maximum Open Tabs: Limited to 20 tabs. When the limit is reached, opening
+  a new note prompts the user to close an existing tab. Tabs beyond the limit
+  are not loaded into memory.
+
+────────────────────────────────────────────────────────────
+3. SEARCH
+────────────────────────────────────────────────────────────
+
+- Full-Text Search: Now supports both single-note search (Ctrl+F) and
+  global search across all notes (Ctrl+Shift+F). Global search results show
+  filename, matching line, and a 2-line context preview.
+- Case Sensitivity: Case-sensitive search is now available via a toggle button
+  (Aa icon) in the search bar.
+- Regular Expressions: PCRE-compatible regex is now supported. Toggle via the
+  .* icon in the search bar. Named capture groups are not supported.
+- Search Operators: Boolean operators are supported in the search bar:
+  AND (default, space-separated terms), OR (pipe symbol |), NOT (minus prefix
+  -term), and exact phrase matching with double quotes ("exact phrase").
+
+────────────────────────────────────────────────────────────
+4. APPEARANCE & UI
+────────────────────────────────────────────────────────────
+
+- Themes: Two new themes added—Nord and Dracula—bringing the total to 5:
+  Light, Dark, Sepia, Nord, and Dracula.
+- Default Theme: Changed from Light to "System"—QuickNotes now follows the
+  operating system theme setting on first launch. On Windows and macOS, this
+  means the app starts in Dark mode if the OS is in Dark mode.
+- Font: Font family and size are now customizable via Settings > Appearance.
+  Default font remains the system monospace font.
+- Custom CSS: Users can add custom CSS snippets via Settings > Appearance >
+  Custom CSS. Snippets are applied to both the editor and preview panes.
+- Window Mode: Detachable tabs—drag a tab out of the main window to create a
+  new window. Drag it back to reattach. Each window can have its own set of
+  tabs and split views.
+- Minimap: A code-style minimap (zoomed-out overview) of the current note is
+  available on the right side of the editor. Toggle via View > Minimap.
+- Typewriter Mode: Keeps the current editing line vertically centered. Toggle
+  via F10 or View > Typewriter Mode. Cursor line is highlighted in a subtle
+  accent color.
+- Focus Mode: Fullscreen mode that hides all UI chrome except the editor.
+  Toggle via F10 (when Typewriter Mode is off) or View > Focus Mode.
+- Command Palette: Ctrl+P opens the Command Palette—a fuzzy-searchable list
+  of 40+ commands (open file, change theme, toggle settings, etc.).
+- System Tray: QuickNotes can minimize to the system tray. Tray icon provides
+  quick actions: New Note, Search, and Quit.
+
+────────────────────────────────────────────────────────────
+5. IMPORT & EXPORT
+────────────────────────────────────────────────────────────
+
+- Import Formats: Expanded from .txt and .md to also include .html and .docx.
+  HTML files are converted to Markdown on import. Basic .docx conversion
+  preserves headings, bold, italic, lists, and tables.
+- Export Formats: Markdown (.md), PDF (.pdf), HTML (.html), and Plain Text
+  (.txt). PDF export requires a system-installed PDF viewer for preview;
+  generation itself uses a built-in Chromium-based renderer.
+- Batch Export: Select multiple notes in the file explorer, right-click, and
+  choose Export Selected. Notes can be exported as individual files or
+  merged into a single document (Markdown or HTML only).
+- Frontmatter: YAML frontmatter is now preserved during Markdown export.
+  There is a toggle in the export dialog to include or exclude frontmatter.
+- Table of Contents: Auto-generate a table of contents from headings via
+  Tools > Insert Table of Contents. The ToC updates automatically when
+  headings change.
+- Note Statistics: Tools > Note Statistics shows word count, character count
+  (with and without spaces), number of headings, number of internal links,
+  number of tags, and last modified timestamp.
+
+────────────────────────────────────────────────────────────
+6. STORAGE & BACKUP
+────────────────────────────────────────────────────────────
+
+- Storage Location: Changed from ~/.quicknotes/ to ~/Documents/QuickNotes/.
+  On first launch of v2.0, existing notes in ~/.quicknotes/ are automatically
+  migrated to the new location. The old directory is kept untouched as a
+  backup and is never deleted by QuickNotes.
+- Config File: Moved from ~/.quicknotes/config.ini to
+  ~/Documents/QuickNotes/config.json. Settings are now stored in JSON format
+  rather than INI. The old config.ini file is not migrated.
+- Automatic Backup: QuickNotes now creates a daily backup of all notes. Backup
+  archives (.zip format) are stored in ~/Documents/QuickNotes/backups/ and
+  rotated to retain the last 7 days. Manual backup (File > Create Backup)
+  creates a timestamped archive that is never auto-deleted.
+- File Versioning: QuickNotes retains the last 3 versions of each note in a
+  hidden .quicknotes-versions/ directory. Right-click a note and choose
+  "View Version History" to browse, diff, or restore previous versions.
+- File Watching: External changes to note files (e.g., editing in VS Code
+  or via Git operations) are detected via the OS file system watcher and
+  automatically reflected in the editor. A notification banner appears
+  when external changes are loaded.
+- Crash Recovery: Unsaved changes are written to a recovery file every 30
+  seconds (during auto-save). If QuickNotes exits unexpectedly, the next
+  launch shows a "Recovered Notes" panel listing all recoverable changes.
+
+────────────────────────────────────────────────────────────
+7. KEYBOARD SHORTCUTS
+────────────────────────────────────────────────────────────
+
+  Ctrl+S            Save current note
+  Ctrl+F            Find in current note (with regex & case toggles)
+  Ctrl+Shift+F      Search across all notes
+  Ctrl+N            New note
+  Ctrl+W            Close current tab
+  Ctrl+Shift+T      Reopen last closed tab (NEW)
+  Ctrl+P            Command Palette (CHANGED—was "Quick file open" in v1.0)
+  Ctrl+Shift+O      Quick file open (NEW—replaces old Ctrl+P behavior)
+  Ctrl+B            Toggle bold
+  Ctrl+I            Toggle italic
+  Ctrl+Shift+V      Paste image from clipboard (NEW)
+  Ctrl+Z            Undo
+  Ctrl+Y            Redo
+  F11               Toggle fullscreen
+  F10               Toggle Focus Mode / Typewriter Mode (NEW)
+
+  IMPORTANT: The Ctrl+P shortcut has been reassigned from "Quick file open"
+  (v1.0) to "Command Palette" (v2.0). To open a file quickly, use the new
+  Ctrl+Shift+O shortcut. This is a BREAKING CHANGE.
+
+────────────────────────────────────────────────────────────
+8. ENCRYPTION & SECURITY
+────────────────────────────────────────────────────────────
+
+- AES-256 Encryption: Individual notes can be encrypted by right-clicking
+  and selecting "Encrypt". A password prompt appears. Encrypted notes display
+  a lock icon and require the password to view. Encryption is applied at the
+  file level—the .md file on disk contains ciphertext, not plaintext.
+- A password strength meter is shown when setting an encryption password.
+  Passwords must be at least 8 characters.
+
+────────────────────────────────────────────────────────────
+9. MIGRATION FROM v1.0.0
+────────────────────────────────────────────────────────────
+
+When upgrading from v1.0.0 to v2.0.0:
+
+1. Notes: All .md files in ~/.quicknotes/ are copied to
+   ~/Documents/QuickNotes/ on first launch. The original files are left
+   untouched as a manual backup.
+
+2. Tags: Tag delimiters are NOT auto-converted. Existing #work/project tags
+   will still work but will be treated as flat tags (the '/' is no longer
+   recognized as a hierarchy separator). To convert, run Tools > Migrate Tags,
+   which replaces '/' with ':' in all tags across all notes.
+
+3. Config: v1.0's config.ini is NOT migrated to v2.0's config.json. Users
+   must reconfigure their settings in the new Settings panel.
+
+4. Keyboard Shortcuts: The Ctrl+P shortcut now opens the Command Palette
+   rather than Quick File Open. Use Ctrl+Shift+O for Quick File Open.
+
+5. File Explorer Sort: The default sort order changes from alphabetical (A-Z)
+   to last modified date (newest first). This can be changed back in
+   Settings > General.
+
+6. Undo History: v1.0 per-session undo history is not migrated. v2.0 starts
+   with a fresh persistent undo history for each note.
+
+────────────────────────────────────────────────────────────
+10. SYSTEM REQUIREMENTS & LIMITATIONS
+────────────────────────────────────────────────────────────
+
+- Operating Systems: Windows 10 (build 19041+), macOS 12 (Monterey+), Linux
+  (Ubuntu 22.04+, Debian 12+, Fedora 38+). Note: Ubuntu minimum version
+  has been raised from 20.04 to 22.04.
+- Disk Space: 200 MB for the application (was 100 MB)
+- RAM: 4 GB recommended (was 2 GB)
+- Maximum Note Size: 200,000 characters per note (was 50,000)
+- Maximum File Name Length: 120 characters (unchanged)
+
+Known Limitations:
+- No cloud synchronization (local-first design is intentional)
+- No mobile version (desktop platforms only)
+- No real-time collaboration
+- No plugin or extension marketplace
+- No API or webhook integration
+- PDF export preview opens in the system's default PDF viewer
+- .docx import is basic—complex formatting (nested tables, text boxes) may
+  not convert correctly
+- Spell check dictionaries for languages beyond EN/DE/FR/ES/ZH are not
+  available
+- Note versioning retains only the last 3 versions
+- Named capture groups are not supported in regex search
