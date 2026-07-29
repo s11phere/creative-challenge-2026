@@ -29,9 +29,19 @@ QWEN3_WEB_SEARCH_QUERY_PREFIX = (
     "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "
 )
 
+QWEN3_WEB_SEARCH_DOCUMENT_PREFIX = (
+    "Instruct: Given a web search query, retrieve relevant passages "
+    "that answer the query\nDocument: "
+)
+
 _QUERY_PREFIXES = {
     "none-v1": "",
     "qwen3-web-search-v1": QWEN3_WEB_SEARCH_QUERY_PREFIX,
+}
+
+_DOCUMENT_PREFIXES = {
+    "none-v1": "",
+    "qwen3-web-search-v1": QWEN3_WEB_SEARCH_DOCUMENT_PREFIX,
 }
 
 
@@ -105,6 +115,23 @@ def query_embedding_config(
         query_prefix=query_prefix,
         timeout_seconds=timeout_seconds,
     )
+
+
+def document_embedding_config(
+    identity: EmbeddingIdentity,
+) -> str:
+    """Resolve the document instruction prefix from a versioned identity.
+
+    Returns the prefix string to prepend to each chunk text before
+    embedding.  An empty string means no prefix (equivalent to the
+    ``none-v1`` instruction version).
+    """
+    try:
+        return _DOCUMENT_PREFIXES[identity.document_instruction_version]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported document instruction version: {identity.document_instruction_version}"
+        ) from exc
 
 
 class QueryEmbeddingService:

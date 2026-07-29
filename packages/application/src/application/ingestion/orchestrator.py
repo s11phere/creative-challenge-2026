@@ -42,6 +42,8 @@ from domain.repositories import (
     SourceRepository,
 )
 
+from application.retrieval.dense import document_embedding_config
+
 from .embedding import EmbeddingConfig, EmbeddingService, TextEmbedder
 
 logger = logging.getLogger(__name__)
@@ -359,6 +361,7 @@ class IngestionOrchestrator:
             embed_config = EmbeddingConfig(
                 batch_size=cfg.embedding_batch_size,
                 embedding_identity=cfg.embedding_identity,
+                document_prefix=document_embedding_config(cfg.embedding_identity),
             )
             embed_result = await self._embedding_service.embed_and_publish(
                 document=document,

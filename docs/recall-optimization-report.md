@@ -201,6 +201,75 @@ dense@100 → BGE Reranker → top-5
       fusion_alpha: 0.9
 ```
 
+## 2026-07-29 补充：文档 Instruction Prefix 修复
+
+### 根因分析
+
+在对检索管道的逐层审查中，发现一个关键 bug：**文档嵌入缺少 Instruction Prefix**。
+
+Qwen3-Embedding 是指令微调的不对称 embedding 模型，期望查询和文档使用不同前缀：
+
+- **查询嵌入时**：应用了 `qwen3-web-search-v1` 指令前缀
+  ```
+  Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: <query>
+  ```
+- **文档块嵌入时**（摄入阶段）：**完全没有指令前缀**，原始块文本直接送入模型
+  ```
+  <raw_chunk_text>
+  ```
+
+这意味着查询向量和文档向量处于不同的 embedding 空间，cosine similarity 的区分力被系统性削弱。
+
+**代码证据：**
+- `packages/application/src/application/retrieval/dense.py` 有 `_QUERY_PREFIXES` 注册表，但全代码库**没有** `_DOCUMENT_PREFIXES`
+- `.env` 中 `EMBEDDING_DOCUMENT_INSTRUCTION_VERSION=none-v1`（等于 disabled）
+- 摄入管道的 `embed_and_publish()` 直接将原始 chunk text 送入模型网关，无前缀处理
+
+### 实施修复
+
+改动涉及 4 个文件 + `.env`：
+
+| 文件 | 改动 |
+|------|------|
+| `dense.py` | 添加 `_DOCUMENT_PREFIXES` 注册表 + `document_embedding_config()` 解析函数 |
+| `retrieval/__init__.py` | 导出 `document_embedding_config` |
+| `ingestion/embedding.py` | `EmbeddingConfig` 新增 `document_prefix` 字段，嵌入前给每个 chunk 加上前缀 |
+| `ingestion/orchestrator.py` | 导入 `document_embedding_config`，解析前缀并传入 `EmbeddingConfig` |
+| `.env` | `EMBEDDING_DOCUMENT_INSTRUCTION_VERSION=none-v1` → `qwen3-web-search-v1` |
+
+修复后的文档前缀：
+```
+Instruct: Given a web search query, retrieve relevant passages that answer the query\nDocument: <chunk_text>
+```
+
+验证：`ruff format` / `ruff check` / `mypy` / `pytest`（499 passed）全部通过。
+
+### 实验结果
+
+在 development 集上重新摄入 + 评测（`dense-exact`, k=5）：
+
+| 指标 | 修复前 | 修复后 | 变化 |
+|------|:----:|:----:|:----:|
+| **Recall@5** | **51.43%** | **52.38%** | **+0.95pp** |
+| MRR | 0.4822 | 0.4969 | +0.015 |
+| nDCG@5 | 0.3940 | 0.3994 | +0.005 |
+| P95 latency (ms) | 92.8 | 110.2 | +18.7% |
+
+Recall 提升看似微小，但**失败模式的分布发生了质变**：
+
+| 失败类别 | 修复前 | 修复后 | 含义 |
+|---------|:---:|:---:|------|
+| `dense_recall`（文档级未命中） | **102** | **2** | 大幅减少 |
+| `locator_mapping`（段落级未命中） | ~70 | **58** | 部分改善 |
+
+修复前：102 个案例连正确文档都找不到（dense@5 recall 51% 由少数"撞对"的案例撑起）。
+
+修复后：只剩 **2 个** dense_recall 失败（来源是 16 个 parser 不支持的代码文件，如 `.py`/`.cpp`）。
+
+剩余 **58 个 locator_mapping 失败**全是「正确文档在 top-5，但排到的是错误段落」。
+
+**核心结论：文档前缀修复了 embedding 空间不对称，使模型能稳定定位到正确文档。** 但 0.6B 的 Qwen3-Embedding 对同一文档内不同段落的向量区分力不足，后续需要 cross-encoder reranker 或更大的 embedding 模型来解决段落级排名问题。
+
 ### TEI 服务注意事项
 
 - `EMBEDDING_ENDPOINT` 在 `.env` 中配置为 `http://tei:80`（Docker 内部主机名）
