@@ -59,6 +59,22 @@ def test_embedding_batch_size_is_bounded_and_configurable() -> None:
         Settings(embedding_batch_size=0)
 
 
+def test_qwen3_query_instruction_resolves_to_reviewed_prefix() -> None:
+    s = Settings(embedding_query_instruction_version="qwen3-web-search-v1")
+
+    assert s.query_embedding_prefix() == (
+        "Instruct: Given a web search query, retrieve relevant passages that answer the query\n"
+        "Query: "
+    )
+
+
+def test_unknown_query_instruction_version_is_rejected() -> None:
+    s = Settings(embedding_query_instruction_version="unknown-v1")
+
+    with pytest.raises(ValueError, match="EMBEDDING_QUERY_INSTRUCTION_VERSION"):
+        s.active_embedding_identity()
+
+
 async def test_application_lifespan_rejects_missing_production_secrets(
     monkeypatch: MonkeyPatch,
 ) -> None:

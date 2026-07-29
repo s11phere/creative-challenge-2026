@@ -55,7 +55,7 @@ experiments:
       dense_candidate_k: 30
       fusion_candidate_k: 30
       rrf_k: 60
-      fusion_alpha: 0.5
+      fusion_alpha: 0.35
       reranker_enabled: false
       rerank_k: 10
       final_k: 5

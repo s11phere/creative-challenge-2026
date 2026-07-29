@@ -97,7 +97,7 @@ class TestStructureChunker:
         doc = _make_doc("Hello, world.")
         result = await chunker.chunk(doc)
         assert result.total_ordinals == 1
-        assert result.chunker_version == "1.0"
+        assert result.chunker_version == "1.1"
         assert result.config_hash
 
     # -- Basic text chunking ----------------------------------------------
@@ -303,6 +303,23 @@ class TestStructureChunker:
         assert result.total_ordinals > 1
         # All chunks should have text
         assert all(c.text for c in result.chunks)
+
+    async def test_split_normalized_multiline_node_preserves_source_span(self, chunker) -> None:
+        node = StructNode(
+            node_type=StructNodeType.PARAGRAPH,
+            text="normalized content " * 30,
+            start_line=10,
+            end_line=20,
+        )
+        doc = _make_doc(node.text, structure=(node,))
+
+        result = await chunker.chunk(
+            doc,
+            config=ChunkerConfig(chunk_size=80, chunk_overlap=0, min_chunk_size=0),
+        )
+
+        assert result.total_ordinals > 1
+        assert {(chunk.start_line, chunk.end_line) for chunk in result.chunks} == {(10, 20)}
 
     # -- Min chunk size ---------------------------------------------------
 

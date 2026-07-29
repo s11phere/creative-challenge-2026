@@ -222,9 +222,17 @@ services:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:c26a226262ad4ff3330fb30b76653c1bb65da2fcf413b92284545a010e0a8a48
     command:
       - --model-id
-      - BAAI/bge-base-zh-v1.5
+      - Qwen/Qwen3-Embedding-0.6B
       - --revision
-      - f03589ceff5aac7111bd60cfc7d497ca17ecac65
+      - 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
+      - --max-batch-tokens
+      - "512"
+      - --max-client-batch-size
+      - "4"
+      - --max-batch-requests
+      - "1"
+    environment:
+      RAYON_NUM_THREADS: "8"
     ports:
       - "${EMBEDDING_PORT:-8080}:80"
     volumes:

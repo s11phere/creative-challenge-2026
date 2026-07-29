@@ -52,7 +52,7 @@ class SearchApiRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: Annotated[str, Field(min_length=1, max_length=MAX_SEARCH_QUERY_CHARS)]
-    mode: RetrievalMode = RetrievalMode.HYBRID
+    mode: RetrievalMode = RetrievalMode.HYBRID_RERANK
     filters: SearchFiltersRequest = Field(default_factory=SearchFiltersRequest)
 
     @field_validator("query")

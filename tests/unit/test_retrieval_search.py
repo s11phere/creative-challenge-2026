@@ -676,7 +676,8 @@ async def test_invalid_reranker_mapping_is_rejected(repos) -> None:
 async def test_hybrid_rerank_requires_compatible_profile(repos) -> None:
     with pytest.raises(RetrievalError) as captured:
         await _service(repos, _FakeStore(), _FakeEmbedder()).search(
-            SearchRequest("query", SPACE_ID, mode=RetrievalMode.HYBRID_RERANK), _profile()
+            SearchRequest("query", SPACE_ID, mode=RetrievalMode.HYBRID_RERANK),
+            _profile(reranker_enabled=False),
         )
     assert captured.value.code is RetrievalErrorCode.PROFILE_INCOMPATIBLE
 

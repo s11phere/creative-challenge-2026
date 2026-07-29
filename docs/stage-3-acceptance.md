@@ -168,6 +168,7 @@ BGE Reranker 重排前 10 -> 返回前 5。Dense@30 在 37 个 evidence unit 中
 API 的缺省模式改为 `hybrid_rerank`，Compose `embedding` profile 改为固定 revision 的 Qwen3。
 真实在线环境还必须配置对应 instruction identity 与 L2 normalization，并以新的
 `embedding_version` 全量重建候选 DocumentVersion；在重建并发布前，旧向量不会与新查询向量混用。
+
 ## 退出条件与未关闭项
 
 已完成：检索四种模式、固定 profile/Embedding/索引版本、Search Application Port、稳定错误

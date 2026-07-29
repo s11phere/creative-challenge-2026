@@ -159,7 +159,7 @@ class StructureChunker:
     same ``chunk_hash`` values).
     """
 
-    CHUNKER_VERSION = "1.0"
+    CHUNKER_VERSION = "1.1"
 
     async def chunk(
         self,
@@ -350,6 +350,13 @@ class StructureChunker:
         if not lines:
             return [seg]
 
+        source_line_count = seg.end_line - seg.start_line + 1
+        preserve_source_span = (
+            seg.start_line > 0
+            and seg.end_line >= seg.start_line
+            and len(lines) != source_line_count
+        )
+
         result: list[_Segment] = []
         current_lines: list[str] = []
         current_len = 0
@@ -364,8 +371,8 @@ class StructureChunker:
                     result.append(
                         _Segment(
                             text=chunk_text,
-                            start_line=line_offset,
-                            end_line=line_offset,
+                            start_line=seg.start_line if preserve_source_span else line_offset,
+                            end_line=seg.end_line if preserve_source_span else line_offset,
                             heading_path=seg.heading_path,
                             primary_type=seg.primary_type,
                             start_page=seg.start_page,
@@ -381,8 +388,12 @@ class StructureChunker:
                 result.append(
                     _Segment(
                         text="\n".join(current_lines),
-                        start_line=line_offset,
-                        end_line=line_offset + len(current_lines) - 1,
+                        start_line=seg.start_line if preserve_source_span else line_offset,
+                        end_line=(
+                            seg.end_line
+                            if preserve_source_span
+                            else line_offset + len(current_lines) - 1
+                        ),
                         heading_path=seg.heading_path,
                         primary_type=seg.primary_type,
                         start_page=seg.start_page,
@@ -399,8 +410,12 @@ class StructureChunker:
             result.append(
                 _Segment(
                     text="\n".join(current_lines),
-                    start_line=line_offset,
-                    end_line=line_offset + len(current_lines) - 1,
+                    start_line=seg.start_line if preserve_source_span else line_offset,
+                    end_line=(
+                        seg.end_line
+                        if preserve_source_span
+                        else line_offset + len(current_lines) - 1
+                    ),
                     heading_path=seg.heading_path,
                     primary_type=seg.primary_type,
                     start_page=seg.start_page,

@@ -320,7 +320,7 @@
           },
           "mode": {
             "$ref": "#/components/schemas/RetrievalMode",
-            "default": "hybrid"
+            "default": "hybrid_rerank"
           },
           "query": {
             "maxLength": 512,
