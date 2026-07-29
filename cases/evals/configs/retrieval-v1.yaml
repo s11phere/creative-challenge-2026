@@ -82,6 +82,32 @@ experiments:
     profile:
       <<: *baseline_profile
       reranker_enabled: true
+
+  # ── candidate pool expansion (dense only) ────────────────────
+  - id: dense-exact-k100
+    mode: dense
+    dense_mode: exact
+    profile:
+      <<: *baseline_profile
+      dense_candidate_k: 100
+
+  # ── dense → reranker (skip hybrid fusion) ──────────────────
+  - id: dense-rerank-k30
+    mode: hybrid_rerank
+    dense_mode: exact
+    profile:
+      <<: *baseline_profile
+      reranker_enabled: true
+      rerank_k: 10
+
+  - id: dense-rerank-k100
+    mode: hybrid_rerank
+    dense_mode: exact
+    profile:
+      <<: *baseline_profile
+      dense_candidate_k: 100
+      reranker_enabled: true
+      rerank_k: 30
 gates:
   formal_manifest_status: frozen
   stage_2_step_9_acceptance_path: docs/stage-2-acceptance.md

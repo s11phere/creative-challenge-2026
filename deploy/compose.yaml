@@ -252,7 +252,7 @@ services:
     image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
     command:
       - --model-id
-      - BAAI/bge-reranker-base
+      - /data/model
       - --revision
       - 2cfc18c9415c912f9d8155881c133215df768a70
     ports:

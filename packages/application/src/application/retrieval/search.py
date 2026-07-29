@@ -250,6 +250,25 @@ class SearchService:
                 "hybrid_rerank mode requires an enabled reranker profile.",
             )
 
+        # ── Reranker input: dense-only (skip hybrid fusion) ────────
+        # Hybrid fusion via RRF with weak keyword signal dilutes the
+        # dense candidate pool.  Feed pure dense candidates directly
+        # to the reranker so it sees the full breadth of the 90%+ @100
+        # recall pool.
+        if request.mode is RetrievalMode.HYBRID_RERANK:
+            dense_candidates = hybrid_dense.candidates[: profile.rerank_k]
+            fused = tuple(
+                FusedCandidate(
+                    candidate=c,
+                    fused_score=c.score,
+                    fused_rank=i + 1,
+                    dense_rank=c.rank,
+                    dense_score=c.score,
+                )
+                for i, c in enumerate(dense_candidates)
+            )
+            fused = _limit_document_quota(fused, profile.max_chunks_per_document)
+
         try:
             response = await self._rerank(request, fused, profile)
             hits = _reranked_hits(fused, response, final_k=profile.final_k)
