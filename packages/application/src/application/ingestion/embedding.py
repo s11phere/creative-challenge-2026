@@ -176,7 +176,12 @@ class EmbeddingService:
         # ------------------------------------------------------------------
         # EMBED: call ModelGateway in batches
         # ------------------------------------------------------------------
-        chunk_texts = [f"{prefix}{c.text}" if prefix else c.text for c in chunk_outputs]
+        chunk_texts = []
+        for c in chunk_outputs:
+            enriched = c.text
+            if c.heading_path:
+                enriched = f"[{c.heading_path}]\n{enriched}"
+            chunk_texts.append(f"{prefix}{enriched}" if prefix else enriched)
         vectors: list[tuple[float, ...]] = []
 
         # Model gateway contracts reject every empty request item. Empty

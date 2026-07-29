@@ -114,6 +114,12 @@ Instruct: Given a question, retrieve the most relevant passage from the knowledg
 | 知识问答（仅查询） | knowledge QA | 无前缀 | 52.86% | 0.4807 | 2 | 59 |
 | **对称知识问答** | knowledge QA | `Document:`前缀 | **53.33%** | **0.4875** | 3 | **57** |
 
+### 指标说明
+
+**Recall@5 是 chunk-level recall**（`sum(matched_chunks) / sum(gold_chunks)` across all evidenced
+cases），不是 case-level 的全覆盖率。平均每个 answerable case 有 2.08 个 gold chunks，系统能
+找到其中约 1.1 个。Case 全覆盖率（所有 gold chunks 都找到）约为 41%。
+
 ### 关键发现
 
 **失败模式的质变：**
@@ -135,6 +141,51 @@ Instruct: Given a question, retrieve the most relevant passage from the knowledg
 0.6B 的 Qwen3-Embedding 对同一文档内不同段落的向量区分力不足——同一篇论文的第 3 页和
 第 7 页的 cosine 分数过于接近，query 无法偏好正确的那一页。
 
+### 深度失败分析
+
+经过对最新结果（53.33%）的逐 case 分析，发现瓶颈不在文档级，而在 chunk 级：
+
+| 指标 | 值 | 含义 |
+|------|:--:|------|
+| **文档级 Recall@5** | **97.0%** | 模型找到正确文档的能力已接近天花板 |
+| 正确文档在 dense@rank #1 | 91% | dense 检索极强，92/101 case 第一个匹配即正确文档 |
+| 正确文档不在 top-30 | 3% | 仅有 3 个 dense_recall 失败 |
+| **Chunk 级 Recall@5** | **53.3%** | 真实瓶颈——正确文档在 top-5，但正确段落不全是 |
+
+**60 个失败 case 的分类：**
+
+| 失败模式 | 数量 | 占比 | 描述 |
+|---------|:---:|:----:|------|
+| 同文档多段溢出 | 50 | **83%** | 正确文档在 top-5，至少 1 个 gold chunk 找到，但剩下的排不进 top-5 |
+| 跨文档垄断 | 7 | 12% | gold 分布在 2+ 文档，但一个文档的 chunk 占满 top-5 |
+| dense_recall | 3 | 5% | 正确文档不在 top-30 |
+
+**52/60 的失败 case 中，第一个 gold chunk 排在 dense@rank #1。** 模型能精准定位到正确段落，
+但当需要 2+ 个 gold chunks 时，剩下的就排不出 top-5 了。
+
+**按类别分析 Chunk Recall@5：**
+
+| 类别 | Gold | Matched | ChunkR@5 | 难度因素 |
+|------|:---:|:-------:|:--------:|----------|
+| single_document_factual | 79 | 48 | **60.8%** | 单段落为主，相对容易 |
+| version_or_conflict | 16 | 10 | **62.5%** | 版本对比，多段落分散 |
+| bilingual | 44 | 23 | **52.3%** | 中英混杂，语义空间分裂 |
+| cross_document_synthesis | 56 | 26 | **46.4%** | **最难**——多文档各自贡献一段，top-5 难以覆盖全部 |
+| code_and_nl | 15 | 5 | **33.3%** | **chunk 级最差**——代码注释放入 embedding 后段落区分力最弱 |
+
+**按来源领域分析 Chunk Recall@5：**
+
+| 领域 | Cases | ChunkR@5 | 说明 |
+|------|:----:|:--------:|------|
+| cs229 | 7 | **92.3%** | 数学笔记段落间语义差异大，容易区分 |
+| math | 20 | **67.2%** | 分析/代数笔记，段落结构清晰 |
+| physics | 21 | **43.8%** | PDF 页码切割，chunk 边界与 gold 不匹配 |
+| papers (VLA) | 27 | **44.7%** | 多论文对比，top-5 被一个垄断 |
+| devtools | 20 | **39.5%** | **最难**——Docker/Git/Linux 功能点多，同文档 4-5 chunks 全找不到 |
+
+**缺口量化：** `112/210 gold chunks matched → 98 缺失`。其中 32 个 case 只缺 1 段，
+21 个 case 缺 2 段。如果解决「缺 1 段」的 case，就能拿到 +32 matched chunks（提升到 ~68%）。
+
 ### Reranker 实验
 
 Reranker（BGE-Reranker-Base, 0.6B）在 embedding 修复后的表现仍然低于纯 cosine 排序：
@@ -150,8 +201,8 @@ BGE-Reranker-Base 也是 0.6B 级模型，同样对中英技术内容的段落�
 ## 核心瓶颈
 
 ```
-Dense@100 召回正确文档 ≈ 90%+    → ✓ 模型能定位到正确来源
-Dense@5  选对正确段落  ≈ 53%     → ✗ 但同一文档的不同段落分数太接近
+Dense@100 召回正确文档 ≈ 97%+   → ✓ 模型能定位到正确来源
+Dense@5  选对正确段落  ≈ 53%    → ✗ 但同一文档的不同段落分数太接近（0.6B 模型容量不足）
 ```
 
 **瓶颈本质**：单向量点积（cosine similarity）在文档内段落级区分上存在固有限制。
@@ -162,13 +213,57 @@ Dense@5  选对正确段落  ≈ 53%     → ✗ 但同一文档的不同段落�
 2. **更强的 cross-encoder reranker**——直接在 query×paragraph 对上做 pairwise 匹配
 3. 两者配合才可能达到 85%
 
+## 实验 5：上下文增强嵌入（Contextual Embedding）
+
+### 假设
+
+Chunker 已将 `heading_path`（章节路径，如 `Docker > Storage > OverlayFS`）记录在每个 chunk 的
+metadata 中，但 embedding 时只用纯 chunk text。如果在嵌入前将 heading_path 作为上下文前缀拼入，
+可以给同一文档的不同 chunk 创造更独特的向量，减少同文档段落间的相似度。
+
+```
+改前: embed("Docker 使用 overlay2 存储驱动...")
+改后: embed("[Docker > Storage > OverlayFS]\nDocker 使用 overlay2 存储驱动...")
+```
+
+### 改动
+
+`packages/application/src/application/ingestion/embedding.py` 第 179 行，嵌入 chunk text 前
+如果 `c.heading_path` 非空，则拼入 `[{heading_path}]\n` 前缀。
+
+### 结果
+
+在 development 集上全量重摄入 + 评测（dense-exact, k=5）：
+
+| 配置 | Recall@5 | MRR | 失败数 | 失败分布 |
+|------|:--------:|:---:|:------:|:---------|
+| 基线（无上下文） | **53.33%** | 0.4875 | 60 | locator_mapping:57, dense_recall:3 |
+| 上下文嵌入 | **53.81%** | 0.4894 | 60 | locator_mapping:58, dense_recall:4 |
+| **Δ** | **+0.48pp** | +0.0019 | — | — |
+
+### 分析
+
+效果微乎其微（+0.48pp），原因：**0.6B 模型容量不足以利用章节级上下文信号**。
+
+```
+[Docker > Storage > OverlayFS]\nDocker 使用 overlay2...
+[Docker > Networking > Bridge]\nDocker 支持 bridge...
+```
+
+0.6B 模型的 768 维向量中，文档级信号（"Docker"）淹没了章节级信号（"Storage" vs "Networking"）。
+两个向量在空间中的距离几乎没有拉开。
+
+此改动已保留在代码中（仅 4 行），不增加任何运行时开销。换上更大模型（1.8B+）后，
+其更大的注意力头可能更有效地利用 heading_path 结构信息，届时可重新评测对比。
+
 ## 后续方向
 
-| 方向 | 预期提升 | 工作量 |
-|------|:-------:|:------:|
-| **Qwen3-Embedding-1.8B** 替代 0.6B | ~15-25pp | 中（模型下载 + 重新 TEI 部署） |
-| **Qwen3-Reranker**（1.8B+）替代 BGE-Base | ~10-20pp | 中（新增 TEI 容器） |
-| 两者组合 | 可达 85% | 高 |
+| 方向 | 预期提升 | 工作量 | 已试结论 |
+|------|:-------:|:------:|:--------:|
+| **Qwen3-Embedding-1.8B** 替代 0.6B | ~15-25pp | 中（模型下载 + 重新 TEI 部署） | — |
+| **Qwen3-Reranker**（1.8B+）替代 BGE-Base | ~10-20pp | 中（新增 TEI 容器） | — |
+| 两者组合 | 可达 85% | 高 | — |
+| 上下文增强嵌入（heading_path） | 已试 **+0.48pp** | 已实现 | 0.6B 模型无法利用章节信号；保留代码，换 1.8B 后可重新对比 |
 
 ### TEI 服务注意事项
 
@@ -201,6 +296,12 @@ uv run python scripts/evaluate_retrieval.py \
   --output tmp/retrieval-eval-xxx.json
 ```
 
+### 本次实验的输出文件
+
+| 文件 | 对应实验 |
+| --- | --- |
+| `tmp/retrieval-eval-contextual-embed.json` | 实验 5：上下文嵌入（heading_path 前缀），53.81% |
+
 ### 相关文件
 
 | 文件 | 用途 |
@@ -209,7 +310,10 @@ uv run python scripts/evaluate_retrieval.py \
 | `scripts/evaluate_retrieval.py` | 评测执行脚本 |
 | `packages/application/src/application/retrieval/search.py` | `SearchService` — 检索编排核心 |
 | `packages/application/src/application/retrieval/dense.py` | Embedding prefix 注册表（Query + Document） |
+| `packages/application/src/application/ingestion/embedding.py` | 嵌入管道 — 含 heading_path 上下文增强（实验 5） |
 | `packages/domain/src/domain/retrieval.py` | 检索领域协议、`CandidateBatch`、`RetrievalProfileV1` |
+| `packages/domain/src/domain/chunking.py` | `ChunkOutput.heading_path` — 章节路径字段 |
 | `packages/infrastructure/src/infrastructure/retrieval/postgres_store.py` | pgvector 检索适配器 |
-| `packages/application/src/application/retrieval/evaluation.py` | 评测指标与失败分类 |
+| `packages/application/src/application/retrieval/evaluation.py` | 评测指标与失败分类（chunk-level recall） |
+| `packages/infrastructure/src/infrastructure/chunkers/structure_chunker.py` | 结构感知分块器，生成 heading_path |
 | `deploy/compose.yaml` | TEI / Reranker 容器配置 |
