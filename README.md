@@ -28,6 +28,11 @@ development 改进并关闭 Recall/Reranker/P95 门禁、冻结默认配置，�
 
 前置条件：Docker Engine 29+ 和 Docker Compose 5+。本机不需要单独安装 PostgreSQL 或 Redis。
 
+> **GPU 支持（可选）**：如需使用 GPU 加速 Embedding/Reranker，需要：
+> - NVIDIA 驱动（支持 CUDA 12.2+）
+> - [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+> - 安装后验证：`docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi`
+
 1. 创建本地环境文件，必须设置 `APP_SECRET_KEY` 和 `POSTGRES_PASSWORD`：
 
 ```bash
@@ -123,8 +128,17 @@ git diff --exit-code -- docs/openapi.json
 | PostgreSQL | `127.0.0.1:5432` | PostgreSQL 16 + pgvector |
 | Redis | `127.0.0.1:6379` | Dramatiq broker，启用 AOF |
 | OTel Collector | `4317`、`4318` | 仅 `--profile otel` 启动 |
+| Embedding | `127.0.0.1:8080` | Qwen3-Embedding-0.6B（TEI），需 `--profile embedding` |
+| Reranker | `127.0.0.1:8081` | BGE Reranker Base（TEI），需 `--profile reranker` |
 
-端口可通过 `.env` 中的 `WEB_PORT`、`API_PORT`、`POSTGRES_PORT` 和 `REDIS_PORT` 覆盖。
+端口可通过 `.env` 中的 `WEB_PORT`、`API_PORT`、`POSTGRES_PORT`、`REDIS_PORT`、`EMBEDDING_PORT` 和 `RERANKER_PORT` 覆盖。
+
+Embedding 和 Reranker 服务使用 GPU 加速（如有），需主机已安装 nvidia-container-toolkit。启动完整模型栈：
+
+```bash
+docker compose -f deploy/compose.yaml --env-file .env \
+  --profile embedding --profile reranker up --build --detach --wait
+```
 
 ## 文档
 

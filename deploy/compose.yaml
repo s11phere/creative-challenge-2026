@@ -219,16 +219,25 @@ services:
   tei:
     profiles:
       - embedding
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:c26a226262ad4ff3330fb30b76653c1bb65da2fcf413b92284545a010e0a8a48
+    # GPU version: requires nvidia-container-toolkit on host + CUDA 12.2+ drivers
+    # Pin digest after first pull: docker inspect --format='{{.RepoDigests}}' <image>
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
     command:
       - --model-id
-      - BAAI/bge-base-zh-v1.5
+      - /data/model
       - --revision
-      - f03589ceff5aac7111bd60cfc7d497ca17ecac65
+      - 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
     ports:
       - "${EMBEDDING_PORT:-8080}:80"
     volumes:
       - teidata:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:80/health"]
       interval: 10s
@@ -239,7 +248,8 @@ services:
   reranker:
     profiles:
       - reranker
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:c26a226262ad4ff3330fb30b76653c1bb65da2fcf413b92284545a010e0a8a48
+    # GPU version: requires nvidia-container-toolkit on host + CUDA 12.2+ drivers
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
     command:
       - --model-id
       - BAAI/bge-reranker-base
@@ -249,6 +259,13 @@ services:
       - "${RERANKER_PORT:-8081}:80"
     volumes:
       - rerankerdata:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:80/health"]
       interval: 10s
