@@ -1,0 +1,88 @@
+schema_version: retrieval-eval-config-v1
+status: provisional
+corpus:
+  version: v0
+  manifest_path: cases/evals/corpus/v0/manifest.yaml
+  manifest_sha256: 53d6f863060dd7d5e6affb0abda64348f0b498995b3d1cda5ef80f0e576ca738
+  required_allowed_use: local_evaluation
+dataset:
+  version: v1
+  cases_path: cases/evals/datasets/knowledge-qa-v1/cases.jsonl
+  cases_sha256: a16a953cff715b4de95ade05d5b8aa173ddbd4fdc28c380d54eb7dc2014270c8
+  schema_path: cases/evals/datasets/knowledge-qa-v1/schema.json
+  schema_sha256: daddbcb380db21fa3f05b5daedd88ccfe5278e52727aaae094e60b57bf3b9588
+  splits:
+    development:
+      count: 127
+      content_sha256: 86411f3a6b4dbe4c500eb32182d46829a727b4f0436da207666554f90eb57ba8
+    holdout:
+      count: 149
+      content_sha256: bcf559fcaf4c67d0fd958afae22c461a770c8c1176e85e6c233055dafe461019
+protocol:
+  evidence_match: source_key+source_version+locator_overlap-v1
+  included_source_formats:
+    - markdown
+    - text
+    - pdf
+  metrics:
+    - evidence_recall
+    - mrr
+    - evidence_ndcg
+    - full_evidence_coverage
+    - must_exclude_violations
+    - latency_p50_p95
+    - failure_rate
+  recall_k: 5
+  ndcg_k: 5
+  no_evidence_policy: exclude_from_recall_and_ranking_denominators
+  safety_slices:
+    - no_answer
+    - cross_space
+    - withdrawn_version
+    - adversarial_document
+runtime:
+  target: Windows 10.0.26200; Intel64 family 6 model 183; 32 logical processors
+  concurrency: 1
+  warmup_queries: 3
+  sampling: one_complete_pass
+  retrieval_p95_budget_ms: 1000
+experiments:
+  - id: keyword-baseline
+    mode: keyword
+    dense_mode: exact
+    profile: &baseline_profile
+      keyword_candidate_k: 30
+      dense_candidate_k: 30
+      fusion_candidate_k: 30
+      rrf_k: 60
+      fusion_alpha: 0.35
+      reranker_enabled: false
+      rerank_k: 10
+      final_k: 5
+      adjacent_window: 1
+      max_chunks_per_document: 3
+      hybrid_embedding_failure_policy: error
+      reranker_failure_policy: error
+  - id: dense-exact
+    mode: dense
+    dense_mode: exact
+    profile: *baseline_profile
+  - id: dense-ivfflat
+    mode: dense
+    dense_mode: ivfflat
+    ivfflat_probes: 10
+    profile: *baseline_profile
+  - id: hybrid
+    mode: hybrid
+    dense_mode: exact
+    profile: *baseline_profile
+  - id: hybrid-rerank
+    mode: hybrid_rerank
+    dense_mode: exact
+    profile:
+      <<: *baseline_profile
+      reranker_enabled: true
+gates:
+  formal_manifest_status: frozen
+  stage_2_step_9_acceptance_path: docs/stage-2-acceptance.md
+  formal_runs_enabled: false

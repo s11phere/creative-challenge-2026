@@ -22,8 +22,8 @@ if sys.platform == "win32":
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = ROOT / "evals" / "corpus" / "v0" / "manifest.yaml"
-CASES_PATH = ROOT / "evals" / "datasets" / "knowledge-qa-v0" / "cases.jsonl"
-SCHEMA_PATH = ROOT / "evals" / "datasets" / "knowledge-qa-v0" / "schema.json"
+DATASETS_ROOT = ROOT / "evals" / "datasets"
+DEFAULT_DATASET_DIR = DATASETS_ROOT / "knowledge-qa-v0"
 PDF_VISUAL_REVIEW_PATH = ROOT / "evals" / "corpus" / "v0" / "PDF-VISUAL-REVIEW.yaml"
 
 SOURCE_FIELDS = {
@@ -94,6 +94,8 @@ class Audit:
 
 def load_inputs(
     audit: Audit,
+    *,
+    dataset_dir: Path,
 ) -> tuple[
     dict[str, Any],
     dict[str, Any],
@@ -102,9 +104,11 @@ def load_inputs(
 ]:
     try:
         manifest = yaml.safe_load(MANIFEST_PATH.read_text(encoding="utf-8"))
-        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        schema = json.loads((dataset_dir / "schema.json").read_text(encoding="utf-8"))
         cases = [
-            json.loads(line) for line in CASES_PATH.read_text(encoding="utf-8").splitlines() if line
+            json.loads(line)
+            for line in (dataset_dir / "cases.jsonl").read_text(encoding="utf-8").splitlines()
+            if line
         ]
         visual_document = yaml.safe_load(PDF_VISUAL_REVIEW_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError, yaml.YAMLError) as exc:
@@ -155,7 +159,8 @@ def load_inputs(
             ):
                 audit.error(
                     "visual_review",
-                    f"{case_id} evidence[{evidence_index}]: transcription contains control/private-use characters",
+                    f"{case_id} evidence[{evidence_index}]: transcription contains "
+                    "control/private-use characters",
                 )
             visual_reviews[key] = entry
     return manifest, schema, cases, visual_reviews
@@ -240,12 +245,15 @@ def validate_sources(
                 or source.get("redistribution") == "review_required"
             ) and not internal_only:
                 audit.error("policy", f"{key}: unresolved rights in frozen corpus")
-            if internal_only and "repository_fixture" in source.get("allowed_uses", []):
-                if source.get("sensitivity") != "public_demo":
-                    audit.error(
-                        "policy",
-                        f"{key}: internal-only unresolved source cannot be a repository_fixture",
-                    )
+            if (
+                internal_only
+                and "repository_fixture" in source.get("allowed_uses", [])
+                and source.get("sensitivity") != "public_demo"
+            ):
+                audit.error(
+                    "policy",
+                    f"{key}: internal-only unresolved source cannot be a repository_fixture",
+                )
     return sources
 
 
@@ -283,10 +291,20 @@ def validate_cases(
                 audit.error("dataset", f"{case_id}: duplicate question in {split}")
             questions[split].add(question_key)
 
-        claim_ids = {claim.get("id") for claim in case.get("answer_claims", [])}
+        claims = case.get("answer_claims", [])
+        claim_id_values = [claim.get("id") for claim in claims]
+        claim_ids = set(claim_id_values)
+        if len(claim_ids) != len(claim_id_values):
+            audit.error("evidence_link", f"{case_id}: duplicate claim IDs")
         supported_claims: set[str] = set()
+        evidence_ids: set[str] = set()
         for index, evidence in enumerate(case.get("evidence", []), start=1):
             prefix = f"{case_id} evidence[{index}]"
+            evidence_id = evidence.get("id")
+            if evidence_id is not None:
+                if evidence_id in evidence_ids:
+                    audit.error("evidence_link", f"{case_id}: duplicate evidence ID {evidence_id}")
+                evidence_ids.add(evidence_id)
             key = evidence.get("source_key")
             source_entry = sources.get(key)
             if source_entry is None:
@@ -318,9 +336,42 @@ def validate_cases(
                 if visual_review.get("page") != locator.get("page"):
                     audit.error("visual_review", f"{prefix}: page does not match visual review")
 
+        unknown_support = supported_claims - claim_ids
+        if unknown_support:
+            audit.error(
+                "evidence_link",
+                f"{case_id}: evidence references unknown claims {sorted(unknown_support)}",
+            )
         missing_support = claim_ids - supported_claims
         if missing_support:
             audit.error("evidence_link", f"{case_id}: unsupported claims {sorted(missing_support)}")
+        for claim in claims:
+            claim_id = claim.get("id")
+            for set_index, evidence_set in enumerate(
+                claim.get("acceptable_evidence_sets", []), start=1
+            ):
+                missing_evidence = set(evidence_set) - evidence_ids
+                if missing_evidence:
+                    audit.error(
+                        "evidence_link",
+                        f"{case_id} {claim_id} evidence set {set_index}: unknown evidence IDs "
+                        f"{sorted(missing_evidence)}",
+                    )
+                incompatible = {
+                    evidence_id
+                    for evidence_id in evidence_set
+                    if not any(
+                        evidence.get("id") == evidence_id
+                        and claim_id in evidence.get("supports_claims", [])
+                        for evidence in case.get("evidence", [])
+                    )
+                }
+                if incompatible:
+                    audit.error(
+                        "evidence_link",
+                        f"{case_id} {claim_id} evidence set {set_index}: evidence does not declare "
+                        f"claim support {sorted(incompatible)}",
+                    )
 
     overlap = questions["development"] & questions["holdout"]
     if overlap:
@@ -382,25 +433,42 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--quiet", "-q", action="store_true", help="print only the summary")
     parser.add_argument("--max-issues", type=int, default=50, help="maximum issue details to print")
+    parser.add_argument(
+        "--dataset-dir",
+        type=Path,
+        default=DEFAULT_DATASET_DIR,
+        help="dataset directory under cases/evals/datasets (default: knowledge-qa-v0)",
+    )
     args = parser.parse_args()
+
+    dataset_dir = args.dataset_dir
+    if not dataset_dir.is_absolute():
+        dataset_dir = (Path.cwd() / dataset_dir).resolve()
+    else:
+        dataset_dir = dataset_dir.resolve()
+    if dataset_dir.parent != DATASETS_ROOT.resolve():
+        parser.error("--dataset-dir must be a direct child of cases/evals/datasets")
 
     audit = Audit()
     if sys.version_info[:2] != PDF_EXTRACTION_PYTHON:
         audit.error(
             "environment",
-            f"PDF extraction requires Python 3.12.x, found {sys.version_info.major}.{sys.version_info.minor}",
+            "PDF extraction requires Python 3.12.x, found "
+            f"{sys.version_info.major}.{sys.version_info.minor}",
         )
     if fitz.VersionBind != PDF_EXTRACTION_PYMUPDF_VERSION:
         audit.error(
             "environment",
-            f"PDF extraction requires PyMuPDF {PDF_EXTRACTION_PYMUPDF_VERSION}, found {fitz.VersionBind}",
+            f"PDF extraction requires PyMuPDF {PDF_EXTRACTION_PYMUPDF_VERSION}, "
+            f"found {fitz.VersionBind}",
         )
-    manifest, schema, cases, visual_reviews = load_inputs(audit)
+    manifest, schema, cases, visual_reviews = load_inputs(audit, dataset_dir=dataset_dir)
     sources = validate_sources(audit, manifest) if manifest else {}
     if schema and cases:
         validate_cases(audit, schema, cases, sources, visual_reviews)
 
     print(f"  root: {ROOT}")
+    print(f"  dataset: {dataset_dir.name}")
     print(f"  spaces: {len(manifest.get('spaces', [])) if manifest else 0}")
     print(f"  sources: {len(sources)}")
     print(f"  cases: {len(cases)}")
