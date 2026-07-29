@@ -34,14 +34,26 @@ QWEN3_WEB_SEARCH_DOCUMENT_PREFIX = (
     "that answer the query\nDocument: "
 )
 
+QWEN3_KNOWLEDGE_QA_QUERY_PREFIX = (
+    "Instruct: Given a question, retrieve the most relevant passage "
+    "from the knowledge base that answers it\nQuery: "
+)
+
+QWEN3_KNOWLEDGE_QA_DOCUMENT_PREFIX = (
+    "Instruct: Given a question, retrieve the most relevant passage "
+    "from the knowledge base that answers it\nDocument: "
+)
+
 _QUERY_PREFIXES = {
     "none-v1": "",
     "qwen3-web-search-v1": QWEN3_WEB_SEARCH_QUERY_PREFIX,
+    "qwen3-knowledge-qa-v1": QWEN3_KNOWLEDGE_QA_QUERY_PREFIX,
 }
 
 _DOCUMENT_PREFIXES = {
     "none-v1": "",
     "qwen3-web-search-v1": QWEN3_WEB_SEARCH_DOCUMENT_PREFIX,
+    "qwen3-knowledge-qa-v1": QWEN3_KNOWLEDGE_QA_DOCUMENT_PREFIX,
 }
 
 
