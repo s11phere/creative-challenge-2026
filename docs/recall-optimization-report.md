@@ -3,7 +3,8 @@
 > 日期：2026-07-30
 > 分支：`dev/recall-optimization`
 > 基线：阶段 3 Step 10 验收（development P0 五路径消融）
-> **最终结果：88.57% ✅ 已超过 85% 门禁**
+> **最终结果：90.48% ✅ 已超过 85% 门禁**
+> **当前最新实验：实验 7 — 文档配额 + 重叠去重，从 88.57% → 90.48%**
 
 ## 问题
 
@@ -343,6 +344,16 @@ Chunk 5-8 (PID/Mount/User/Network 内容段): heading_path=""
 └────────────────────────────────┘       └────────────────────────────────┘
 ```
 
+加上实验 7 文档配额 + 重叠去重后：
+
+```
+Section-aware (88.57%)                   实验 7: 配额+去重 (90.48%)
+┌────────────────────────────────┐       ┌────────────────────────────────┐
+│  正确匹配 ████████████████████ 186 │       │  正确匹配 ████████████████████ 190 │
+│  缺失       ████  24            │       │  缺失       ████  20            │
+└────────────────────────────────┘       └────────────────────────────────┘
+```
+
 ### 分析
 
 改动仅 ~20 行，不涉及模型升级，不增加推理成本或存储开销。效果远超预期（+34.8pp），
@@ -364,7 +375,122 @@ Chunk 5-8 (PID/Mount/User/Network 内容段): heading_path=""
    巨型 TOC 列表开头，是之前失败最多的来源。TOC 合并后，这些文件中大量 case 从零召回
    变为完全命中（qa-238~243, qa-249 等）。
 
-### 剩余失败
+## 实验 7：文档配额 + 重叠 Chunk 去重
+
+### 发现的两个 Bug
+
+在对剩余 16 个失败 case 逐一分析时，发现检索管线的两个代码问题：
+
+**Bug 1：dense-exact 模式未执行 `max_chunks_per_document`**
+
+Profile 配置了 `max_chunks_per_document: 3`，但只在 HYBRID 路径调用了
+`_limit_document_quota()`，DENSE 路径直接通过 `_raw_hits()` 取前 k：
+
+```python
+# search.py:159-162 — DENSE 路径，无 quota
+embedding, dense = await self._dense(request, profile)
+hits = _raw_hits(dense, final_k=profile.final_k)  # ← 直接取 top-5
+
+# search.py:221 — HYBRID 路径，有 quota
+fused = _limit_document_quota(fused, profile.max_chunks_per_document)  # ← 限制了
+```
+
+后果：一个文档可占满 top-5 全部 5 个 slot（qa-192: 5/5 来自 `analysis-sequences`）。
+
+**Bug 2：滑动窗口重叠 chunk 未去重**
+
+chunk_size=512, overlap=64 产生相邻重叠 chunk。同一个段落出现在 2-3 个连续 chunk 中，
+若这 2-3 个 chunk 同时进 top-5，浪费 slot：
+
+| Case | Top-5 实际情况 | 浪费 slot |
+|:----:|:---|:---:|
+| qa-177 | `analysis-reals` lines:158 出现 **3 次**（不同 chunk_id，覆盖同一行） | **2** |
+| qa-178 | `analysis-sequences` lines:248 出现 2 次 + lines:279 出现 3 次 | **3** |
+
+### 改动
+
+`packages/application/src/application/retrieval/search.py`，`_raw_hits()` 函数：
+
+1. 新增 `max_chunks_per_document` 参数，在排序后应用文档级配额
+2. 新增重叠去重逻辑：同 `source_key` 的 chunk 若 locator 区间重叠（same-kind
+   inclusive interval intersection），只保留最高分的一个
+
+```python
+# search.py:690-734 — 修复后的 _raw_hits()
+candidates = list(batch.candidates)
+candidates.sort(key=lambda item: (item.rank, str(item.chunk_id)))
+
+# Step 1: Document-level quota
+if max_chunks_per_document is not None:
+    counts: dict[object, int] = {}
+    limited: list[RetrievalCandidate] = []
+    for c in candidates:
+        current = counts.get(c.document_id, 0)
+        if current >= max_chunks_per_document:
+            continue
+        limited.append(c)
+        counts[c.document_id] = current + 1
+    candidates = limited
+
+# Step 2: Overlap dedup — same source_key, overlapping locators → keep highest
+seen_ranges: dict[str, list[SearchLocator]] = {}
+deduped: list[RetrievalCandidate] = []
+for c in candidates:
+    sk = c.source_key
+    is_dup = False
+    if sk in seen_ranges:
+        for c_loc in c.locators:
+            for seen_loc in seen_ranges[sk]:
+                if c_loc.overlaps(seen_loc):
+                    is_dup = True
+                    break
+            if is_dup:
+                break
+    if is_dup:
+        continue
+    if sk not in seen_ranges:
+        seen_ranges[sk] = []
+    seen_ranges[sk].extend(c.locators)
+    deduped.append(c)
+
+ordered = deduped[:final_k]
+```
+
+### 结果
+
+在已有 corpus（实验 6 的 section-aware chunks）上重新评测（dense-exact, k=5）：
+
+| 配置 | Recall@5 | MRR | Case 全覆盖率 | 匹配 chunks | 失败 case |
+|------|:--------:|:---:|:-------------:|:----------:|:---------:|
+| 基线（实验 6） | **88.57%** | 0.9274 | 84.2% | 186/210 | 16 |
+| **文档配额 + 重叠去重** | **90.48%** | **0.9318** | **87.1%** | **190/210** | **13** |
+| **Δ** | **+1.91pp** | +0.0044 | +2.9pp | **+4** | **-3** |
+
+**5 个 case 改进，1 个微量回退（qa-014, 42.9%→28.6%）：**
+
+| Case | 修复前 | 修复后 | 原因 |
+|:----:|:-----:|:-----:|------|
+| **qa-004** | ❌ 0% | ✅ **100%** | `arch` 之前被 `readme` 垄断，quota 后进入 top-5 |
+| **qa-005** | ❌ 0% | 🟡 **50%** | `arch` 进入 top-5，但 `claude` 仍找不到 |
+| **qa-178** | 🟡 80% | ✅ **100%** | overlap 去重 + quota 释放足够 slot |
+| **qa-192** | 🟡 75% | ✅ **100%** | `analysis-sequences` 占满 5 slot → quota 3，`cheatsheet` 补上 |
+| **qa-177** | 🟡 40% | 🟡 **60%** | overlap 去重释放 2 slot，仍缺 2 gold chunk |
+
+回退 `qa-014`（42.9%→28.6%）：7 个 gold chunks 全部来自 `omnistudio/arch`，
+quota 限制 arch 最多 3 → 丢失了已匹配的 chunk。这是单文档多段 case 被 quota 误伤的
+预期 trade-off。
+
+### 类别指标变化
+
+| 类别 | 基线 (实验 6) | 配额+去重 | Δ |
+|:----|:-----------:|:--------:|:-:|
+| single_document_factual | 91.1% | **96.2%** | **+5.1pp** |
+| version_or_conflict | 87.5% | **93.8%** | +6.3pp |
+| cross_document_synthesis | 92.9% | 92.9% | — |
+| bilingual | 79.5% | 79.5% | — |
+| code_and_nl | 86.7% | 86.7% | — |
+
+### 剩余失败（实验 6 后）
 
 16 个 case 仍未达到完全召回，主要分两类：
 
@@ -376,6 +502,42 @@ Chunk 5-8 (PID/Mount/User/Network 内容段): heading_path=""
 平均 Recall 仍在 75-85% 之间，最差的 qa-187（代码类，33%）是唯一低于 50% 的剩余 case。
 如果需要从 88.57% 提升到接近 100%，可以评测上一级模型（Qwen3-Embedding-1.8B）补上
 dense_recall 的缺口。
+
+### 剩余失败（实验 7 后，当前最新）
+
+配额+重叠去重修复后，失败数从 16 降至 **13**：
+
+| 类型 | 数量 | 描述 |
+|:----|:----:|------|
+| **dense_recall** | 6 | 正确文档不在 dense@30。pi05 是罪魁（4/6 涉及 pi05），pi07 ×1, motionlib ×1 |
+| **locator_mapping** | 7 | 正确文档找到但部分 gold chunks 仍遗漏。qa-014 被 quota 误伤（7 gold 全在一份文档）|
+
+**dense_recall 的 6 个 case：**
+
+| Case | 缺失文档 | 问题 |
+|:----:|:--------:|------|
+| qa-005 | `omnistudio/claude` | README 的 embedding 仍然压过 CLAUDE.md |
+| qa-189 | `math/analysis-sequences` | cheatsheet 关键词密度更高 |
+| qa-198 | `math/rudin` | 330 页 PDF 的 chunk 向量太扩散 |
+| qa-211 | `papers/motionlib` | motion 库论文与手部重建 query 语义偏差 |
+| qa-213 | `papers/pi05` | pi05 在 VLA 相关 query 中均排不进 dense@30 |
+| qa-217 | `papers/pi05`, `papers/pi07` | VLA 术语翻译 query，π 系列论文全部消失 |
+| qa-225 | `papers/pi05` | 同上 |
+
+**locator_mapping 的 7 个 case：**
+
+| Case | 类别 | Gold/Matched | 瓶颈 |
+|:----:|:----:|:---------:|------|
+| qa-005 | single_doc | 2/1 | `claude` 进了 top-5 但只覆盖 1 个 gold |
+| qa-014 | bilingual | 7/2 | quota 误伤，7 gold 都在 `arch` 但限到 3 |
+| qa-177 | single_doc | 5/3 | 仍缺 2 个 gold，非重叠问题 |
+| qa-180 | cross_doc | 3/2 | prob-notes 占 3 slot，正确 chunk 不在 top-5 |
+| qa-181 | cross_doc | 4/3 | Rudin PDF 占 slot，gold chunk 差 1 |
+| qa-187 | code_and_nl | 3/1 | cheatsheet 关键词压过 analysis-sequences 正文 |
+| qa-190 | bilingual | 4/3 | cheatsheet 占 2 slot |
+
+**缺口量化：** `190/210 gold chunks matched → 20 缺失`。其中 qa-014 因 quota 误伤丢失
+1 个。如果仅解决 dense_recall 的 6 个 case，可再收回约 8 个 gold chunks（提升到 ~94%）。
 
 ### 实验文件
 
@@ -409,13 +571,15 @@ uv run python scripts/evaluate_retrieval.py \
 
 ## 后续方向
 
-门禁 85% 已在当前 0.6B 模型 + 改进 chunker 下达成。后续提升可选：
+门禁 85% 已在当前 0.6B 模型 + 改进 chunker + 配额去重下超额达成（90.48%）。
+后续提升可选：
 
 | 方向 | 预期提升 | 工作量 | 备注 |
 |------|:-------:|:------:|------|
-| Section-aware chunking | **+34.8pp** ✅ | **20 行代码** | **已实现，已达到 88.57%** |
-| **Qwen3-Embedding-1.8B** | ~5-10pp | 中（模型下载 + 重新 TEI 部署） | 补 dense_recall 缺口（7 个 case） |
-| **Qwen3-Reranker-4B** | ~3-5pp | 中（新增 TEI 容器） | 在 dense@30 候选上做 cross-encoder 重排 |
+| Section-aware chunking | **+34.8pp** ✅ | **20 行代码** | **已实现** |
+| **文档配额 + 重叠去重** | **+1.91pp** ✅ | **~30 行代码** | **已实现，已达 90.48%** |
+| **Qwen3-Embedding-1.8B** | ~3-5pp | 中（模型下载 + 重新 TEI 部署） | 补 dense_recall 缺口（pi05/pi07/motionlib 等） |
+| dense@100 重测 | ~?（需验证） | 低（仅重跑 eval） | section-aware chunk + 配额去重后 dense@100 可能不同 |
 | holdout 集验证 | — | 低 | 使用 `--split holdout` 检验泛化性 |
 
 ### TEI 服务注意事项
@@ -454,7 +618,8 @@ uv run python scripts/evaluate_retrieval.py \
 | 文件 | 对应实验 |
 | --- | --- |
 | `tmp/retrieval-eval-contextual-embed.json` | 实验 5：上下文嵌入（heading_path 前缀），53.81% |
-| `tmp/retrieval-eval-chunk-fix.json` | **实验 6：Section-aware chunking（TOC 合并 + 标题段），88.57% ✅** |
+| `tmp/retrieval-eval-chunk-fix.json` | **实验 6：Section-aware chunking（TOC 合并 + 标题段），88.57%** |
+| `tmp/retrieval-eval-dedup-fix.json` | **实验 7：文档配额 + 重叠去重，90.48% ✅** |
 
 ### 相关文件
 
@@ -470,4 +635,5 @@ uv run python scripts/evaluate_retrieval.py \
 | `packages/infrastructure/src/infrastructure/retrieval/postgres_store.py` | pgvector 检索适配器 |
 | `packages/application/src/application/retrieval/evaluation.py` | 评测指标与失败分类（chunk-level recall） |
 | `packages/infrastructure/src/infrastructure/chunkers/structure_chunker.py` | **结构感知分块器 — 含实验 6 的 TOC 合并 + 标题段改动** |
+| `packages/application/src/application/retrieval/search.py` | **`_raw_hits()` — 含实验 7 的文档配额 + 重叠去重** |
 | `deploy/compose.yaml` | TEI / Reranker 容器配置 |

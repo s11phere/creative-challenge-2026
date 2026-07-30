@@ -34,6 +34,7 @@ from domain.retrieval import (
     SearchExecutionContext,
     SearchHit,
     SearchHitSummary,
+    SearchLocator,
     SearchRequest,
     SearchResult,
     StageTiming,
@@ -158,7 +159,11 @@ class SearchService:
 
         if request.mode is RetrievalMode.DENSE:
             embedding, dense = await self._dense(request, profile)
-            hits = _raw_hits(dense, final_k=profile.final_k)
+            hits = _raw_hits(
+                dense,
+                final_k=profile.final_k,
+                max_chunks_per_document=profile.max_chunks_per_document,
+            )
             return SearchResult(
                 hits=hits,
                 diagnostics=self._diagnostics(
@@ -681,8 +686,56 @@ def _same_candidate_identity(left: RetrievalCandidate, right: RetrievalCandidate
     )
 
 
-def _raw_hits(batch: CandidateBatch, *, final_k: int) -> tuple[SearchHit, ...]:
-    ordered = sorted(batch.candidates, key=lambda item: (item.rank, str(item.chunk_id)))[:final_k]
+def _raw_hits(
+    batch: CandidateBatch,
+    *,
+    final_k: int,
+    max_chunks_per_document: int | None = None,
+) -> tuple[SearchHit, ...]:
+    candidates = list(batch.candidates)
+    candidates.sort(key=lambda item: (item.rank, str(item.chunk_id)))
+
+    # ── Document-level quota ────────────────────────────────────────────
+    # Prevent a single document from dominating the top-k.  Applies in all
+    # modes that call _raw_hits; the caller passes None to skip (keyword).
+    if max_chunks_per_document is not None:
+        counts: dict[object, int] = {}
+        limited: list[RetrievalCandidate] = []
+        for c in candidates:
+            current = counts.get(c.document_id, 0)
+            if current >= max_chunks_per_document:
+                continue
+            limited.append(c)
+            counts[c.document_id] = current + 1
+        candidates = limited
+
+    # ── Overlap dedup ───────────────────────────────────────────────────
+    # Sliding-window chunking produces consecutive chunks whose locator
+    # ranges overlap.  When multiple such chunks from the same source_key
+    # rank highly, they waste top-k slots on near-duplicate content.
+    # Keep only the highest-ranked candidate per unique (source_key, locator
+    # range) — overlap is defined as any same-kind locator intersection.
+    seen_ranges: dict[str, list[SearchLocator]] = {}
+    deduped: list[RetrievalCandidate] = []
+    for c in candidates:
+        sk = c.source_key
+        is_dup = False
+        if sk in seen_ranges:
+            for c_loc in c.locators:
+                for seen_loc in seen_ranges[sk]:
+                    if c_loc.overlaps(seen_loc):
+                        is_dup = True
+                        break
+                if is_dup:
+                    break
+        if is_dup:
+            continue
+        if sk not in seen_ranges:
+            seen_ranges[sk] = []
+        seen_ranges[sk].extend(c.locators)
+        deduped.append(c)
+
+    ordered = deduped[:final_k]
     return tuple(
         _to_hit(
             candidate,
