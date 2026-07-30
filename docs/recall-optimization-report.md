@@ -1,8 +1,9 @@
 # Recall 优化实验报告
 
-> 日期：2026-07-29
+> 日期：2026-07-30
 > 分支：`dev/recall-optimization`
 > 基线：阶段 3 Step 10 验收（development P0 五路径消融）
+> **最终结果：88.57% ✅ 已超过 85% 门禁**
 
 ## 问题
 
@@ -198,7 +199,9 @@ Reranker（BGE-Reranker-Base, 0.6B）在 embedding 修复后的表现仍然低�
 
 BGE-Reranker-Base 也是 0.6B 级模型，同样对中英技术内容的段落级区分力不足。
 
-## 核心瓶颈
+## 核心瓶颈（实验 6 前）
+
+> **注**：实验 6（Section-aware chunking）后此瓶颈已基本解决。保留此节作为历史诊断记录。
 
 ```
 Dense@100 召回正确文档 ≈ 97%+   → ✓ 模型能定位到正确来源
@@ -208,10 +211,11 @@ Dense@5  选对正确段落  ≈ 53%    → ✗ 但同一文档的不同段落�
 **瓶颈本质**：单向量点积（cosine similarity）在文档内段落级区分上存在固有限制。
 语意相近的段落共享文档级含义，0.6B 的 embedding 模型无法将它们的向量在空间中拉开足够距离。
 
-真正需要的是：
-1. **更大的 embedding 模型**（1.8B / 7B）——更强的段落级语义区分力
-2. **更强的 cross-encoder reranker**——直接在 query×paragraph 对上做 pairwise 匹配
-3. 两者配合才可能达到 85%
+**实验 6 的发现修正了这一判断：** 实际上，文档内段落区分困难的主要原因并非模型容量，
+而是**文档目录 TOC 段的「关键词密集向量」系统性主导了检索结果**——TOC 段涵盖了
+所有话题的关键词，embedding 向量像话题质心一样与几乎所有 query 高度相似。
+去掉 TOC 段的偏差后，正确内容段的 cosine 分数自然浮现到 top-5，0.6B 模型也因此
+达到了 88.57% 的 Recall@5。
 
 ## 实验 5：上下文增强嵌入（Contextual Embedding）
 
@@ -256,14 +260,163 @@ metadata 中，但 embedding 时只用纯 chunk text。如果在嵌入前将 hea
 此改动已保留在代码中（仅 4 行），不增加任何运行时开销。换上更大模型（1.8B+）后，
 其更大的注意力头可能更有效地利用 heading_path 结构信息，届时可重新评测对比。
 
+## 实验 6：Section-Aware Chunking 改进（TOC 合并 + 标题段）
+
+### 假设
+
+前序实验确认 bottleneck 在「同文档多段溢出」——正确文档在 top-5，但剩余的 gold chunks
+排不进去。但后续抽样分析发现，溢出问题的主要原因**不是 embedding 模型容量不够**，而是
+**文档目录（TOC）段产生的「关键词密集向量」主导了检索结果**。
+
+### 抽样分析：四种失败模式
+
+对 60 个失败 case 逐层追溯 query → gold evidence → top-5 实际命中，识别出四种不同根因：
+
+| 模式 | 占比 | 描述 | 典型 case |
+|:----:|:----:|------|:---------:|
+| **A: 概述段打败细节段** | **~40%** | TOC/简介的 embedding 是纯关键词密集阵（包含所有 topic 名字）→ cosine 远超含代码和长文本的具体内容段 | qa-249（Docker） |
+| **B: README 覆盖专用文档** | ~25% | README 技术栈表格从关键词上撞中 query，但实际不包含答案。CLAUDE.md / ARCHITECTURE.md 不在 top-30 | qa-004, qa-005（OmniStudio） |
+| **C: PDF 页面偏差** | ~20% | gold 在第 3 页，但 embedding 认为第 10 页（具体架构细节）更匹配 | qa-201（π₀.₅ 论文） |
+| **D: 真实语义混淆** | ~15% | query 中专有名词将向量拉向同名文档而非正确来源 | qa-179（Rudin） |
+
+以 qa-249（Docker Namespace）为例：
+
+```
+Q: 各 Namespace 的隔离能力和局限性分别是什么？
+Gold: PID Namespace (lines 263-311), Mount (315-317), User (319-321), Network (363-395)
+
+解析器输出：整个文档被解析为嵌套 LIST，没有 HEADING 节点。
+所有 list_item 的 heading_path=""（无章节上下文）。
+
+Chunk 1 (TOC, ~500 chars): heading_path=""
+  text: "1.1 UTS Namespace / 1.2 IPC Namespace / 1.3 PID Namespace /
+         1.4 Mount Namespace / 1.5 User Namesapce / 1.6 Network Namespace / ..."
+  → embedding 前无 heading_path 前缀 → 纯关键词密集向量
+  → cosine=0.84，排第 1
+
+Chunk 5-8 (PID/Mount/User/Network 内容段): heading_path=""
+  text: "PID namespace是用来隔离进程 id...\n以下程序执行的命令...```go\npackage main...```"
+  → 含代码和长文本，稀释了语义信号
+  → cosine=0.73，排 6-30
+```
+
+**TOC 段不是「embedding 不够强」，而是「恰好包含了太多关键词」。** 0.6B 模型「正确」地
+将 TOC 排到第 1，因为它确实包含了所有 namespace 的名字。但问题在于 TOC 没有答案内容。
+
+### 改动
+
+`packages/infrastructure/src/infrastructure/chunkers/structure_chunker.py`，两处：
+
+**改动 1：`_extract_segments` — 标题文本作为 segment（+9 行）**
+
+2. **丢弃纯 TOC 段**：检测文档开头 `heading_path=""` + `list_item`/`raw_text` 类型的纯 TOC 组，将其丢弃——heading 文本已作为 segment 嵌入正文，TOC 的关键词完全冗余，去掉后消除纯关键词密集向量对检索的干扰。
+
+### 结果
+
+在 development 集上全量重摄入 + 评测（dense-exact, k=5），需清空已有评估数据强制重新摄入：
+
+| 配置 | Recall@5 | MRR | Case 全覆盖率 | 匹配 chunks |
+|------|:--------:|:---:|:-------------:|:----------:|
+| 基线（实验 5） | **53.81%** | 0.4894 | 40.6% | 113/210 |
+| **Section-aware chunking** | **88.57%** | **0.9274** | **84.2%** | **186/210** |
+| **Δ** | **+34.76pp** | **+0.4380** | **+43.6pp** | **+73** |
+
+**所有类别均显著提升：**
+
+| 类别 | 基线 | 新 | 提升 |
+|:----|:---:|:--:|:----:|
+| code_and_nl | 33.3% | **86.7%** | **+53.4pp** |
+| cross_document_synthesis | 46.4% | **92.9%** | **+46.4pp** |
+| bilingual | 50.0% | **79.5%** | +29.5pp |
+| single_document_factual | 63.3% | **91.1%** | +27.8pp |
+| version_or_conflict | 62.5% | **87.5%** | +25.0pp |
+
+**51 个 case 改进，仅 1 个微降（qa-177, 60%→40%）。** 22 个之前零召回的 case 完全修复。
+
+### 诊断映像：前后对比
+
+```
+基线 (53.81%)                            Section-aware (88.57%)
+┌────────────────────────────────┐       ┌────────────────────────────────┐
+│  正确匹配 ████████████████ 113  │       │  正确匹配 ████████████████████ 186 │
+│  缺失       ██████████████  97  │       │  缺失       ████  24            │
+└────────────────────────────────┘       └────────────────────────────────┘
+```
+
+### 分析
+
+改动仅 ~20 行，不涉及模型升级，不增加推理成本或存储开销。效果远超预期（+34.8pp），
+直接超越 85% 门禁。
+
+1. **丢弃 TOC 消除系统性偏差**——TOC 段以纯关键词列表形态占据 embedding 空间的「话题质心」位置，任何查询都先匹配 TOC。丢弃后正确内容段自然浮现。heading 文本已作为 segment 嵌入，不丢失专有名词信号。
+2. **标题文本使 chunk 自包含**——每个 chunk 以标题开头（如 `1.3 PID Namespace`），在 embedding 空间增加专有名词信号强度。
+3. **devtools（最难领域）升至 85%+**——之前 devtools 的三个 markdown 以巨型 TOC 开头，是失败最多的来源。TOC 丢弃后大量 case 从零召回变为完全命中。
+
+1. **TOC 合并不是「微调」，而是消除了一个系统性偏差。** TOC 段以纯关键词列表形式占
+   据了 embedding 空间的「话题质心」位置——无论 query 是关于文档的哪个方面，TOC 段
+   的 cosine 总是最高。去掉这个偏差后，正确的内容段自然浮现到 top-5。
+
+2. **标题文本作为 segment 使 chunk 自包含。** 之前 heading 文本只存在于 `meta` 字段，
+   chunk 文本不包含它。现在每个 chunk 以标题开头（如 `1.3 PID Namespace`），在
+   embedding 空间里增加了专有名词的信号强度。
+
+3. **devtools 领域（最难的 39.5%）升至 85%+。** devtools 的三个 markdown 文件以
+   巨型 TOC 列表开头，是之前失败最多的来源。TOC 合并后，这些文件中大量 case 从零召回
+   变为完全命中（qa-238~243, qa-249 等）。
+
+### 剩余失败
+
+16 个 case 仍未达到完全召回，主要分两类：
+
+| 类型 | 数量 | 描述 |
+|:----|:----:|------|
+| **dense_recall** | 7 | 正确文档不在 dense@30 候选池中（需 1.8B embedding 模型）|
+| **locator_mapping** | 9 | 正确文档找到，部分 gold chunks 仍遗漏（多段证据 >5 个 slots） |
+
+平均 Recall 仍在 75-85% 之间，最差的 qa-187（代码类，33%）是唯一低于 50% 的剩余 case。
+如果需要从 88.57% 提升到接近 100%，可以评测上一级模型（Qwen3-Embedding-1.8B）补上
+dense_recall 的缺口。
+
+### 实验文件
+
+```bash
+# 2026-07-30 最终实验
+EVALUATION_DATABASE_ISOLATED=1 \
+EMBEDDING_ENDPOINT=http://localhost:8080 \
+EMBEDDING_BATCH_SIZE=8 \
+uv run python scripts/evaluate_retrieval.py \
+  --config cases/evals/configs/retrieval-v1.yaml \
+  --split development \
+  --prepare-corpus \
+  --experiment dense-exact \
+  --output tmp/retrieval-eval-chunk-fix.json
+```
+
+> **注意**：`--prepare-corpus` 会跳过已 PUBLISHED 的版本（通过 `content_sha256` 判断）。
+> 如果代码有变更需要强制重新摄入，需先清空评估库的旧数据：
+> ```sql
+> DELETE FROM chunks WHERE version_id IN (
+>   SELECT id FROM document_versions WHERE document_id IN (
+>     SELECT id FROM documents WHERE source_id IN (
+>       SELECT id FROM sources WHERE space_id IN (
+>         SELECT id FROM spaces WHERE owner_id = 'evaluation'))));
+> UPDATE document_versions SET status = 'pending'
+>   WHERE document_id IN (...同上...);
+> UPDATE documents SET current_version_id = NULL
+>   WHERE source_id IN (...同上...);
+> DELETE FROM ingestion_tasks WHERE source_id IN (...同上...);
+> ```
+
 ## 后续方向
 
-| 方向 | 预期提升 | 工作量 | 已试结论 |
-|------|:-------:|:------:|:--------:|
-| **Qwen3-Embedding-1.8B** 替代 0.6B | ~15-25pp | 中（模型下载 + 重新 TEI 部署） | — |
-| **Qwen3-Reranker**（1.8B+）替代 BGE-Base | ~10-20pp | 中（新增 TEI 容器） | — |
-| 两者组合 | 可达 85% | 高 | — |
-| 上下文增强嵌入（heading_path） | 已试 **+0.48pp** | 已实现 | 0.6B 模型无法利用章节信号；保留代码，换 1.8B 后可重新对比 |
+门禁 85% 已在当前 0.6B 模型 + 改进 chunker 下达成。后续提升可选：
+
+| 方向 | 预期提升 | 工作量 | 备注 |
+|------|:-------:|:------:|------|
+| Section-aware chunking | **+34.8pp** ✅ | **20 行代码** | **已实现，已达到 88.57%** |
+| **Qwen3-Embedding-1.8B** | ~5-10pp | 中（模型下载 + 重新 TEI 部署） | 补 dense_recall 缺口（7 个 case） |
+| **Qwen3-Reranker-4B** | ~3-5pp | 中（新增 TEI 容器） | 在 dense@30 候选上做 cross-encoder 重排 |
+| holdout 集验证 | — | 低 | 使用 `--split holdout` 检验泛化性 |
 
 ### TEI 服务注意事项
 
@@ -301,6 +454,7 @@ uv run python scripts/evaluate_retrieval.py \
 | 文件 | 对应实验 |
 | --- | --- |
 | `tmp/retrieval-eval-contextual-embed.json` | 实验 5：上下文嵌入（heading_path 前缀），53.81% |
+| `tmp/retrieval-eval-chunk-fix.json` | **实验 6：Section-aware chunking（TOC 合并 + 标题段），88.57% ✅** |
 
 ### 相关文件
 
@@ -315,5 +469,5 @@ uv run python scripts/evaluate_retrieval.py \
 | `packages/domain/src/domain/chunking.py` | `ChunkOutput.heading_path` — 章节路径字段 |
 | `packages/infrastructure/src/infrastructure/retrieval/postgres_store.py` | pgvector 检索适配器 |
 | `packages/application/src/application/retrieval/evaluation.py` | 评测指标与失败分类（chunk-level recall） |
-| `packages/infrastructure/src/infrastructure/chunkers/structure_chunker.py` | 结构感知分块器，生成 heading_path |
+| `packages/infrastructure/src/infrastructure/chunkers/structure_chunker.py` | **结构感知分块器 — 含实验 6 的 TOC 合并 + 标题段改动** |
 | `deploy/compose.yaml` | TEI / Reranker 容器配置 |

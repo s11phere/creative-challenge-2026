@@ -67,6 +67,22 @@ def _extract_segments(
                 heading_path.pop()
             heading_path.append((node.text, node.level))
             # Recurse into children (content under this heading)
+            # Emit the heading text itself as a segment so it appears in
+            # the chunk text (not just the heading_path metadata). This
+            # strengthens the topic signal in the embedding vector and
+            # makes chunk text self-contained for RAG context.
+            path_str = " > ".join(h[0] for h in heading_path)
+            segments.append(
+                _Segment(
+                    text=node.text,
+                    start_line=node.start_line,
+                    end_line=node.end_line,
+                    heading_path=path_str,
+                    primary_type="heading",
+                    start_page=node.start_page,
+                    end_page=node.end_page,
+                )
+            )
             if node.children:
                 segments.extend(_extract_segments(node.children, heading_path))
 
@@ -327,6 +343,31 @@ class StructureChunker:
                 groups[-1].extend(current)
             else:
                 groups.append(current)
+
+        # ── Drop leading TOC-only groups ──
+        #
+        # Documents with a table-of-contents list before the first heading
+        # produce chunks whose text is a dense keyword list (namespace names,
+        # section titles). These chunks' embedding vectors act like topic
+        # centroids — they out-score every content chunk for almost any query
+        # about the document because the vector space sees pure topic keywords
+        # with no specific signal.
+        #
+        # The heading text is already included as a segment in content chunks
+        # (see _extract_segments — each heading produces a heading segment),
+        # so TOC keywords are present in the actual content chunks without
+        # the pollution of a standalone keyword-dense vector.  Dropping
+        # TOC-only groups eliminates the embedding distortion cleanly.
+        toc_prefix: list[_Segment] = []
+        while groups and all(
+            seg.heading_path == "" and seg.primary_type in ("list_item", "raw_text")
+            for seg in groups[0]
+        ):
+            toc_prefix.extend(groups.pop(0))
+
+        if toc_prefix and not groups:
+            # Every group was TOC-only — keep one to avoid empty results
+            groups = [toc_prefix]
 
         # Merge chunks that remain too small
         merged: list[list[_Segment]] = []
