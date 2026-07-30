@@ -12,6 +12,7 @@ from application.retrieval.dense import (
     QueryEmbeddingBatchRunner,
     QueryEmbeddingConfig,
     QueryEmbeddingService,
+    document_embedding_config,
     query_embedding_config,
 )
 from domain.embedding import EmbeddingIdentity
@@ -79,6 +80,12 @@ def test_query_embedding_config_resolves_versioned_instruction() -> None:
 
 def test_query_embedding_config_resolves_no_instruction_to_empty_prefix() -> None:
     assert query_embedding_config(EmbeddingIdentity()).query_prefix == ""
+
+
+def test_qwen3_no_prefix_document_identity_resolves_to_empty_prefix() -> None:
+    identity = EmbeddingIdentity(document_instruction_version="qwen3-document-no-prefix-v1")
+
+    assert document_embedding_config(identity) == ""
 
 
 def test_query_embedding_config_rejects_unknown_instruction_version() -> None:

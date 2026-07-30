@@ -52,6 +52,8 @@ _QUERY_PREFIXES = {
 
 _DOCUMENT_PREFIXES = {
     "none-v1": "",
+    # Explicit identity for the reviewed no-prefix Qwen3 document format.
+    "qwen3-document-no-prefix-v1": "",
     "qwen3-web-search-v1": QWEN3_WEB_SEARCH_DOCUMENT_PREFIX,
     "qwen3-knowledge-qa-v1": QWEN3_KNOWLEDGE_QA_DOCUMENT_PREFIX,
 }

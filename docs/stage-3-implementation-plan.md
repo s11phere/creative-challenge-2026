@@ -317,6 +317,11 @@ docs/
   和 `BAAI/bge-base-zh-v1.5` revision
   `f03589ceff5aac7111bd60cfc7d497ca17ecac65`。该模型仅作为阶段 0 门禁关闭前的部署烟测
   基线，不替代第 4 项候选的正式同配置评测和默认模型选择。
+- 2026-07-25 的 provisional development 消融后，Compose `embedding` profile 已切换到
+  `Qwen/Qwen3-Embedding-0.6B` revision
+  `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`，并固定查询指令、L2 归一化和实测 CPU batch
+  限制；旧 BGE 记录仅保留为历史部署 smoke。指标、资源结果和未关闭门禁见
+  `docs/stage-3-acceptance.md`。
 - `EmbeddingIdentity` 将 revision、768 维、查询/文档指令版本、归一化和精度写入
   `embedding_version`、`processing_config` 及摘要；受控重建命令只创建候选版本，仍经
   EMBED/INDEX/VALIDATE/PUBLISH 后原子切换当前版本。
@@ -833,8 +838,9 @@ Compose 或模型服务变更还必须验证空缓存首次启动、已有缓存
 1. 解决本地 Embedding/Reranker 的空缓存首次启动、缓存后离线启动、健康检查和固定 revision
    校验；模型服务失败不得被 fake 结果替代。私有语料仍禁止发送到外部 Provider。
 2. 关闭 R3-02～R3-06：确认 FTS 中文/双语切片、Embedding 模型与指令/归一化/精度、RRF 与
-   上下文参数、Reranker 开关/降级、指标和 P95 预算。计划列出的 gte/Qwen3/E5 候选与当前
-   `bge-base-zh-v1.5` 部署 smoke 不等价，必须按同一协议比较或更新记录说明选择理由。
+   上下文参数、Reranker 开关/降级、指标和 P95 预算。Qwen3 已通过 2026-07-25 development
+   消融成为 provisional 默认，但 Keyword=0、Recall@5 未达门槛且 P95 缺失，仍不能视为完成
+   正式模型定版或默认配置冻结。
 3. 在冻结 development 上依次运行 Keyword、Dense exact、Dense approximate、Hybrid、
    Hybrid+Reranker，并只使用预注册的有限参数集合；输出 per-case 阶段候选、失败归因、语言/安全
    切片、P50/P95 及模型/SQL/融合/精排分段耗时。

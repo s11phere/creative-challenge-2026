@@ -1,0 +1,83 @@
+"""Provisional grounded QA application services."""
+
+from .context_builder import (
+    SYSTEM_RULES,
+    ContextBuildDiagnostic,
+    ContextBuilder,
+    ContextBundle,
+    ContextEvidence,
+    ConversationRole,
+    ConversationTurn,
+    conservative_token_count,
+)
+from .evidence import (
+    BoundEvidence,
+    CitationResolver,
+    EvidenceBindingService,
+    EvidenceVerifier,
+    compute_excerpt_sha256,
+)
+from .generation import (
+    GenerationIdentity,
+    GenerationResult,
+    GenerationUsage,
+    GroundedAnswerGenerator,
+    GroundedConfidence,
+    StructuredAnswerParser,
+    StructuredOutputError,
+    VerificationMetrics,
+)
+from .persistence import InMemoryGroundedQARepository
+from .profile import (
+    QAGenerationProfileV1,
+    QAPlanningProfileV1,
+    load_qa_generation_profile,
+    load_qa_planning_profile,
+)
+from .query_planning import (
+    MergedSearchResult,
+    QASearchCoordinator,
+    QueryPlanner,
+    QueryPlanningDiagnostic,
+    QueryPlanningResult,
+    QueryRetrievalDiagnostic,
+    SearchServicePort,
+    classify_question,
+)
+
+__all__ = [
+    "BoundEvidence",
+    "CitationResolver",
+    "ContextBuildDiagnostic",
+    "ContextBuilder",
+    "ContextBundle",
+    "ContextEvidence",
+    "ConversationRole",
+    "ConversationTurn",
+    "EvidenceBindingService",
+    "EvidenceVerifier",
+    "GenerationIdentity",
+    "GenerationResult",
+    "GenerationUsage",
+    "GroundedAnswerGenerator",
+    "GroundedConfidence",
+    "InMemoryGroundedQARepository",
+    "MergedSearchResult",
+    "QAGenerationProfileV1",
+    "QAPlanningProfileV1",
+    "QASearchCoordinator",
+    "QueryPlanner",
+    "QueryPlanningDiagnostic",
+    "QueryPlanningResult",
+    "QueryRetrievalDiagnostic",
+    "SYSTEM_RULES",
+    "SearchServicePort",
+    "StructuredAnswerParser",
+    "StructuredOutputError",
+    "VerificationMetrics",
+    "classify_question",
+    "compute_excerpt_sha256",
+    "conservative_token_count",
+    "load_qa_generation_profile",
+    "load_qa_planning_profile",
+]

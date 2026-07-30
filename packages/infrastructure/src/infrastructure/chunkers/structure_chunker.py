@@ -7,6 +7,7 @@ paragraphs) before respecting character-size limits.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from domain.chunking import (
@@ -48,6 +49,15 @@ _CONTENT_NODE_TYPES = frozenset(
         StructNodeType.THEMATIC_BREAK,
     }
 )
+
+_TOC_NUMBER_PREFIX = re.compile(
+    r"^\s*(?:"
+    r"\d+(?:\.\d+)*(?:[.)、．）]\s*|\s+)"
+    r"|[（(]?[一二三四五六七八九十百]+[.、．）)]\s*"
+    r")"
+)
+_TOC_TRAILING_PAGE = re.compile(r"(?:\s*\.{2,}\s*|\s+)\d+\s*$")
+_TOC_SCAN_MAX_LINE = 120
 
 
 def _extract_segments(
@@ -175,7 +185,7 @@ class StructureChunker:
     same ``chunk_hash`` values).
     """
 
-    CHUNKER_VERSION = "1.0"
+    CHUNKER_VERSION = "1.3"
 
     async def chunk(
         self,
@@ -201,8 +211,23 @@ class StructureChunker:
                 total_ordinals=0,
             )
 
-        # Group segments into chunks
-        raw_chunks: list[list[_Segment]] = self._group_segments(segments, cfg)
+        # Detect a TOC before minimum-size merging can combine it with the first
+        # real heading. TOC and content are grouped independently so neither
+        # source text nor the content heading is lost at the boundary.
+        toc_range = self._table_of_contents_segment_range(segments)
+        if toc_range is not None:
+            toc_start, toc_end = toc_range
+            preamble_chunks = self._group_segments(segments[:toc_start], cfg)
+            toc_chunks = self._group_segments(segments[toc_start:toc_end], cfg)
+            content_chunks = self._group_segments(segments[toc_end:], cfg)
+            content_chunks = self._merge_leading_small_group_forward(content_chunks, cfg)
+            raw_chunks = [*preamble_chunks, *toc_chunks, *content_chunks]
+            toc_group_indexes = frozenset(
+                range(len(preamble_chunks), len(preamble_chunks) + len(toc_chunks))
+            )
+        else:
+            raw_chunks = self._group_segments(segments, cfg)
+            toc_group_indexes = frozenset()
 
         # Build ChunkOutput list
         outputs: list[ChunkOutput] = []
@@ -232,7 +257,9 @@ class StructureChunker:
             )
             end_page = max((s.end_page for s in group if s.end_page is not None), default=None)
 
-            primary_type = self._infer_type(group)
+            primary_type = (
+                "table_of_contents" if i in toc_group_indexes else self._infer_type(group)
+            )
 
             outputs.append(
                 ChunkOutput(
@@ -344,31 +371,6 @@ class StructureChunker:
             else:
                 groups.append(current)
 
-        # ── Drop leading TOC-only groups ──
-        #
-        # Documents with a table-of-contents list before the first heading
-        # produce chunks whose text is a dense keyword list (namespace names,
-        # section titles). These chunks' embedding vectors act like topic
-        # centroids — they out-score every content chunk for almost any query
-        # about the document because the vector space sees pure topic keywords
-        # with no specific signal.
-        #
-        # The heading text is already included as a segment in content chunks
-        # (see _extract_segments — each heading produces a heading segment),
-        # so TOC keywords are present in the actual content chunks without
-        # the pollution of a standalone keyword-dense vector.  Dropping
-        # TOC-only groups eliminates the embedding distortion cleanly.
-        toc_prefix: list[_Segment] = []
-        while groups and all(
-            seg.heading_path == "" and seg.primary_type in ("list_item", "raw_text")
-            for seg in groups[0]
-        ):
-            toc_prefix.extend(groups.pop(0))
-
-        if toc_prefix and not groups:
-            # Every group was TOC-only — keep one to avoid empty results
-            groups = [toc_prefix]
-
         # Merge chunks that remain too small
         merged: list[list[_Segment]] = []
         for group in groups:
@@ -380,6 +382,100 @@ class StructureChunker:
 
         return merged
 
+    @classmethod
+    def _table_of_contents_segment_range(
+        cls,
+        segments: list[_Segment],
+    ) -> tuple[int, int] | None:
+        """Find an early navigation list that substantially mirrors later headings."""
+        headings = {
+            cls._normalize_toc_label(segment.text)
+            for segment in segments
+            if segment.primary_type == "heading"
+        }
+        headings.discard("")
+        if len(headings) < 3:
+            return None
+
+        run_start: int | None = None
+        run_end_line = 0
+        for index, segment in enumerate(segments):
+            if segment.start_line > _TOC_SCAN_MAX_LINE:
+                break
+            is_list_candidate = segment.primary_type in {"list_item", "raw_text"}
+            has_line_gap = run_start is not None and segment.start_line > run_end_line + 2
+            if not is_list_candidate or has_line_gap:
+                if run_start is not None and cls._is_table_of_contents_run(
+                    segments[run_start:index], headings
+                ):
+                    return run_start, index
+                run_start = index if is_list_candidate else None
+                run_end_line = segment.end_line if is_list_candidate else 0
+                continue
+            if run_start is None:
+                run_start = index
+            run_end_line = max(run_end_line, segment.end_line)
+
+        if run_start is not None and cls._is_table_of_contents_run(
+            segments[run_start : index + 1], headings
+        ):
+            return run_start, index + 1
+        return None
+
+    @classmethod
+    def _is_table_of_contents_run(cls, run: list[_Segment], headings: set[str]) -> bool:
+        labels = tuple(
+            dict.fromkeys(
+                label
+                for segment in run
+                for line in segment.text.splitlines()
+                if (label := cls._normalize_toc_label(line))
+            )
+        )
+        if len(labels) < 3:
+            return False
+        matches = sum(
+            any(cls._toc_labels_match(label, heading) for heading in headings) for label in labels
+        )
+        return matches >= 3 and matches / len(labels) >= 0.6
+
+    @staticmethod
+    def _toc_labels_match(label: str, heading: str) -> bool:
+        if label == heading:
+            return True
+        separators = " :：-—（("
+        return (
+            len(label) > len(heading)
+            and label.startswith(heading)
+            and label[len(heading)] in separators
+        ) or (
+            len(heading) > len(label)
+            and heading.startswith(label)
+            and heading[len(label)] in separators
+        )
+
+    @staticmethod
+    def _merge_leading_small_group_forward(
+        groups: list[list[_Segment]], config: ChunkerConfig
+    ) -> list[list[_Segment]]:
+        """Keep a small first content heading without merging it into the TOC."""
+        if len(groups) < 2:
+            return groups
+        first_length = sum(len(segment.text) for segment in groups[0])
+        second_length = sum(len(segment.text) for segment in groups[1])
+        if first_length >= config.min_chunk_size:
+            return groups
+        if first_length + second_length > config.chunk_size:
+            return groups
+        return [[*groups[0], *groups[1]], *groups[2:]]
+
+    @staticmethod
+    def _normalize_toc_label(text: str) -> str:
+        normalized = " ".join(text.casefold().split())
+        normalized = _TOC_NUMBER_PREFIX.sub("", normalized)
+        normalized = _TOC_TRAILING_PAGE.sub("", normalized)
+        return normalized.strip(" .:-")
+
     @staticmethod
     def _split_oversize_segment(seg: _Segment, max_size: int) -> list[_Segment]:
         """Split a single large segment into smaller ones.
@@ -390,6 +486,13 @@ class StructureChunker:
         lines = seg.text.splitlines(keepends=False)
         if not lines:
             return [seg]
+
+        source_line_count = seg.end_line - seg.start_line + 1
+        preserve_source_span = (
+            seg.start_line > 0
+            and seg.end_line >= seg.start_line
+            and len(lines) != source_line_count
+        )
 
         result: list[_Segment] = []
         current_lines: list[str] = []
@@ -405,8 +508,8 @@ class StructureChunker:
                     result.append(
                         _Segment(
                             text=chunk_text,
-                            start_line=line_offset,
-                            end_line=line_offset,
+                            start_line=seg.start_line if preserve_source_span else line_offset,
+                            end_line=seg.end_line if preserve_source_span else line_offset,
                             heading_path=seg.heading_path,
                             primary_type=seg.primary_type,
                             start_page=seg.start_page,
@@ -422,8 +525,12 @@ class StructureChunker:
                 result.append(
                     _Segment(
                         text="\n".join(current_lines),
-                        start_line=line_offset,
-                        end_line=line_offset + len(current_lines) - 1,
+                        start_line=seg.start_line if preserve_source_span else line_offset,
+                        end_line=(
+                            seg.end_line
+                            if preserve_source_span
+                            else line_offset + len(current_lines) - 1
+                        ),
                         heading_path=seg.heading_path,
                         primary_type=seg.primary_type,
                         start_page=seg.start_page,
@@ -440,8 +547,12 @@ class StructureChunker:
             result.append(
                 _Segment(
                     text="\n".join(current_lines),
-                    start_line=line_offset,
-                    end_line=line_offset + len(current_lines) - 1,
+                    start_line=seg.start_line if preserve_source_span else line_offset,
+                    end_line=(
+                        seg.end_line
+                        if preserve_source_span
+                        else line_offset + len(current_lines) - 1
+                    ),
                     heading_path=seg.heading_path,
                     primary_type=seg.primary_type,
                     start_page=seg.start_page,

@@ -27,10 +27,18 @@ class TestRetrievalProfile:
         profile = RetrievalProfile()
         assert profile.chunk_size == 512
         assert profile.chunk_overlap == 64
-        assert profile.top_k == 10
-        assert profile.rerank_k == 5
-        assert profile.fusion_alpha == 0.5
-        assert profile.extra == {}
+        assert profile.top_k == 5
+        assert profile.rerank_k == 10
+        assert profile.fusion_alpha == 0.35
+        assert profile.extra == {
+            "keyword_candidate_k": "30",
+            "dense_candidate_k": "30",
+            "fusion_candidate_k": "30",
+            "rrf_k": "60",
+            "reranker_enabled": "true",
+            "adjacent_window": "1",
+            "max_chunks_per_document": "3",
+        }
 
     def test_custom_values(self) -> None:
         profile = RetrievalProfile(

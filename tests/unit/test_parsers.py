@@ -75,6 +75,37 @@ class TestMarkdownParser:
         doc = (await _parse(parser, "sample.md")).document
         assert all(n.start_line >= 1 for n in doc.structure if n.start_line > 0)
 
+    async def test_nested_list_does_not_consume_following_paragraph(self, parser) -> None:
+        raw = b"- parent\n  - child\n\nafter list\n"
+        result = await parser.parse(
+            raw,
+            ParseMetadata(file_name="nested.md", mime_type="text/markdown"),
+        )
+
+        assert isinstance(result, ParseSuccess)
+        assert any(
+            node.node_type is StructNodeType.PARAGRAPH
+            and node.text == "after list"
+            and node.start_line == 4
+            for node in result.document.structure
+        )
+
+    async def test_blockquote_preserves_text_and_source_range(self, parser) -> None:
+        result = await parser.parse(
+            b"> quoted line\n> second line\n",
+            ParseMetadata(file_name="quote.md", mime_type="text/markdown"),
+        )
+
+        assert isinstance(result, ParseSuccess)
+        quotes = [
+            node
+            for node in result.document.structure
+            if node.node_type is StructNodeType.QUOTE_BLOCK
+        ]
+        assert len(quotes) == 1
+        assert quotes[0].text == "quoted line second line"
+        assert (quotes[0].start_line, quotes[0].end_line) == (1, 2)
+
 
 # ===========================================================================
 #  TXT parser

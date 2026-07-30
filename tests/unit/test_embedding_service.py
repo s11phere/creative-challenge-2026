@@ -37,9 +37,11 @@ class _FakeEmbedder:
     def __init__(self, dims: int = 768) -> None:
         self._dims = dims
         self.call_count = 0
+        self.batches: list[tuple[str, ...]] = []
 
     async def embed(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
         self.call_count += 1
+        self.batches.append(texts)
         vectors: list[tuple[float, ...]] = []
         for text in texts:
             seed = hashlib.sha256(text.encode()).digest()
@@ -265,6 +267,29 @@ class TestEmbeddingService:
         saved = await chunk_repo.get_by_version(version.id)
         assert len(saved) == 1
         assert saved[0].embedding is not None
+
+    async def test_document_prefix_does_not_duplicate_heading_metadata(
+        self, service, embedder
+    ) -> None:
+        doc = _make_doc()
+        version = _make_version(document_id=doc.id)
+        outputs = (
+            ChunkOutput(
+                ordinal=0,
+                text="Introduction\n\nGrounded content.",
+                chunk_hash="heading",
+                heading_path="Introduction",
+            ),
+        )
+        await service.embed_and_publish(
+            doc,
+            version,
+            outputs,
+            config=EmbeddingConfig(document_prefix="Document: "),
+        )
+        assert embedder.batches == [
+            ("Document: Introduction\n\nGrounded content.",),
+        ]
 
     async def test_empty_chunks_raises_validation_error(self, service, chunk_repo) -> None:
         doc = _make_doc()

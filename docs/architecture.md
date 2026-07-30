@@ -1,7 +1,8 @@
 # 项目架构概览
 
 > 本文档描述 "Agent 驱动的个人知识仓库" 项目的整体架构、各组件职责与协作关系。
-> 更新于阶段 3 Step 10 工程验收和阶段 5 通用 Runtime/Registry 实现审查完成时（2026-07-23）。
+> 更新于阶段 3 Step 10 工程验收、阶段 4 实施计划和阶段 5 通用 Runtime/Registry 审查完成时
+>（2026-07-23）。
 
 ---
 
@@ -89,7 +90,7 @@ Agent Runtime → Domain + ModelGateway
 ├── .env.example                    # 环境变量模板
 ├── .gitignore                      # Git 忽略规则
 ├── .python-version                 # Python 版本锁定 (3.12)
-├── AGENTS.md                       # AI 代理开发指南（精简版）
+├── AGENTS.md                       # AI 代理开发指南与仓库级约束
 ├── README.md                       # 项目简介
 ├── alembic.ini                     # Alembic 迁移配置
 ├── pyproject.toml                  # Python 项目配置（uv workspace + 质量工具）
@@ -97,7 +98,7 @@ Agent Runtime → Domain + ModelGateway
 │
 ├── apps/
 │   ├── api/                        # FastAPI HTTP 服务
-│   └── worker/                     # Dramatiq 后台 Worker
+│   ├── worker/                     # Dramatiq 后台 Worker
 │   └── web/                        # React 前端工作台
 │
 ├── packages/
@@ -105,10 +106,16 @@ Agent Runtime → Domain + ModelGateway
 │   ├── application/                # 用例编排
 │   ├── agent_runtime/              # Tool/Skill Registry 与确定性执行器
 │   ├── infrastructure/             # 基础设施适配器
-│   └── model_gateway/             # 模型网关
+│   └── model_gateway/              # 模型网关
+│
+├── cases/                          # 阶段 0 基线、允许语料、评测集与公开 fixture
+│   ├── docs/
+│   └── evals/
 │
 ├── skills/
 │   └── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
+│
+├── scripts/                        # OpenAPI 导出、Embedding 重建和检索评测 CLI
 │
 ├── deploy/                         # Docker 部署配置
 │   ├── compose.yaml                # 服务编排
@@ -130,8 +137,9 @@ Agent Runtime → Domain + ModelGateway
 │
 └── tests/                          # 测试
     ├── unit/                       # 单元测试
-    ├── integration/                # 集成测试（预留）
-    └── contract/                   # 契约测试（预留）
+    ├── integration/                # 隔离 PostgreSQL/Redis/API 集成测试
+    ├── contract/                   # ModelGateway/Tool Registry 契约测试
+    └── fixtures/                   # 确定性 parser fixture
 ```
 
 ---
@@ -141,7 +149,8 @@ Agent Runtime → Domain + ModelGateway
 ### `pyproject.toml`
 Python 项目中央配置。包含：
 - **uv workspace**：定义工作空间成员（`packages/*`、`apps/api`、`apps/worker`）
-- **根项目依赖**：依赖 `agent-runtime`、`api` 和 `worker`，确保 `uv sync --frozen` 安装当前已实现的 workspace 包
+- **根项目依赖**：依赖 `agent-runtime`、`api`、`worker` 及 Runtime schema/YAML 工具，确保
+  `uv sync --frozen` 安装当前已实现的 workspace 包
 - **构建系统**：各子包均使用 `setuptools` + `src/` 布局
 - **质量工具配置**：
   - `ruff`：代码格式 + lint（选用规则：E、F、I、N、W、UP、B、SIM、ARG）
@@ -160,8 +169,11 @@ Python 项目中央配置。包含：
 - `APP_ENV` / `APP_DEBUG` / `APP_SECRET_KEY`：应用配置
 - `POSTGRES_*`：数据库连接
 - `REDIS_*`：Redis 连接
-- `WORKER_*` / `DIAGNOSTIC_TASK_*`：Worker 并发、优雅停止、任务超时与重试上限
-- `MODEL_*`：模型端点（默认注释，使用 deterministic fake）
+- `WORKER_*` / `DIAGNOSTIC_TASK_*` / `INGESTION_TASK_*`：Worker 并发、优雅停止、任务租约、
+  心跳、超时与重试上限
+- `MODEL_*` / `FAST_CHAT_*` / `EMBEDDING_*` / `RERANKER_*`：能力级模型端点、identity、协议
+  和数据外发策略（默认 deterministic fake）
+- `RETRIEVAL_*`：检索总超时和仅开发环境可用的安全诊断开关
 - `OTLP_ENDPOINT`：OpenTelemetry 端点（可选）
 - `LOG_LEVEL` / `LOG_FORMAT`：日志配置
 
@@ -171,6 +183,14 @@ Python 项目中央配置。包含：
 
 ### `AGENTS.md`
 AI 开发代理的全局行为指南。定义了项目目标、优先级、架构不变量、技术基线、工作方式和 ADR 触发条件。
+
+### `scripts/`
+
+| 文件 | 职责 |
+| --- | --- |
+| `scripts/export_openapi.py` | 从应用工厂确定性导出 `docs/openapi.json` |
+| `scripts/rebuild_embeddings.py` | 按固定 Embedding identity 创建受控重建任务，不绕过原子发布 |
+| `scripts/evaluate_retrieval.py` | 校验/执行版本化检索评测、formal/holdout 门禁和机器可读报告 |
 
 ---
 
@@ -191,6 +211,11 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/parsing.py` | `ParsedDocument` / `StructNode` / `ParseError` 纯类型、`Parser` Protocol、`compute_blob_hash` 辅助函数 |
 | `src/domain/fingerprinting.py` | 内容指纹：`normalize_stable_key`、`compute_content_hash`（含版本分隔符）、`compute_storage_key` |
 | `src/domain/blob_store.py` | `BlobStore` Port（含 `store_and_verify`） |
+| `src/domain/chunking.py` | 结构分块输入输出、`ChunkerConfig`、Chunk identity/hash 和 `Chunker` Port |
+| `src/domain/embedding.py` | `EmbeddingIdentity`、处理配置摘要和 768 维版本边界 |
+| `src/domain/retrieval.py` | SearchRequest/SearchResult、`RetrievalProfileV1`、候选/诊断/locator、`RetrievalStore`、QueryEmbedder 和 Reranker Port |
+| `src/domain/grounded_qa.py` | provisional GroundedAnswer/Claim/Evidence/Citation/Refusal/Conflict 契约、稳定拒答/错误、取消 Port、不可重开 attempt/retry、引用校验和 QA 状态投影 |
+| `src/domain/qa_persistence.py` | provisional Conversation/Message/Run/Attempt/Evidence/Citation/Feedback、版本/用量与 Repository Port；不依赖数据库实现 |
 
 **约束**：
 - 零外部依赖（不依赖 FastAPI、SQLAlchemy、任何 SDK）
@@ -209,8 +234,22 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/__init__.py` | 包标记 |
 | `src/application/ingestion/__init__.py` | 摄入用例包 |
 | `src/application/ingestion/source_registration.py` | 来源登记用例：`SourceRegistrationService`（创建 Source、FINGERPRINT 阶段、`(source_id, stable_key)` 查重、`blob_hash` 匹配）|
+| `src/application/ingestion/embedding.py` | INDEX/VALIDATE/PUBLISH Embedding 流水线和原子发布编排 |
+| `src/application/ingestion/orchestrator.py` | discover/parse/chunk/embed/publish 状态机、幂等重入、取消、删除与清理 |
+| `src/application/ingestion/rebuild.py` | 固定 Embedding identity 的受控重建计划 |
+| `src/application/retrieval/search.py` | `SearchService`：Space 校验、单路/混合召回、RRF、去重、扩展、精排和降级编排 |
+| `src/application/retrieval/dense.py` | Query Embedding Adapter 边界、批处理、超时和顺序保持 |
+| `src/application/retrieval/reranker.py` | ModelGateway Reranker Adapter 和响应映射 |
+| `src/application/retrieval/profile.py` | 版本化 `RetrievalProfileV1` 配置解析 |
+| `src/application/retrieval/evaluation.py` | Evidence/locator 映射、检索指标、失败分类和报告输入 |
+| `src/application/qa/evidence.py` | provisional SearchHit/Evidence 绑定、生成前/发布前归属校验、历史 Citation 状态和最小原文解析 |
+| `src/application/qa/profile.py` | provisional QA profile 的查询、历史、Evidence、生成和完整性阈值投影 |
+| `src/application/qa/query_planning.py` | 确定性问题分类、有界改写回退、Space/filter 不变的多查询检索和去重 |
+| `src/application/qa/context_builder.py` | 系统/问题/历史/不可信 Evidence 隔离、配额裁剪和稳定上下文摘要 |
+| `src/application/qa/generation.py` | `fast_chat` 非流式结构化生成、JSON schema 解析、一次修复、空证据拒答、显式取消、细分模型故障、冲突/发布竞态校验和安全版本/用量结果 |
+| `src/application/qa/persistence.py` | provisional 内存 Grounded QA Repository；验证 Space/owner、幂等、attempt、取消、usage、Evidence/Feedback 和原子终态发布 |
 
-**依赖**：`domain`
+**依赖**：`domain`、`model-gateway`、`jsonschema`
 
 **模式**：每个用例是一个独立函数或类，接收 Port 作为参数，不直接依赖具体实现。
 
@@ -247,6 +286,10 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 - **`redis_*`** — Redis 连接参数，提供 `redis_url` 属性
 - **`max_upload_size_mb`** — 上传文件大小上限（默认 50 MB）
 - **`blob_store_path`** — 本地 Blob 存储根目录（默认 `./data/blobs`）
+- **`ingestion_task_*`** — 摄入任务超时、重试、心跳和租约
+- **能力级模型配置** — Chat/Embedding/Reranker endpoint、模型 identity、Embedding 指令/
+  归一化/精度和外发策略
+- **`retrieval_*`** — SearchService 总超时和开发诊断策略
 - **`otlp_endpoint`** / `otel_export_timeout_seconds` — 可选 Collector 与有界导出超时
 - **`validate_secrets()`** — 生产环境（`app_env=production`）下校验必须密钥不为空，启动失败
 
@@ -262,7 +305,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 
 | 文件 | 职责 |
 |------|------|
-| `contracts.py` | Chat/Embedding 类型、能力别名、Protocol 与错误分类 |
+| `contracts.py` | Chat/Embedding/Reranker 类型、能力别名、Protocol、使用量与错误分类 |
 | `fake.py` | 确定性 fake 和失败场景 |
 | `factory.py` | Provider 选择、endpoint/data policy 校验 |
 | `openai_compatible.py` | OpenAI-compatible HTTP Adapter、重试和响应解析 |
@@ -270,7 +313,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `__init__.py` | 稳定公开导出 |
 
 **设计要点**：
-- 通过**能力别名**（`fast_chat`、`embedding_zh`）引用模型，不散落具体模型名
+- 通过**能力别名**（`fast_chat`、`embedding_zh`、`reranker_multilingual`）引用模型，不散落具体模型名
 - 默认使用**确定性 fake**，不需要 API key
 - Provider Adapter 封装 SDK/HTTP 类型，不向 application 或 domain 泄漏
 - 外部 endpoint 默认禁止，公网外发需要显式策略开关
@@ -278,7 +321,10 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 
 **依赖**：`httpx`、`opentelemetry-api`
 
-本阶段不包含 Reranker，也不执行真实 Provider 调用。
+阶段 3 已通过同一网关接入查询 Embedding 和可选 Reranker；阶段 4 provisional 生成也只通过
+`fast_chat` 获取完整响应，并在 Application 层做结构化校验。CI 默认仍使用 fake。真实本地
+Embedding/Reranker 仅通过固定镜像、revision 和显式 Compose profile 启动，私有内容不得
+绕过 ADR-004 的数据策略发送到外部 Provider。`fast_chat` 仍不提供 SSE/流式协议。
 
 ---
 
@@ -324,6 +370,9 @@ Runtime API、Web 入口或 `knowledge_qa` 等业务 Skill；活动版本和生�
 3. **路由注册**：
    - `GET /api/v1/health/live` — **存活探测**：仅检查进程事件循环
    - `GET /api/v1/health/ready` — **就绪探测**：并发检查 PostgreSQL 和 Redis，返回稳定机器码
+   - `/api/v1/spaces/{space_id}/sources*` — 来源创建/列表/详情、上传和触发摄入
+   - `/api/v1/tasks/{task_id}*` — 摄入任务状态、取消和重试
+   - `POST /api/v1/spaces/{space_id}/search` — Space-scoped Keyword/Dense/Hybrid 检索
 4. **请求可观测性**：`observability.py` 校验或生成 trace/request ID，返回
    `X-Trace-ID`、`X-Request-ID`，并创建 HTTP server span 与开始/完成 JSON 日志。
 
@@ -346,9 +395,11 @@ Runtime API、Web 入口或 `knowledge_qa` 等业务 Skill；活动版本和生�
 }
 ```
 
-**OpenAPI**：端点声明 `response_model`，OpenAPI schema 中包含 `LiveResponse`、`ReadyResponse`、`ErrorResponse` 的 JSON Schema。
+**OpenAPI**：端点声明 `response_model`；`docs/openapi.json` 由运行时应用确定性导出，当前覆盖
+健康、来源/摄入任务和检索 schema。新增或修改公开端点后必须重新导出并运行一致性检查。
 
-**依赖**：`fastapi`、`uvicorn[standard]`、`infrastructure`、`application`、`model-gateway`
+**依赖**：`fastapi`、`uvicorn[standard]`、`python-multipart`、`alembic`、`infrastructure`、
+`application`、`model-gateway`、`worker`
 
 ---
 
@@ -362,20 +413,19 @@ Runtime API、Web 入口或 `knowledge_qa` 等业务 Skill；活动版本和生�
 |------|------|
 | `src/worker/main.py` | 独立 Worker CLI 入口与优雅停止参数 |
 | `src/worker/__main__.py` | 支持 `python -m worker` 启动 |
+| `src/worker/broker.py` | Worker 进程的 Redis/Dramatiq broker 初始化 |
 | `src/worker/tasks.py` | 无正文诊断任务、有限重试和永久失败回调 |
+| `src/worker/ingestion_tasks.py` | 持久摄入任务 actor、Orchestrator 组装、租约/心跳、取消、错误分类、有限重试和死信记录 |
 
-**当前状态**：已实现 Redis/Dramatiq Worker 基线。诊断消息仅包含 `task_id`、
-`trace_id`、`event_version`、计数和请求时间；任务有明确超时、有限重试、优雅停止和
-永久失败日志，重复执行不写入业务状态。
+**当前状态**：Redis/Dramatiq 同时承载无正文诊断任务和阶段 2 摄入任务。摄入 actor 执行解析、
+分块、Embedding、索引验证和原子发布；PostgreSQL `IngestionTask` 是状态、幂等、取消、租约和
+死信事实源，Redis 只投递 `task_id`/`trace_id` 等控制元数据。重复投递、Worker 丢失和取消均按
+持久状态恢复，不以日志是否出现作为完成事实。
 
-后续阶段实现：
-- 文档解析、分块、Embedding、索引等长任务
-- 任务状态跟踪（DB 持久化，Redis 只负责投递）
+诊断 actor 的 started/completed 日志在容器中仍有已记录差异；排查应同时检查任务表、Redis
+队列和 trace。问答/Agent 长任务尚未接入 Worker，等待阶段 4 ADR-007 和持久化协议。
 
-当前诊断任务已经提供 producer/consumer span 和结构化日志，能够按 trace/task/message ID
-从入队事件关联到完成或永久失败事件。
-
-**依赖**：`dramatiq`、`infrastructure`、`application`
+**依赖**：`dramatiq`、`infrastructure`、`application`、`model-gateway`
 
 ---
 
@@ -408,19 +458,18 @@ Trace/Request ID；数据来源读取真实 Source、Document 和 IngestionTask 
 不展示虚构的文档、会话或证据。
 
 **后续将包含**：
-- 空间/会话导航
-- 对话与任务工作区
-- 证据与原文查看器
-- 错误/空白/加载状态
+- 阶段 3 检索结果界面（当前只有 HTTP Search API）
+- 阶段 4 空间/会话导航、对话运行状态和取消/重试
+- 阶段 4 证据与原文查看器、引用高亮和拒答/冲突状态
 
 **规范命令**：
 ```bash
-corepack pnpm --dir apps/web install      # 安装依赖
-corepack pnpm --dir apps/web dev          # 开发服务器
-corepack pnpm --dir apps/web build        # 生产构建
-corepack pnpm --dir apps/web test         # 运行测试
-corepack pnpm --dir apps/web lint         # 代码检查
-corepack pnpm --dir apps/web typecheck    # 类型检查
+corepack pnpm@10.20.0 --dir apps/web install --frozen-lockfile
+corepack pnpm@10.20.0 --dir apps/web dev
+corepack pnpm@10.20.0 --dir apps/web build
+corepack pnpm@10.20.0 --dir apps/web test
+corepack pnpm@10.20.0 --dir apps/web lint
+corepack pnpm@10.20.0 --dir apps/web typecheck
 ```
 
 ---
@@ -429,7 +478,8 @@ corepack pnpm --dir apps/web typecheck    # 类型检查
 
 ### `compose.yaml`
 
-Docker Compose 编排，定义 5 个长期服务、1 个一次性迁移服务和 1 个可选服务：
+Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服务和 3 个按 profile 启动的
+可选服务：
 
 | 服务 | 镜像 | 关键配置 | 健康检查 |
 |------|------|----------|---------|
@@ -440,6 +490,12 @@ Docker Compose 编排，定义 5 个长期服务、1 个一次性迁移服务和
 | **worker** | 本地构建 | 依赖 migrate 成功、Redis 健康 | 进程检查 |
 | **web** | 本地构建 (nginx) | 依赖 API 健康，同源代理 `/api` | `/healthz` |
 | **otel-collector** (可选) | `otel/opentelemetry-collector-contrib` | 需 `--profile otel` 启动 | — |
+| **tei** (可选) | 固定 digest 的 TEI CPU 镜像 | `--profile embedding`；固定 `Qwen3-Embedding-0.6B` revision、实测 CPU batch 限制和命名缓存卷 | `/health` |
+| **reranker** (可选) | 固定 digest 的 TEI CPU 镜像 | `--profile reranker`；固定 `bge-reranker-base` revision 和命名缓存卷 | `/health` |
+
+基础 API/Worker/Web 在模型 profile 未启用或模型故障时仍应保持管理面可用；Dense/Reranker
+请求按 profile 返回明确错误或受控降级。全新模型卷首次下载仍需在可复现网络环境补证，不能
+通过移除 digest、改用 `latest` 或开启外部 Provider 绕过。
 
 ### `Dockerfile.api`
 
@@ -495,6 +551,7 @@ Docker Compose 编排，定义 5 个长期服务、1 个一次性迁移服务和
 | 004 | Local-First Data Boundary | 本地优先，外部模型显式选择 |
 | 005 | Ingestion Identity, Versioning, Publication, And Deletion | 固定摄入身份、双哈希、处理版本、原子发布、任务可靠性和删除语义 |
 | 006 | Skill Manifest Versioning And Trust Model | 固定 Skill manifest、摘要、受信目录、权限、恢复和回滚语义 |
+| 007 | Grounded QA Persistence, Citation, Execution, And SSE Semantics | 固定唯一 QA Port、引用生命周期、运行/取消、Worker 和 SSE 语义；仅协议已接受 |
 | 009 | Redis / Dramatiq Task Delivery | 队列选型 Redis + Dramatiq，状态存 DB |
 
 ADR-007 已接受，但只固定 Stage 4 的 GroundedAnswer/Citation、Conversation/AgentRun/Evidence、
@@ -509,6 +566,11 @@ SSE/取消和后台执行协议。ADR-008 仍为保留编号；阶段 4 的持�
 | `project-implementation-plan.md` | 总实施计划 |
 | `stage-1-implementation-plan.md` | 阶段 1 详细实施计划与任务清单 |
 | `stage-1-acceptance.md` | 阶段 1 验收命令、结果、退出条件、外部确认和已知问题 |
+| `stage-2-implementation-plan.md` | 阶段 2 Step 0～8 实现记录和 Step 9 正式质量门禁 |
+| `stage-3-implementation-plan.md` | 阶段 3 检索、评测协议、分步实现和正式门禁 |
+| `stage-3-acceptance.md` | 阶段 3 工程验收、正式完成清单、holdout Runbook 和阶段 4 移交 |
+| `stage-4-implementation-plan.md` | 阶段 4 启动门禁、引用问答协议、分步执行与验收矩阵 |
+| `stage-4-persistence-design.md` | 阶段 4 provisional 持久化表、约束、索引、事务和门禁后迁移验收设计 |
 | `stage-5-implementation-plan.md` | 阶段 5 依赖门禁、分步计划、完成与暂缓状态 |
 | `stage-5-implementation-review.md` | 阶段 5 通用基础审查证据、未完成范围和审查决定 |
 | `troubleshooting.md` | 本地运行故障恢复和已知限制 |
@@ -524,38 +586,32 @@ SSE/取消和后台执行协议。ADR-008 仍为保留编号；阶段 4 的持�
 ```
 tests/
 ├── __init__.py
+├── fixtures/                       # Markdown/TXT/PDF 确定性 parser fixture
 ├── unit/
-│   ├── __init__.py
-│   ├── test_config.py              # 配置、密钥与固定向量 schema 边界（6 个）
-│   ├── test_database.py            # Engine、失败语义和数据库 span（3 个）
-│   ├── test_domain_models.py       # 领域实体、值对象与任务状态（23 个）
-│   ├── test_agent_runtime_domain.py # Runtime 状态、预算、取消、超时和恢复（7 个）
-│   ├── test_errors.py              # 错误协议测试（6 个）
-│   ├── test_health.py              # 本地依赖与模型状态测试（4 个）
-│   ├── test_model_gateway.py       # Provider 策略、错误、重试、维度和隐私（21 个）
-│   ├── test_observability.py       # 上下文、日志 schema 和脱敏（4 个）
-│   ├── test_openapi.py             # OpenAPI schema 测试（1 个）
-│   ├── test_orm_models.py          # ORM 映射、向量索引与唯一约束（20 个）
-│   ├── test_runtime_executor.py    # 确定性 workflow、权限、预算、故障和审计（12 个）
-│   ├── test_skill_registry.py      # manifest、信任路径、摘要、兼容和固定（16 个）
-│   ├── test_skill_lifecycle.py     # reload、升级、回滚、恢复兼容和并发（6 个）
-│   ├── test_fingerprinting.py      # stable_key/content_hash/storage_key（42 个）
-│   ├── test_blob_store.py          # BlobStore CRUD/verify/路径防护（21 个）
-│   ├── test_source_registration.py # 来源登记：Source 创建、FINGERPRINT 查重（11 个）
-│   ├── test_trace_middleware.py    # API 关联头与错误 trace（3 个）
-│   ├── test_parsing_domain.py      # ParsedDocument/StructNode/ParseError（20 个）
-│   ├── test_parsers.py            # Markdown/TXT/PDF 解析器（32 个）
-│   └── test_worker_tasks.py        # 诊断任务、重试、入队和 trace（9 个）
+│   ├── test_parsers.py / test_chunkers.py / test_embedding_service.py / test_ingestion_orchestrator.py
+│   ├── test_retrieval_domain.py / test_postgres_retrieval_store.py / test_retrieval_search.py
+│   ├── test_gateway_*              # Query Embedding 与 Reranker Adapter
+│   ├── test_source_api_helpers.py  # 来源 API 映射和安全边界
+│   ├── test_agent_runtime_domain.py
+│   ├── test_runtime_executor.py
+│   ├── test_skill_registry.py
+│   ├── test_skill_lifecycle.py
+│   └── 其他阶段 1 配置、DB、错误、健康、OpenAPI、OTel 和 Worker 测试
 ├── integration/
 │   ├── __init__.py
-│   ├── test_data_model.py          # CRUD 与重试安全约束（17 个，需 RUN_INTEGRATION=1）
-│   └── test_local_dependencies.py  # pgvector/Alembic/ORM 索引/Redis/readiness（4 个，需 RUN_INTEGRATION=1）
+│   ├── test_data_model.py                 # 6 表 CRUD、身份、版本和任务约束
+│   ├── test_local_dependencies.py         # pgvector/Alembic/Redis/readiness
+│   ├── test_postgres_retrieval_store.py   # FTS、exact/IVFFlat、发布集合和上下文
+│   ├── test_search_api.py                 # 四种检索模式、错误/降级和 HTTP schema
+│   ├── test_source_api_isolation.py       # Space/Source/Task 越权边界
+│   └── test_stage3_retrieval_lifecycle.py # 摄入、重建、原子切换、撤下和再次检索
 └── contract/
-    ├── test_model_gateway_contract.py  # fake/Adapter 共享契约（4 个）
-    └── test_tool_registry_contract.py  # Tool schema、权限、预算和审批契约（14 个）
+    ├── test_model_gateway_contract.py  # fake/Adapter 共享契约
+    └── test_tool_registry_contract.py  # Tool schema、权限、预算和审批契约
 ```
 
-默认后端测试覆盖阶段 1 工程基线、阶段 2 摄入和阶段 5 通用 Runtime；真实依赖集成测试需
+默认后端测试覆盖阶段 1 工程基线、阶段 2 摄入、阶段 3 检索和阶段 5 通用 Runtime；真实依赖
+集成测试需
 显式设置 `RUN_INTEGRATION=1`。覆盖：
 - 配置：空密钥在 production 下拒绝启动，development 下跳过
 - 错误：Pydantic model、404 统一格式、AppError 结构化响应、未知异常不泄露
@@ -564,17 +620,19 @@ tests/
 - 数据库：结构化 URL、Engine 延迟连接、不可用语义和父 trace 延续
 - 可观测性：关联 ID 校验、JSON schema、集中脱敏和错误体/响应头一致性
 - Worker：消息无正文、输入校验、幂等执行、超时/重试、入队和 consumer trace
-- ModelGateway：共享 Chat/Embedding 契约、能力别名、确定性 fake、有限重试、结构解析、
+- 摄入：Parser、Chunker、Embedding identity、原子发布、状态机、取消、租约、删除和重建
+- 检索：Keyword/Dense/Hybrid/Hybrid+Reranker、RRF、去重、扩展、Space/版本/tombstone、
+  exact/IVFFlat、API、评测门禁和失败归因
+- ModelGateway：共享 Chat/Embedding/Reranker 契约、能力别名、确定性 fake、有限重试、结构解析、
   endpoint 策略、显式不可用状态及输入/输出不进入日志或 span
 - Agent Runtime：状态/步骤分离、终态、预算、Tool/Skill schema、受信路径、版本固定、
   声明式执行、权限、有限重试、取消/超时、审计脱敏和原子 reload/回滚
 
-前端另有 6 个 Vitest 组件测试，覆盖健康、依赖降级、API 不可达与手动重试、非法响应、
-有界超时和键盘焦点。
+前端 Vitest 覆盖系统健康、数据来源、上传/触发、任务轮询/取消/重试、API 不可达、非法响应、
+有界超时和键盘焦点。当前没有阶段 3 搜索 UI 或阶段 4 会话/引用 UI 测试。
 
-另有 21 个需要 `RUN_INTEGRATION=1` 显式启用的真实依赖集成测试，覆盖 6 表 CRUD、作用域
-唯一约束、版本/Chunk/Task 幂等身份、pgvector cosine 索引、单一 Alembic head、Redis 往返和
-API readiness。CI 在独立 PostgreSQL/Redis 服务中运行这些测试。
+所有真实依赖集成测试必须指向隔离 PostgreSQL/Redis 和 Blob 根，禁止复用含业务数据的本地卷；
+CI 使用独立服务运行集成套件。测试数量不在本文档固定，以测试收集结果和阶段验收记录为准。
 
 ---
 
@@ -594,18 +652,19 @@ tests / future composition root ──→ agent-runtime ──┬──→ domai
                                                      └──→ model-gateway
 ```
 
-`agent-runtime` 尚未被 API、Worker 或 Application 业务用例引用；该接线等待阶段 2～4 正式
-Application Port 和阶段 5 Step 5～7。
+`agent-runtime` 尚未被 API、Worker 或 Application 业务用例引用；阶段 2/3 已提供摄入与检索
+Application Port，剩余接线等待阶段 4 Grounded QA、Conversation/AgentRun/Evidence 持久化及
+SSE/取消协议，再由阶段 5 Step 5～7 封装业务 Skill。
 
 依赖来源（通过各包的 `pyproject.toml`）：
 
 | 包 | 依赖 |
 |----|------|
-| `api` | `application`、`infrastructure`、`model-gateway`、`fastapi`、`uvicorn` |
-| `worker` | `application`、`infrastructure`、`dramatiq` |
+| `api` | `application`、`infrastructure`、`model-gateway`、`worker`、`alembic`、`fastapi`、`python-multipart`、`uvicorn` |
+| `worker` | `application`、`infrastructure`、`model-gateway`、`dramatiq` |
 | `application` | `domain` |
-| `infrastructure` | `domain`、`application`、`pydantic-settings`、`sqlalchemy`、`asyncpg`、`redis`、`dramatiq`、`opentelemetry-api`、`opentelemetry-sdk` |
-| `model-gateway` | `httpx` |
+| `infrastructure` | `domain`、`application`、PostgreSQL/pgvector、Redis/Dramatiq、Parser 和 OpenTelemetry Adapter 依赖 |
+| `model-gateway` | `httpx`、`opentelemetry-api` |
 | `agent-runtime` | `domain`、`model-gateway`、`jsonschema`、`packaging`、`pyyaml` |
 | `domain` | （无外部依赖） |
 
@@ -625,18 +684,21 @@ uv run pytest                       # 运行测试
 uv run pytest -q --tb=short         # 精简输出
 uv run uvicorn api.main:app         # 启动 API 服务
 uv run python -m worker             # 启动独立 Dramatiq Worker
+uv run alembic upgrade head         # 升级真实数据库
 uv run alembic upgrade --sql head   # 脱机生成迁移 SQL
+uv run python scripts/export_openapi.py
+git diff --exit-code -- docs/openapi.json
 ```
 
 ### 前端
 
 ```bash
-corepack pnpm --dir apps/web install     # 安装依赖
-corepack pnpm --dir apps/web dev         # 开发服务器
-corepack pnpm --dir apps/web build       # 生产构建
-corepack pnpm --dir apps/web test        # 运行测试
-corepack pnpm --dir apps/web lint        # 代码检查
-corepack pnpm --dir apps/web typecheck   # 类型检查
+corepack pnpm@10.20.0 --dir apps/web install --frozen-lockfile
+corepack pnpm@10.20.0 --dir apps/web dev
+corepack pnpm@10.20.0 --dir apps/web build
+corepack pnpm@10.20.0 --dir apps/web test
+corepack pnpm@10.20.0 --dir apps/web lint
+corepack pnpm@10.20.0 --dir apps/web typecheck
 ```
 
 ### Docker
@@ -645,7 +707,7 @@ corepack pnpm --dir apps/web typecheck   # 类型检查
 docker compose -f deploy/compose.yaml up --build --detach --wait  # 启动并等待健康
 docker compose -f deploy/compose.yaml --profile otel up --detach  # 含 OTel
 docker compose -f deploy/compose.yaml down                         # 停止并保留数据
-docker compose -f deploy/compose.yaml down --volumes               # 永久删除项目数据
+docker compose -f deploy/compose.yaml down --volumes               # 仅确认后永久删除项目数据
 ```
 
 ---
@@ -663,15 +725,16 @@ docker compose -f deploy/compose.yaml down --volumes               # 永久删�
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 
-阶段 2 已完成本地验收：
+阶段 2 Step 0～8 已完成工程实现与本地验证，尚不代表 Step 9 正式质量验收：
 
 - **Step 0/1**：ADR-005 固定身份、版本、发布、任务和删除语义；Space、Source、Document、DocumentVersion、Chunk、IngestionTask 的领域实体、ORM 模型、仓库实现及迁移已完成，R2-01～03 已关闭。
-- **Step 2**：`ParsedDocument` 纯类型 schema（`StructNode`含标题层级/代码块/列表/1-based行号/页码定位）、`Parser` Protocol、三种 P0 解析器（Markdown/TXT/可复制文本 PDF）、`ParserFactory`（扩展名/MIME校验+大小限制）、统一 7+1 类错误码。32 个单元测试覆盖正常/异常路径。
-- **Step 3**：内容指纹（`normalize_stable_key` / `compute_content_hash` / `compute_storage_key`）、`BlobStore` Port（含 `store_and_verify`）、`LocalFileBlobStore`（路径遍历防护）、`SourceRegistrationService` 来源登记用例。78 个新增单元测试。
-- **Step 4**：结构感知分块器（`StructureChunker`）+ `Chunker` Port + 统一 `ChunkOutput` schema + 41 个测试。
-- **Step 5**：Embedding 流水线（INDEX → VALIDATE → 原子 PUBLISH）+ `EmbeddingService` + 9 个测试。
-- **Step 6**：`IngestionOrchestrator` 状态机（`discover` → `parse` → `chunk` → `embed` → `publish`）+ Dramatiq actor + 幂等重入 + 取消 + 死信处理 + 34 个测试。
-- **Step 7**：增量维护（内容不变跳过、路径更新）+ 原子删除 + 异步清理 + 9 个测试。
+- **Step 2**：`ParsedDocument` 纯类型 schema、`Parser` Port、Markdown/TXT/可复制文本 PDF
+  ParserFactory 和统一错误分类。
+- **Step 3**：内容指纹、`BlobStore`、`LocalFileBlobStore` 和 `SourceRegistrationService`。
+- **Step 4**：结构感知 `StructureChunker`、统一 `ChunkOutput` 和父/邻接/locator metadata。
+- **Step 5**：Embedding INDEX → VALIDATE → 原子 PUBLISH 流水线和版本 identity。
+- **Step 6**：`IngestionOrchestrator` 状态机、Dramatiq actor、租约/心跳、幂等重入、取消和死信。
+- **Step 7**：内容不变跳过、路径更新、原子撤下、异步删除和清理。
 - **Step 8**：摄入 API（8 个端点：创建/列举来源、上传、触发摄入、状态查询、取消、重试）+ Web 数据源页面（来源列表、任务进度、上传/重试/取消 UI）。
 - **Step 9**：冻结 manifest 中 Markdown 35/35、TXT 9/9、PDF 30/30 通过 SHA-256、解析、1-based 定位与分块门禁；隔离依赖、迁移、API/Worker/Web 和 Compose E2E 通过。
 

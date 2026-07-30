@@ -6,18 +6,18 @@ corpus:
   manifest_sha256: 53d6f863060dd7d5e6affb0abda64348f0b498995b3d1cda5ef80f0e576ca738
   required_allowed_use: local_evaluation
 dataset:
-  version: v0
-  cases_path: cases/evals/datasets/knowledge-qa-v0/cases.jsonl
-  cases_sha256: 19b58c1471ff69b748233c61470cb19ce38c74d0bf6b83c4555cde18d7456fda
-  schema_path: cases/evals/datasets/knowledge-qa-v0/schema.json
-  schema_sha256: 4949f3f4a9212f5fa02c915850f06a64bde501df0568e57fab582057a3b45e16
+  version: v1
+  cases_path: cases/evals/datasets/knowledge-qa-v1/cases.jsonl
+  cases_sha256: a16a953cff715b4de95ade05d5b8aa173ddbd4fdc28c380d54eb7dc2014270c8
+  schema_path: cases/evals/datasets/knowledge-qa-v1/schema.json
+  schema_sha256: daddbcb380db21fa3f05b5daedd88ccfe5278e52727aaae094e60b57bf3b9588
   splits:
     development:
       count: 127
-      content_sha256: 6e870ee94cb64367d111557a2d1fdfc0d3f8b231e2d60cde7e7118e3881e239c
+      content_sha256: 86411f3a6b4dbe4c500eb32182d46829a727b4f0436da207666554f90eb57ba8
     holdout:
       count: 149
-      content_sha256: ec56aa778587f0b66b78a2aa2d55dad04e187930f1b75423bb42b5d31a077b28
+      content_sha256: bcf559fcaf4c67d0fd958afae22c461a770c8c1176e85e6c233055dafe461019
 protocol:
   evidence_match: source_key+source_version+locator_overlap-v1
   included_source_formats:
@@ -82,14 +82,6 @@ experiments:
     profile:
       <<: *baseline_profile
       reranker_enabled: true
-
-  # Development-only candidate pool expansion.
-  - id: dense-exact-k100
-    mode: dense
-    dense_mode: exact
-    profile:
-      <<: *baseline_profile
-      dense_candidate_k: 100
 gates:
   formal_manifest_status: frozen
   stage_2_step_9_acceptance_path: docs/stage-2-acceptance.md

@@ -36,6 +36,10 @@ cases/evals/datasets/*
 cases/evals/datasets/knowledge-qa-v0/*
 !cases/evals/datasets/knowledge-qa-v0/README.md
 !cases/evals/datasets/knowledge-qa-v0/schema.json
+!cases/evals/datasets/knowledge-qa-v1/
+cases/evals/datasets/knowledge-qa-v1/*
+!cases/evals/datasets/knowledge-qa-v1/README.md
+!cases/evals/datasets/knowledge-qa-v1/schema.json
 
 # Environment
 .env

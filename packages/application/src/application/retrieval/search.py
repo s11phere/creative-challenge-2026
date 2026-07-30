@@ -34,7 +34,6 @@ from domain.retrieval import (
     SearchExecutionContext,
     SearchHit,
     SearchHitSummary,
-    SearchLocator,
     SearchRequest,
     SearchResult,
     StageTiming,
@@ -197,6 +196,8 @@ class SearchService:
             )
 
         fusion_started = perf_counter()
+        filtered_keyword = _filter_direct_candidates(keyword)
+        filtered_dense = _filter_direct_candidates(hybrid_dense)
         try:
             with tracer.start_as_current_span(
                 "retrieval.fusion",
@@ -209,8 +210,8 @@ class SearchService:
                 },
             ) as span:
                 fused = fuse_candidates(
-                    keyword.candidates,
-                    hybrid_dense.candidates,
+                    filtered_keyword.candidates,
+                    filtered_dense.candidates,
                     fusion_alpha=profile.fusion_alpha,
                     rrf_k=profile.rrf_k,
                     limit=profile.fusion_candidate_k,
@@ -223,6 +224,7 @@ class SearchService:
             ) from exc
         fusion_latency_ms = (perf_counter() - fusion_started) * 1000
 
+        fused = _deduplicate_fused(fused)
         fused = _limit_document_quota(fused, profile.max_chunks_per_document)
 
         if request.mode is RetrievalMode.HYBRID:
@@ -254,25 +256,6 @@ class SearchService:
                 RetrievalErrorCode.PROFILE_INCOMPATIBLE,
                 "hybrid_rerank mode requires an enabled reranker profile.",
             )
-
-        # ── Reranker input: dense-only (skip hybrid fusion) ────────
-        # Hybrid fusion via RRF with weak keyword signal dilutes the
-        # dense candidate pool.  Feed pure dense candidates directly
-        # to the reranker so it sees the full breadth of the 90%+ @100
-        # recall pool.
-        if request.mode is RetrievalMode.HYBRID_RERANK:
-            dense_candidates = hybrid_dense.candidates[: profile.rerank_k]
-            fused = tuple(
-                FusedCandidate(
-                    candidate=c,
-                    fused_score=c.score,
-                    fused_rank=i + 1,
-                    dense_rank=c.rank,
-                    dense_score=c.score,
-                )
-                for i, c in enumerate(dense_candidates)
-            )
-            fused = _limit_document_quota(fused, profile.max_chunks_per_document)
 
         try:
             response = await self._rerank(request, fused, profile)
@@ -692,48 +675,20 @@ def _raw_hits(
     final_k: int,
     max_chunks_per_document: int | None = None,
 ) -> tuple[SearchHit, ...]:
-    candidates = list(batch.candidates)
+    candidates = list(_filter_direct_candidates(batch).candidates)
     candidates.sort(key=lambda item: (item.rank, str(item.chunk_id)))
+    deduped = _deduplicate_candidates(candidates)
 
-    # ── Document-level quota ────────────────────────────────────────────
-    # Prevent a single document from dominating the top-k.  Applies in all
-    # modes that call _raw_hits; the caller passes None to skip (keyword).
     if max_chunks_per_document is not None:
         counts: dict[object, int] = {}
         limited: list[RetrievalCandidate] = []
-        for c in candidates:
-            current = counts.get(c.document_id, 0)
+        for candidate in deduped:
+            current = counts.get(candidate.document_id, 0)
             if current >= max_chunks_per_document:
                 continue
-            limited.append(c)
-            counts[c.document_id] = current + 1
-        candidates = limited
-
-    # ── Overlap dedup ───────────────────────────────────────────────────
-    # Sliding-window chunking produces consecutive chunks whose locator
-    # ranges overlap.  When multiple such chunks from the same source_key
-    # rank highly, they waste top-k slots on near-duplicate content.
-    # Keep only the highest-ranked candidate per unique (source_key, locator
-    # range) — overlap is defined as any same-kind locator intersection.
-    seen_ranges: dict[str, list[SearchLocator]] = {}
-    deduped: list[RetrievalCandidate] = []
-    for c in candidates:
-        sk = c.source_key
-        is_dup = False
-        if sk in seen_ranges:
-            for c_loc in c.locators:
-                for seen_loc in seen_ranges[sk]:
-                    if c_loc.overlaps(seen_loc):
-                        is_dup = True
-                        break
-                if is_dup:
-                    break
-        if is_dup:
-            continue
-        if sk not in seen_ranges:
-            seen_ranges[sk] = []
-        seen_ranges[sk].extend(c.locators)
-        deduped.append(c)
+            limited.append(candidate)
+            counts[candidate.document_id] = current + 1
+        deduped = limited
 
     ordered = deduped[:final_k]
     return tuple(
@@ -747,6 +702,58 @@ def _raw_hits(
         )
         for final_rank, candidate in enumerate(ordered, start=1)
     )
+
+
+def _filter_direct_candidates(batch: CandidateBatch) -> CandidateBatch:
+    """Exclude TOC centroids from direct retrieval without deleting source text."""
+    return CandidateBatch(
+        channel=batch.channel,
+        candidates=tuple(
+            candidate for candidate in batch.candidates if not _is_table_of_contents(candidate)
+        ),
+        index_version=batch.index_version,
+        latency_ms=batch.latency_ms,
+    )
+
+
+def _deduplicate_candidates(
+    candidates: list[RetrievalCandidate],
+) -> list[RetrievalCandidate]:
+    """Drop repeated sliding-window boundaries within one document version."""
+    seen_by_version: dict[tuple[object, object], list[RetrievalCandidate]] = {}
+    deduped: list[RetrievalCandidate] = []
+    for candidate in candidates:
+        identity = (candidate.document_id, candidate.version_id)
+        seen = seen_by_version.setdefault(identity, [])
+        if any(_has_boundary_text_overlap(candidate.text, item.text) for item in seen):
+            continue
+        seen.append(candidate)
+        deduped.append(candidate)
+    return deduped
+
+
+def _deduplicate_fused(fused: tuple[FusedCandidate, ...]) -> tuple[FusedCandidate, ...]:
+    candidates = _deduplicate_candidates([item.candidate for item in fused])
+    retained_ids = {candidate.chunk_id for candidate in candidates}
+    return tuple(item for item in fused if item.candidate.chunk_id in retained_ids)
+
+
+def _is_table_of_contents(candidate: RetrievalCandidate) -> bool:
+    return dict(candidate.metadata).get("node_type") == "table_of_contents"
+
+
+def _has_boundary_text_overlap(left: str, right: str, *, minimum_chars: int = 32) -> bool:
+    left_text = left.strip()
+    right_text = right.strip()
+    if left_text == right_text:
+        return True
+    maximum = min(len(left_text), len(right_text))
+    if maximum < minimum_chars:
+        return False
+    for size in range(maximum, minimum_chars - 1, -1):
+        if left_text[-size:] == right_text[:size] or right_text[-size:] == left_text[:size]:
+            return True
+    return False
 
 
 def _fused_hits(fused: tuple[FusedCandidate, ...], *, final_k: int) -> tuple[SearchHit, ...]:

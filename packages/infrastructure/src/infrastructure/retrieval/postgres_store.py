@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from time import perf_counter
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from domain.models import DocumentStatus
@@ -28,6 +28,7 @@ from domain.retrieval import (
 )
 from sqlalchemy import Select, and_, func, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from ..orm import ChunkModel, DocumentModel, DocumentVersionModel, SourceModel
 
@@ -79,6 +80,7 @@ class PostgresRetrievalStore:
             self._published_candidates(query.space_id, query.filters)
             .add_columns(rank_score)
             .where(ChunkModel.search_vector.bool_op("@@")(tsquery))
+            .where(_is_direct_retrieval_content())
             .order_by(rank_score.desc(), ChunkModel.id.asc())
             .limit(query.limit)
         )
@@ -253,6 +255,7 @@ class PostgresRetrievalStore:
                 DocumentVersionModel.embedding_version == query.embedding_version,
                 ChunkModel.embedding.is_not(None),
                 distance.is_not(None),
+                _is_direct_retrieval_content(),
             )
             .order_by(distance.asc(), ChunkModel.id.asc())
             .limit(query.limit)
@@ -270,7 +273,11 @@ class PostgresRetrievalStore:
                 ChunkModel.ordinal.label("chunk_ordinal"),
                 (1.0 - distance).label("score"),
             )
-            .where(ChunkModel.embedding.is_not(None), distance.is_not(None))
+            .where(
+                ChunkModel.embedding.is_not(None),
+                distance.is_not(None),
+                _is_direct_retrieval_content(),
+            )
             .order_by(distance.asc())
             .limit(query.limit * 10)
             .cte("ivfflat_shortlist")
@@ -441,6 +448,12 @@ def _metadata_int(metadata: tuple[tuple[str, str], ...], key: str) -> int | None
     except ValueError:
         return None
     return value if value >= 0 else None
+
+
+def _is_direct_retrieval_content() -> ColumnElement[bool]:
+    """Exclude TOC centroids before candidate LIMIT while retaining stored chunks."""
+    node_type = ChunkModel.meta["node_type"].as_string()
+    return cast(ColumnElement[bool], node_type.is_distinct_from("table_of_contents"))
 
 
 def _locator(
