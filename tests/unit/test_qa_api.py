@@ -26,6 +26,13 @@ async def test_provisional_qa_api_creates_run_cancels_and_replays_events() -> No
         run_id = UUID(submitted.json()["run_id"])
         assert submitted.json()["status"] == "queued"
 
+        replayed_submission = await client.post(
+            f"/api/v1/conversations/{conversation_id}/questions",
+            json={"question": "What is supported?", "idempotency_key": "question-1"},
+        )
+        assert replayed_submission.status_code == 202
+        assert UUID(replayed_submission.json()["run_id"]) == run_id
+
         replay = await client.get(f"/api/v1/qa/runs/{run_id}/events")
         assert replay.status_code == 200
         assert "event: accepted" in replay.text

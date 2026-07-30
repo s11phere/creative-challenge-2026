@@ -14,10 +14,12 @@
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
 | 阶段 3 🟡 工程 Step 0-10 | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；真实模型 development 最佳 Dense Recall@5 为 51.90%，未达到 85%，默认配置未冻结且正式 holdout 未执行 |
-| 阶段 4 🟡 provisional Step 0-10 | ADR-007、Grounded QA/Evidence/Citation、查询/上下文、结构化生成、拒答/冲突/故障、内存 Repository、SSE/问答 API、Web 对话工作区、反馈候选和回答评测 validate-only 已完成；PostgreSQL/Alembic、Worker 完成链、真实引用 UI/E2E、默认配置与 holdout 未完成 |
+| 阶段 4 🟡 provisional Step 0-10 | ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、查询/上下文、结构化生成、拒答/冲突/故障、内存 Repository、SSE/问答 API、Web 对话工作区、反馈候选和回答评测 validate-only 已完成；PostgreSQL/Alembic、Worker 完成链、真实引用 UI/E2E、默认配置与 holdout 未完成 |
 | 阶段 5 🟡 通用基础 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、版本固定、预算/权限/审计、事务式 reload/回滚和 Skill 模板已通过审查 |
 
 当前 Web 展示系统健康、数据来源和 provisional 知识问答工作区；HTTP API 可创建内存会话、提交问题、查询/取消 queued Run、重放安全 SSE 并提交已发布回答的反馈。由于没有 PostgreSQL QA 表、Worker 完成链和终态 Citation API，Run 不会形成真实回答，证据面板不会伪造引用，因此仍不能宣称真实问答或引用能力已经可用。
+纯 Application 层的 `GroundedQAApplicationPort` 已用合成 Search/Citation/Chat fake 验证幂等提交、
+Evidence 保存、结构化生成、原子发布、失败与取消语义；当前 HTTP/Worker 尚未接入该执行路径。
 阶段 5 当前只有离线通用 Runtime/Registry 和合成 fake 契约；没有业务 Skill、Runtime API、
 运行/检查点持久化或 Web Skill 入口，不能据此宣称 `knowledge_qa` 可用或阶段 5 整体完成。
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见

@@ -1,23 +1,27 @@
 # Stage 5 Cross-Stage Contract Audit
 
-Status: audited 2026-07-19. Authoritative decisions are in [ADR-006](adr/006-skill-manifest-versioning-and-trust.md).
+Status: audited 2026-07-19; refreshed 2026-07-31. Authoritative decisions are in
+[ADR-006](adr/006-skill-manifest-versioning-and-trust.md) and
+[ADR-007](adr/007-grounded-qa-persistence-and-sse.md).
 
-Stage 5 is allowed to define generic Runtime, Tool, and Skill contracts with deterministic fakes.
-It is not allowed to declare the knowledge workflow usable until the upstream application ports exist.
+Stage 5 is allowed to define generic Runtime, Tool, and Skill contracts and to consume the provisional
+Grounded QA Application Port with deterministic fakes. It is not allowed to implement or expose the
+`knowledge_qa` business Skill until the upstream formal gates and production adapters are complete.
 
 | Upstream capability | Expected reusable contract | Current checkout | Stage 5 action |
 | --- | --- | --- | --- |
-| Stage 2 ingestion | Published `DocumentVersion` identity, locator metadata, Space ownership, withdrawal state | Domain/ORM ingestion entities exist; ingestion pipeline port is absent | Use identity-shaped fake; do not read ORM directly |
-| Stage 3 retrieval | `RetrievalStore.search` or equivalent returning scored, versioned, Space-scoped results | No retrieval package or port | Block real retrieval Tool; use fixed `SearchResult` fake |
-| Stage 4 grounded answer | Structured answer/refusal with claims, citations, evidence, versions, and stable errors | No GroundedAnswer/Application implementation | Block `knowledge_qa`; use fixed `GroundedAnswer` fixture |
-| Stage 4 citation resolver | Current/history/withdrawn source resolution and original location | No citation resolver | Do not synthesize citation logic in Skill |
-| Stage 4 conversations/runs | Conversation, AgentRun, Evidence ownership and persistence semantics | No such domain entities or API | Runtime persistence must remain an interface; do not create parallel business model |
-| Stage 4 SSE/cancellation | Event names, payloads, cancellation, recovery, and `event_version` | No SSE or run API | Internal event contract only; public API waits for upstream protocol |
+| Stage 2 ingestion | Published `DocumentVersion` identity, locator metadata, Space ownership, withdrawal state | Domain, PostgreSQL adapters, Worker pipeline and formal Stage 2 acceptance exist | Reuse Application/Domain boundaries; never read ingestion ORM from a Skill |
+| Stage 3 retrieval | `SearchService.search(SearchRequest, RetrievalProfileV1)` returning versioned, Space-scoped results | SearchService, PostgreSQL FTS/pgvector and four retrieval modes exist; formal model/profile/holdout gate remains open | Grounded QA owns retrieval; Skill must not call RetrievalStore or duplicate ranking logic |
+| Stage 4 grounded answer | Structured answer/refusal with claims, citations, evidence, versions, and stable errors | Domain contracts, generator and provisional `GroundedQAApplicationPort` exist and pass synthetic end-to-end tests | Use the QA Port in fake contract tests; block production `knowledge_qa` until Stage 4 exits |
+| Stage 4 citation resolver | Current/history/withdrawn source resolution and original location | Resolver and target Port exist; PostgreSQL target adapter, terminal Citation API and approved-corpus golden validation are absent | Do not synthesize citation logic in Skill; wait for the production adapter/API |
+| Stage 4 conversations/runs | Conversation, shared AgentRun, Evidence ownership and persistence semantics | Domain/Repository Port and in-memory transaction double exist; reviewed PostgreSQL implementation is absent | Reuse identities and Port; do not apply the current QA ORM/Alembic draft or create a parallel run model |
+| Stage 4 SSE/cancellation | Event names, payloads, cancellation, recovery, and `event_version` | `qa-sse-v1`, explicit cancellation and provisional in-memory API exist; durable events, Worker recovery and API restart recovery are absent | Reuse event schema in fakes; public Runtime API waits for durable upstream protocol |
 | Model gateway | Capability aliases and bounded usage/errors | `ModelGateway` package with `fast_chat`/`embedding_zh` fake exists | Reuse port; no provider SDK in Skill |
-| Queue delivery | PostgreSQL fact source; Redis/Dramatiq ID-only delivery | ADR-009 accepted; no AgentRun actor | Defer background recovery actor until durable run model exists |
+| Queue delivery | PostgreSQL fact source; Redis/Dramatiq ID-only delivery | ADR-009 and ingestion actor exist; no reviewed QA AgentRun actor | Defer QA background/recovery actor until durable run model exists |
 
 ## Verification boundary
 
-The audit is complete for Step 0 when ADR-006 is accepted and every missing upstream item is
-explicitly marked as blocked. Contract tests added before those items land must use local,
-deterministic fakes and must not be presented as end-to-end knowledge quality validation.
+The refreshed audit permits Stage 5 schema, workflow and handler contract work against the provisional
+QA Port with local deterministic fakes. It does not permit PostgreSQL/Worker/API integration or a
+`knowledge_qa` availability claim. Formal Stage 5 business work remains blocked until Stage 3 formally
+exits and Stage 4 supplies the reviewed persistence, Worker, Citation API and quality evidence.

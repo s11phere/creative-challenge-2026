@@ -115,6 +115,8 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 - provisional QA 的会话、Run 与事件均只在 API 进程内保存。重启 API 会丢失这些状态；断开 SSE 连接不会
   取消 Run，只有显式取消请求才会记录取消意图。真实回答、Citation、原文跳转、重试、反馈审核和恢复语义
   必须等待阶段 4 正式门禁、持久化和 Worker 实现。
+- `GroundedQAApplicationPort` 已在纯 Application 层用内存 Repository 和合成 fake 跑通完整终态，
+  但 API/Worker 当前未装配该执行服务；因此通过服务单测不代表 Web/API Run 会离开 queued。
 - 阶段 3 评测配置仍为 provisional：阶段 0 和阶段 2 已正式关闭，但 2026-07-29 冻结语料
   development 的最佳 Dense Recall@5 只有 51.90%，BGE Reranker 没有净收益且 P95 为
   3523.9 ms，因此 holdout 仍被配置门禁拒绝。不要手工打开 `formal_runs_enabled`。

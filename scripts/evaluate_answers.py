@@ -53,9 +53,7 @@ def _split_hash(lines: Sequence[str]) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def validate_answer_evaluation_config(
-    config: Mapping[str, Any], *, config_schema: Mapping[str, Any]
-) -> dict[str, Any]:
+def _validate_config_schema(config: Mapping[str, Any], config_schema: Mapping[str, Any]) -> None:
     errors = sorted(
         Draft202012Validator(config_schema).iter_errors(config),
         key=lambda error: tuple(str(item) for item in error.absolute_path),
@@ -64,6 +62,12 @@ def validate_answer_evaluation_config(
         first = errors[0]
         location = ".".join(str(item) for item in first.absolute_path) or "<root>"
         raise AnswerEvaluationConfigError(f"config schema error at {location}: {first.message}")
+
+
+def validate_answer_evaluation_config(
+    config: Mapping[str, Any], *, config_schema: Mapping[str, Any]
+) -> dict[str, Any]:
+    _validate_config_schema(config, config_schema)
 
     checked: dict[str, Path] = {}
     for section, path_key, hash_key in (
@@ -127,6 +131,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         config_path = _resolve_path(args.config)
         config = _load_yaml(config_path)
         schema = json.loads(CONFIG_SCHEMA_PATH.read_text(encoding="utf-8"))
+        _validate_config_schema(config, schema)
+        if not args.validate_only and not bool(config["gates"]["formal_runs_enabled"]):
+            print("answer evaluation execution blocked: formal_runs_enabled is false")
+            return 4
         summary = validate_answer_evaluation_config(config, config_schema=schema)
     except (AnswerEvaluationConfigError, json.JSONDecodeError) as exc:
         print(f"answer evaluation validation failed: {exc}")
@@ -134,8 +142,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(json.dumps(summary, sort_keys=True))
     if args.validate_only:
         return 0
-    print("answer evaluation execution blocked: formal_runs_enabled is false")
-    return 4
+    print("answer evaluation execution is not implemented")
+    return 5
 
 
 if __name__ == "__main__":

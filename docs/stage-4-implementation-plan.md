@@ -681,8 +681,15 @@ holdout 达到阶段 0 冻结阈值，且没有 Space/撤下/版本安全违规�
 - 未执行：隔离 PostgreSQL/Redis QA 集成、Alembic upgrade/downgrade、QA Worker/Dramatiq、Compose QA
   E2E、真实回答/Citation 旅程、Playwright 截图、真实模型 development/holdout。这些工作受阶段 3
   未退出与阶段 4 正式门禁限制，不能以本次回归替代。
-- 移交边界：现有 Grounded QA、SSE/API 均为 provisional 契约，尚未形成带持久执行的唯一生产 QA
-  Application Port；阶段 5 不得实现或宣称 `knowledge_qa` Skill 可用。
+- 补充（2026-07-31）：新增唯一 provisional `GroundedQAApplicationPort`，串联幂等提交、阶段 3
+  `SearchService`、Evidence 保存、上下文、结构化生成、原子终态、取消和稳定失败映射；合成
+  Search/Citation/Chat fake 与内存 Repository 的成功、检索失败和取消契约测试通过。
+- 移交边界：该 Port 尚无 PostgreSQL/Worker Adapter，HTTP/SSE 也尚未接入执行路径，因此仍未形成
+  带持久执行的唯一生产 QA Application Port；阶段 5 不得实现或宣称 `knowledge_qa` Skill 可用。
+- 修复（2026-07-31）：`knowledge-qa-v0/cases.jsonl` 是 `internal_team_only` 文件，不进入 CI checkout。
+  `--validate-only` 的完整 pin/hash/split 校验仅在持有批准内部数据的环境执行；CI 单测对此显式 skip。
+  同时 CLI 先校验公开 config schema 并拒绝 `formal_runs_enabled=false` 的执行请求，再尝试读取任何
+  dataset，因此公开 CI 能稳定验证正式执行门禁。
 
 ## 6. 核心契约与协议
 

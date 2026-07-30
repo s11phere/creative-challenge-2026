@@ -249,6 +249,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/qa/context_builder.py` | 系统/问题/历史/不可信 Evidence 隔离、配额裁剪和稳定上下文摘要 |
 | `src/application/qa/generation.py` | `fast_chat` 非流式结构化生成、JSON schema 解析、一次修复、空证据拒答、显式取消、细分模型故障、冲突/发布竞态校验和安全版本/用量结果 |
 | `src/application/qa/persistence.py` | provisional 内存 Grounded QA Repository；验证 Space/owner、幂等、attempt、取消、usage、Evidence/Feedback 和原子终态发布 |
+| `src/application/qa/service.py` | 唯一 provisional `GroundedQAApplicationPort`；编排幂等提交、阶段 3 SearchService、Evidence/上下文、结构化生成、原子发布、取消和稳定失败终态 |
 | `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
 | `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
 

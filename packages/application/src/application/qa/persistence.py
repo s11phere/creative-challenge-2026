@@ -88,6 +88,20 @@ class InMemoryGroundedQARepository:
         async with self._lock:
             return self._messages.get(message_id)
 
+    async def list_messages(self, conversation_id: UUID) -> tuple[MessageRecord, ...]:
+        async with self._lock:
+            self._require_conversation(conversation_id)
+            return tuple(
+                sorted(
+                    (
+                        message
+                        for message in self._messages.values()
+                        if message.conversation_id == conversation_id
+                    ),
+                    key=lambda message: (message.created_at, str(message.message_id)),
+                )
+            )
+
     async def create_run(self, run: QARunRecord) -> QARunRecord:
         async with self._lock:
             conversation = self._require_conversation(run.conversation_id)
@@ -436,14 +450,12 @@ def _same_message_command(existing: MessageRecord, requested: MessageRecord) -> 
 
 def _same_run_command(existing: QARunRecord, requested: QARunRecord) -> bool:
     return (
-        existing.run_id,
         existing.conversation_id,
         existing.question_message_id,
         existing.space_id,
         existing.caller_id,
         existing.versions,
     ) == (
-        requested.run_id,
         requested.conversation_id,
         requested.question_message_id,
         requested.space_id,

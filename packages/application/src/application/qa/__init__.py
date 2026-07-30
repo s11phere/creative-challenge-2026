@@ -57,6 +57,7 @@ from .query_planning import (
     SearchServicePort,
     classify_question,
 )
+from .service import GroundedQAApplicationPort, GroundedQAExecutionProfile, GroundedQAService
 
 __all__ = [
     "BoundEvidence",
@@ -81,6 +82,9 @@ __all__ = [
     "GenerationResult",
     "GenerationUsage",
     "GroundedAnswerGenerator",
+    "GroundedQAApplicationPort",
+    "GroundedQAExecutionProfile",
+    "GroundedQAService",
     "GroundedConfidence",
     "InMemoryGroundedQARepository",
     "MergedSearchResult",

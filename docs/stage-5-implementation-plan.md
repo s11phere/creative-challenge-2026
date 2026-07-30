@@ -211,6 +211,11 @@ AgentRun、Evidence、SSE 和取消 Application 契约，因此真实 `knowledge
 接入按计划跳过，后续契约测试只能使用确定性 fake。已运行 `git diff --check`、ADR 必填字段、
 文档链接和文件存在性检查，均通过；未修改迁移或运行时代码。
 
+**时点补充（2026-07-31）**：阶段 3 SearchService、阶段 4 GroundedAnswer/Citation、会话/运行/
+Evidence Repository、SSE 以及唯一 provisional `GroundedQAApplicationPort` 已存在，并可供阶段 5
+继续编写不接生产入口的 fake 契约。阶段 3 尚未正式退出，且该 Port 没有 PostgreSQL/Worker
+Adapter 或终态 Citation API，因此 `knowledge_qa` 的实现与接入仍按原门禁阻塞。
+
 ### 步骤 1：Agent Runtime 领域契约
 
 - 定义 `RunStatus`、`RunStep`、`RunBudget`、`BudgetUsage`、`ToolPermission`、
