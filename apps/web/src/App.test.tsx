@@ -172,4 +172,20 @@ describe('system status workspace', () => {
       'page',
     )
   })
+
+  it('opens the grounded QA workspace from primary navigation', async () => {
+    vi.stubGlobal('fetch', mockHealthyFetch())
+
+    renderApp()
+    await screen.findByText('本地服务运行正常')
+    fireEvent.click(screen.getByRole('link', { name: '知识问答' }))
+
+    expect(screen.getByRole('heading', { level: 1, name: '知识问答' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '问题' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '引用证据' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '知识问答' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+  })
 })

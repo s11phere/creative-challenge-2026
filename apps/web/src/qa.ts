@@ -1,0 +1,70 @@
+import { apiBaseUrl } from './health'
+
+export const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
+
+export type Conversation = {
+  conversation_id: string
+  space_id: string
+  owner_id: string
+}
+
+export type QARun = {
+  run_id: string
+  attempt_id: string
+  status: string
+  conversation_id: string
+  question_message_id: string
+  cancellation_requested: boolean
+  error_code: string | null
+}
+
+export class QAApiError extends Error {
+  status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'QAApiError'
+    this.status = status
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
+  })
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { detail?: string } | null
+    throw new QAApiError(body?.detail ?? response.statusText, response.status)
+  }
+  return response.json() as Promise<T>
+}
+
+export function createConversation(): Promise<Conversation> {
+  return request(`/api/v1/spaces/${DEFAULT_SPACE_ID}/conversations`, {
+    method: 'POST',
+    body: JSON.stringify({ owner_id: 'local' }),
+  })
+}
+
+export function submitQuestion(
+  conversationId: string,
+  question: string,
+  idempotencyKey: string,
+): Promise<QARun> {
+  return request(`/api/v1/conversations/${conversationId}/questions`, {
+    method: 'POST',
+    body: JSON.stringify({ question, idempotency_key: idempotencyKey }),
+  })
+}
+
+export function fetchRun(runId: string, signal?: AbortSignal): Promise<QARun> {
+  return request(`/api/v1/qa/runs/${runId}`, { signal })
+}
+
+export function cancelRun(runId: string): Promise<QARun> {
+  return request(`/api/v1/qa/runs/${runId}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
+}

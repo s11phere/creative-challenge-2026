@@ -1,0 +1,111 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { QAWorkspace } from './QAWorkspace'
+
+function response(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function renderWorkspace() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  })
+  return render(
+    <QueryClientProvider client={client}>
+      <QAWorkspace />
+    </QueryClientProvider>,
+  )
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe('QAWorkspace', () => {
+  it('creates a conversation, submits a question, and cancels explicitly', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/conversations')) {
+        return Promise.resolve(
+          response({
+            conversation_id: 'conversation-1',
+            space_id: 'space-1',
+            owner_id: 'local',
+          }),
+        )
+      }
+      if (url.endsWith('/questions')) {
+        return Promise.resolve(
+          response(
+            {
+              run_id: 'run-1',
+              attempt_id: 'attempt-1',
+              status: 'queued',
+              conversation_id: 'conversation-1',
+              question_message_id: 'message-1',
+              cancellation_requested: false,
+              error_code: null,
+            },
+            202,
+          ),
+        )
+      }
+      if (url.endsWith('/cancel') && init?.method === 'POST') {
+        return Promise.resolve(
+          response({
+            run_id: 'run-1',
+            attempt_id: 'attempt-1',
+            status: 'cancel_requested',
+            conversation_id: 'conversation-1',
+            question_message_id: 'message-1',
+            cancellation_requested: true,
+            error_code: null,
+          }),
+        )
+      }
+      return Promise.resolve(
+        response({
+          run_id: 'run-1',
+          attempt_id: 'attempt-1',
+          status: 'queued',
+          conversation_id: 'conversation-1',
+          question_message_id: 'message-1',
+          cancellation_requested: false,
+          error_code: null,
+        }),
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'idempotency-1' })
+
+    renderWorkspace()
+    fireEvent.change(screen.getByLabelText('问题'), {
+      target: { value: '文档中的关键结论是什么？' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提问' }))
+
+    expect(await screen.findByText('文档中的关键结论是什么？')).toBeInTheDocument()
+    expect(screen.getByText('等待执行')).toBeInTheDocument()
+    expect(screen.getByText('等待证据校验')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+
+    await waitFor(() => expect(screen.getByText('正在取消')).toBeInTheDocument())
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/qa/runs/run-1/cancel'),
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
+  it('keeps evidence empty instead of inventing citations', () => {
+    vi.stubGlobal('fetch', vi.fn())
+    renderWorkspace()
+
+    expect(screen.getByRole('heading', { name: '引用证据' })).toBeInTheDocument()
+    expect(screen.getByText('完成回答后显示引用')).toBeInTheDocument()
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+  })
+})

@@ -9,6 +9,7 @@ import {
   HardDrive,
   LibraryBig,
   LoaderCircle,
+  MessageSquareText,
   RefreshCw,
   Server,
   ShieldCheck,
@@ -24,10 +25,11 @@ import {
   type HealthSnapshot,
 } from './health'
 import { SourcesPanel } from './SourcesPanel'
+import { QAWorkspace } from './QAWorkspace'
 import './App.css'
 
 type ServiceState = 'available' | 'unavailable' | 'checking'
-type WorkspaceView = 'status' | 'sources'
+type WorkspaceView = 'qa' | 'status' | 'sources'
 
 type ServiceRow = {
   key: string
@@ -124,9 +126,11 @@ function formatCheckTime(timestamp: number | undefined): string {
 }
 
 function App() {
-  const [activeView, setActiveView] = useState<WorkspaceView>(() =>
-    window.location.hash === '#sources' ? 'sources' : 'status',
-  )
+  const [activeView, setActiveView] = useState<WorkspaceView>(() => {
+    if (window.location.hash === '#sources') return 'sources'
+    if (window.location.hash === '#qa') return 'qa'
+    return 'status'
+  })
   const healthQuery = useQuery<HealthSnapshot, HealthApiError>({
     queryKey: ['system-health'],
     queryFn: ({ signal }) => fetchHealthSnapshot(signal),
@@ -145,7 +149,8 @@ function App() {
 
   const showView = (view: WorkspaceView) => {
     setActiveView(view)
-    window.history.replaceState(null, '', view === 'sources' ? '#sources' : '#system-status')
+    const hash = view === 'sources' ? '#sources' : view === 'qa' ? '#qa' : '#system-status'
+    window.history.replaceState(null, '', hash)
   }
 
   return (
@@ -162,6 +167,17 @@ function App() {
         </div>
 
         <nav className="sidebar-nav">
+          <a
+            href="#qa"
+            aria-current={activeView === 'qa' ? 'page' : undefined}
+            onClick={(event) => {
+              event.preventDefault()
+              showView('qa')
+            }}
+          >
+            <MessageSquareText size={18} />
+            知识问答
+          </a>
           <a
             href="#system-status"
             aria-current={activeView === 'status' ? 'page' : undefined}
@@ -195,11 +211,26 @@ function App() {
         </div>
       </aside>
 
-      <main className="workspace" id={activeView === 'status' ? 'system-status' : 'sources'}>
+      <main
+        className={`workspace ${activeView === 'qa' ? 'workspace-qa' : ''}`}
+        id={activeView === 'status' ? 'system-status' : activeView}
+      >
         <header className="workspace-header">
           <div>
-            <p className="eyebrow">{activeView === 'status' ? '运行概览' : '知识库内容'}</p>
-            <h1>{activeView === 'status' ? '系统状态' : '数据来源'}</h1>
+            <p className="eyebrow">
+              {activeView === 'status'
+                ? '运行概览'
+                : activeView === 'qa'
+                  ? '当前知识空间'
+                  : '知识库内容'}
+            </p>
+            <h1>
+              {activeView === 'status'
+                ? '系统状态'
+                : activeView === 'qa'
+                  ? '知识问答'
+                  : '数据来源'}
+            </h1>
           </div>
           {activeView === 'status' && <button
             className="icon-button"
@@ -332,8 +363,10 @@ function App() {
           </dl>
         </section>
           </>
-        ) : (
+        ) : activeView === 'sources' ? (
           <SourcesPanel />
+        ) : (
+          <QAWorkspace />
         )}
       </main>
     </div>

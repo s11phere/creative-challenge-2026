@@ -571,6 +571,20 @@ Application 用例；`docs/openapi.json` 与运行时 schema 一致。
 **完成标准**：核心状态在桌面和移动 viewport 无重叠、文本溢出或 Citation 跳号；键盘和屏幕阅读
 顺序可用；前端测试覆盖断线、取消、重试、拒答和失效引用。
 
+#### Provisional 实现记录（2026-07-31）
+
+- 已完成：在现有工作台主导航中新增“知识问答”视图，沿用同源 `/api`、现有 TanStack Query 和
+  Lucide 图标，不新增前端状态库。首次提问按顺序创建 Space 会话并提交问题，随后轮询权威 Run 状态。
+- 已完成：覆盖 created/queued/running/verifying/cancel_requested/cancelled/completed/refused/failed/
+  timed_out 的明确展示；活动 Run 只能通过显式取消按钮取消，断开或切换视图不会触发取消命令。
+- 已完成：桌面采用消息区与证据侧栏双栏布局，小屏改为纵向证据区；输入长度、禁用态、错误提示、
+  焦点样式和 `aria-live` 已落地。前端不解析回答文本，也不会在服务端返回验证结果前构造 Citation。
+- 已验证：前端 lint、TypeScript、15 个 Vitest 测试和生产构建通过；测试覆盖导航、提问、queued、
+  显式取消、证据空状态和不伪造 Citation。
+- 未关闭：Step 7 尚无 Worker 完成链、终态结果读取、Citation resolver、retry/feedback API 和正式
+  PostgreSQL 会话持久化，因此本步不能展示真实回答、引用原文、高亮、重试或反馈，也未执行完整
+  Playwright/API E2E。当前只完成可由 provisional API 支持的 Web 主链，不满足正式完成标准。
+
 ### Step 9：实现反馈审核和评测候选导出
 
 1. Feedback 保存用户判断、可选说明、目标回答版本和安全元数据，不在日志记录说明正文。
