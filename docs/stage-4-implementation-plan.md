@@ -670,6 +670,20 @@ holdout 达到阶段 0 冻结阈值，且没有 Space/撤下/版本安全违规�
 **完成标准**：阶段退出条件全部有实际输出支持；没有实际执行的命令不得标为通过；阶段 5 能在
 不复制检索、生成或引用逻辑的情况下封装 `knowledge_qa` Skill。
 
+#### Provisional 实现记录（2026-07-31）
+
+- 已完成：Step 0～10 的纯领域/Application、内存 Repository、API/SSE、Web、反馈候选和回答评测
+  门禁回归通过；README、architecture、troubleshooting、OpenAPI 和本次 provisional 验收记录已同步。
+- 已验证：Ruff format/check、mypy（77 个源文件）、后端 pytest（585 passed, 41 skipped）、OpenAPI
+  导出与一致性测试、answer evaluator `--validate-only`，以及前端 lint/typecheck、Vitest（15 passed）、
+  production build 和 `git diff --check` 均通过。validate-only 确认 development 127、holdout 149，
+  `formal_run_eligible=false`，未调用模型或执行回答。
+- 未执行：隔离 PostgreSQL/Redis QA 集成、Alembic upgrade/downgrade、QA Worker/Dramatiq、Compose QA
+  E2E、真实回答/Citation 旅程、Playwright 截图、真实模型 development/holdout。这些工作受阶段 3
+  未退出与阶段 4 正式门禁限制，不能以本次回归替代。
+- 移交边界：现有 Grounded QA、SSE/API 均为 provisional 契约，尚未形成带持久执行的唯一生产 QA
+  Application Port；阶段 5 不得实现或宣称 `knowledge_qa` Skill 可用。
+
 ## 6. 核心契约与协议
 
 ### 6.1 GroundedAnswer v1

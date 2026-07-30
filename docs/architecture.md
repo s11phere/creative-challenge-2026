@@ -1,8 +1,8 @@
 # 项目架构概览
 
 > 本文档描述 "Agent 驱动的个人知识仓库" 项目的整体架构、各组件职责与协作关系。
-> 更新于阶段 3 Step 10 工程验收、阶段 4 实施计划和阶段 5 通用 Runtime/Registry 审查完成时
->（2026-07-23）。
+> 更新于阶段 3 Step 10 工程验收、阶段 4 provisional Step 0～10 和阶段 5 通用 Runtime/Registry
+> 审查完成时（2026-07-31）。
 
 ---
 
@@ -216,6 +216,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/retrieval.py` | SearchRequest/SearchResult、`RetrievalProfileV1`、候选/诊断/locator、`RetrievalStore`、QueryEmbedder 和 Reranker Port |
 | `src/domain/grounded_qa.py` | provisional GroundedAnswer/Claim/Evidence/Citation/Refusal/Conflict 契约、稳定拒答/错误、取消 Port、不可重开 attempt/retry、引用校验和 QA 状态投影 |
 | `src/domain/qa_persistence.py` | provisional Conversation/Message/Run/Attempt/Evidence/Citation/Feedback、版本/用量与 Repository Port；不依赖数据库实现 |
+| `src/domain/qa_sse.py` | provisional `qa-sse-v1` 事件、单调 sequence、唯一终态、安全 payload 和内存重放日志 |
 
 **约束**：
 - 零外部依赖（不依赖 FastAPI、SQLAlchemy、任何 SDK）
@@ -248,6 +249,8 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/qa/context_builder.py` | 系统/问题/历史/不可信 Evidence 隔离、配额裁剪和稳定上下文摘要 |
 | `src/application/qa/generation.py` | `fast_chat` 非流式结构化生成、JSON schema 解析、一次修复、空证据拒答、显式取消、细分模型故障、冲突/发布竞态校验和安全版本/用量结果 |
 | `src/application/qa/persistence.py` | provisional 内存 Grounded QA Repository；验证 Space/owner、幂等、attempt、取消、usage、Evidence/Feedback 和原子终态发布 |
+| `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
+| `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
 
 **依赖**：`domain`、`model-gateway`、`jsonschema`
 
@@ -373,6 +376,11 @@ Runtime API、Web 入口或 `knowledge_qa` 等业务 Skill；活动版本和生�
    - `/api/v1/spaces/{space_id}/sources*` — 来源创建/列表/详情、上传和触发摄入
    - `/api/v1/tasks/{task_id}*` — 摄入任务状态、取消和重试
    - `POST /api/v1/spaces/{space_id}/search` — Space-scoped Keyword/Dense/Hybrid 检索
+   - `POST /api/v1/spaces/{space_id}/conversations`、`POST /api/v1/conversations/{conversation_id}/questions`
+     — provisional 内存会话与 queued Run 创建
+   - `GET /api/v1/qa/runs/{run_id}`、`POST /api/v1/qa/runs/{run_id}/cancel`、
+     `GET /api/v1/qa/runs/{run_id}/events`、`POST /api/v1/qa/runs/{run_id}/feedback` — provisional
+     Run 查询/取消、SSE 重放和反馈契约；无 Worker 完成链，不能产出真实回答或 Citation
 4. **请求可观测性**：`observability.py` 校验或生成 trace/request ID，返回
    `X-Trace-ID`、`X-Request-ID`，并创建 HTTP server span 与开始/完成 JSON 日志。
 
@@ -396,7 +404,8 @@ Runtime API、Web 入口或 `knowledge_qa` 等业务 Skill；活动版本和生�
 ```
 
 **OpenAPI**：端点声明 `response_model`；`docs/openapi.json` 由运行时应用确定性导出，当前覆盖
-健康、来源/摄入任务和检索 schema。新增或修改公开端点后必须重新导出并运行一致性检查。
+健康、来源/摄入任务、检索和 provisional QA schema。QA 状态只存在进程内，服务重启即丢失；
+新增或修改公开端点后必须重新导出并运行一致性检查。
 
 **依赖**：`fastapi`、`uvicorn[standard]`、`python-multipart`、`alembic`、`infrastructure`、
 `application`、`model-gateway`、`worker`
@@ -457,10 +466,9 @@ Trace/Request ID；数据来源读取真实 Source、Document 和 IngestionTask 
 触发、取消、重试与轮询。两个视图均包含错误/空白/加载状态、键盘焦点和移动端布局，
 不展示虚构的文档、会话或证据。
 
-**后续将包含**：
-- 阶段 3 检索结果界面（当前只有 HTTP Search API）
-- 阶段 4 空间/会话导航、对话运行状态和取消/重试
-- 阶段 4 证据与原文查看器、引用高亮和拒答/冲突状态
+Web 已包含系统健康、数据来源和 provisional 知识问答工作区。问答工作区可创建内存会话、提交
+问题、轮询/取消 Run，并保留不伪造 Citation 的证据空状态；真实回答、重试、反馈、证据原文和
+引用高亮仍等待 Worker 完成链、终态结果 API 和正式持久化。
 
 **规范命令**：
 ```bash
@@ -554,8 +562,8 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | 007 | Grounded QA Persistence, Citation, Execution, And SSE Semantics | 固定唯一 QA Port、引用生命周期、运行/取消、Worker 和 SSE 语义；仅协议已接受 |
 | 009 | Redis / Dramatiq Task Delivery | 队列选型 Redis + Dramatiq，状态存 DB |
 
-ADR-007 已接受，但只固定 Stage 4 的 GroundedAnswer/Citation、Conversation/AgentRun/Evidence、
-SSE/取消和后台执行协议。ADR-008 仍为保留编号；阶段 4 的持久化、SSE、API 和业务实现仍须等待
+ADR-007 已接受并已有 provisional 纯契约、内存 Repository、SSE/API/Web 验证，但未授权用这些
+内存能力替代 PostgreSQL/Worker 生产协议。ADR-008 仍为保留编号；正式迁移和后台执行仍须等待
 阶段 3 正式退出门禁及对应实现评审；阶段 2 Step 9 已按 `docs/stage-2-acceptance.md` 关闭。
 
 ### 其他文档
@@ -571,6 +579,7 @@ SSE/取消和后台执行协议。ADR-008 仍为保留编号；阶段 4 的持�
 | `stage-3-acceptance.md` | 阶段 3 工程验收、正式完成清单、holdout Runbook 和阶段 4 移交 |
 | `stage-4-implementation-plan.md` | 阶段 4 启动门禁、引用问答协议、分步执行与验收矩阵 |
 | `stage-4-persistence-design.md` | 阶段 4 provisional 持久化表、约束、索引、事务和门禁后迁移验收设计 |
+| `stage-4-acceptance.md` | 阶段 4 provisional 工程回归、未执行矩阵、正式阻塞项和阶段 5 移交边界 |
 | `stage-5-implementation-plan.md` | 阶段 5 依赖门禁、分步计划、完成与暂缓状态 |
 | `stage-5-implementation-review.md` | 阶段 5 通用基础审查证据、未完成范围和审查决定 |
 | `troubleshooting.md` | 本地运行故障恢复和已知限制 |
@@ -629,7 +638,8 @@ tests/
   声明式执行、权限、有限重试、取消/超时、审计脱敏和原子 reload/回滚
 
 前端 Vitest 覆盖系统健康、数据来源、上传/触发、任务轮询/取消/重试、API 不可达、非法响应、
-有界超时和键盘焦点。当前没有阶段 3 搜索 UI 或阶段 4 会话/引用 UI 测试。
+有界超时、键盘焦点，以及 provisional 问答导航、提问、queued、显式取消和不伪造 Citation。
+阶段 3 搜索 UI、真实回答/Citation 和 Playwright E2E 仍未落地。
 
 所有真实依赖集成测试必须指向隔离 PostgreSQL/Redis 和 Blob 根，禁止复用含业务数据的本地卷；
 CI 使用独立服务运行集成套件。测试数量不在本文档固定，以测试收集结果和阶段验收记录为准。
@@ -720,7 +730,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
 | **阶段 2** | **✅ 正式完成** | **Step 0～9 完成；冻结 manifest 的 74 个 P0 来源成功率 100%，退出记录见 `docs/stage-2-acceptance.md`** |
 | **阶段 3** | **🟡 工程 Step 0～10 验收完成** | **检索 API、离线评测和安全边界已落地；真实模型定版及正式 holdout 未关闭，阶段未正式退出** |
-| 阶段 4 | ❌ 未正式开始 | Step 0～6 的 provisional 配置、领域、Evidence/Citation、查询/上下文、生成/故障语义及内存持久化契约已落地；ORM/Alembic/PostgreSQL、Worker/SSE、API/Web、真实模型验证和回答评测未落地 |
+| 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、查询/上下文、生成/故障、内存持久化、SSE/API/Web、反馈候选和回答评测门禁已落地；ORM/Alembic/PostgreSQL、Worker 完成链、真实 Citation E2E、默认配置和 holdout 未落地 |
 | **阶段 5** | **🟡 通用基础已审查** | **Step 0～4 和 Step 9 通用部分通过；业务 Skill/API/持久化/验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅

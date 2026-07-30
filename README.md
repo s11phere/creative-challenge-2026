@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，冻结语料 development 已复核但未达到 Recall/Reranker/P95 门禁，因此默认配置未冻结且正式 holdout 未执行。阶段 4 仍未正式启动，但 provisional Step 0-6 的领域/Application 契约、确定性校验和内存持久化设计已完成；阶段 5 通用 Agent Runtime/Skill 基础已并行通过审查。**
+**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，冻结语料 development 已复核但未达到 Recall/Reranker/P95 门禁，因此默认配置未冻结且正式 holdout 未执行。阶段 4 仍未正式启动，但 provisional Step 0-10 的领域/Application、内存持久化、API/SSE、Web、反馈和回答评测门禁已跑通；阶段 5 通用 Agent Runtime/Skill 基础已并行通过审查。**
 
 已交付的核心能力：
 
@@ -14,10 +14,10 @@
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
 | 阶段 3 🟡 工程 Step 0-10 | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；真实模型 development 最佳 Dense Recall@5 为 51.90%，未达到 85%，默认配置未冻结且正式 holdout 未执行 |
-| 阶段 4 🟡 provisional Step 0-6 | ADR-007、Grounded QA 领域契约、Evidence/Citation 校验、查询与上下文构建、结构化生成、拒答/冲突/故障语义、内存 Repository 和持久化设计已完成；正式门禁、PostgreSQL/Alembic、Worker/SSE、问答 API/Web、真实模型验证和回答评测未完成 |
+| 阶段 4 🟡 provisional Step 0-10 | ADR-007、Grounded QA/Evidence/Citation、查询/上下文、结构化生成、拒答/冲突/故障、内存 Repository、SSE/问答 API、Web 对话工作区、反馈候选和回答评测 validate-only 已完成；PostgreSQL/Alembic、Worker 完成链、真实引用 UI/E2E、默认配置与 holdout 未完成 |
 | 阶段 5 🟡 通用基础 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、版本固定、预算/权限/审计、事务式 reload/回滚和 Skill 模板已通过审查 |
 
-当前 Web 展示系统健康状态和数据来源管理；检索能力已通过 HTTP API 提供。阶段 4 已形成可由 fake 和合成输入验证的 provisional 问答核心，但尚无问答 API、SSE、会话/引用 Web 界面或 PostgreSQL 业务持久化，因此不能宣称真实问答或引用能力已经可用。
+当前 Web 展示系统健康、数据来源和 provisional 知识问答工作区；HTTP API 可创建内存会话、提交问题、查询/取消 queued Run、重放安全 SSE 并提交已发布回答的反馈。由于没有 PostgreSQL QA 表、Worker 完成链和终态 Citation API，Run 不会形成真实回答，证据面板不会伪造引用，因此仍不能宣称真实问答或引用能力已经可用。
 阶段 5 当前只有离线通用 Runtime/Registry 和合成 fake 契约；没有业务 Skill、Runtime API、
 运行/检查点持久化或 Web Skill 入口，不能据此宣称 `knowledge_qa` 可用或阶段 5 整体完成。
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
@@ -139,6 +139,7 @@ git diff --exit-code -- docs/openapi.json
 - [阶段 3 实施计划](docs/stage-3-implementation-plan.md)
 - [阶段 3 验收记录](docs/stage-3-acceptance.md)
 - [阶段 4 实施计划](docs/stage-4-implementation-plan.md)
+- [阶段 4 provisional 验收记录](docs/stage-4-acceptance.md)
 - [阶段 4 持久化设计](docs/stage-4-persistence-design.md)
 - [ADR-007：Grounded QA 持久化、引用、执行与 SSE](docs/adr/007-grounded-qa-persistence-and-sse.md)
 - [阶段 5 实施计划](docs/stage-5-implementation-plan.md)
