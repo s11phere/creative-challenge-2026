@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "answer-report-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["report_schema_version", "status", "formal_run_eligible", "pinned_inputs", "dataset", "runtime"],
+  "properties": {
+    "report_schema_version": { "const": "answer-report-v1" },
+    "status": { "enum": ["provisional", "formal"] },
+    "formal_run_eligible": { "type": "boolean" },
+    "pinned_inputs": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "pattern": "^cases/evals/" }
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["split_counts"],
+      "properties": {
+        "split_counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["development", "holdout"],
+          "properties": {
+            "development": { "type": "integer", "minimum": 0 },
+            "holdout": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "runtime": { "type": "object" }
+  }
+}

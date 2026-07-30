@@ -10,6 +10,11 @@ from .context_builder import (
     ConversationTurn,
     conservative_token_count,
 )
+from .evaluation import (
+    AnswerEvaluationObservation,
+    AnswerFailureStage,
+    aggregate_answer_metrics,
+)
 from .evidence import (
     BoundEvidence,
     CitationResolver,
@@ -55,6 +60,8 @@ from .query_planning import (
 
 __all__ = [
     "BoundEvidence",
+    "AnswerEvaluationObservation",
+    "AnswerFailureStage",
     "CitationResolver",
     "ContextBuildDiagnostic",
     "ContextBuilder",
@@ -89,6 +96,7 @@ __all__ = [
     "StructuredAnswerParser",
     "StructuredOutputError",
     "VerificationMetrics",
+    "aggregate_answer_metrics",
     "classify_question",
     "compute_excerpt_sha256",
     "conservative_token_count",

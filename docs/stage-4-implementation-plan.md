@@ -638,6 +638,22 @@ Application 用例；`docs/openapi.json` 与运行时 schema 一致。
 **完成标准**：同一配置的 development 结果可复现；默认配置选择有逐 case 诊断证据；正式
 holdout 达到阶段 0 冻结阈值，且没有 Space/撤下/版本安全违规。
 
+#### Provisional 实现记录（2026-07-31）
+
+- 已完成：新增 `scripts/evaluate_answers.py --validate-only`。该命令校验 QA config schema、
+  manifest/dataset/schema/profile/prompt 的仓库内路径与 SHA-256、manifest 版本和状态、每个
+  dataset case schema、development/holdout 的计数及保序内容哈希；不调用模型，不输出题目或正文。
+- 已完成：新增 `answer-report-v1` 验证报告 schema，以及纯 `aggregate_answer_metrics`。报告对
+  supported claim、citation validity/target resolution、refusal、conflict、forbidden claim、安全、
+  latency、token、infrastructure failure 和失败归因均记录显式分子/分母；基础设施失败不计为拒答。
+- 已完成：常规执行路径在 `formal_runs_enabled: false` 时稳定阻断，无法通过遗漏确认参数或
+  provisional config 运行 development/holdout。
+- 已验证：QA 配置的 validate-only 命令、报告 schema、指标分母和正式执行阻断测试通过；没有读取
+  评测题目用于调参、没有调用真实模型、没有运行 development 或 holdout。
+- 未关闭：Stage 3 默认检索 profile 和真实模型尚未冻结，`QAProfileV1`/prompt/model config hash
+  未正式冻结；因此没有 development 消融、正式 answer report、默认配置选择、正式 holdout 或质量
+  门槛结论。本步只完成 deterministic 契约与门禁，不满足正式完成标准。
+
 ### Step 11：端到端验收与文档移交
 
 1. 在隔离 PostgreSQL/Redis、独立 Blob 根和批准语料上验证导入 -> 发布 -> 提问 -> 引用 ->
