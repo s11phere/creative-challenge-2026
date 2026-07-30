@@ -7,6 +7,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
+from application.qa.persistence import InMemoryGroundedQARepository
+from domain.qa_sse import QAEventLog
 from fastapi import FastAPI, Response
 from infrastructure.config import settings
 from infrastructure.database import Database
@@ -23,7 +25,7 @@ from pydantic import BaseModel
 
 from .errors import ErrorResponse, register_error_handlers
 from .observability import TraceMiddleware
-from .routers import search, sources
+from .routers import qa, search, sources
 
 
 class LiveResponse(BaseModel):
@@ -90,6 +92,8 @@ def create_app(
     )
     app.state.database = database
     app.state.model_gateway = gateway
+    app.state.qa_repository = InMemoryGroundedQARepository()
+    app.state.qa_event_log = QAEventLog()
 
     app.add_middleware(TraceMiddleware)
     register_error_handlers(app)
@@ -100,6 +104,7 @@ def create_app(
 def _register_routes(app: FastAPI) -> None:
     app.include_router(sources.router)
     app.include_router(search.router)
+    app.include_router(qa.router)
 
     @app.get(
         "/api/v1/health/live",

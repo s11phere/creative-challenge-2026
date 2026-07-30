@@ -542,6 +542,20 @@ Space、Document、DocumentVersion 和 locator 归属，再返回最小必要片
 **完成标准**：SSE 事件有严格单调 sequence 和唯一终态；取消/重试可恢复且幂等；API 只调用
 Application 用例；`docs/openapi.json` 与运行时 schema 一致。
 
+#### Provisional 实现记录（2026-07-30）
+
+- 已完成：新增 `qa-sse-v1` 纯领域事件契约和内存事件日志，覆盖 accepted/started/phase/evidence/
+  answer_delta/completed/refused/failed/cancel_requested/cancelled/timed_out/heartbeat；单 Run sequence
+  严格递增，终态后拒绝产生第二个业务事件，并支持按 sequence 游标重放。
+- 已完成：新增 provisional HTTP 端点，支持创建 Space 内会话、提交问题、查询 Run、显式取消和
+  SSE 重放。提交顺序固定为先写内存 Repository Port，再发布 accepted 事件；客户端断开不会取消 Run。
+- 已完成：事件 payload 只包含安全状态和 ID；契约测试证明问题正文不会进入 SSE。新增 API 已重新
+  导出到 `docs/openapi.json`，受影响 Ruff、mypy 和 pytest 通过。
+- 未关闭：当前只有门禁允许的内存 Repository/EventLog，Run 在 queued 后不会投递正式 Worker；
+  PostgreSQL 事件序列、Dramatiq 投递、执行恢复、retry/feedback HTTP 端点、长连接 heartbeat、并发
+  取消/发布和 API 重启恢复仍依赖 Step 6 正式迁移及 Worker Adapter。因此本 Step 只完成 provisional
+  传输主链，不满足正式完成标准，也不宣称问答 API 已可用。
+
 ### Step 8：实现 Web 对话工作台与证据查看器
 
 1. 在现有工作台中增加 Space 范围的 Conversation 列表、消息区、输入区和运行状态。
