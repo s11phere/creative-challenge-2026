@@ -78,9 +78,6 @@ services:
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
       EMBEDDING_MODEL_REVISION: ${EMBEDDING_MODEL_REVISION:-}
-      RERANKER_ENDPOINT: ${RERANKER_ENDPOINT:-}
-      RERANKER_API_KEY: ${RERANKER_API_KEY:-}
-      RERANKER_MODEL: ${RERANKER_MODEL:-}
       EMBEDDING_PROTOCOL: ${EMBEDDING_PROTOCOL:-openai-compatible}
       EMBEDDING_QUERY_INSTRUCTION_VERSION: ${EMBEDDING_QUERY_INSTRUCTION_VERSION:-none-v1}
       EMBEDDING_DOCUMENT_INSTRUCTION_VERSION: ${EMBEDDING_DOCUMENT_INSTRUCTION_VERSION:-none-v1}
@@ -149,9 +146,6 @@ services:
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
       EMBEDDING_MODEL_REVISION: ${EMBEDDING_MODEL_REVISION:-}
-      RERANKER_ENDPOINT: ${RERANKER_ENDPOINT:-}
-      RERANKER_API_KEY: ${RERANKER_API_KEY:-}
-      RERANKER_MODEL: ${RERANKER_MODEL:-}
       EMBEDDING_PROTOCOL: ${EMBEDDING_PROTOCOL:-openai-compatible}
       EMBEDDING_QUERY_INSTRUCTION_VERSION: ${EMBEDDING_QUERY_INSTRUCTION_VERSION:-none-v1}
       EMBEDDING_DOCUMENT_INSTRUCTION_VERSION: ${EMBEDDING_DOCUMENT_INSTRUCTION_VERSION:-none-v1}
@@ -220,11 +214,10 @@ services:
     profiles:
       - embedding
     # GPU version: requires nvidia-container-toolkit on host + CUDA 12.2+ drivers
-    # Pin digest after first pull: docker inspect --format='{{.RepoDigests}}' <image>
-    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9@sha256:249a0bc87522bfe2f1012b4d194f0225878f47079115ada3aeb0b1ef257b402a
     command:
       - --model-id
-      - /data/model
+      - Qwen/Qwen3-Embedding-0.6B
       - --revision
       - 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
     ports:
@@ -245,37 +238,8 @@ services:
       retries: 30
       start_period: 30s
 
-  reranker:
-    profiles:
-      - reranker
-    # GPU version: requires nvidia-container-toolkit on host + CUDA 12.2+ drivers
-    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
-    command:
-      - --model-id
-      - /data/model
-      - --revision
-      - 2cfc18c9415c912f9d8155881c133215df768a70
-    ports:
-      - "${RERANKER_PORT:-8081}:80"
-    volumes:
-      - rerankerdata:/data
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:80/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 30s
-
 volumes:
   pgdata:
   redisdata:
   blobdata:
   teidata:
-  rerankerdata:

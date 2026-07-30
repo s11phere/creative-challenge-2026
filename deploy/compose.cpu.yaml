@@ -1,0 +1,19 @@
+# CPU override for compose.yaml
+#
+# Override file that switches the TEI and Reranker services from GPU to CPU.
+# Use this when your host lacks an NVIDIA GPU or nvidia-container-toolkit.
+#
+# Usage:
+#   docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml \
+#     --profile embedding up --build --detach --wait
+#
+# Notes:
+#   - Setting `deploy: ~` (YAML null) removes the GPU resource reservation
+#     from the base compose.yaml, so Docker won't attempt to allocate GPUs.
+#   - The --model-id and --revision are inherited from compose.yaml, so TEI
+#     will auto-download Qwen3-Embedding-0.6B on first startup.
+
+services:
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:c26a226262ad4ff3330fb30b76653c1bb65da2fcf413b92284545a010e0a8a48
+    deploy: ~

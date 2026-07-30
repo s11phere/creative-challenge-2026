@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，冻结语料 development 已复核但未达到 Recall/Reranker/P95 门禁，因此默认配置未冻结且正式 holdout 未执行。阶段 5 通用 Agent Runtime/Skill 基础已并行通过审查。**
+**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现与 Recall 优化已完成——frozen 语料 development 的 Dense Recall@5 已达 90.48%（门禁 85% ✅），Reranker 已从默认栈移除（纯 dense 已越过门禁）。P95 门禁仍未关闭，因此默认配置尚未正式冻结且 holdout 未执行。阶段 5 通用 Agent Runtime/Skill 基础已并行通过审查。**
 
 已交付的核心能力：
 
@@ -13,7 +13,7 @@
 |------|------|
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
-| 阶段 3 🟡 工程 Step 0-10 | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；真实模型 development 最佳 Dense Recall@5 为 51.90%，未达到 85%，默认配置未冻结且正式 holdout 未执行 |
+| 阶段 3 🟡 工程 + Recall 优化 | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；Section-aware chunking + 文档配额 + 重叠去重使 Dense Recall@5 提升至 **90.48%（门禁 85% ✅）**，Reranker 已从默认栈移除（纯 dense 已越过门禁）；P95 门禁仍未关闭，默认配置未正式冻结且 holdout 未执行 |
 | 阶段 5 🟡 通用基础 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、版本固定、预算/权限/审计、事务式 reload/回滚和 Skill 模板已通过审查 |
 
 当前 Web 展示系统健康状态和数据来源管理；检索能力已通过 HTTP API 提供，Web 搜索界面、会话、引用和问答仍属于后续阶段。
@@ -21,17 +21,23 @@
 运行/检查点持久化或 Web Skill 入口，不能据此宣称 `knowledge_qa` 可用或阶段 5 整体完成。
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
 [Stage 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
-[Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；必须先完成真实模型
-development 改进并关闭 Recall/Reranker/P95 门禁、冻结默认配置，再按阶段 3 Runbook 执行一次性 holdout。
+[Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；Dense Recall@5 已达 90.48% 越过 85% 门禁，Reranker 已从默认栈移除。
+但仍需关闭 P95 门禁、冻结默认配置后，再按阶段 3 Runbook 执行一次性 holdout。
 
 ## 快速启动
 
 前置条件：Docker Engine 29+ 和 Docker Compose 5+。本机不需要单独安装 PostgreSQL 或 Redis。
 
-> **GPU 支持（可选）**：如需使用 GPU 加速 Embedding/Reranker，需要：
+> **GPU 加速（默认）**：Embedding 服务默认使用 GPU 加速，需要：
 > - NVIDIA 驱动（支持 CUDA 12.2+）
 > - [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
 > - 安装后验证：`docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi`
+>
+> **无 GPU？使用 CPU 回退**：添加 `-f deploy/compose.cpu.yaml` 即可切换到 CPU 版本：
+> ```bash
+> docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml --env-file .env \
+>   --profile embedding up --build --detach --wait
+> ```
 
 1. 创建本地环境文件，必须设置 `APP_SECRET_KEY` 和 `POSTGRES_PASSWORD`：
 
@@ -58,6 +64,10 @@ docker compose -f deploy/compose.yaml --env-file .env up --build --detach --wait
 
 首次构建需要下载锁定 digest 的基础镜像和依赖。Compose 会依次等待 PostgreSQL、迁移、Redis、
 API、Worker 和 Web 达到各自完成或健康条件。
+
+> 首次启动 Embedding 模型服务（`--profile embedding`）时，TEI 会从 HuggingFace Hub
+> 自动下载 Qwen3-Embedding-0.6B（约 400 MB）。模型文件会缓存在 Docker 层面，后续启动
+> 无需重下载。中国用户可参考 [模型下载文档](docs/model-setup.md) 使用镜像源加速。
 
 ## Smoke Test
 
@@ -129,16 +139,26 @@ git diff --exit-code -- docs/openapi.json
 | Redis | `127.0.0.1:6379` | Dramatiq broker，启用 AOF |
 | OTel Collector | `4317`、`4318` | 仅 `--profile otel` 启动 |
 | Embedding | `127.0.0.1:8080` | Qwen3-Embedding-0.6B（TEI），需 `--profile embedding` |
-| Reranker | `127.0.0.1:8081` | BGE Reranker Base（TEI），需 `--profile reranker` |
 
-端口可通过 `.env` 中的 `WEB_PORT`、`API_PORT`、`POSTGRES_PORT`、`REDIS_PORT`、`EMBEDDING_PORT` 和 `RERANKER_PORT` 覆盖。
+端口可通过 `.env` 中的 `WEB_PORT`、`API_PORT`、`POSTGRES_PORT`、`REDIS_PORT` 和 `EMBEDDING_PORT` 覆盖。
 
-Embedding 和 Reranker 服务使用 GPU 加速（如有），需主机已安装 nvidia-container-toolkit。启动完整模型栈：
+Embedding（Qwen3-Embedding-0.6B）服务需通过 `--profile embedding` 显式启动。首次启动时，TEI 会自动从 HuggingFace Hub 下载模型（缓存至 Docker 层面，后续启动无需重下载）。
 
+**GPU 模式（默认）：**
 ```bash
 docker compose -f deploy/compose.yaml --env-file .env \
-  --profile embedding --profile reranker up --build --detach --wait
+  --profile embedding up --build --detach --wait
 ```
+
+**CPU 模式（无 GPU 时）：**
+```bash
+docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml --env-file .env \
+  --profile embedding up --build --detach --wait
+```
+
+模型启动后，健康检查输出应显示 `embedding` 处于 `healthy` 状态。可以通过 `docker compose ps` 确认。
+
+可通过 `.env` 中的 `EMBEDDING_QUERY_INSTRUCTION_VERSION` 和 `EMBEDDING_DOCUMENT_INSTRUCTION_VERSION` 切换 embedding 指令前缀版本（详见 `.env.example` 注释）。
 
 ## 文档
 
