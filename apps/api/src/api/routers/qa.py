@@ -11,6 +11,8 @@ from application.qa.persistence import InMemoryGroundedQARepository
 from domain.grounded_qa import QAAttempt, QAEvent, QAStatus, normalize_question
 from domain.qa_persistence import (
     ConversationRecord,
+    FeedbackDecision,
+    FeedbackRecord,
     MessageRecord,
     MessageRole,
     QARunRecord,
@@ -47,6 +49,19 @@ class RunResponse(BaseModel):
     question_message_id: UUID
     cancellation_requested: bool
     error_code: str | None = None
+
+
+class FeedbackRequest(BaseModel):
+    decision: FeedbackDecision
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    note: str | None = Field(default=None, min_length=1, max_length=2000)
+
+
+class FeedbackResponse(BaseModel):
+    feedback_id: UUID
+    run_id: UUID
+    message_id: UUID
+    review_status: str
 
 
 def _state(request: Request) -> tuple[InMemoryGroundedQARepository, QAEventLog]:
@@ -148,6 +163,40 @@ async def cancel_run(run_id: UUID, request: Request) -> RunResponse:
         raise HTTPException(status_code=404, detail="Run not found") from exc
     events.append(run_id, QAEventType.CANCEL_REQUESTED, {"status": run.status.value})
     return _run_response(run)
+
+
+@router.post("/qa/runs/{run_id}/feedback", response_model=FeedbackResponse, status_code=201)
+async def submit_feedback(
+    run_id: UUID, body: FeedbackRequest, request: Request
+) -> FeedbackResponse:
+    repo, _ = _state(request)
+    run = await repo.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.answer_message_id is None:
+        raise HTTPException(status_code=409, detail="Run has no published answer to review")
+    try:
+        feedback = await repo.submit_feedback(
+            FeedbackRecord(
+                conversation_id=run.conversation_id,
+                message_id=run.answer_message_id,
+                run_id=run.run_id,
+                attempt_id=run.attempt.attempt_id,
+                space_id=run.space_id,
+                caller_id=run.caller_id,
+                idempotency_key=body.idempotency_key,
+                decision=body.decision,
+                note=body.note,
+            )
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return FeedbackResponse(
+        feedback_id=feedback.feedback_id,
+        run_id=feedback.run_id,
+        message_id=feedback.message_id,
+        review_status=feedback.review_status.value,
+    )
 
 
 @router.get("/qa/runs/{run_id}/events")

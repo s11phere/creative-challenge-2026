@@ -598,6 +598,24 @@ Application 用例；`docs/openapi.json` 与运行时 schema 一致。
 **完成标准**：反馈不能直接污染冻结评测集；候选导出可审计、可去重、经过隐私检查且不包含
 未批准正文。
 
+#### Provisional 实现记录（2026-07-31）
+
+- 已完成：新增 `FeedbackCandidateExporter` 和 `feedback-candidate-v1` JSON Schema。只有状态为
+  `accepted` 的人工审核记录，且授权确认、脱敏、预期行为、gold answer 摘要和 Evidence 审核均
+  完整时才能生成候选；`pending_review` 不可导出。
+- 已完成：repository 候选导出要求 Evidence 当前 `valid`、敏感度为 `public_demo` 且明确允许
+  `repository_fixture`。撤下/删除/不可用 Evidence、`private_local` 和缺少许可均返回稳定安全错误码。
+- 已完成：候选包只保存 Feedback/Run/Attempt/Message/Space/Evidence ID、人工审核时间、版本清单和
+  SHA-256，不包含问题、回答、反馈说明、prompt、引用片段或 Provider 响应；候选 ID 使用 canonical
+  JSON 计算，重复输入确定性去重，也不会读取或修改 frozen dataset。
+- 已完成：新增版本化反馈提交 API。反馈只能绑定已经发布的回答，初始状态固定为
+  `pending_review`；未完成或失败 Run 返回冲突，不把基础设施失败作为评测候选。
+- 已验证：Ruff、mypy、候选 schema/隐私/许可/撤下/去重测试和反馈 API 拒绝路径通过；OpenAPI 已
+  重新导出。
+- 未关闭：正式 PostgreSQL Feedback 表、人工审核 UI/身份、Citation resolver 和已完成回答 API
+  尚未落地，因此当前没有生产反馈队列，也没有实际候选写盘命令。本步完成 provisional 领域、
+  Application 和传输契约，不满足正式完成标准。
+
 ### Step 10：建立回答评测、消融和默认配置
 
 1. 实现 `evaluate_answers.py`，先支持 `--validate-only`，正式运行受 corpus/dataset/config

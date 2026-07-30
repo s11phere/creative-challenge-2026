@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "feedback-candidate-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidate_id",
+    "feedback_id",
+    "run_id",
+    "attempt_id",
+    "message_id",
+    "space_id",
+    "decision",
+    "expected_behavior",
+    "approved_evidence_ids",
+    "gold_answer_sha256",
+    "versions",
+    "reviewed_at"
+  ],
+  "properties": {
+    "schema_version": { "const": "feedback-candidate-v1" },
+    "candidate_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "feedback_id": { "type": "string", "format": "uuid" },
+    "run_id": { "type": "string", "format": "uuid" },
+    "attempt_id": { "type": "string", "format": "uuid" },
+    "message_id": { "type": "string", "format": "uuid" },
+    "space_id": { "type": "string", "format": "uuid" },
+    "decision": { "enum": ["positive", "negative"] },
+    "expected_behavior": { "enum": ["answer", "refuse"] },
+    "approved_evidence_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "gold_answer_sha256": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      ]
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skill", "qa_profile", "retrieval_profile", "model", "prompt", "output_schema", "corpus", "dataset"],
+      "properties": {
+        "skill": { "type": "string", "minLength": 1 },
+        "qa_profile": { "type": "string", "minLength": 1 },
+        "retrieval_profile": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "prompt": { "type": "string", "minLength": 1 },
+        "output_schema": { "type": "string", "minLength": 1 },
+        "corpus": { "type": "string", "minLength": 1 },
+        "dataset": { "type": "string", "minLength": 1 }
+      }
+    },
+    "reviewed_at": { "type": "string", "format": "date-time" }
+  }
+}

@@ -1,3 +1,4 @@
+import json
 from uuid import UUID
 
 import pytest
@@ -39,3 +40,14 @@ async def test_provisional_qa_api_creates_run_cancels_and_replays_events() -> No
         )
         assert "event: cancel_requested" in resumed.text
         assert "event: accepted" not in resumed.text
+
+        feedback = await client.post(
+            f"/api/v1/qa/runs/{run_id}/feedback",
+            json={
+                "decision": "negative",
+                "idempotency_key": "feedback-1",
+                "note": "Needs review",
+            },
+        )
+        assert feedback.status_code == 409
+        assert "Needs review" not in json.dumps(feedback.json())

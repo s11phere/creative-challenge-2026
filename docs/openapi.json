@@ -233,6 +233,77 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "FeedbackDecision": {
+        "enum": [
+          "positive",
+          "negative"
+        ],
+        "title": "FeedbackDecision",
+        "type": "string"
+      },
+      "FeedbackRequest": {
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/FeedbackDecision"
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "decision",
+          "idempotency_key"
+        ],
+        "title": "FeedbackRequest",
+        "type": "object"
+      },
+      "FeedbackResponse": {
+        "properties": {
+          "feedback_id": {
+            "format": "uuid",
+            "title": "Feedback Id",
+            "type": "string"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "review_status": {
+            "title": "Review Status",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "feedback_id",
+          "run_id",
+          "message_id",
+          "review_status"
+        ],
+        "title": "FeedbackResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1423,6 +1494,56 @@
           }
         },
         "summary": "Stream Events"
+      }
+    },
+    "/api/v1/qa/runs/{run_id}/feedback": {
+      "post": {
+        "operationId": "submit_feedback_api_v1_qa_runs__run_id__feedback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Feedback"
       }
     },
     "/api/v1/spaces/{space_id}/conversations": {

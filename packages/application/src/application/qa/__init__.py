@@ -17,6 +17,14 @@ from .evidence import (
     EvidenceVerifier,
     compute_excerpt_sha256,
 )
+from .feedback_export import (
+    FeedbackCandidate,
+    FeedbackCandidateExporter,
+    FeedbackEvidencePolicy,
+    FeedbackExportError,
+    FeedbackExportErrorCode,
+    FeedbackReview,
+)
 from .generation import (
     GenerationIdentity,
     GenerationResult,
@@ -56,6 +64,12 @@ __all__ = [
     "ConversationTurn",
     "EvidenceBindingService",
     "EvidenceVerifier",
+    "FeedbackCandidate",
+    "FeedbackCandidateExporter",
+    "FeedbackEvidencePolicy",
+    "FeedbackExportError",
+    "FeedbackExportErrorCode",
+    "FeedbackReview",
     "GenerationIdentity",
     "GenerationResult",
     "GenerationUsage",
