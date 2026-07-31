@@ -7,11 +7,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
-from application.qa.persistence import InMemoryGroundedQARepository
-from domain.qa_sse import QAEventLog
+from domain.qa_persistence import GroundedQARepository
+from domain.qa_sse import QAEventStore
 from fastapi import FastAPI, Response
 from infrastructure.config import settings
 from infrastructure.database import Database
+from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
 from infrastructure.telemetry import configure_observability
 from model_gateway import (
     GatewayConfig,
@@ -66,13 +67,15 @@ def create_app(
     *,
     database: Database | None = None,
     enable_qa_execution: bool = True,
+    qa_repository: GroundedQARepository | None = None,
+    qa_event_store: QAEventStore | None = None,
 ) -> FastAPI:
     """Application factory. Call once at process start."""
 
     database = database or Database(settings.database_url)
     gateway = model_gateway or _create_configured_model_gateway()
-    qa_repository = InMemoryGroundedQARepository()
-    qa_event_log = QAEventLog()
+    qa_repository = qa_repository or PostgresGroundedQARepository(database)
+    qa_event_log = qa_event_store or PostgresQAEventStore(database)
     qa_runtime = InProcessQARuntime(
         database=database,
         gateway=gateway,
@@ -86,6 +89,8 @@ def create_app(
         observability = configure_observability(settings, service_name="api")
         database.instrument()
         try:
+            if enable_qa_execution:
+                await qa_runtime.recover()
             yield
         finally:
             await qa_runtime.aclose()

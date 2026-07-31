@@ -112,9 +112,10 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 - 阶段 3 的 Keyword/Dense/Hybrid/Hybrid+Reranker 检索 API 已可用。provisional 知识问答 Web/API
   可以创建进程内会话、提交问题，并在 API 进程内调用真实 PostgreSQL SearchService 产出回答或拒答；
   终态响应和 Web 证据区展示经过当前 Space/版本/Chunk 再校验的 Citation 身份。
-- provisional QA 的会话、Run 与事件均只在 API 进程内保存。重启 API 会丢失这些状态；断开 SSE 连接不会
-  取消 Run，只有显式取消请求才会记录取消意图。执行不经过 Worker，进程退出时运行中的任务会被取消；
-  原文跳转、重试、反馈审核和恢复语义仍等待正式持久化与 Worker 实现。
+- provisional QA 的会话、Message、Run/Attempt、Evidence、Citation、Feedback 与 SSE 事件均保存到
+  PostgreSQL。API 启动时会重排队安全的非终态 attempt，保留终态并清理中断时尚未发布的 Evidence；
+  断开 SSE 不会取消 Run，只有显式取消请求才会记录取消意图。执行仍不经过 Worker，原文跳转、用户重试、
+  反馈审核、Worker 租约和重复投递语义尚未实现。
 - 默认 `FakeModelGateway` 使用确定性抽取式回答，返回相关证据片段而不是高质量综合回答；这是当前
   流程验证基线。Stage 3 达标并冻结检索配置后再调整召回、重排和回答表现，不得把当前结果用于 holdout。
 - 阶段 3 评测配置仍为 provisional：阶段 0 和阶段 2 已正式关闭，但 2026-07-29 冻结语料

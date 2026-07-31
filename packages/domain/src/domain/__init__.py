@@ -115,7 +115,7 @@ from .qa_persistence import (
     QARunVersions,
     terminal_status_for_result,
 )
-from .qa_sse import TERMINAL_EVENT_TYPES, QAEventLog, QAEventType, QAStreamEvent
+from .qa_sse import TERMINAL_EVENT_TYPES, QAEventLog, QAEventStore, QAEventType, QAStreamEvent
 from .repositories import (
     ChunkRepository,
     DocumentRepository,
@@ -311,6 +311,7 @@ __all__ = [
     "normalize_question",
     "project_qa_status",
     "QAEventLog",
+    "QAEventStore",
     "QAEventType",
     "QAStreamEvent",
     "TERMINAL_EVENT_TYPES",

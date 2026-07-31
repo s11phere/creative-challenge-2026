@@ -82,3 +82,29 @@ async def test_in_process_runtime_starts_each_run_once(monkeypatch: pytest.Monke
     release.set()
     await runtime.aclose()
     assert runtime.start(run_id) is False
+
+
+@pytest.mark.asyncio
+async def test_in_process_runtime_starts_recoverable_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    run_ids = (UUID(int=1), UUID(int=2))
+
+    class RecoverableRepository(InMemoryGroundedQARepository):
+        async def prepare_recovery(self) -> tuple[UUID, ...]:
+            return run_ids
+
+    runtime = InProcessQARuntime(
+        database=cast(Database, object()),
+        gateway=FakeModelGateway(),
+        repository=RecoverableRepository(),
+        events=QAEventLog(),
+    )
+    started: list[UUID] = []
+
+    def start(run_id: UUID) -> bool:
+        started.append(run_id)
+        return True
+
+    monkeypatch.setattr(runtime, "start", start)
+
+    assert await runtime.recover() == run_ids
+    assert started == list(run_ids)

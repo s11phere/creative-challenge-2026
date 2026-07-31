@@ -21,6 +21,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -302,8 +303,15 @@ class ConversationModel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (Index("idx_conversations_space_owner", "space_id", "owner_id"),)
+
+
+_QA_STATUS_CHECK = (
+    "status IN ('created', 'queued', 'running', 'verifying', 'completed', 'refused', "
+    "'failed', 'cancel_requested', 'cancelled', 'timed_out')"
+)
 
 
 class QARunModel(Base):
@@ -318,6 +326,12 @@ class QARunModel(Base):
     )
     caller_id: Mapped[str] = mapped_column(String(255), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    question_message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="RESTRICT"), nullable=False
+    )
+    answer_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="RESTRICT"), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="created")
     cancellation_requested: Mapped[bool] = mapped_column(default=False)
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -331,6 +345,7 @@ class QARunModel(Base):
 
     __table_args__ = (
         UniqueConstraint("space_id", "caller_id", "idempotency_key", name="uq_qa_runs_idempotency"),
+        CheckConstraint(_QA_STATUS_CHECK, name="ck_qa_runs_status"),
         Index("idx_qa_runs_conversation", "conversation_id", "created_at"),
         Index("idx_qa_runs_status", "status"),
     )
@@ -352,6 +367,45 @@ class QAMessageModel(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    __table_args__ = (
+        Index(
+            "uq_qa_messages_conversation_idempotency",
+            "conversation_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
+
+
+class QARunAttemptModel(Base):
+    __tablename__ = "qa_run_attempts"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    previous_attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_run_attempts.id", ondelete="RESTRICT"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    cancellation_requested: Mapped[bool] = mapped_column(nullable=False, default=False)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    usage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    answer_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="RESTRICT"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+    __table_args__ = (
+        UniqueConstraint("run_id", "number", name="uq_qa_run_attempts_number"),
+        CheckConstraint("number >= 1", name="ck_qa_run_attempts_number_positive"),
+        CheckConstraint(_QA_STATUS_CHECK, name="ck_qa_run_attempts_status"),
+        Index("idx_qa_run_attempts_run_number", "run_id", "number"),
+    )
 
 
 class QAEvidenceModel(Base):
@@ -360,7 +414,9 @@ class QAEvidenceModel(Base):
     run_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
     )
-    attempt_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    attempt_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_run_attempts.id", ondelete="CASCADE"), nullable=False
+    )
     space_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
     )
@@ -376,7 +432,9 @@ class QACitationModel(Base):
     run_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
     )
-    attempt_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    attempt_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_run_attempts.id", ondelete="CASCADE"), nullable=False
+    )
     message_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="CASCADE"), nullable=False
     )
@@ -399,3 +457,35 @@ class QAEventModel(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_qa_events_run_sequence"),)
+
+
+class QAFeedbackModel(Base):
+    __tablename__ = "qa_feedback"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_run_attempts.id", ondelete="CASCADE"), nullable=False
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    caller_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "caller_id", "idempotency_key", name="uq_qa_feedback_idempotency"
+        ),
+        Index("idx_qa_feedback_review_status", "review_status", "created_at"),
+    )

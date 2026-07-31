@@ -15,7 +15,6 @@ from application.qa import (
     GroundedAnswerGenerator,
     GroundedQAExecutionProfile,
     GroundedQAService,
-    InMemoryGroundedQARepository,
     QAGenerationProfileV1,
     QAPlanningProfileV1,
     QASearchCoordinator,
@@ -23,8 +22,8 @@ from application.qa import (
     StructuredAnswerParser,
 )
 from domain.grounded_qa import QAEvent, QAStatus
-from domain.qa_persistence import QARunRecord, QARunVersions
-from domain.qa_sse import QAEventLog, QAEventType
+from domain.qa_persistence import GroundedQARepository, QARunRecord, QARunVersions
+from domain.qa_sse import QAEventStore, QAEventType
 from domain.retrieval import RetrievalProfileV1
 from infrastructure.config import settings
 from infrastructure.database import Database
@@ -135,8 +134,8 @@ class InProcessQARuntime:
         *,
         database: Database,
         gateway: ModelGateway,
-        repository: InMemoryGroundedQARepository,
-        events: QAEventLog,
+        repository: GroundedQARepository,
+        events: QAEventStore,
     ) -> None:
         identity = settings.active_embedding_identity()
         retrieval = RetrievalProfileV1(embedding_version=identity.version)
@@ -187,8 +186,17 @@ class InProcessQARuntime:
         task.add_done_callback(lambda _task: self._tasks.pop(run_id, None))
         return True
 
+    async def recover(self) -> tuple[UUID, ...]:
+        prepare = getattr(self._repository, "prepare_recovery", None)
+        if prepare is None:
+            return ()
+        run_ids: tuple[UUID, ...] = await prepare()
+        for run_id in run_ids:
+            self.start(run_id)
+        return run_ids
+
     async def _execute(self, run_id: UUID) -> None:
-        self._events.append(run_id, QAEventType.STARTED, {"status": QAStatus.RUNNING.value})
+        await self._events.append(run_id, QAEventType.STARTED, {"status": QAStatus.RUNNING.value})
         resolved_run: QARunRecord | None
         try:
             resolved_run = await self._service.execute(run_id, profile=self.profile)
@@ -207,7 +215,7 @@ class InProcessQARuntime:
             QAStatus.CANCELLED: QAEventType.CANCELLED,
             QAStatus.TIMED_OUT: QAEventType.TIMED_OUT,
         }.get(resolved_run.status, QAEventType.FAILED)
-        self._events.append(
+        await self._events.append(
             run_id,
             event_type,
             {"status": resolved_run.status.value, "error_code": resolved_run.error_code},

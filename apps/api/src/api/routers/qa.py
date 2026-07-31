@@ -8,17 +8,17 @@ from collections.abc import AsyncIterator
 from typing import Literal
 from uuid import UUID, uuid4
 
-from application.qa.persistence import InMemoryGroundedQARepository
 from domain.grounded_qa import QAAttempt, QAEvent, QAStatus, normalize_question
 from domain.qa_persistence import (
     ConversationRecord,
     FeedbackDecision,
     FeedbackRecord,
+    GroundedQARepository,
     MessageRecord,
     MessageRole,
     QARunRecord,
 )
-from domain.qa_sse import QAEventLog, QAEventType
+from domain.qa_sse import QAEventStore, QAEventType
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -99,7 +99,7 @@ class FeedbackResponse(BaseModel):
     review_status: str
 
 
-def _state(request: Request) -> tuple[InMemoryGroundedQARepository, QAEventLog]:
+def _state(request: Request) -> tuple[GroundedQARepository, QAEventStore]:
     return request.app.state.qa_repository, request.app.state.qa_event_log
 
 
@@ -213,7 +213,7 @@ async def submit_question(
             run = await repo.transition_run(run.run_id, QAEvent.QUEUE)
     except Exception as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    events.append(run.run_id, QAEventType.ACCEPTED, {"status": QAStatus.QUEUED.value})
+    await events.append(run.run_id, QAEventType.ACCEPTED, {"status": QAStatus.QUEUED.value})
     if request.app.state.qa_execution_enabled:
         request.app.state.qa_runtime.start(run.run_id)
     return _run_response(run)
@@ -235,7 +235,7 @@ async def cancel_run(run_id: UUID, request: Request) -> RunResponse:
         run = await repo.request_cancel(run_id)
     except Exception as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
-    events.append(run_id, QAEventType.CANCEL_REQUESTED, {"status": run.status.value})
+    await events.append(run_id, QAEventType.CANCEL_REQUESTED, {"status": run.status.value})
     return _run_response(run)
 
 
@@ -286,10 +286,11 @@ async def stream_events(
         raise HTTPException(status_code=400, detail="Last-Event-ID must be a sequence") from exc
 
     async def generate() -> AsyncIterator[str]:
-        for event in events.replay(run_id, cursor):
+        replayed = await events.replay(run_id, cursor)
+        for event in replayed:
             data = json.dumps(event.as_dict(), separators=(",", ":"))
             yield (f"id: {event.event_id}\nevent: {event.event_type.value}\ndata: {data}\n\n")
-        if not events.replay(run_id, cursor):
+        if not replayed:
             await asyncio.sleep(0)
             yield ": heartbeat\n\n"
 

@@ -54,13 +54,26 @@ Application Port，并复用真实 PostgreSQL SearchService 和新增 Citation t
 QA Run 从 queued 到 completed，返回回答及绑定同一 Space 的 source/document/version/chunk 和
 `lines 120-126` locator。默认模型仍为确定性抽取 fake；未运行 development 或 holdout。
 
+持久化补充（2026-07-31）：新增前向 Alembic revision 和 PostgreSQL Repository/Event Store，
+持久保存 Conversation、Message、Run、append-only Attempt、Evidence、Citation、Feedback 与
+`qa-sse-v1` 事件。隔离 PostgreSQL 已验证空库 upgrade、downgrade、单一 head、终态数据跨 Repository
+实例读取，以及中断 attempt 重排队和未发布 Evidence 清理。隔离 Compose 中已完成 Run 在 API 重启后
+仍保持 completed，回答、1 条 Citation 和 accepted/completed 事件均可读取/重放。执行器仍在 API
+进程内，未接入 Worker，未实现引用原文 API。
+
+本次补充验证：Ruff format/check、mypy（84 个源文件）、后端全量 pytest（`602 passed, 43
+skipped`）、OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）与 production build 均通过。
+PostgreSQL 持久化集成测试在同一保留卷连续运行两次，均为 `2 passed`；Windows 沙箱既有
+`.pytest_cache` 写权限警告不影响结果。
+
 ## 正式退出矩阵
 
 | 项目 | 状态 | 原因 |
 | --- | --- | --- |
-| 领域、Application、SSE/API、Web 契约回归 | 已完成（provisional） | 仅内存态与 fake/合成验证 |
-| QA PostgreSQL 迁移、upgrade/downgrade、保留语义 | 未执行 | 不新增受门禁限制的业务表 |
-| Worker/Dramatiq 执行、取消恢复、API 重启恢复 | 未执行 | 没有 QA Worker 完成链 |
+| 领域、Application、SSE/API、Web 契约回归 | 已完成（provisional） | fake/合成契约与真实 PostgreSQL 链路均已验证 |
+| QA PostgreSQL 迁移、upgrade/downgrade、保留语义 | provisional 已执行 | 空库往返迁移、单一 head、终态保留和中断恢复通过 |
+| Worker/Dramatiq 执行 | 未执行 | 执行仍在 API 进程内，没有 QA Worker 完成链 |
+| API 重启恢复 | provisional 已执行 | 终态读取/SSE 重放及非终态重排队通过；无 Worker 租约恢复 |
 | 导入到回答与引用身份的 Compose E2E | provisional 已执行 | 真实摄入/检索/引用身份通过；原文解析与反馈旅程未执行 |
 | Playwright 桌面/移动截图 | 未执行 | 真实回答/Citation 用户旅程不存在 |
 | development 消融、默认 QA 配置冻结、正式 holdout | 未执行 | Stage 3 质量门禁及 Stage 4 正式门禁未关闭 |
@@ -69,7 +82,7 @@ QA Run 从 queued 到 completed，返回回答及绑定同一 Space 的 source/d
 ## 阶段 5 边界
 
 Grounded QA schema、SSE v1、安全边界和唯一 provisional QA Application Port 已可供后续设计；
-现有 QA API/Web 也可作为真实检索和引用身份的临时可用入口。但执行和状态仍在 API 进程内，
-没有持久恢复、Worker 或引用原文 API。阶段 5 可以据此继续开发，不得据此宣称活动
+现有 QA API/Web 也可作为真实检索和引用身份的临时可用入口。QA 状态和事件已有 PostgreSQL
+事实源及 API 重启恢复，但执行仍在 API 进程内，没有 Worker 或引用原文 API。阶段 5 可以据此继续开发，不得据此宣称活动
 `knowledge_qa` Skill 或阶段 4/5 正式完成；正式退出仍须关闭 Stage 3、持久化、Worker、质量和
 holdout 门禁。

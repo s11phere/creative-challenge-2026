@@ -393,6 +393,14 @@ Repository Port 和内存事务替身，但正式门禁仍禁止新增 QA/Runtim
 持久化和旧检查点清理；这些内容继续等待阶段 3 正式退出及阶段 4 正式持久化门禁关闭，不能据此
 宣称 Step 5 或阶段 5 完成。定向验证：Ruff format 通过，Runtime/Skill 相关测试 `30 passed`。
 
+**QA 持久化子集（2026-07-31，用户明确授权）**：在不建立第二套 Runtime 身份的前提下，
+`qa_runs` 作为共享运行投影并新增 append-only `qa_run_attempts`；Conversation、Message、Evidence、
+Citation、Feedback 与 `qa-sse-v1` Event 已有 PostgreSQL Adapter 和前向 Alembic revision。API 启动
+会保留终态、重排队安全的非终态 attempt，并清理中断时未发布的 Evidence。隔离数据库验证了空库
+upgrade、downgrade、单一 head、跨 Repository 实例读取和中断恢复；Compose 验证了 completed Run、
+回答、Citation 及 SSE 事件跨 API 重启保留。该子集不等于通用 AgentRun/Checkpoint 持久化，租约、
+Worker 重启、重复投递、审批和旧版本引用清理仍未完成，因此 Step 5 状态仍为部分完成。
+
 ### 步骤 6：封装 `knowledge_qa` Skill
 
 本步骤必须等待阶段 2 至阶段 4 的相关退出条件和接口完成。
@@ -465,8 +473,9 @@ transport 和 Web 问答入口已接入唯一 `GroundedQAApplicationPort`，由 
 `SearchService` 检索和 Citation target 再校验。默认 fake Chat 产生确定性抽取式结构化回答，外部
 Chat Provider 在策略允许并配置后复用相同生成/校验路径；终态查询与 Web 展示回答、限制和引用身份。
 实现没有新增平行 Runtime/SSE schema，也没有激活 `_provisional/knowledge_qa`。该子集可用于后续
-开发，但 Run/Event/Evidence/Citation 仍为进程内状态、无 Worker/重启恢复和引用原文跳转，故 Step 7
-正式完成标准仍未满足，Stage 3/4/5 状态不变。
+开发。Run/Attempt/Event/Evidence/Citation/Feedback 随后已切换为 PostgreSQL 事实源，并验证 API
+重启恢复；执行仍无 Worker，且没有引用原文跳转或活动 Skill，故 Step 7 正式完成标准仍未满足，
+Stage 3/4/5 状态不变。
 
 ### 步骤 8：知识整理 Skill 与写入确认
 
@@ -547,9 +556,9 @@ Registry 不提供旧版本删除 API；AgentRun/Checkpoint/审计引用查询�
 | 2. Tool Registry | 步骤 1；阶段 3/4 Port 可先用 fake | 通用契约与 Registry 已完成；真实 Tool 待阶段 3/4 |
 | 3. Skill Registry | 步骤 0/1；受信目录和摘要规则确定 | 已完成 |
 | 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 已完成 |
-| 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | provisional 内存原子检查点/恢复已完成；PostgreSQL、Worker、租约与清理仍阻塞 |
+| 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | provisional 内存 Runtime 检查点及 PostgreSQL QA Run/Attempt/API 重启恢复已完成；通用 Checkpoint、Worker、租约与清理仍阻塞 |
 | 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | provisional 未激活包和 QA Port fake 契约已完成；生产接入仍阻塞 |
-| 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 现有 QA API/Web 的真实检索、回答和引用 provisional 子集已完成；持久 Run/Worker/恢复及活动 Skill 仍阻塞 |
+| 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 现有 QA API/Web 的真实检索、持久 Run、回答、引用和重启恢复 provisional 子集已完成；Worker 及活动 Skill 仍阻塞 |
 | 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | 已复核并跳过；等待步骤 6/7 |
 | 9. 热加载与回滚 | 步骤 3/5；不可变版本和恢复语义已验证 | 通用部分已完成；持久化引用清理等待步骤 5 |
 | 10. 测试与验收 | 步骤 0～9；阶段 0 数据门禁关闭 | 已复核并跳过；等待全部交付和数据门禁 |

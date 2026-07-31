@@ -216,7 +216,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/retrieval.py` | SearchRequest/SearchResult、`RetrievalProfileV1`、候选/诊断/locator、`RetrievalStore`、QueryEmbedder 和 Reranker Port |
 | `src/domain/grounded_qa.py` | provisional GroundedAnswer/Claim/Evidence/Citation/Refusal/Conflict 契约、稳定拒答/错误、取消 Port、不可重开 attempt/retry、引用校验和 QA 状态投影 |
 | `src/domain/qa_persistence.py` | provisional Conversation/Message/Run/Attempt/Evidence/Citation/Feedback、版本/用量与 Repository Port；不依赖数据库实现 |
-| `src/domain/qa_sse.py` | provisional `qa-sse-v1` 事件、单调 sequence、唯一终态、安全 payload 和内存重放日志 |
+| `src/domain/qa_sse.py` | provisional `qa-sse-v1` 事件、异步 Event Store Port、单调 sequence、唯一终态和安全 payload |
 
 **约束**：
 - 零外部依赖（不依赖 FastAPI、SQLAlchemy、任何 SDK）
@@ -282,6 +282,7 @@ Application 层的 Skill Adapter 编排使用；通用 Runtime 不反向依赖�
 | `src/infrastructure/parsers/` | 文档解析器包：MarkdownParser（`markdown-it-py`）、TxtParser（编码回退）、PdfParser（固定 `PyMuPDF==1.28.0`，可复制文本/扫描件分类）、ParserFactory（扩展名+MIME校验+大小限制） |
 | `src/infrastructure/chunkers/structure_chunker.py` | 结构感知分块、标题路径传播、父/邻接 metadata 和 locator 保留 |
 | `src/infrastructure/retrieval/postgres_store.py` | 当前发布集合上的 PostgreSQL FTS、pgvector exact/IVFFlat、上下文候选和诊断 |
+| `src/infrastructure/qa_persistence.py` | PostgreSQL Grounded QA Repository 与 SSE Event Store；事务式终态发布、append-only attempt 和 API 重启恢复 |
 
 **`config.py` 详解**：
 
@@ -383,7 +384,7 @@ AgentRun/Checkpoint ORM 或 PostgreSQL Adapter、Runtime API、Web 入口或活�
    - `/api/v1/tasks/{task_id}*` — 摄入任务状态、取消和重试
    - `POST /api/v1/spaces/{space_id}/search` — Space-scoped Keyword/Dense/Hybrid 检索
    - `POST /api/v1/spaces/{space_id}/conversations`、`POST /api/v1/conversations/{conversation_id}/questions`
-     — provisional 内存会话与 Run 创建；API 进程内启动唯一 Grounded QA 用例
+     — provisional PostgreSQL 会话与 Run 创建；API 进程内启动唯一 Grounded QA 用例
    - `GET /api/v1/qa/runs/{run_id}`、`POST /api/v1/qa/runs/{run_id}/cancel`、
      `GET /api/v1/qa/runs/{run_id}/events`、`POST /api/v1/qa/runs/{run_id}/feedback` — provisional
      Run 查询/取消、SSE 重放和反馈契约；终态响应包含结构化回答/拒答及已校验 Citation 身份
@@ -410,8 +411,8 @@ AgentRun/Checkpoint ORM 或 PostgreSQL Adapter、Runtime API、Web 入口或活�
 ```
 
 **OpenAPI**：端点声明 `response_model`；`docs/openapi.json` 由运行时应用确定性导出，当前覆盖
-健康、来源/摄入任务、检索和 provisional QA schema。QA 执行复用真实 PostgreSQL SearchService，
-但状态只存在进程内，服务重启即丢失；
+健康、来源/摄入任务、检索和 provisional QA schema。QA 执行复用真实 PostgreSQL SearchService；
+状态、结果、引用和事件由 PostgreSQL 保存，服务启动时恢复安全的非终态 attempt；
 新增或修改公开端点后必须重新导出并运行一致性检查。
 
 **依赖**：`fastapi`、`uvicorn[standard]`、`python-multipart`、`alembic`、`infrastructure`、
@@ -473,7 +474,7 @@ Trace/Request ID；数据来源读取真实 Source、Document 和 IngestionTask 
 触发、取消、重试与轮询。两个视图均包含错误/空白/加载状态、键盘焦点和移动端布局，
 不展示虚构的文档、会话或证据。
 
-Web 已包含系统健康、数据来源和 provisional 知识问答工作区。问答工作区可创建内存会话、提交
+Web 已包含系统健康、数据来源和 provisional 知识问答工作区。问答工作区可创建持久会话、提交
 问题、轮询/取消 Run，并展示真实 PostgreSQL 检索后生成的回答/拒答、限制以及已校验的文档、
 版本、Chunk 和 locator 身份。重试、证据原文跳转、引用高亮、Worker 完成链和重启恢复仍待实现。
 
@@ -738,8 +739,8 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
 | **阶段 2** | **✅ 正式完成** | **Step 0～9 完成；冻结 manifest 的 74 个 P0 来源成功率 100%，退出记录见 `docs/stage-2-acceptance.md`** |
 | **阶段 3** | **🟡 工程 Step 0～10 验收完成** | **检索 API、离线评测和安全边界已落地；真实模型定版及正式 holdout 未关闭，阶段未正式退出** |
-| 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、查询/上下文、生成/故障、内存持久化、SSE/API/Web、反馈候选和回答评测门禁已落地；真实 PostgreSQL 检索/Citation adapter 的进程内 E2E 已跑通；QA PostgreSQL Repository、Worker、默认配置和 holdout 未落地 |
-| **阶段 5** | **🟡 通用基础 + 可用 provisional 链路** | **Step 0～4 和 Step 9 通用部分通过；现有 QA Web/API 可支撑后续开发，活动业务 Skill、持久化和正式验收仍阻塞** |
+| 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、查询/上下文、生成/故障、PostgreSQL QA 持久化、SSE/API/Web、反馈候选和回答评测门禁已落地；迁移往返与 API 重启恢复已验证；Worker、原文跳转、默认配置和 holdout 未落地 |
+| **阶段 5** | **🟡 通用基础 + 可用 provisional 链路** | **Step 0～4 和 Step 9 通用部分通过；现有持久 QA Web/API 可支撑后续开发，活动业务 Skill、Worker/检查点持久化和正式验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 

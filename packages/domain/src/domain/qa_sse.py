@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 
@@ -75,13 +75,21 @@ class QAStreamEvent:
         }
 
 
+class QAEventStore(Protocol):
+    async def append(
+        self, run_id: UUID, event_type: QAEventType, payload: Mapping[str, Any]
+    ) -> QAStreamEvent: ...
+
+    async def replay(self, run_id: UUID, after_sequence: int = 0) -> tuple[QAStreamEvent, ...]: ...
+
+
 class QAEventLog:
     """In-memory event authority used by provisional API and contract tests."""
 
     def __init__(self) -> None:
         self._events: dict[UUID, list[QAStreamEvent]] = {}
 
-    def append(
+    async def append(
         self, run_id: UUID, event_type: QAEventType, payload: Mapping[str, Any]
     ) -> QAStreamEvent:
         events = self._events.setdefault(run_id, [])
@@ -95,7 +103,7 @@ class QAEventLog:
         events.append(event)
         return event
 
-    def replay(self, run_id: UUID, after_sequence: int = 0) -> tuple[QAStreamEvent, ...]:
+    async def replay(self, run_id: UUID, after_sequence: int = 0) -> tuple[QAStreamEvent, ...]:
         return tuple(
             event for event in self._events.get(run_id, ()) if event.sequence > after_sequence
         )
@@ -110,4 +118,10 @@ def _contains_forbidden_key(value: Mapping[str, Any]) -> bool:
     return False
 
 
-__all__ = ["QAEventLog", "QAEventType", "QAStreamEvent", "TERMINAL_EVENT_TYPES"]
+__all__ = [
+    "QAEventLog",
+    "QAEventStore",
+    "QAEventType",
+    "QAStreamEvent",
+    "TERMINAL_EVENT_TYPES",
+]

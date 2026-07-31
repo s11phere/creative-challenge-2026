@@ -11,10 +11,10 @@ ADR-003、ADR-006 和阶段 5 实施计划一致：领域状态与 Port、Tool/S
 固定版本、确定性有限状态执行、预算、权限、审计、事务式 reload 和内存活动版本回滚均有
 单元或契约测试。
 
-这不是阶段 5 整体验收。阶段 5 的目标是封装阶段 2～4 已验证的知识能力，而当前仓库仍无
-完整摄入闭环、RetrievalStore、GroundedAnswer/Citation Application 用例、Conversation/
-AgentRun/Evidence 持久化及 ADR-007 协议。因此没有 `knowledge_qa` 或三个知识整理业务 Skill，
-没有 Runtime API、Web Skill 入口、PostgreSQL 检查点恢复或三入口端到端旅程。
+这不是阶段 5 整体验收。阶段 5 的目标是封装阶段 2～4 已验证的知识能力。当前仓库已有摄入闭环、
+RetrievalStore、GroundedAnswer/Citation Application 用例、QA Conversation/Run/Evidence 持久化及
+ADR-007 协议，但仍没有活动 `knowledge_qa` 或三个知识整理业务 Skill，也没有通用 Runtime API、
+Web Skill 入口、PostgreSQL Runtime Checkpoint 恢复或三入口端到端旅程。
 
 ## 已审查实现
 
@@ -35,9 +35,9 @@ AgentRun/Evidence 持久化及 ADR-007 协议。因此没有 `knowledge_qa` 或�
 
 | 范围 | 状态 | 解阻条件 |
 | --- | --- | --- |
-| Step 5 | 部分完成 | 共享身份、内存原子检查点和确定性恢复已完成；PostgreSQL/Alembic、Worker、租约与清理等待阶段 3/4 正式门禁 |
+| Step 5 | 部分完成 | 共享身份、内存 Runtime 检查点、PostgreSQL QA Run/Attempt 与 API 重启恢复已完成；通用 Checkpoint、Worker、租约与清理仍待实现 |
 | Step 6 | 部分完成 | 未激活声明式包、QA Port Adapter 和合成契约已完成；生产激活等待阶段 3/4 正式退出 |
-| Step 7 | provisional 可用子集 | 现有 QA API/Web 已接真实检索、回答和引用身份；正式完成仍等待 PostgreSQL Run、Worker、重启恢复和活动 Skill |
+| Step 7 | provisional 可用子集 | 现有 QA API/Web 已接真实检索、持久 Run、回答、引用身份和 API 重启恢复；正式完成仍等待 Worker 和活动 Skill |
 | Step 8 | 阻塞 | `knowledge_qa` 真实链路和派生知识写入 Application 用例稳定 |
 | Step 9 持久化部分 | 阻塞 | Step 5 提供运行引用查询、保留和清理事实源 |
 | Step 10 | 阻塞 | Step 0～9 全部交付，阶段 0 数据门禁关闭 |
@@ -63,8 +63,14 @@ Skill 入口；这与门禁一致，不是遗漏。只有在 Step 5/6 提供持�
 不改变正式门禁的 provisional 子集：复用现有 QA API、`qa-sse-v1` 和 Web 问答入口，在 API 进程
 内调用唯一 QA Application Port、真实 PostgreSQL SearchService 与 Citation target adapter。
 默认 fake Chat 返回确定性证据摘录，终态 API/Web 展示回答或拒答及引用身份。未新增第二套 Runtime
-API/SSE，未激活 `_provisional/knowledge_qa`；QA 状态重启丢失、无 Worker、无原文跳转，故不能把
+API/SSE，未激活 `_provisional/knowledge_qa`；该时间点 QA 状态重启丢失、无 Worker、无原文跳转，故不能把
 该可用子集记为 Step 7 或阶段 5 正式完成。
+
+2026-07-31 QA 持久化补充审查：新增前向 Alembic revision、PostgreSQL QA Repository 和 Event
+Store，`qa_runs` 保持共享稳定身份，`qa_run_attempts` 记录 append-only attempt，Evidence/Citation/
+Feedback 均绑定 attempt。隔离 PostgreSQL 已验证迁移往返、单一 head、终态保留及中断 attempt
+重排队；Compose 已验证 completed Run、回答、Citation 和 SSE 事件跨 API 重启可读取。前述“QA
+状态重启丢失”限制由此关闭，但 Worker、通用 Runtime Checkpoint、原文跳转和活动 Skill 仍未完成。
 
 ## 验证记录
 
