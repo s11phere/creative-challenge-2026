@@ -133,15 +133,28 @@ def _build_structure(tokens: list[Token]) -> tuple[StructNode, ...]:
         # --- Blockquote -------------------------------------------------------
         if token.type == "blockquote_open":
             quote_start = token.map[0] + 1 if token.map else 0
+            quote_text: list[str] = []
+            depth = 1
             while i + 1 < len(tokens):
                 i += 1
-                if tokens[i].type == "blockquote_close":
-                    break
+                current = tokens[i]
+                if current.type == "blockquote_open":
+                    depth += 1
+                elif current.type == "blockquote_close":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                elif current.type == "inline":
+                    text = " ".join(_inline_text(current).split())
+                    if text:
+                        quote_text.append(text)
+                elif current.type in ("fence", "code_block") and current.content:
+                    quote_text.append(current.content)
             quote_end = token.map[1] if token.map else quote_start
             nodes.append(
                 StructNode(
                     node_type=StructNodeType.QUOTE_BLOCK,
-                    text="",
+                    text="\n".join(quote_text),
                     start_line=quote_start,
                     end_line=quote_end,
                 )
@@ -220,7 +233,7 @@ def _consume_list(tokens: list[Token], start: int, depth: int) -> tuple[list[Str
                     break
                 # Nested list
                 if t.type in ("bullet_list_open", "ordered_list_open"):
-                    nested, consumed = _consume_list(tokens, i - 1, depth + 1)
+                    nested, consumed = _consume_list(tokens, i, depth + 1)
                     child_nodes.extend(nested)
                     i += consumed
                     continue
