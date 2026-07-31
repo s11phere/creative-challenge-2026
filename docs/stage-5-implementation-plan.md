@@ -598,9 +598,11 @@ revision CAS 保证并发激活/回滚不会静默覆盖。Registry reload 仍�
 **完成标准**：本计划的阶段退出条件全部通过；验证命令和结果有可复现记录；文档与运行时
 行为一致。
 
-**暂缓情况（2026-07-19）**：已复核并跳过阶段验收。Step 5～8 尚未交付，阶段 0 数据门禁
-仍未关闭，不能运行真实 Skill 三入口端到端旅程、持久化恢复、引用质量 Eval 或宣称阶段退出。
-当前仅完成已落地 Runtime/Registry 的后端格式、lint、类型、单元/契约和完整现有测试回归。
+**Provisional 验收（2026-07-31）**：Step 5～8 的可用子集已交付，见
+`docs/stage-5-acceptance.md`。后端、前端、迁移、QA persistence、Compose Worker 和三个知识整理
+入口均完成本地/隔离验证；安全矩阵覆盖受信包、权限、Space/版本、prompt injection 和日志边界。
+由于通用 Runtime Checkpoint、持久审批/派生写入、Skill 管理 Web、旧版本引用清理以及 Stage 3/4
+正式质量门禁仍未关闭，本步骤只记为 provisional 验收，不宣称阶段 5 退出。
 
 ## 6. 执行依赖与状态
 
@@ -616,7 +618,7 @@ revision CAS 保证并发激活/回滚不会静默覆盖。Registry reload 仍�
 | 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 现有 QA API/Web/Worker 加只读 Skill Catalog、Run fixed identity 已完成；通用 Run 管理和 Skill 写入口仍阻塞 |
 | 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | provisional 只读完成；固定版本摘要/比较/复习卡预览可用，派生知识写入与确认仍阻塞 |
 | 9. 热加载与回滚 | 步骤 3/5；不可变版本和恢复语义已验证 | 通用部分已完成；持久化引用清理等待步骤 5 |
-| 10. 测试与验收 | 步骤 0～9；阶段 0 数据门禁关闭 | 已复核并跳过；等待全部交付和数据门禁 |
+| 10. 测试与验收 | 步骤 0～9；阶段 0 数据门禁关闭 | provisional 验收完成；正式退出等待通用 Checkpoint、持久写入、Skill Web、旧版本清理及 Stage 3/4 质量门禁 |
 
 允许通用 Runtime、Registry 和 fake 契约与阶段 2～4 并行开发，但合并时必须以阶段 3/4 的
 正式 Port 和 schema 为准；不得要求前序模块反向依赖 Agent Runtime 私有类型。

@@ -50,6 +50,8 @@
 - `summarize_document`、`compare_sources` 和 `create_review_cards 0.1.0` 已通过现有 QA API/Worker
   提供 provisional 只读执行；Run 固定 Source/Document/DocumentVersion，复习卡写入仍明确阻塞且
   必须保持零副作用。
+- Step 10 已形成 `docs/stage-5-acceptance.md` provisional 验收记录；该记录不替代 Stage 3/4
+  正式质量门禁，也不代表阶段 5 正式退出。
 - ADR-001～007 和 ADR-009 已接受；除非触发其重新评估条件，不重复讨论已固定基线。
 
 当前事实的权威文档：

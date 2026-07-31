@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from typing import cast
 from uuid import UUID
 
 import pytest
@@ -111,3 +112,33 @@ async def test_document_scope_rejects_cross_space_or_non_current_version() -> No
             version_id=UUID(int=98),
         )
     assert old_version.value.code is OrganizationScopeErrorCode.VERSION_INVALID
+
+
+@pytest.mark.asyncio
+async def test_comparison_scope_rejects_undersized_cross_space_or_unpublished_sources() -> None:
+    scope_service, ids = service()
+
+    with pytest.raises(OrganizationScopeError) as undersized:
+        await scope_service.sources_scope(
+            space_id=ids["space"], source_ids=frozenset({ids["source1"]})
+        )
+    assert undersized.value.code is OrganizationScopeErrorCode.SOURCE_INVALID
+
+    sources = cast(FakeSources, scope_service.sources)
+    sources.values[ids["source2"]] = replace(sources.values[ids["source2"]], space_id=UUID(int=99))
+    with pytest.raises(OrganizationScopeError) as cross_space:
+        await scope_service.sources_scope(
+            space_id=ids["space"],
+            source_ids=frozenset({ids["source1"], ids["source2"]}),
+        )
+    assert cross_space.value.code is OrganizationScopeErrorCode.SOURCE_INVALID
+
+    sources.values[ids["source2"]] = replace(sources.values[ids["source2"]], space_id=ids["space"])
+    documents = cast(FakeDocuments, scope_service.documents)
+    documents.by_source[ids["source2"]] = []
+    with pytest.raises(OrganizationScopeError) as unpublished:
+        await scope_service.sources_scope(
+            space_id=ids["space"],
+            source_ids=frozenset({ids["source1"], ids["source2"]}),
+        )
+    assert unpublished.value.code is OrganizationScopeErrorCode.EVIDENCE_INSUFFICIENT

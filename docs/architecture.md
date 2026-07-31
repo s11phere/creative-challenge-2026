@@ -610,6 +610,7 @@ ADR-007 已接受并已有 provisional 纯契约、内存 Repository、SSE/API/W
 | `stage-4-acceptance.md` | 阶段 4 provisional 工程回归、未执行矩阵、正式阻塞项和阶段 5 移交边界 |
 | `stage-5-implementation-plan.md` | 阶段 5 依赖门禁、分步计划、完成与暂缓状态 |
 | `stage-5-implementation-review.md` | 阶段 5 通用基础审查证据、未完成范围和审查决定 |
+| `stage-5-acceptance.md` | 阶段 5 provisional 工程验收、E2E、安全矩阵和正式退出阻塞项 |
 | `troubleshooting.md` | 本地运行故障恢复和已知限制 |
 | `openapi.json` | 由应用确定性导出的公开 HTTP schema |
 | `architecture.md` | **本文档** |
