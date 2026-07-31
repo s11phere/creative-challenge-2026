@@ -55,6 +55,30 @@ export type SkillSummary = {
   versions: string[]
 }
 
+export type SkillVersion = {
+  name: string
+  version: string
+  content_sha256: string
+  description: string
+  active: boolean
+  permissions: string[]
+  required_capabilities: string[]
+  budget: {
+    max_steps: number
+    max_tool_calls: number
+    max_input_tokens: number
+    max_output_tokens: number
+    timeout_seconds: number
+  }
+}
+
+export type SkillActivation = {
+  name: string
+  version: string
+  content_sha256: string
+  revision: number
+}
+
 export type CitationExcerpt = NonNullable<QARun['citations']>[number] & {
   status: string
   excerpt: string | null
@@ -118,6 +142,32 @@ export function cancelRun(runId: string): Promise<QARun> {
 
 export function fetchSkills(signal?: AbortSignal): Promise<SkillSummary[]> {
   return request('/api/v1/skills', { signal })
+}
+
+export function fetchSkillVersions(skillName: string, signal?: AbortSignal): Promise<SkillVersion[]> {
+  return request(`/api/v1/skills/${skillName}/versions`, { signal })
+}
+
+export function activateSkill(
+  skillName: string,
+  version: string,
+  expectedRevision: number,
+): Promise<SkillActivation> {
+  return request(`/api/v1/skills/${skillName}/active`, {
+    method: 'PUT',
+    body: JSON.stringify({ version, expected_revision: expectedRevision }),
+  })
+}
+
+export function rollbackSkill(
+  skillName: string,
+  version: string,
+  expectedRevision: number,
+): Promise<SkillActivation> {
+  return request(`/api/v1/skills/${skillName}/rollback`, {
+    method: 'POST',
+    body: JSON.stringify({ version, expected_revision: expectedRevision }),
+  })
 }
 
 export function fetchCitationExcerpt(

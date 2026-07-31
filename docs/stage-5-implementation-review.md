@@ -15,7 +15,7 @@ ADR-003、ADR-006 和阶段 5 实施计划一致：领域状态与 Port、Tool/S
 RetrievalStore、GroundedAnswer/Citation Application 用例、QA Conversation/Run/Evidence 持久化及
 ADR-007 协议；`knowledge_qa 0.1.0` 现已通过既有 QA Web/API/Worker 成为 active provisional Skill。
 三个知识整理业务 Skill 已提供 provisional 只读版本；仍没有派生知识写入/持久确认、通用 Runtime
-API、Skill 管理 Web、PostgreSQL Runtime Checkpoint 恢复或正式质量验收。
+API、PostgreSQL Runtime Checkpoint 恢复或正式质量验收。
 
 ## 已审查实现
 
@@ -131,7 +131,7 @@ Space、current published 状态，SearchService 在执行时再次要求精确�
 
 `create_review_cards` 当前只生成带引用预览，HTTP response 与 Runtime Skill output 都返回
 `SKILL_WRITE_PORT_UNAVAILABLE`、`side_effects=0`；没有直接写表或文件。故本步骤只记为
-provisional 只读完成，派生知识 Application Port、持久审批、幂等写入、Skill 管理 Web、通用
+provisional 只读完成，派生知识 Application Port、持久审批、幂等写入、通用
 Runtime Checkpoint 和正式质量门禁仍未完成。
 
 本子集验证：Ruff format/check、mypy 94 个源文件、后端全量 pytest `624 passed, 45 skipped`、
@@ -148,6 +148,12 @@ OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）和 production bui
 第二个 Run 保持 queued，重启后接管完成，Attempt/Event 为 `1/3`。5 条既有 Citation 在重建后仍为
 `valid` 且返回非空原文。新问题的一条 Citation 因既有 excerpt 再校验返回 `invalid`，按 provisional
 协议显式展示而未回退到相似文本；未据此形成引用质量结论。
+
+2026-07-31 Skill 管理 Web 补充审查：Web 新增独立技能管理工作区，读取受信 Catalog 和版本详情，
+展示版本摘要、权限、能力与预算，并调用已有持久化激活/回滚 API。所有写操作携带当前 revision，
+沿用 PostgreSQL compare-and-set 冲突保护；页面不允许安装包、指定路径、编辑权限或删除版本。
+该增量关闭 Step 7 的 Skill 管理 Web 缺口，但没有新增通用 Runtime Run/Checkpoint 协议。Web
+lint、typecheck、Vitest `19 passed` 和 production build 均通过。
 
 ## 验证记录
 

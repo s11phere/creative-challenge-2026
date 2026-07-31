@@ -13,7 +13,7 @@
 截至 2026-07-31，Step 0～4 和 Step 9 的通用可执行部分已通过实现审查；Step 5 已完成 QA
 持久化/Worker 子集，Step 6 已交付 active provisional `knowledge_qa`，Step 7 复用现有 QA API/Web。
 Step 8 已交付三个知识整理 Skill 的 provisional 只读子集。通用 Runtime Checkpoint、派生知识
-写入/确认、Skill 管理 Web、旧版本清理和正式质量门禁仍未完成。
+写入/确认、旧版本清理和正式质量门禁仍未完成。
 
 阶段 5 的目标是把阶段 2 至阶段 4 已验证的摄入、检索、引用和问答能力封装为稳定、
 可版本化、可审计、可恢复的 Skill，并确保同一个 Skill 通过 Web、HTTP API 和测试入口
@@ -527,6 +527,12 @@ Skill 管理 UI 和 PostgreSQL Checkpoint 仍不存在，故 Step 7 正式完成
 覆盖；激活/回滚仍只能由启动配置控制，等待 active pointer 的持久化事实源。该子集完成 Step 7 的
 版本可见性和三入口身份核对部分，Runtime Run 管理 API、Skill 管理写入口和通用 Checkpoint 仍未完成。
 
+**Skill 管理 Web 补充（2026-07-31）**：Web 新增受信 Skill 管理工作区，复用既有 Catalog、
+版本查询、持久化激活和回滚 API，展示完整内容摘要、权限、模型能力和运行预算。激活与回滚请求
+必须携带当前 `expected_revision`，冲突时由既有稳定错误协议拒绝；页面不提供包安装、任意路径、
+权限编辑或旧版本删除能力。该子集关闭 Step 7 的 Skill 管理 Web 缺口，但通用 Runtime Run 管理与
+PostgreSQL Checkpoint 仍未完成。
+
 **持久 active pointer 子集（2026-07-31）**：新增 PostgreSQL `skill_activations` 前向迁移，保存
 Skill 名称、active semver、内容摘要和递增 revision。首次启动仅用配置初始化缺失记录，此后数据库为
 事实源；Catalog 与新 QA Run 提交前同步 pointer，API 重启后恢复同一版本。新增受控 activate/rollback
@@ -634,7 +640,7 @@ revision CAS 保证并发激活/回滚不会静默覆盖。Registry reload 仍�
 | 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 已完成 |
 | 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | PostgreSQL QA Run/Attempt、Worker lease/heartbeat 和重启恢复已完成；通用 Runtime Checkpoint、审批与清理仍阻塞 |
 | 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | active provisional `0.1.0` 已由固定摘要 Worker 执行；正式质量门禁仍未关闭 |
-| 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 现有 QA API/Web/Worker 加只读 Skill Catalog、Run fixed identity 已完成；通用 Run 管理和 Skill 写入口仍阻塞 |
+| 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 现有 QA API/Web/Worker、Skill Catalog、持久激活/回滚 Web 和 Run fixed identity 已完成；通用 Run 管理仍阻塞 |
 | 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | provisional 只读完成；固定版本摘要/比较/复习卡预览可用，派生知识写入与确认仍阻塞 |
 | 9. 热加载与回滚 | 步骤 3/5；不可变版本和恢复语义已验证 | 通用部分已完成；持久化引用清理等待步骤 5 |
 | 10. 测试与验收 | 步骤 0～9；阶段 0 数据门禁关闭 | provisional 验收完成；正式退出等待通用 Checkpoint、持久写入、Skill Web、旧版本清理及 Stage 3/4 质量门禁 |

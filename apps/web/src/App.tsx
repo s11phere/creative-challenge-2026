@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   Activity,
   Bot,
+  Boxes,
   CheckCircle2,
   CircleAlert,
   Clock3,
@@ -25,11 +26,12 @@ import {
   type HealthSnapshot,
 } from './health'
 import { SourcesPanel } from './SourcesPanel'
+import { SkillsPanel } from './SkillsPanel'
 import { QAWorkspace } from './QAWorkspace'
 import './App.css'
 
 type ServiceState = 'available' | 'unavailable' | 'checking'
-type WorkspaceView = 'qa' | 'status' | 'sources'
+type WorkspaceView = 'qa' | 'status' | 'sources' | 'skills'
 
 type ServiceRow = {
   key: string
@@ -129,6 +131,7 @@ function formatCheckTime(timestamp: number | undefined): string {
 function App() {
   const [activeView, setActiveView] = useState<WorkspaceView>(() => {
     if (window.location.hash === '#sources') return 'sources'
+    if (window.location.hash === '#skills') return 'skills'
     if (window.location.hash === '#qa') return 'qa'
     return 'status'
   })
@@ -150,7 +153,7 @@ function App() {
 
   const showView = (view: WorkspaceView) => {
     setActiveView(view)
-    const hash = view === 'sources' ? '#sources' : view === 'qa' ? '#qa' : '#system-status'
+    const hash = view === 'sources' ? '#sources' : view === 'skills' ? '#skills' : view === 'qa' ? '#qa' : '#system-status'
     window.history.replaceState(null, '', hash)
   }
 
@@ -201,6 +204,17 @@ function App() {
             <Database size={18} />
             数据来源
           </a>
+          <a
+            href="#skills"
+            aria-current={activeView === 'skills' ? 'page' : undefined}
+            onClick={(event) => {
+              event.preventDefault()
+              showView('skills')
+            }}
+          >
+            <Boxes size={18} />
+            技能管理
+          </a>
         </nav>
 
         <div className="local-mode">
@@ -223,14 +237,18 @@ function App() {
                 ? '运行概览'
                 : activeView === 'qa'
                   ? '当前知识空间'
-                  : '知识库内容'}
+                  : activeView === 'skills'
+                    ? '技能与版本'
+                    : '知识库内容'}
             </p>
             <h1>
               {activeView === 'status'
                 ? '系统状态'
                 : activeView === 'qa'
                   ? '知识问答'
-                  : '数据来源'}
+                  : activeView === 'skills'
+                    ? '技能管理'
+                    : '数据来源'}
             </h1>
           </div>
           {activeView === 'status' && <button
@@ -366,6 +384,8 @@ function App() {
           </>
         ) : activeView === 'sources' ? (
           <SourcesPanel />
+        ) : activeView === 'skills' ? (
+          <SkillsPanel />
         ) : (
           <QAWorkspace />
         )}
