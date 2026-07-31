@@ -13,9 +13,10 @@ import {
   CircleAlert,
   type LucideIcon,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import {
   cancelTask,
+  createUploadSource,
   fetchSourceDetail,
   fetchSources,
   fetchTaskStatus,
@@ -26,6 +27,8 @@ import {
   type SourceInfo,
   type TaskInfo,
 } from './sources'
+
+const WEB_UPLOAD_URI = 'web-upload://browser'
 
 const statusMeta: Record<
   string,
@@ -186,6 +189,95 @@ function TaskRow({ taskId, onTaskChange }: { taskId: string; onTaskChange: (task
         <RefreshCw size={16} />
         <span>刷新</span>
       </button>
+    </div>
+  )
+}
+
+function DirectUpload({ sources }: { sources: SourceInfo[] }) {
+  const queryClient = useQueryClient()
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [file, setFile] = useState<File | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
+
+  const uploadMut = useMutation({
+    mutationFn: async (selected: File) => {
+      const existing = sources.find((source) => source.uri === WEB_UPLOAD_URI)
+      const sourceId = existing?.id ?? (await createUploadSource(WEB_UPLOAD_URI)).source_id
+      return uploadFile(sourceId, selected)
+    },
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: ['sources'] })
+      void queryClient.invalidateQueries({ queryKey: ['source', result.source_id] })
+      setActiveTaskId(result.task_id)
+      setFile(null)
+      if (inputRef.current) inputRef.current.value = ''
+    },
+  })
+
+  const selectFile = (selected: File | undefined) => {
+    uploadMut.reset()
+    setFile(selected ?? null)
+  }
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    setIsDragging(false)
+    selectFile(event.dataTransfer.files[0])
+  }
+
+  return (
+    <div className="direct-upload">
+      <div
+        className={`direct-upload-target ${isDragging ? 'is-dragging' : ''}`}
+        onDragEnter={(event) => {
+          event.preventDefault()
+          setIsDragging(true)
+        }}
+        onDragOver={(event) => event.preventDefault()}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={handleDrop}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          className="file-input"
+          accept=".md,.markdown,.txt,.pdf,text/markdown,text/plain,application/pdf"
+          aria-label="选择要上传的文件"
+          onChange={(event) => selectFile(event.target.files?.[0])}
+        />
+        <span className="direct-upload-icon" aria-hidden="true">
+          <FileUp size={20} />
+        </span>
+        <div className="direct-upload-copy">
+          <strong>{file?.name ?? '上传知识文件'}</strong>
+          <span>{file ? `${(file.size / 1024).toFixed(1)} KB` : 'PDF、Markdown 或文本文件'}</span>
+        </div>
+        <button type="button" className="file-picker-button" onClick={() => inputRef.current?.click()}>
+          <FileUp size={16} />
+          选择文件
+        </button>
+        <button
+          type="button"
+          className="upload-action-button"
+          disabled={!file || uploadMut.isPending}
+          onClick={() => file && uploadMut.mutate(file)}
+        >
+          {uploadMut.isPending ? <LoaderCircle className="spin" size={16} /> : <CloudUpload size={16} />}
+          {uploadMut.isPending ? '上传中' : '上传并摄入'}
+        </button>
+      </div>
+      {uploadMut.isError && (
+        <div className="upload-error" role="alert">
+          上传失败：{uploadMut.error instanceof SourcesApiError
+            ? `${uploadMut.error.code}: ${uploadMut.error.message}`
+            : String(uploadMut.error)}
+        </div>
+      )}
+      {uploadMut.data && !uploadMut.data.task_id && (
+        <div className="upload-result">文件内容未变化，无需重复摄入。</div>
+      )}
+      {activeTaskId && <TaskRow taskId={activeTaskId} onTaskChange={setActiveTaskId} />}
     </div>
   )
 }
@@ -354,6 +446,8 @@ export function SourcesPanel() {
         </div>
       </div>
 
+      {!isLoading && !isError && <DirectUpload sources={sources} />}
+
       {isError ? (
         <div className="empty-state">
           <CircleAlert size={24} />
@@ -369,7 +463,7 @@ export function SourcesPanel() {
         <div className="empty-state">
           <FileText size={24} />
           <p>暂无数据来源</p>
-          <span>调用 API 创建来源后上传文件开始摄入</span>
+          <span>选择上方文件即可创建来源并开始摄入</span>
         </div>
       ) : (
         <div className="sources-list">

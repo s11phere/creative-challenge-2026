@@ -51,6 +51,14 @@ export type UploadResult = {
   task_id: string | null
 }
 
+export type CreateSourceResult = {
+  source_id: string
+  space_id: string
+  source_type: string
+  uri: string
+  is_new: boolean
+}
+
 export type IngestResult = {
   task_id: string
 }
@@ -114,6 +122,14 @@ export function fetchSourceDetail(sourceId: string, signal?: AbortSignal): Promi
   return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources/${sourceId}/detail`, {
     method: 'GET',
     signal,
+  })
+}
+
+/** Create a browser-managed upload source. */
+export function createUploadSource(uri: string): Promise<CreateSourceResult> {
+  return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources`, {
+    method: 'POST',
+    body: { source_type: 'upload', uri },
   })
 }
 

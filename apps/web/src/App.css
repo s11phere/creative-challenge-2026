@@ -1084,6 +1084,56 @@
 /* Sources panel                                                      */
 /* ------------------------------------------------------------------ */
 
+.direct-upload {
+  padding: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.direct-upload-target {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: 10px 12px;
+  background: var(--canvas);
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.direct-upload-target.is-dragging {
+  background: color-mix(in srgb, var(--accent) 7%, var(--canvas));
+  border-color: var(--accent);
+}
+
+.direct-upload-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.direct-upload-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.direct-upload-copy strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.direct-upload-copy span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .sources-list {
   display: flex;
   flex-direction: column;
@@ -1404,6 +1454,16 @@
 }
 
 @media (max-width: 680px) {
+  .direct-upload-target {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .direct-upload-target .file-picker-button,
+  .direct-upload-target .upload-action-button {
+    grid-column: 2;
+    justify-self: start;
+  }
+
   .source-header {
     grid-template-columns: 18px minmax(0, 1fr);
   }

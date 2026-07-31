@@ -26,6 +26,60 @@ afterEach(() => {
 })
 
 describe('SourcesPanel task controls', () => {
+  it('creates an upload source and uploads a file from the empty state', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/sources') && init?.method === 'POST') {
+        return Promise.resolve(jsonResponse({
+          source_id: 'browser-source', space_id: 'space-1', source_type: 'upload',
+          uri: 'web-upload://browser', is_new: true,
+        }))
+      }
+      if (url.endsWith('/sources/browser-source/upload') && init?.method === 'POST') {
+        expect(init.body).toBeInstanceOf(FormData)
+        return Promise.resolve(jsonResponse({
+          source_id: 'browser-source', document_id: 'doc-1', blob_hash: 'a'.repeat(64),
+          is_new_document: true, is_unchanged: false, task_id: 'upload-task',
+        }))
+      }
+      if (url.endsWith('/tasks/upload-task')) {
+        return Promise.resolve(jsonResponse({
+          task_id: 'upload-task', source_id: 'browser-source', operation: 'ingest',
+          status: 'succeeded', stage: 'publish', progress: 1,
+          retry_count: 0, max_retries: 3, error_code: null,
+          error: null, created_at: '2026-01-01T00:00:00Z',
+        }))
+      }
+      if (url.endsWith('/sources')) {
+        return Promise.resolve(jsonResponse({ sources: [] }))
+      }
+      return Promise.resolve(jsonResponse({ sources: [] }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderPanel()
+
+    const input = await screen.findByLabelText('选择要上传的文件')
+    fireEvent.change(input, {
+      target: { files: [new File(['content'], 'notes.md', { type: 'text/markdown' })] },
+    })
+    expect(screen.getByText('notes.md')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '上传并摄入' }))
+
+    expect(await screen.findByText('成功')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/sources'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ source_type: 'upload', uri: 'web-upload://browser' }),
+      }),
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/sources/browser-source/upload'),
+      expect.objectContaining({ method: 'POST', body: expect.any(FormData) }),
+    )
+  })
+
   it('switches to the new task after retry and exposes action labels', async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -264,10 +318,11 @@ describe('SourcesPanel task controls', () => {
 
     renderPanel()
     fireEvent.click(await screen.findByText('fixture://test'))
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    const uploadForm = document.querySelector('.upload-form') as HTMLFormElement
+    const input = uploadForm.querySelector('input[type="file"]') as HTMLInputElement
     const file = new File(['content'], 'test.txt', { type: 'text/plain' })
     fireEvent.change(input, { target: { files: [file] } })
-    fireEvent.click(screen.getByRole('button', { name: '上传并摄入' }))
+    fireEvent.submit(uploadForm)
 
     expect(await screen.findByText(`文件已登记，哈希 ${hash}`)).toBeInTheDocument()
     expect(screen.queryByText(/86386fb5317e…/)).not.toBeInTheDocument()
