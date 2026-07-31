@@ -751,6 +751,52 @@
   white-space: nowrap;
 }
 
+.qa-mode-selector {
+  width: fit-content;
+  min-height: 36px;
+  margin: -8px 0 18px;
+  padding: 3px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 3px;
+  background: #e8eeeb;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.qa-mode-selector button {
+  min-height: 30px;
+  padding: 5px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.qa-mode-selector button[aria-pressed='true'] {
+  color: var(--ink);
+  background: var(--surface);
+  border-color: #cbd7d1;
+  box-shadow: 0 1px 2px rgb(22 46 38 / 8%);
+}
+
+.qa-mode-selector button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.qa-mode-selector button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .qa-answer {
   display: grid;
   gap: 8px;

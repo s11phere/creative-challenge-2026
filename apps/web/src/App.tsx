@@ -47,6 +47,7 @@ const codeLabels: Record<string, string> = {
   REDIS_UNREACHABLE: '不可用',
   MODEL_FAKE_READY: '测试替身',
   MODEL_PROVIDER_CONFIGURED: '已配置',
+  MODEL_CAPABILITIES_ROUTED: '混合配置',
   MODEL_DISABLED: '已禁用',
   MODEL_CONFIGURATION_MISSING: '未配置',
   MODEL_POLICY_DENIED: '策略阻止',
@@ -205,8 +206,8 @@ function App() {
         <div className="local-mode">
           <ShieldCheck size={17} />
           <div>
-            <strong>本地模式</strong>
-            <span>默认不向外发送数据</span>
+            <strong>策略受控</strong>
+            <span>模型外发由部署配置</span>
           </div>
         </div>
       </aside>

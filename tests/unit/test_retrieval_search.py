@@ -517,6 +517,17 @@ async def test_empty_candidate_sets_are_successful(repos) -> None:
     assert "fusion" in {timing.stage for timing in result.diagnostics.stage_timings}
 
 
+async def test_empty_candidate_sets_skip_reranker(repos) -> None:
+    reranker = _FakeReranker()
+    result = await _service(repos, _FakeStore(), _FakeEmbedder(), reranker).search(
+        SearchRequest("missing", SPACE_ID, mode=RetrievalMode.HYBRID_RERANK),
+        _profile(reranker_enabled=True),
+    )
+    assert result.hits == ()
+    assert reranker.requests == []
+    assert result.diagnostics.reranker_version == "empty-rerank-v1"
+
+
 @pytest.mark.parametrize(
     "filters",
     [

@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
+  Bot,
   BookOpenText,
   FileText,
   LoaderCircle,
   MessageSquareText,
   Quote,
   Send,
+  Search,
   Square,
   Workflow,
 } from 'lucide-react'
@@ -18,6 +20,7 @@ import {
   fetchRun,
   fetchSkills,
   submitQuestion,
+  type QASkillName,
   type QARun,
 } from './qa'
 
@@ -50,6 +53,7 @@ export function QAWorkspace() {
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [question, setQuestion] = useState<LocalQuestion | null>(null)
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null)
+  const [selectedSkill, setSelectedSkill] = useState<QASkillName>('knowledge_agent')
   const excerptRef = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
 
@@ -70,9 +74,9 @@ export function QAWorkspace() {
   })
 
   const currentRun = runQuery.data ?? question?.run
-  const activeSkill = skillsQuery.data?.find((skill) => skill.name === 'knowledge_qa')
+  const activeSkill = skillsQuery.data?.find((skill) => skill.name === selectedSkill)
   const displayedSkill = currentRun?.skill ?? {
-    name: 'knowledge_qa',
+    name: selectedSkill,
     version: activeSkill?.active_version ?? null,
   }
   const isActive = currentRun ? activeStatuses.has(currentRun.status) : false
@@ -99,7 +103,7 @@ export function QAWorkspace() {
         setConversationId(currentConversationId)
       }
       const idempotencyKey = crypto.randomUUID()
-      const run = await submitQuestion(currentConversationId, text, idempotencyKey)
+      const run = await submitQuestion(currentConversationId, text, idempotencyKey, selectedSkill)
       return { id: idempotencyKey, text, run }
     },
     onSuccess: (nextQuestion) => {
@@ -108,6 +112,13 @@ export function QAWorkspace() {
       setDraft('')
     },
   })
+
+  const chooseSkill = (skill: QASkillName) => {
+    if (isActive || submitMutation.isPending) return
+    setSelectedSkill(skill)
+    setQuestion(null)
+    setSelectedEvidenceId(null)
+  }
 
   const cancelMutation = useMutation({
     mutationFn: async () => cancelRun(currentRun!.run_id),
@@ -138,6 +149,26 @@ export function QAWorkspace() {
             <strong>{displayedSkill.name}</strong>
             <code>{displayedSkill.version ? `v${displayedSkill.version}` : '版本不可用'}</code>
             {currentRun?.skill && <span>已固定</span>}
+          </div>
+          <div className="qa-mode-selector" role="group" aria-label="问答模式">
+            <button
+              type="button"
+              aria-pressed={selectedSkill === 'knowledge_agent'}
+              onClick={() => chooseSkill('knowledge_agent')}
+              disabled={submitMutation.isPending || isActive}
+            >
+              <Bot size={16} aria-hidden="true" />
+              LLM Agent
+            </button>
+            <button
+              type="button"
+              aria-pressed={selectedSkill === 'knowledge_qa'}
+              onClick={() => chooseSkill('knowledge_qa')}
+              disabled={submitMutation.isPending || isActive}
+            >
+              <Search size={16} aria-hidden="true" />
+              直接问答
+            </button>
           </div>
           {!question ? (
             <div className="qa-empty">

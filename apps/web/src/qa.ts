@@ -1,6 +1,7 @@
 import { apiBaseUrl } from './health'
 
 export const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
+export type QASkillName = 'knowledge_agent' | 'knowledge_qa'
 
 export type Conversation = {
   conversation_id: string
@@ -92,8 +93,13 @@ export function submitQuestion(
   conversationId: string,
   question: string,
   idempotencyKey: string,
+  skillName: QASkillName = 'knowledge_qa',
 ): Promise<QARun> {
-  return request(`/api/v1/conversations/${conversationId}/questions`, {
+  const path =
+    skillName === 'knowledge_agent'
+      ? `/api/v1/conversations/${conversationId}/skills/knowledge_agent/runs`
+      : `/api/v1/conversations/${conversationId}/questions`
+  return request(path, {
     method: 'POST',
     body: JSON.stringify({ question, idempotency_key: idempotencyKey }),
   })

@@ -22,6 +22,7 @@ function renderWorkspace() {
 }
 
 const activeSkills = [
+  { name: 'knowledge_agent', active_version: '0.1.0', versions: ['0.1.0'] },
   { name: 'knowledge_qa', active_version: '0.1.0', versions: ['0.1.0'] },
 ]
 
@@ -102,8 +103,49 @@ describe('QAWorkspace', () => {
 
     await waitFor(() => expect(screen.getByText('正在取消')).toBeInTheDocument())
     expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/skills/knowledge_agent/runs'),
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/api/v1/qa/runs/run-1/cancel'),
       expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
+  it('can switch to direct QA before submitting', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/skills')) return Promise.resolve(response(activeSkills))
+      if (url.endsWith('/conversations')) {
+        return Promise.resolve(
+          response({ conversation_id: 'conversation-1', space_id: 'space-1', owner_id: 'local' }),
+        )
+      }
+      return Promise.resolve(
+        response({
+          run_id: 'run-direct',
+          attempt_id: 'attempt-direct',
+          status: 'queued',
+          conversation_id: 'conversation-1',
+          question_message_id: 'message-direct',
+          cancellation_requested: false,
+          error_code: null,
+        }),
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'idempotency-direct' })
+
+    renderWorkspace()
+    fireEvent.click(screen.getByRole('button', { name: '直接问答' }))
+    fireEvent.change(screen.getByLabelText('问题'), { target: { value: 'Direct question' } })
+    fireEvent.click(screen.getByRole('button', { name: '提问' }))
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/conversations\/conversation-1\/questions$/),
+        expect.objectContaining({ method: 'POST' }),
+      ),
     )
   })
 
@@ -111,7 +153,7 @@ describe('QAWorkspace', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(response(activeSkills))))
     renderWorkspace()
 
-    expect(await screen.findByText('knowledge_qa')).toBeInTheDocument()
+    expect(await screen.findByText('knowledge_agent')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '引用证据' })).toBeInTheDocument()
     expect(screen.getByText('当前回答没有可显示的引用')).toBeInTheDocument()
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
@@ -127,7 +169,7 @@ describe('QAWorkspace', () => {
       cancellation_requested: false,
       error_code: null,
       skill: {
-        name: 'knowledge_qa',
+        name: 'knowledge_agent',
         version: '0.1.0',
         content_sha256: 'a'.repeat(64),
       },

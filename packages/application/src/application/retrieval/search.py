@@ -518,6 +518,11 @@ class SearchService:
                 retryable=True,
             )
         selected = fused[: profile.rerank_k]
+        # An empty Space is a valid retrieval result.  Do not call the reranker
+        # with an empty document list because the provider-neutral request
+        # contract intentionally rejects it.
+        if not selected:
+            return RerankResponse(scores=(), model_version="empty-rerank-v1", latency_ms=0.0)
         rerank_request = RerankRequest(
             query=request.query,
             documents=tuple(
