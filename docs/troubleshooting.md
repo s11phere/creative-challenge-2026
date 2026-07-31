@@ -115,7 +115,8 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 - provisional QA 的会话、Message、Run/Attempt、Evidence、Citation、Feedback 与 SSE 事件均保存到
   PostgreSQL。API 启动时会重排队安全的非终态 attempt，保留终态并清理中断时尚未发布的 Evidence；
   断开 SSE 不会取消 Run，只有显式取消请求才会记录取消意图。Worker 使用 attempt lease/heartbeat，
-  启动时接管 queued 或租约过期运行，重复投递不会重复发布终态。原文跳转、用户重试和反馈审核尚未实现。
+  启动时接管 queued 或租约过期运行，重复投递不会重复发布终态。Citation 可按需解析固定版本的
+  最小原文片段；用户重试和反馈审核尚未实现。
 - 默认 `FakeModelGateway` 使用确定性抽取式回答，返回相关证据片段而不是高质量综合回答；这是当前
   流程验证基线。Stage 3 达标并冻结检索配置后再调整召回、重排和回答表现，不得把当前结果用于 holdout。
 - 阶段 3 评测配置仍为 provisional：阶段 0 和阶段 2 已正式关闭，但 2026-07-29 冻结语料
@@ -134,8 +135,9 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
   Web 入口或 PostgreSQL 运行/检查点持久化。
 - Registry 的活动版本、通用 Runtime Checkpoint 和生命周期事件当前仍只在进程内；QA Worker
   接管已完成，但活动 Skill 的进程重启恢复和旧版本引用清理仍等待阶段 5 后续持久化。
-- Web 分别展示真实健康状态、真实数据来源/摄入任务和 provisional QA 状态；QA 证据面板只展示
-  服务端已校验的 Citation 身份和 locator，不伪造原文内容。
+- Web 分别展示真实健康状态、真实数据来源/摄入任务和 provisional QA 状态；QA 证据面板只对
+  服务端已发布的 Citation 按需请求原文，不接受客户端提供的 locator 或版本。若返回 `invalid`，
+  先检查 Blob hash、parser 版本和 locator 是否仍与固定 DocumentVersion 一致，不要回退到相似文本。
 - 阶段 0 语料已按 `docs/stage-0-acceptance.md` 冻结为 `internal_team_only`；真实语料只可在
   manifest 允许列表内用于本地/组内评测，禁止 Git 分发、公开演示和未经策略允许的外部 Provider
   外发。阶段 2 Step 9 已关闭，但阶段 3 正式质量门禁仍未关闭；阶段 4 因此仍未正式启动。

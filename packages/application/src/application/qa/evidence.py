@@ -24,7 +24,7 @@ from domain.grounded_qa import (
     QAErrorCode,
     validate_answer_citations,
 )
-from domain.parsing import ParseError, Parser, ParseSuccess
+from domain.parsing import ParseError, Parser, ParseSuccess, StructNode, StructNodeType
 from domain.retrieval import LocatorKind, SearchHit, SearchLocator
 
 
@@ -176,43 +176,86 @@ class CitationResolver:
         if hashlib.sha256(raw).hexdigest() != snapshot.blob_hash:
             return CitationResolution(citation, CitationStatus.INVALID)
 
-        excerpt = await self._extract(snapshot, citation.locator, raw)
-        if excerpt is None or compute_excerpt_sha256(excerpt) != citation.excerpt_sha256:
+        excerpts = await self._extract(snapshot, citation.locator, raw)
+        excerpt = next(
+            (item for item in excerpts if compute_excerpt_sha256(item) == citation.excerpt_sha256),
+            None,
+        )
+        if excerpt is None:
             return CitationResolution(citation, CitationStatus.INVALID)
         return CitationResolution(citation, status, excerpt)
 
     async def _extract(
         self, snapshot: CitationTargetSnapshot, locator: SearchLocator, raw: bytes
-    ) -> str | None:
+    ) -> tuple[str, ...]:
         if snapshot.content_kind is CitationContentKind.TEXT and locator.kind is LocatorKind.LINES:
             try:
                 text = raw.decode(snapshot.metadata.encoding)
             except (LookupError, UnicodeDecodeError):
-                return None
+                return ()
             lines = text.splitlines()
             if locator.end > len(lines):
-                return None
-            return "\n".join(lines[locator.start - 1 : locator.end])
+                return ()
+            raw_excerpt = "\n".join(lines[locator.start - 1 : locator.end])
+            parser = self._parsers.get(CitationContentKind.TEXT)
+            if parser is None:
+                return (raw_excerpt,)
+            parsed = await parser.parse(raw, snapshot.metadata)
+            if isinstance(parsed, ParseError):
+                return (raw_excerpt,)
+            assert isinstance(parsed, ParseSuccess)
+            node_text = _texts_within_lines(parsed.document.structure, locator)
+            structured_excerpt = "\n\n".join(" ".join(item.split()) for item in node_text)
+            return tuple(dict.fromkeys((raw_excerpt, structured_excerpt)))
 
         if (
             snapshot.content_kind is not CitationContentKind.PDF
             or locator.kind is not LocatorKind.PDF_PAGE
             or locator.start != locator.end
         ):
-            return None
+            return ()
         parser = self._parsers.get(CitationContentKind.PDF)
         if parser is None:
-            return None
+            return ()
         parsed = await parser.parse(raw, snapshot.metadata)
         if isinstance(parsed, ParseError):
-            return None
+            return ()
         assert isinstance(parsed, ParseSuccess)
         page_text = tuple(
             node.text
             for node in parsed.document.structure
             if node.start_page == locator.start and node.end_page == locator.end and node.text
         )
-        return "\n".join(page_text) or None
+        excerpt = "\n".join(page_text)
+        return (excerpt,) if excerpt else ()
+
+
+_CITABLE_NODE_TYPES = frozenset(
+    {
+        StructNodeType.PARAGRAPH,
+        StructNodeType.CODE_BLOCK,
+        StructNodeType.LIST_ITEM,
+        StructNodeType.QUOTE_BLOCK,
+        StructNodeType.TABLE,
+        StructNodeType.RAW_TEXT,
+        StructNodeType.THEMATIC_BREAK,
+    }
+)
+
+
+def _texts_within_lines(nodes: tuple[StructNode, ...], locator: SearchLocator) -> tuple[str, ...]:
+    texts: list[str] = []
+    for node in nodes:
+        if (
+            node.node_type in _CITABLE_NODE_TYPES
+            and node.text.strip()
+            and node.start_line >= locator.start
+            and node.end_line <= locator.end
+        ):
+            texts.append(node.text)
+        if node.children:
+            texts.extend(_texts_within_lines(node.children, locator))
+    return tuple(texts)
 
 
 def _target_query(candidate: EvidenceCandidate) -> CitationTargetQuery:

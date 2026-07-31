@@ -482,7 +482,8 @@ transport 和 Web 问答入口已接入唯一 `GroundedQAApplicationPort`，由 
 Chat Provider 在策略允许并配置后复用相同生成/校验路径；终态查询与 Web 展示回答、限制和引用身份。
 实现没有新增平行 Runtime/SSE schema，也没有激活 `_provisional/knowledge_qa`。该子集可用于后续
 开发。Run/Attempt/Event/Evidence/Citation/Feedback 随后已切换为 PostgreSQL 事实源，并验证 API/
-Worker 重启恢复；执行已进入独立 Worker，但仍没有引用原文跳转或活动 Skill，故 Step 7 正式完成标准仍未满足，
+Worker 重启恢复；执行已进入独立 Worker，已发布 Citation 也可按需解析固定版本最小原文片段。
+但仍没有活动 Skill，故 Step 7 正式完成标准仍未满足，
 Stage 3/4/5 状态不变。
 
 ### 步骤 8：知识整理 Skill 与写入确认

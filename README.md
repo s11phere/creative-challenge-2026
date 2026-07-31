@@ -14,7 +14,7 @@
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
 | 阶段 3 🟡 工程 Step 0-10 | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；真实模型 development 最佳 Dense Recall@5 为 51.90%，未达到 85%，默认配置未冻结且正式 holdout 未执行 |
-| 阶段 4 🟡 provisional Step 0-10 | ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web 和回答评测 validate-only 已完成；独立 Worker 通过 attempt lease 执行并支持重启恢复/重复投递；原文跳转、默认配置与 holdout 未完成 |
+| 阶段 4 🟡 provisional Step 0-10 | ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测 validate-only 已完成；默认配置与 holdout 未完成 |
 | 阶段 5 🟡 通用基础 + 可用 provisional 链路 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、版本固定、预算/权限/审计、事务式 reload/回滚和 Skill 模板已通过审查；现有 QA Web/API 已作为后续业务 Skill 开发的临时可用链路 |
 
 当前 Web 展示系统健康、数据来源和 provisional 知识问答工作区；HTTP API 可创建持久会话、提交
@@ -22,11 +22,11 @@
 真实 PostgreSQL `SearchService` 和
 Citation target adapter 生成回答或拒答。默认 fake 模型提供确定性抽取式回答；配置允许的外部
 Chat Provider 仍走相同结构化生成与引用校验路径。Web 会展示终态回答、限制和文档版本/locator
-引用身份。
+引用身份；点击 Citation 后按 `run_id + evidence_id` 解析固定版本的最小原文片段并高亮。
 
 该链路是可真实使用的 provisional 版本，不是阶段 4/5 正式完成：QA 会话、Message、Run/Attempt、
 Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL；API/Worker 重启可恢复
-未完成运行，重复投递不会重复发布终态；引用尚不能点击跳转原文；
+未完成运行，重复投递不会重复发布终态；Citation 原文解析不会接受客户端伪造的版本、locator 或 Blob 路径；
 阶段 3 默认检索配置和质量门禁也尚未冻结。
 阶段 5 当前只有离线通用 Runtime/Registry、内存检查点恢复，以及不会被批量注册的 provisional
 `knowledge_qa` QA Port 合成契约；没有活动业务 Skill、Runtime API、PostgreSQL 运行/检查点持久化

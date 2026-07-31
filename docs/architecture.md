@@ -388,6 +388,8 @@ AgentRun/Checkpoint ORM 或 PostgreSQL Adapter、Runtime API、Web 入口或活�
    - `GET /api/v1/qa/runs/{run_id}`、`POST /api/v1/qa/runs/{run_id}/cancel`、
      `GET /api/v1/qa/runs/{run_id}/events`、`POST /api/v1/qa/runs/{run_id}/feedback` — provisional
      Run 查询/取消、SSE 重放和反馈契约；终态响应包含结构化回答/拒答及已校验 Citation 身份
+   - `GET /api/v1/qa/runs/{run_id}/citations/{evidence_id}` — 只解析该 Run 已原子发布的 Citation，
+     重新校验 Space、固定 DocumentVersion、Chunk、locator 和 Blob hash 后返回最小必要片段
 4. **请求可观测性**：`observability.py` 校验或生成 trace/request ID，返回
    `X-Trace-ID`、`X-Request-ID`，并创建 HTTP server span 与开始/完成 JSON 日志。
 
@@ -479,7 +481,8 @@ Trace/Request ID；数据来源读取真实 Source、Document 和 IngestionTask 
 
 Web 已包含系统健康、数据来源和 provisional 知识问答工作区。问答工作区可创建持久会话、提交
 问题、轮询/取消 Run，并展示真实 PostgreSQL 检索后生成的回答/拒答、限制以及已校验的文档、
-版本、Chunk 和 locator 身份。用户重试、证据原文跳转和引用高亮仍待实现。
+版本、Chunk 和 locator 身份。点击 Citation 会按需加载固定版本的最小原文片段并高亮 locator；
+伪造 Evidence 返回 404，失效历史引用返回状态而不重定向到新版本。用户重试仍待实现。
 
 **规范命令**：
 ```bash
@@ -742,7 +745,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
 | **阶段 2** | **✅ 正式完成** | **Step 0～9 完成；冻结 manifest 的 74 个 P0 来源成功率 100%，退出记录见 `docs/stage-2-acceptance.md`** |
 | **阶段 3** | **🟡 工程 Step 0～10 验收完成** | **检索 API、离线评测和安全边界已落地；真实模型定版及正式 holdout 未关闭，阶段未正式退出** |
-| 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、PostgreSQL QA 持久化、SSE/API/Web、Worker lease/重启恢复和回答评测门禁已落地；原文跳转、默认配置和 holdout 未落地 |
+| 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、PostgreSQL QA 持久化、SSE/API/Web、Worker lease/重启恢复、原文解析和回答评测门禁已落地；默认配置和 holdout 未落地 |
 | **阶段 5** | **🟡 通用基础 + 可用 provisional 链路** | **Step 0～4 和 Step 9 通用部分通过；现有持久 QA Web/API/Worker 可支撑后续开发，活动业务 Skill、通用 Runtime Checkpoint 和正式验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅

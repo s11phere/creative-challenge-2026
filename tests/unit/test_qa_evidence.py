@@ -255,6 +255,27 @@ async def test_text_citation_resolves_exact_one_based_inclusive_lines() -> None:
 
 
 @pytest.mark.asyncio
+async def test_markdown_citation_uses_structured_text_within_exact_source_lines() -> None:
+    from infrastructure.parsers import MarkdownParser
+
+    raw = b"# Heading\n\nA **formatted** paragraph over\nthree source lines.\n"
+    locator = SearchLocator(LocatorKind.LINES, 3, 4)
+    snapshot = _snapshot(raw, locator=locator)
+    resolver = CitationResolver(
+        targets=FakeTargets(snapshot),
+        blob_store=FakeBlobStore(raw),
+        parsers={CitationContentKind.TEXT: MarkdownParser()},
+    )
+
+    resolution = await resolver.resolve(
+        _citation(locator=locator, excerpt="A formatted paragraph over three source lines.")
+    )
+
+    assert resolution.status is CitationStatus.VALID
+    assert resolution.excerpt == "A formatted paragraph over three source lines."
+
+
+@pytest.mark.asyncio
 async def test_pdf_citation_resolves_only_the_declared_one_based_page() -> None:
     raw = b"synthetic-pdf-bytes"
     locator = SearchLocator(LocatorKind.PDF_PAGE, 2, 2)

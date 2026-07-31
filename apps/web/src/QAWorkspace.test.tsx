@@ -145,6 +145,15 @@ describe('QAWorkspace', () => {
           }),
         )
       }
+      if (url.includes('/citations/evidence-1')) {
+        return Promise.resolve(
+          response({
+            ...completed.citations[0],
+            status: 'valid',
+            excerpt: 'The exact source lines.',
+          }),
+        )
+      }
       return Promise.resolve(response(completed, url.endsWith('/questions') ? 202 : 200))
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -160,5 +169,11 @@ describe('QAWorkspace', () => {
     expect(screen.getByText('Provisional quality.')).toBeInTheDocument()
     expect(screen.getByText('lines 4-8')).toBeInTheDocument()
     expect(screen.getByText('00000000 / 00000000')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /查看原文/ }))
+    expect(await screen.findByText('The exact source lines.')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/qa/runs/run-1/citations/evidence-1'),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
   })
 })

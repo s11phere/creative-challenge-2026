@@ -87,9 +87,11 @@ class PostgresCitationTargetPort:
             file_name = Path(version.file_path or document.stable_key or "document.txt").name
             suffix = Path(file_name).suffix.casefold()
             content_kind = CitationContentKind.PDF if suffix == ".pdf" else CitationContentKind.TEXT
-            mime_type = (
-                "application/pdf" if content_kind is CitationContentKind.PDF else "text/plain"
-            )
+            mime_type = {
+                ".md": "text/markdown",
+                ".markdown": "text/markdown",
+                ".pdf": "application/pdf",
+            }.get(suffix, "text/plain")
             return CitationTargetSnapshot(
                 query=query,
                 current_version_id=document.current_version_id,

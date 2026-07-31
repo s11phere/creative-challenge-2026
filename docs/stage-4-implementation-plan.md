@@ -599,6 +599,11 @@ Application 用例；`docs/openapi.json` 与运行时 schema 一致。
 2026-07-31 补充：Web 现已读取终态结构化回答/拒答和服务端校验后的 Citation 身份，并展示
 document/version 摘要与 locator。引用原文跳转、高亮、重试、持久会话和 Worker 恢复仍未实现。
 
+2026-07-31 原文解析补充：在持久会话和 Worker 恢复落地后，Web Citation 已接入唯一
+`PublishedCitationService`，按 `run_id + evidence_id` 加载固定 DocumentVersion 的最小片段并高亮；
+API 不接受客户端 locator、版本或 Blob 路径。真实 Compose 验证 Markdown locator、Blob/excerpt
+摘要及伪造 Evidence 404。前述原文跳转/高亮缺口由此关闭；用户重试和反馈审核仍未完成。
+
 ### Step 9：实现反馈审核和评测候选导出
 
 1. Feedback 保存用户判断、可选说明、目标回答版本和安全元数据，不在日志记录说明正文。

@@ -592,6 +592,18 @@
 /* Grounded QA workspace                                              */
 /* ------------------------------------------------------------------ */
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .workspace-qa {
   width: min(1380px, 100%);
   height: 100svh;
@@ -735,15 +747,30 @@
 
 .qa-citation {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 20px minmax(0, 1fr) 18px;
+  width: 100%;
+  color: var(--ink);
+  text-align: left;
   gap: 10px;
   padding: 11px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface);
+  cursor: pointer;
 }
 
-.qa-citation div {
+.qa-citation:hover,
+.qa-citation[data-selected='true'] {
+  border-color: var(--accent);
+  background: #f2f7f5;
+}
+
+.qa-citation:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.qa-citation-copy {
   display: grid;
   gap: 4px;
   min-width: 0;
@@ -754,6 +781,57 @@
   overflow-wrap: anywhere;
   color: var(--muted);
   font-size: 12px;
+}
+
+.qa-excerpt {
+  margin: 0 16px 18px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.qa-excerpt:focus {
+  outline: none;
+}
+
+.qa-excerpt-heading,
+.qa-excerpt-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.qa-excerpt-heading {
+  justify-content: space-between;
+  color: var(--muted);
+}
+
+.qa-excerpt-heading strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.qa-excerpt pre {
+  max-height: 320px;
+  margin: 9px 0 0;
+  padding: 12px;
+  overflow: auto;
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/20px var(--mono);
+}
+
+.qa-excerpt mark {
+  color: inherit;
+  background: #fff1a8;
+}
+
+.qa-excerpt-status {
+  color: var(--muted);
 }
 
 .qa-error {

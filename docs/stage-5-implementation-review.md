@@ -37,7 +37,7 @@ Web Skill 入口、PostgreSQL Runtime Checkpoint 恢复或三入口端到端旅�
 | --- | --- | --- |
 | Step 5 | 部分完成 | PostgreSQL QA Run/Attempt、Worker lease/heartbeat、重复投递和重启恢复已完成；通用 Runtime Checkpoint、审批与清理仍待实现 |
 | Step 6 | 部分完成 | 未激活声明式包、QA Port Adapter 和合成契约已完成；生产激活等待阶段 3/4 正式退出 |
-| Step 7 | provisional 可用子集 | 现有 QA API/Web/Worker 已接真实检索、持久 Run、回答、引用身份和重启恢复；正式完成仍等待活动 Skill |
+| Step 7 | provisional 可用子集 | 现有 QA API/Web/Worker 已接真实检索、持久 Run、回答、引用身份、原文解析和重启恢复；正式完成仍等待活动 Skill |
 | Step 8 | 阻塞 | `knowledge_qa` 真实链路和派生知识写入 Application 用例稳定 |
 | Step 9 持久化部分 | 阻塞 | Step 5 提供运行引用查询、保留和清理事实源 |
 | Step 10 | 阻塞 | Step 0～9 全部交付，阶段 0 数据门禁关闭 |
@@ -82,6 +82,14 @@ Checkpoint、原文跳转、活动 Skill 和正式质量门禁仍未完成。
 该补充的完整回归结果为：Ruff format/check、mypy（86 个源文件）、后端 pytest（`605 passed, 44
 skipped`）、OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）和 production build 通过；
 隔离 PostgreSQL QA persistence/lease 集成测试为 `3 passed`。
+
+2026-07-31 Citation 原文补充审查：新增已发布 Citation Application 用例，HTTP/Web 只以
+`run_id + evidence_id` 请求原文，服务端从持久终态取回不可变 Citation 后重新校验 Space、固定版本、
+Chunk、locator、Blob 和 excerpt 摘要。真实 Compose 历史 Run 的 Markdown `lines 20-22` 已解析为
+`valid` 非空最小片段，伪造 Evidence 返回 404；Web 支持键盘打开、高亮及失败/失效状态。前述
+原文跳转缺口由此关闭；活动 Skill、通用 Runtime Checkpoint 和正式质量门禁仍未完成。
+本轮回归为后端 pytest `609 passed, 44 skipped`、mypy 87 个源文件、Web Vitest `16 passed`，
+Ruff、OpenAPI 一致性、Web lint/typecheck/build 和保留 Compose 全栈健康检查均通过。
 
 ## 验证记录
 

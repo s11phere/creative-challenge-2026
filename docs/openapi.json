@@ -74,6 +74,63 @@
         "title": "CandidateCountsResponse",
         "type": "object"
       },
+      "CitationExcerptResponse": {
+        "properties": {
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "evidence_id": {
+            "format": "uuid",
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "excerpt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excerpt"
+          },
+          "locator": {
+            "$ref": "#/components/schemas/CitationLocatorResponse"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CitationStatus"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "source_id",
+          "document_id",
+          "version_id",
+          "chunk_id",
+          "locator",
+          "status"
+        ],
+        "title": "CitationExcerptResponse",
+        "type": "object"
+      },
       "CitationLocatorResponse": {
         "properties": {
           "end": {
@@ -138,6 +195,19 @@
         ],
         "title": "CitationResponse",
         "type": "object"
+      },
+      "CitationStatus": {
+        "enum": [
+          "valid",
+          "source_updated",
+          "withdrawn",
+          "deleted",
+          "retention_expired",
+          "unavailable",
+          "invalid"
+        ],
+        "title": "CitationStatus",
+        "type": "string"
       },
       "ConflictResultResponse": {
         "properties": {
@@ -1607,6 +1677,56 @@
           }
         },
         "summary": "Cancel Run"
+      }
+    },
+    "/api/v1/qa/runs/{run_id}/citations/{evidence_id}": {
+      "get": {
+        "operationId": "resolve_citation_api_v1_qa_runs__run_id__citations__evidence_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidence_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Evidence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitationExcerptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Citation"
       }
     },
     "/api/v1/qa/runs/{run_id}/events": {

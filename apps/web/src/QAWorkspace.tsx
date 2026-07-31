@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
+  BookOpenText,
   FileText,
   LoaderCircle,
   MessageSquareText,
@@ -8,8 +9,15 @@ import {
   Send,
   Square,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
-import { cancelRun, createConversation, fetchRun, submitQuestion, type QARun } from './qa'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  cancelRun,
+  createConversation,
+  fetchCitationExcerpt,
+  fetchRun,
+  submitQuestion,
+  type QARun,
+} from './qa'
 
 type LocalQuestion = {
   id: string
@@ -39,6 +47,8 @@ export function QAWorkspace() {
   const [draft, setDraft] = useState('')
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [question, setQuestion] = useState<LocalQuestion | null>(null)
+  const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null)
+  const excerptRef = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
 
   const runQuery = useQuery({
@@ -52,6 +62,19 @@ export function QAWorkspace() {
 
   const currentRun = runQuery.data ?? question?.run
   const isActive = currentRun ? activeStatuses.has(currentRun.status) : false
+  const citationQuery = useQuery({
+    queryKey: ['qa-citation', currentRun?.run_id, selectedEvidenceId],
+    queryFn: ({ signal }) =>
+      fetchCitationExcerpt(currentRun!.run_id, selectedEvidenceId!, signal),
+    enabled: Boolean(currentRun?.run_id && selectedEvidenceId),
+    retry: false,
+  })
+
+  useEffect(() => {
+    if (selectedEvidenceId && (citationQuery.data || citationQuery.error)) {
+      excerptRef.current?.focus()
+    }
+  }, [citationQuery.data, citationQuery.error, selectedEvidenceId])
 
   const submitMutation = useMutation({
     mutationFn: async (text: string) => {
@@ -67,6 +90,7 @@ export function QAWorkspace() {
     },
     onSuccess: (nextQuestion) => {
       setQuestion(nextQuestion)
+      setSelectedEvidenceId(null)
       setDraft('')
     },
   })
@@ -185,18 +209,57 @@ export function QAWorkspace() {
           <h2 id="qa-evidence-title">引用证据</h2>
         </div>
         {currentRun?.citations?.length ? (
-          <div className="qa-citation-list">
-            {currentRun.citations.map((citation, index) => (
-              <article className="qa-citation" key={citation.evidence_id}>
-                <FileText size={17} aria-hidden="true" />
-                <div>
-                  <strong>证据 {index + 1}</strong>
-                  <span>{citation.locator.kind} {citation.locator.start}-{citation.locator.end}</span>
-                  <code>{citation.document_id.slice(0, 8)} / {citation.version_id.slice(0, 8)}</code>
-                </div>
-              </article>
-            ))}
-          </div>
+          <>
+            <div className="qa-citation-list">
+              {currentRun.citations.map((citation, index) => (
+                <button
+                  className="qa-citation"
+                  data-selected={selectedEvidenceId === citation.evidence_id}
+                  key={citation.evidence_id}
+                  type="button"
+                  aria-pressed={selectedEvidenceId === citation.evidence_id}
+                  onClick={() => setSelectedEvidenceId(citation.evidence_id)}
+                >
+                  <FileText size={17} aria-hidden="true" />
+                  <span className="qa-citation-copy">
+                    <strong>证据 {index + 1}</strong>
+                    <span>{citation.locator.kind} {citation.locator.start}-{citation.locator.end}</span>
+                    <code>{citation.document_id.slice(0, 8)} / {citation.version_id.slice(0, 8)}</code>
+                  </span>
+                  <BookOpenText size={16} aria-hidden="true" />
+                  <span className="sr-only">查看原文</span>
+                </button>
+              ))}
+            </div>
+            {selectedEvidenceId && (
+              <div className="qa-excerpt" ref={excerptRef} tabIndex={-1} aria-live="polite">
+                {citationQuery.isPending ? (
+                  <LoaderCircle className="spin" size={18} aria-label="正在加载原文" />
+                ) : citationQuery.error ? (
+                  <div className="qa-excerpt-status" role="alert">
+                    <AlertCircle size={18} aria-hidden="true" />
+                    <span>原文加载失败</span>
+                  </div>
+                ) : citationQuery.data?.excerpt ? (
+                  <>
+                    <div className="qa-excerpt-heading">
+                      <strong>原文</strong>
+                      <span>
+                        {citationQuery.data.locator.kind} {citationQuery.data.locator.start}-
+                        {citationQuery.data.locator.end}
+                      </span>
+                    </div>
+                    <pre><mark>{citationQuery.data.excerpt}</mark></pre>
+                  </>
+                ) : (
+                  <div className="qa-excerpt-status">
+                    <AlertCircle size={18} aria-hidden="true" />
+                    <span>原文当前不可用（{citationQuery.data?.status ?? 'unavailable'}）</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         ) : (
           <div className="qa-evidence-empty">
             <FileText size={25} aria-hidden="true" />

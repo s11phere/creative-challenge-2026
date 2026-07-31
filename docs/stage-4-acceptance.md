@@ -79,6 +79,15 @@ skipped`）、OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）与 
 隔离 PostgreSQL QA persistence/lease 集成测试为 `3 passed`。Windows 沙箱既有 `.pytest_cache`
 写权限警告不影响结果。
 
+原文解析补充（2026-07-31）：新增只接受 `run_id + evidence_id` 的已发布 Citation Application
+用例和 HTTP 端点，客户端不能提交 Space、版本、Chunk、locator 或 Blob 路径。Resolver 重新校验
+固定版本链、Blob SHA-256 和 excerpt SHA-256；Markdown 使用既有 parser 在精确源行范围内重建
+规范化 Evidence 文本，TXT 按一基闭区间行号，PDF 按单页解析。Web Citation 按钮支持键盘操作，
+按需展示并高亮最小片段，以及加载、失败和不可用状态。保留 Compose 中历史 completed Run 的
+`lines 20-22` Citation 已返回 `valid` 非空片段，伪造 evidence ID 返回 404；未输出或记录原文。
+本轮回归：后端 pytest `609 passed, 44 skipped`，Ruff format/check、mypy（87 个源文件）、
+OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）和 production build 均通过。
+
 ## 正式退出矩阵
 
 | 项目 | 状态 | 原因 |
@@ -87,15 +96,15 @@ skipped`）、OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）与 
 | QA PostgreSQL 迁移、upgrade/downgrade、保留语义 | provisional 已执行 | 空库往返迁移、单一 head、终态保留和中断恢复通过 |
 | Worker/Dramatiq 执行 | provisional 已执行 | ID-only 消息、lease/heartbeat、启动恢复和重复投递通过 |
 | API/Worker 重启恢复 | provisional 已执行 | Worker 停止时 queued，重启接管；终态读取与 SSE 重放通过 |
-| 导入到回答与引用身份的 Compose E2E | provisional 已执行 | 真实摄入/检索/引用身份通过；原文解析与反馈旅程未执行 |
+| 导入到回答、引用和原文的 Compose E2E | provisional 已执行 | 真实摄入/检索/固定版本最小片段解析通过；反馈旅程未执行 |
 | Playwright 桌面/移动截图 | 未执行 | 真实回答/Citation 用户旅程不存在 |
 | development 消融、默认 QA 配置冻结、正式 holdout | 未执行 | Stage 3 质量门禁及 Stage 4 正式门禁未关闭 |
-| Citation target resolution 与回答质量结论 | 部分执行 | PostgreSQL target 身份校验通过；无原文 API、质量冻结或正式 answer report |
+| Citation target resolution 与回答质量结论 | 部分执行 | PostgreSQL/Blob/locator 解析通过；无质量冻结或正式 answer report |
 
 ## 阶段 5 边界
 
 Grounded QA schema、SSE v1、安全边界和唯一 provisional QA Application Port 已可供后续设计；
 现有 QA API/Web 也可作为真实检索和引用身份的临时可用入口。QA 状态和事件已有 PostgreSQL
-事实源及 API/Worker 重启恢复，执行已进入独立 Worker；仍没有引用原文 API。阶段 5 可以据此继续开发，不得据此宣称活动
-`knowledge_qa` Skill 或阶段 4/5 正式完成；正式退出仍须关闭 Stage 3、原文旅程、质量和
+事实源及 API/Worker 重启恢复，执行已进入独立 Worker，固定版本原文片段可按需解析。阶段 5 可以据此继续开发，不得据此宣称活动
+`knowledge_qa` Skill 或阶段 4/5 正式完成；正式退出仍须关闭 Stage 3、完整反馈旅程、质量和
 holdout 门禁。

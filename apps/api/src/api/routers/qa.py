@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Literal
 from uuid import UUID, uuid4
 
-from domain.grounded_qa import QAAttempt, QAEvent, QAStatus, normalize_question
+from domain.grounded_qa import CitationStatus, QAAttempt, QAEvent, QAStatus, normalize_question
 from domain.qa_persistence import (
     ConversationRecord,
     FeedbackDecision,
@@ -72,6 +72,11 @@ class CitationResponse(BaseModel):
     version_id: UUID
     chunk_id: UUID
     locator: CitationLocatorResponse
+
+
+class CitationExcerptResponse(CitationResponse):
+    status: CitationStatus
+    excerpt: str | None = None
 
 
 class RunResponse(BaseModel):
@@ -226,6 +231,35 @@ async def get_run(run_id: UUID, request: Request) -> RunResponse:
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return _run_response(run)
+
+
+@router.get(
+    "/qa/runs/{run_id}/citations/{evidence_id}",
+    response_model=CitationExcerptResponse,
+)
+async def resolve_citation(
+    run_id: UUID,
+    evidence_id: UUID,
+    request: Request,
+) -> CitationExcerptResponse:
+    resolution = await request.app.state.qa_citation_service.resolve(run_id, evidence_id)
+    if resolution is None:
+        raise HTTPException(status_code=404, detail="Citation not found")
+    citation = resolution.citation
+    return CitationExcerptResponse(
+        evidence_id=citation.evidence_id,
+        source_id=citation.source_id,
+        document_id=citation.document_id,
+        version_id=citation.version_id,
+        chunk_id=citation.chunk_id,
+        locator=CitationLocatorResponse(
+            kind=citation.locator.kind.value,
+            start=citation.locator.start,
+            end=citation.locator.end,
+        ),
+        status=resolution.status,
+        excerpt=resolution.excerpt,
+    )
 
 
 @router.post("/qa/runs/{run_id}/cancel", response_model=RunResponse)

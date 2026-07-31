@@ -7,11 +7,20 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
+from application.qa import (
+    CitationResolver,
+    PublishedCitationApplicationPort,
+    PublishedCitationService,
+)
+from domain.grounded_qa import CitationContentKind
 from domain.qa_persistence import GroundedQARepository
 from domain.qa_sse import QAEventStore
 from fastapi import FastAPI, Response
+from infrastructure.blob_store import LocalFileBlobStore
 from infrastructure.config import settings
 from infrastructure.database import Database
+from infrastructure.parsers import MarkdownParser, PdfParser
+from infrastructure.qa import PostgresCitationTargetPort
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
 from infrastructure.telemetry import configure_observability
 from model_gateway import (
@@ -69,6 +78,7 @@ def create_app(
     enable_qa_execution: bool = True,
     qa_repository: GroundedQARepository | None = None,
     qa_event_store: QAEventStore | None = None,
+    qa_citation_service: PublishedCitationApplicationPort | None = None,
 ) -> FastAPI:
     """Application factory. Call once at process start."""
 
@@ -77,6 +87,17 @@ def create_app(
     qa_repository = qa_repository or PostgresGroundedQARepository(database)
     qa_event_log = qa_event_store or PostgresQAEventStore(database)
     qa_runtime = QAWorkerDispatcher(repository=qa_repository)
+    qa_citation_service = qa_citation_service or PublishedCitationService(
+        runs=qa_repository,
+        resolver=CitationResolver(
+            targets=PostgresCitationTargetPort(database),
+            blob_store=LocalFileBlobStore(),
+            parsers={
+                CitationContentKind.TEXT: MarkdownParser(),
+                CitationContentKind.PDF: PdfParser(),
+            },
+        ),
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -105,6 +126,7 @@ def create_app(
     app.state.qa_repository = qa_repository
     app.state.qa_event_log = qa_event_log
     app.state.qa_runtime = qa_runtime
+    app.state.qa_citation_service = qa_citation_service
     app.state.qa_execution_enabled = enable_qa_execution
 
     app.add_middleware(TraceMiddleware)

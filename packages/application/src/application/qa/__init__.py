@@ -1,5 +1,11 @@
 """Provisional grounded QA application services."""
 
+from .citation_resolution import (
+    CitationResolutionPort,
+    PublishedCitationApplicationPort,
+    PublishedCitationService,
+    QARunReader,
+)
 from .context_builder import (
     SYSTEM_RULES,
     ContextBuildDiagnostic,
@@ -64,6 +70,7 @@ __all__ = [
     "AnswerEvaluationObservation",
     "AnswerFailureStage",
     "CitationResolver",
+    "CitationResolutionPort",
     "ContextBuildDiagnostic",
     "ContextBuilder",
     "ContextBundle",
@@ -90,6 +97,9 @@ __all__ = [
     "MergedSearchResult",
     "QAGenerationProfileV1",
     "QAPlanningProfileV1",
+    "PublishedCitationApplicationPort",
+    "PublishedCitationService",
+    "QARunReader",
     "QASearchCoordinator",
     "QueryPlanner",
     "QueryPlanningDiagnostic",

@@ -32,6 +32,11 @@ export type QARun = {
   }>
 }
 
+export type CitationExcerpt = NonNullable<QARun['citations']>[number] & {
+  status: string
+  excerpt: string | null
+}
+
 export class QAApiError extends Error {
   status: number
 
@@ -81,4 +86,12 @@ export function cancelRun(runId: string): Promise<QARun> {
     method: 'POST',
     body: JSON.stringify({}),
   })
+}
+
+export function fetchCitationExcerpt(
+  runId: string,
+  evidenceId: string,
+  signal?: AbortSignal,
+): Promise<CitationExcerpt> {
+  return request(`/api/v1/qa/runs/${runId}/citations/${evidenceId}`, { signal })
 }
