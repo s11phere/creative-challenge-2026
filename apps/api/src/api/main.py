@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from .errors import ErrorResponse, register_error_handlers
 from .observability import TraceMiddleware
-from .qa_runtime import InProcessQARuntime
+from .qa_runtime import QAWorkerDispatcher
 from .routers import qa, search, sources
 
 
@@ -76,12 +76,7 @@ def create_app(
     gateway = model_gateway or _create_configured_model_gateway()
     qa_repository = qa_repository or PostgresGroundedQARepository(database)
     qa_event_log = qa_event_store or PostgresQAEventStore(database)
-    qa_runtime = InProcessQARuntime(
-        database=database,
-        gateway=gateway,
-        repository=qa_repository,
-        events=qa_event_log,
-    )
+    qa_runtime = QAWorkerDispatcher(repository=qa_repository)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -93,7 +88,6 @@ def create_app(
                 await qa_runtime.recover()
             yield
         finally:
-            await qa_runtime.aclose()
             await database.dispose()
             await gateway.aclose()
             await asyncio.to_thread(

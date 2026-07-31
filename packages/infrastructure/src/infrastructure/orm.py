@@ -396,6 +396,11 @@ class QARunAttemptModel(Base):
     answer_message_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="RESTRICT"), nullable=True
     )
+    lease_owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
@@ -405,6 +410,7 @@ class QARunAttemptModel(Base):
         CheckConstraint("number >= 1", name="ck_qa_run_attempts_number_positive"),
         CheckConstraint(_QA_STATUS_CHECK, name="ck_qa_run_attempts_status"),
         Index("idx_qa_run_attempts_run_number", "run_id", "number"),
+        Index("idx_qa_run_attempts_recovery", "status", "lease_expires_at"),
     )
 
 

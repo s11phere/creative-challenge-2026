@@ -384,7 +384,7 @@ AgentRun/Checkpoint ORM 或 PostgreSQL Adapter、Runtime API、Web 入口或活�
    - `/api/v1/tasks/{task_id}*` — 摄入任务状态、取消和重试
    - `POST /api/v1/spaces/{space_id}/search` — Space-scoped Keyword/Dense/Hybrid 检索
    - `POST /api/v1/spaces/{space_id}/conversations`、`POST /api/v1/conversations/{conversation_id}/questions`
-     — provisional PostgreSQL 会话与 Run 创建；API 进程内启动唯一 Grounded QA 用例
+     — provisional PostgreSQL 会话与 Run 创建；API 只投递 Run ID，由独立 Worker 执行唯一 Grounded QA 用例
    - `GET /api/v1/qa/runs/{run_id}`、`POST /api/v1/qa/runs/{run_id}/cancel`、
      `GET /api/v1/qa/runs/{run_id}/events`、`POST /api/v1/qa/runs/{run_id}/feedback` — provisional
      Run 查询/取消、SSE 重放和反馈契约；终态响应包含结构化回答/拒答及已校验 Citation 身份
@@ -433,14 +433,17 @@ AgentRun/Checkpoint ORM 或 PostgreSQL Adapter、Runtime API、Web 入口或活�
 | `src/worker/broker.py` | Worker 进程的 Redis/Dramatiq broker 初始化 |
 | `src/worker/tasks.py` | 无正文诊断任务、有限重试和永久失败回调 |
 | `src/worker/ingestion_tasks.py` | 持久摄入任务 actor、Orchestrator 组装、租约/心跳、取消、错误分类、有限重试和死信记录 |
+| `src/worker/qa_tasks.py` | 无正文 QA actor、attempt lease/心跳、重复投递保护和启动恢复 |
+| `packages/infrastructure/src/infrastructure/qa_execution.py` | API/Worker 共享的 QA 版本配置、Gateway 包装和唯一 Grounded QA Application Port 装配 |
 
-**当前状态**：Redis/Dramatiq 同时承载无正文诊断任务和阶段 2 摄入任务。摄入 actor 执行解析、
+**当前状态**：Redis/Dramatiq 同时承载无正文诊断、阶段 2 摄入和 provisional QA 任务。摄入 actor 执行解析、
 分块、Embedding、索引验证和原子发布；PostgreSQL `IngestionTask` 是状态、幂等、取消、租约和
 死信事实源，Redis 只投递 `task_id`/`trace_id` 等控制元数据。重复投递、Worker 丢失和取消均按
 持久状态恢复，不以日志是否出现作为完成事实。
 
-诊断 actor 的 started/completed 日志在容器中仍有已记录差异；排查应同时检查任务表、Redis
-队列和 trace。问答/Agent 长任务尚未接入 Worker，等待阶段 4 ADR-007 和持久化协议。
+QA actor 只接收 `run_id`、`trace_id` 和事件版本；PostgreSQL attempt lease/heartbeat 阻止并发执行，
+Worker 启动扫描未租用 queued/cancel_requested 与租约过期运行。诊断 actor 的 started/completed 日志
+在容器中仍有已记录差异；排查应同时检查任务表、Redis 队列和 trace。
 
 **依赖**：`dramatiq`、`infrastructure`、`application`、`model-gateway`
 
@@ -476,7 +479,7 @@ Trace/Request ID；数据来源读取真实 Source、Document 和 IngestionTask 
 
 Web 已包含系统健康、数据来源和 provisional 知识问答工作区。问答工作区可创建持久会话、提交
 问题、轮询/取消 Run，并展示真实 PostgreSQL 检索后生成的回答/拒答、限制以及已校验的文档、
-版本、Chunk 和 locator 身份。重试、证据原文跳转、引用高亮、Worker 完成链和重启恢复仍待实现。
+版本、Chunk 和 locator 身份。用户重试、证据原文跳转和引用高亮仍待实现。
 
 **规范命令**：
 ```bash
@@ -739,8 +742,8 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
 | **阶段 2** | **✅ 正式完成** | **Step 0～9 完成；冻结 manifest 的 74 个 P0 来源成功率 100%，退出记录见 `docs/stage-2-acceptance.md`** |
 | **阶段 3** | **🟡 工程 Step 0～10 验收完成** | **检索 API、离线评测和安全边界已落地；真实模型定版及正式 holdout 未关闭，阶段未正式退出** |
-| 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、查询/上下文、生成/故障、PostgreSQL QA 持久化、SSE/API/Web、反馈候选和回答评测门禁已落地；迁移往返与 API 重启恢复已验证；Worker、原文跳转、默认配置和 holdout 未落地 |
-| **阶段 5** | **🟡 通用基础 + 可用 provisional 链路** | **Step 0～4 和 Step 9 通用部分通过；现有持久 QA Web/API 可支撑后续开发，活动业务 Skill、Worker/检查点持久化和正式验收仍阻塞** |
+| 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、PostgreSQL QA 持久化、SSE/API/Web、Worker lease/重启恢复和回答评测门禁已落地；原文跳转、默认配置和 holdout 未落地 |
+| **阶段 5** | **🟡 通用基础 + 可用 provisional 链路** | **Step 0～4 和 Step 9 通用部分通过；现有持久 QA Web/API/Worker 可支撑后续开发，活动业务 Skill、通用 Runtime Checkpoint 和正式验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 

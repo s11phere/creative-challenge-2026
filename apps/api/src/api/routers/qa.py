@@ -1,4 +1,4 @@
-"""Provisional Grounded QA HTTP and SSE surface (no database/worker claim)."""
+"""Provisional Grounded QA HTTP/SSE surface backed by PostgreSQL and Worker execution."""
 
 from __future__ import annotations
 

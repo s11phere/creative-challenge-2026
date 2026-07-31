@@ -35,9 +35,9 @@ Web Skill 入口、PostgreSQL Runtime Checkpoint 恢复或三入口端到端旅�
 
 | 范围 | 状态 | 解阻条件 |
 | --- | --- | --- |
-| Step 5 | 部分完成 | 共享身份、内存 Runtime 检查点、PostgreSQL QA Run/Attempt 与 API 重启恢复已完成；通用 Checkpoint、Worker、租约与清理仍待实现 |
+| Step 5 | 部分完成 | PostgreSQL QA Run/Attempt、Worker lease/heartbeat、重复投递和重启恢复已完成；通用 Runtime Checkpoint、审批与清理仍待实现 |
 | Step 6 | 部分完成 | 未激活声明式包、QA Port Adapter 和合成契约已完成；生产激活等待阶段 3/4 正式退出 |
-| Step 7 | provisional 可用子集 | 现有 QA API/Web 已接真实检索、持久 Run、回答、引用身份和 API 重启恢复；正式完成仍等待 Worker 和活动 Skill |
+| Step 7 | provisional 可用子集 | 现有 QA API/Web/Worker 已接真实检索、持久 Run、回答、引用身份和重启恢复；正式完成仍等待活动 Skill |
 | Step 8 | 阻塞 | `knowledge_qa` 真实链路和派生知识写入 Application 用例稳定 |
 | Step 9 持久化部分 | 阻塞 | Step 5 提供运行引用查询、保留和清理事实源 |
 | Step 10 | 阻塞 | Step 0～9 全部交付，阶段 0 数据门禁关闭 |
@@ -71,6 +71,17 @@ Store，`qa_runs` 保持共享稳定身份，`qa_run_attempts` 记录 append-onl
 Feedback 均绑定 attempt。隔离 PostgreSQL 已验证迁移往返、单一 head、终态保留及中断 attempt
 重排队；Compose 已验证 completed Run、回答、Citation 和 SSE 事件跨 API 重启可读取。前述“QA
 状态重启丢失”限制由此关闭，但 Worker、通用 Runtime Checkpoint、原文跳转和活动 Skill 仍未完成。
+
+2026-07-31 QA Worker 补充审查：API 已移除进程内执行协程，只向既有 Dramatiq broker 投递
+`run_id/trace_id/event_version`；Worker 通过新增的 attempt lease/heartbeat 和共享
+`GroundedQAExecutor` 调用唯一 QA Application Port。隔离数据库验证 lease 互斥和恢复扫描；Compose
+验证 Worker 停止时 Run 保持 queued、重启后自动 completed 并返回 1 条 Citation。completed Run
+重复投递前后 Attempt/Citation/Event 计数保持 `1/1/3`。前述 QA Worker 缺口由此关闭；通用 Runtime
+Checkpoint、原文跳转、活动 Skill 和正式质量门禁仍未完成。
+
+该补充的完整回归结果为：Ruff format/check、mypy（86 个源文件）、后端 pytest（`605 passed, 44
+skipped`）、OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）和 production build 通过；
+隔离 PostgreSQL QA persistence/lease 集成测试为 `3 passed`。
 
 ## 验证记录
 

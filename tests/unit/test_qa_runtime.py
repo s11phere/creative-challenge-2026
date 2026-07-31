@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import json
-from typing import cast
 from uuid import UUID
 
 import pytest
-from api.qa_runtime import InProcessQARuntime, StructuredFakeGateway
+from api.qa_runtime import QAWorkerDispatcher
 from application.qa import InMemoryGroundedQARepository
-from domain.qa_sse import QAEventLog
-from infrastructure.database import Database
+from infrastructure.qa_execution import StructuredFakeGateway
 from model_gateway import ChatMessage, ChatRequest, ChatRole, FakeModelGateway
 
 
@@ -56,55 +53,50 @@ async def test_structured_fake_gateway_refuses_without_evidence() -> None:
 
 
 @pytest.mark.asyncio
-async def test_in_process_runtime_starts_each_run_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    runtime = InProcessQARuntime(
-        database=cast(Database, object()),
-        gateway=FakeModelGateway(),
+async def test_worker_dispatcher_enqueues_control_metadata_only() -> None:
+    captured: dict[str, object] = {}
+
+    class Message:
+        message_id = "message-1"
+
+    def enqueue(**kwargs: object) -> Message:
+        captured.update(kwargs)
+        return Message()
+
+    runtime = QAWorkerDispatcher(
         repository=InMemoryGroundedQARepository(),
-        events=QAEventLog(),
+        enqueuer=enqueue,
     )
-    release = asyncio.Event()
-    executions = 0
-
-    async def execute(_run_id: UUID) -> None:
-        nonlocal executions
-        executions += 1
-        await release.wait()
-
-    monkeypatch.setattr(runtime, "_execute", execute)
     run_id = UUID(int=1)
 
     assert runtime.start(run_id) is True
-    assert runtime.start(run_id) is False
-    await asyncio.sleep(0)
-    assert executions == 1
-
-    release.set()
-    await runtime.aclose()
-    assert runtime.start(run_id) is False
+    assert captured["run_id"] == str(run_id)
+    assert captured["event_version"] == 1
+    assert len(str(captured["trace_id"])) == 32
+    assert set(captured) == {"run_id", "trace_id", "event_version"}
 
 
 @pytest.mark.asyncio
-async def test_in_process_runtime_starts_recoverable_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_worker_dispatcher_enqueues_recoverable_runs() -> None:
     run_ids = (UUID(int=1), UUID(int=2))
 
     class RecoverableRepository(InMemoryGroundedQARepository):
         async def prepare_recovery(self) -> tuple[UUID, ...]:
             return run_ids
 
-    runtime = InProcessQARuntime(
-        database=cast(Database, object()),
-        gateway=FakeModelGateway(),
-        repository=RecoverableRepository(),
-        events=QAEventLog(),
-    )
     started: list[UUID] = []
 
-    def start(run_id: UUID) -> bool:
-        started.append(run_id)
-        return True
+    class Message:
+        message_id = "message-1"
 
-    monkeypatch.setattr(runtime, "start", start)
+    def enqueue(**kwargs: object) -> Message:
+        started.append(UUID(str(kwargs["run_id"])))
+        return Message()
+
+    runtime = QAWorkerDispatcher(
+        repository=RecoverableRepository(),
+        enqueuer=enqueue,
+    )
 
     assert await runtime.recover() == run_ids
     assert started == list(run_ids)

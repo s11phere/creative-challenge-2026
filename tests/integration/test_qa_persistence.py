@@ -13,6 +13,7 @@ from domain.grounded_qa import (
     QAEvent,
     QAOutcome,
     QAResult,
+    QAStatus,
 )
 from domain.models import Space
 from domain.qa_persistence import (
@@ -238,4 +239,33 @@ async def test_recovery_requeues_interrupted_attempt_and_removes_unpublished_evi
     assert recovered is not None
     assert recovered.status.value == "queued"
     assert await repository.list_evidence(recovered.attempt.attempt_id) == ()
+    await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_worker_lease_prevents_duplicate_claim_and_recovery() -> None:
+    database = await _database()
+    repository = PostgresGroundedQARepository(database)
+    _conversation, queued = await _queued_run(repository, key=f"leased-run-{uuid4()}")
+
+    assert (
+        await repository.claim_run(queued.run_id, lease_owner="worker-1", lease_seconds=30)
+        == queued
+    )
+    assert (
+        await repository.claim_run(queued.run_id, lease_owner="worker-2", lease_seconds=30) is None
+    )
+    assert queued.run_id not in await repository.prepare_recovery()
+    assert await repository.renew_run_lease(queued.run_id, lease_owner="worker-1", lease_seconds=30)
+
+    await repository.release_run_lease(queued.run_id, lease_owner="worker-1")
+    reclaimed = await repository.claim_run(
+        queued.run_id,
+        lease_owner="worker-2",
+        lease_seconds=30,
+    )
+    assert reclaimed is not None
+    assert reclaimed.run_id == queued.run_id
+    assert reclaimed.attempt.attempt_id == queued.attempt.attempt_id
+    assert reclaimed.status is QAStatus.QUEUED
     await database.dispose()

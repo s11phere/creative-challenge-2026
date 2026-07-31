@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -250,6 +250,8 @@ class PostgresGroundedQARepository:
             )
             _project_attempt(attempt, updated)
             _project_run(base, updated)
+            if updated.status in _TERMINAL:
+                _clear_lease(attempt)
             return updated
 
     async def request_cancel(self, run_id: UUID) -> QARunRecord:
@@ -359,6 +361,7 @@ class PostgresGroundedQARepository:
             )
             _project_attempt(attempt, updated)
             _project_run(base, updated)
+            _clear_lease(attempt)
             return updated
 
     async def list_citations(self, attempt_id: UUID) -> tuple[CitationRecord, ...]:
@@ -418,8 +421,49 @@ class PostgresGroundedQARepository:
             )
         return feedback
 
+    async def claim_run(
+        self, run_id: UUID, *, lease_owner: str, lease_seconds: int
+    ) -> QARunRecord | None:
+        if not lease_owner or lease_seconds < 1:
+            raise QAContractError("QA Worker lease requires an owner and positive duration")
+        async with self._database.transaction() as session:
+            base, attempt, current = await self._locked_run(session, run_id)
+            if current.status in _TERMINAL:
+                return current
+
+            now = datetime.now(UTC)
+            if _lease_is_active(attempt, now) and attempt.lease_owner != lease_owner:
+                return None
+            if current.status in {QAStatus.RUNNING, QAStatus.VERIFYING}:
+                current = await self._reset_interrupted(session, base, attempt, current)
+            if current.status not in {QAStatus.QUEUED, QAStatus.CANCEL_REQUESTED}:
+                return None
+
+            attempt.lease_owner = lease_owner
+            attempt.heartbeat_at = now
+            attempt.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            return current
+
+    async def renew_run_lease(self, run_id: UUID, *, lease_owner: str, lease_seconds: int) -> bool:
+        if lease_seconds < 1:
+            return False
+        async with self._database.transaction() as session:
+            _base, attempt, current = await self._locked_run(session, run_id)
+            if current.status in _TERMINAL or attempt.lease_owner != lease_owner:
+                return False
+            now = datetime.now(UTC)
+            attempt.heartbeat_at = now
+            attempt.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            return True
+
+    async def release_run_lease(self, run_id: UUID, *, lease_owner: str) -> None:
+        async with self._database.transaction() as session:
+            _base, attempt, _current = await self._locked_run(session, run_id)
+            if attempt.lease_owner == lease_owner:
+                _clear_lease(attempt)
+
     async def prepare_recovery(self) -> tuple[UUID, ...]:
-        """Requeue safe non-terminal attempts after an API process restart."""
+        """Return unleased queued work and reset expired interrupted attempts."""
         async with self._database.transaction() as session:
             bases = (
                 await session.execute(
@@ -429,32 +473,46 @@ class PostgresGroundedQARepository:
                 )
             ).scalars()
             run_ids: list[UUID] = []
+            now = datetime.now(UTC)
             for base in bases:
                 attempt = await self._latest_attempt(session, base.id, for_update=True)
                 if attempt is None:
                     continue
                 status = QAStatus(attempt.status)
-                if status is QAStatus.CANCEL_REQUESTED:
-                    run_ids.append(base.id)
+                if _lease_is_active(attempt, now):
                     continue
-                if status is not QAStatus.QUEUED:
-                    await session.execute(
-                        delete(QAEvidenceModel).where(QAEvidenceModel.attempt_id == attempt.id)
-                    )
-                    attempt.status = QAStatus.QUEUED.value
-                    attempt.cancellation_requested = False
-                    attempt.error_code = None
-                    attempt.usage = _dump(_USAGE, QARunUsage())
-                    attempt.result = None
-                    attempt.answer_message_id = None
-                    base.status = attempt.status
-                    base.cancellation_requested = False
-                    base.error_code = None
-                    base.usage = attempt.usage
-                    base.result = None
-                    base.answer_message_id = None
-                run_ids.append(base.id)
+                current = _run(base, attempt)
+                if status in {QAStatus.RUNNING, QAStatus.VERIFYING}:
+                    current = await self._reset_interrupted(session, base, attempt, current)
+                if current.status in {QAStatus.QUEUED, QAStatus.CANCEL_REQUESTED}:
+                    _clear_lease(attempt)
+                    run_ids.append(base.id)
             return tuple(run_ids)
+
+    @staticmethod
+    async def _reset_interrupted(
+        session: AsyncSession,
+        base: QARunModel,
+        attempt: QARunAttemptModel,
+        current: QARunRecord,
+    ) -> QARunRecord:
+        await session.execute(
+            delete(QAEvidenceModel).where(QAEvidenceModel.attempt_id == attempt.id)
+        )
+        recovered = replace(
+            current,
+            status=QAStatus.QUEUED,
+            cancellation_requested=False,
+            error_code=None,
+            usage=QARunUsage(),
+            result=None,
+            answer_message_id=None,
+            updated_at=datetime.now(UTC),
+        )
+        _project_attempt(attempt, recovered)
+        _project_run(base, recovered)
+        _clear_lease(attempt)
+        return recovered
 
     async def _latest_attempt(
         self, session: AsyncSession, run_id: UUID, *, for_update: bool = False
@@ -659,6 +717,20 @@ def _project_run(model: QARunModel, run: QARunRecord) -> None:
     model.result = _dump(_RESULT, run.result) if run.result is not None else None
     model.answer_message_id = run.answer_message_id
     model.updated_at = run.updated_at
+
+
+def _lease_is_active(model: QARunAttemptModel, now: datetime) -> bool:
+    return (
+        model.lease_owner is not None
+        and model.lease_expires_at is not None
+        and model.lease_expires_at > now
+    )
+
+
+def _clear_lease(model: QARunAttemptModel) -> None:
+    model.lease_owner = None
+    model.lease_expires_at = None
+    model.heartbeat_at = None
 
 
 def _evidence(model: QAEvidenceModel) -> EvidenceRecord:

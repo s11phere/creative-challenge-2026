@@ -271,6 +271,22 @@ class GroundedQARepository(Protocol):
     async def submit_feedback(self, feedback: FeedbackRecord) -> FeedbackRecord: ...
 
 
+class GroundedQAExecutionRepository(GroundedQARepository, Protocol):
+    """Durable execution ownership used by at-least-once Worker delivery."""
+
+    async def claim_run(
+        self, run_id: UUID, *, lease_owner: str, lease_seconds: int
+    ) -> QARunRecord | None: ...
+
+    async def renew_run_lease(
+        self, run_id: UUID, *, lease_owner: str, lease_seconds: int
+    ) -> bool: ...
+
+    async def release_run_lease(self, run_id: UUID, *, lease_owner: str) -> None: ...
+
+    async def prepare_recovery(self) -> tuple[UUID, ...]: ...
+
+
 def terminal_status_for_result(result: QAResult) -> QAStatus:
     if result.outcome is QAOutcome.ANSWER or result.outcome is QAOutcome.CONFLICT:
         return QAStatus.COMPLETED
@@ -287,6 +303,7 @@ __all__ = [
     "FeedbackRecord",
     "FeedbackReviewStatus",
     "GroundedQARepository",
+    "GroundedQAExecutionRepository",
     "MessageRecord",
     "MessageRole",
     "QAPhase",
