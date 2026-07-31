@@ -35,7 +35,7 @@ AgentRun/Evidence 持久化及 ADR-007 协议。因此没有 `knowledge_qa` 或�
 
 | 范围 | 状态 | 解阻条件 |
 | --- | --- | --- |
-| Step 5 | 阻塞 | 阶段 4 提供 Conversation、AgentRun、Evidence 身份和持久化语义；再新增迁移与恢复 Adapter |
+| Step 5 | 部分完成 | 共享身份、内存原子检查点和确定性恢复已完成；PostgreSQL/Alembic、Worker、租约与清理等待阶段 3/4 正式门禁 |
 | Step 6 | 阻塞 | 阶段 2 摄入、阶段 3 检索和阶段 4 引用问答退出条件完成 |
 | Step 7 | 阻塞 | Step 5/6 完成，ADR-007 或等价 SSE/后台任务协议接受 |
 | Step 8 | 阻塞 | `knowledge_qa` 真实链路和派生知识写入 Application 用例稳定 |
@@ -44,6 +44,11 @@ AgentRun/Evidence 持久化及 ADR-007 协议。因此没有 `knowledge_qa` 或�
 
 上述阻塞项不得用平行 ORM、临时回答 schema、fake API 或私有语料绕过。项目当前主推进顺序
 仍是阶段 2 摄入闭环，然后阶段 3 检索和阶段 4 引用问答，再回到阶段 5 业务接入。
+
+2026-07-31 补充审查：阶段 4 provisional 契约落地后，Step 5 已在不新增业务表的边界内继续。
+`RuntimeStateStore` 复用共享 AgentRun 身份，内存事务替身原子保存运行状态与带摘要的下一安全
+检查点；执行器恢复不会重放已完成节点，并拒绝跨 Space、摘要篡改、序号间隙和预算回退。该结论
+仍不覆盖 PostgreSQL、Worker 重启或重复副作用验收。
 
 ## 验证记录
 

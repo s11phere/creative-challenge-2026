@@ -340,15 +340,17 @@ Embedding/Reranker 仅通过固定镜像、revision 和显式 Compose profile �
 | --- | --- |
 | `tools.py` | Tool 定义、JSON Schema、显式 handler、权限/Space/预算/审批校验和脱敏调用记录 |
 | `skills.py` | 受信目录 Skill manifest、包摘要、版本固定、事务式 reload、原子激活/回滚和恢复兼容检查 |
-| `executor.py` | 声明式 workflow、状态迁移、预算预留、有限重试、取消/超时和审计事件 v1 |
+| `checkpoints.py` | 规范化状态摘要、下一安全节点和内存原子 Run/Checkpoint 事务替身 |
+| `executor.py` | 声明式 workflow、状态迁移、预算预留、有限重试、取消/超时、检查点恢复和审计事件 v1 |
 | `__init__.py` | 稳定公开导出 |
 
 **信任边界**：只读取配置的受信根目录；拒绝远程 schema、路径逃逸、symlink/junction 和
 可执行 entrypoint；manifest 只能引用应用启动时注册的 handler。完整包、workflow、schema 和
 prompt 摘要在运行开始时固定。
 
-**当前边界**：该包只完成离线通用工程基础和 fake 契约。没有 AgentRun/Checkpoint ORM、
-Runtime API、Web 入口或 `knowledge_qa` 等业务 Skill；活动版本和生命周期事件当前只在进程内。
+**当前边界**：该包只完成离线通用工程基础、fake 契约和内存检查点恢复。没有
+AgentRun/Checkpoint ORM 或 PostgreSQL Adapter、Runtime API、Web 入口或 `knowledge_qa` 等业务
+Skill；活动版本、生命周期事件和检查点当前只在进程内。
 
 **依赖**：`domain`、`model-gateway`、`jsonschema`、`packaging`、`pyyaml`
 
@@ -603,6 +605,7 @@ tests/
 │   ├── test_gateway_*              # Query Embedding 与 Reranker Adapter
 │   ├── test_source_api_helpers.py  # 来源 API 映射和安全边界
 │   ├── test_agent_runtime_domain.py
+│   ├── test_runtime_checkpoints.py
 │   ├── test_runtime_executor.py
 │   ├── test_skill_registry.py
 │   ├── test_skill_lifecycle.py
@@ -636,7 +639,7 @@ tests/
 - ModelGateway：共享 Chat/Embedding/Reranker 契约、能力别名、确定性 fake、有限重试、结构解析、
   endpoint 策略、显式不可用状态及输入/输出不进入日志或 span
 - Agent Runtime：状态/步骤分离、终态、预算、Tool/Skill schema、受信路径、版本固定、
-  声明式执行、权限、有限重试、取消/超时、审计脱敏和原子 reload/回滚
+  声明式执行、权限、有限重试、取消/超时、内存原子检查点/恢复、审计脱敏和原子 reload/回滚
 
 前端 Vitest 覆盖系统健康、数据来源、上传/触发、任务轮询/取消/重试、API 不可达、非法响应、
 有界超时、键盘焦点，以及 provisional 问答导航、提问、queued、显式取消和不伪造 Citation。

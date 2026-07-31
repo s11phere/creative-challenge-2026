@@ -8,6 +8,7 @@ from uuid import UUID
 
 import pytest
 import yaml
+from agent_runtime.checkpoints import InMemoryRuntimeStateStore
 from agent_runtime.executor import (
     DeterministicWorkflowExecutor,
     NodeExecutionContext,
@@ -24,7 +25,9 @@ from domain.agent_runtime import (
     AgentRun,
     AgentRunContext,
     BudgetUsage,
+    RecoveryRejectedError,
     RunStatus,
+    RuntimeStateStore,
 )
 from model_gateway import (
     ChatMessage,
@@ -233,6 +236,7 @@ def executor(
     node_handlers: Mapping[str, NodeHandler] | None = None,
     tool_available: bool = True,
     sink: MemoryAuditSink | None = None,
+    state_store: RuntimeStateStore | None = None,
     cancellation_check: Callable[[AgentRun], Awaitable[bool]] | None = None,
     clock_ms: Callable[[], int] | None = None,
 ) -> DeterministicWorkflowExecutor:
@@ -242,6 +246,7 @@ def executor(
         handlers=node_handlers or handlers(),
         tool_registry=FakeToolRegistry(tool_available),
         audit_sink=sink,
+        state_store=state_store,
         cancellation_check=cancellation_check,
         clock_ms=clock_ms,
     )
@@ -435,6 +440,83 @@ async def test_missing_tool_is_rejected_before_workflow(tmp_path: Path) -> None:
     assert result.error is not None
     assert result.error.code == "TOOL_NOT_FOUND"
     assert not called
+
+
+@pytest.mark.asyncio
+async def test_resume_continues_after_last_committed_node(tmp_path: Path) -> None:
+    registry, pin, run = registry_and_pin(tmp_path)
+    store = InMemoryRuntimeStateStore()
+    first_calls: list[str] = []
+
+    async def fail_generate(_context: NodeExecutionContext) -> NodeResult:
+        first_calls.append("generate")
+        raise RuntimeError("synthetic interruption")
+
+    interrupted_handlers = handlers(calls=first_calls)
+    interrupted_handlers["generate"] = fail_generate
+    interrupted = await executor(
+        registry, node_handlers=interrupted_handlers, state_store=store, clock_ms=lambda: 0
+    ).execute(run, pin, {"question": "fixture"})
+    assert interrupted.run.status is RunStatus.FAILED
+    stored_run = await store.get_run(run.context.run_id)
+    checkpoint = await store.get_latest(run.context.run_id)
+    assert stored_run is not None and checkpoint is not None
+    assert checkpoint.next_node == "generate"
+
+    resumed_calls: list[str] = []
+    resumed = await executor(
+        registry, node_handlers=handlers(calls=resumed_calls), state_store=store, clock_ms=lambda: 0
+    ).resume(
+        stored_run,
+        pin,
+        checkpoint,
+        {"question": "fixture"},
+        caller_id=run.context.caller_id,
+        space_id=run.context.space_id,
+    )
+
+    assert resumed.run.status is RunStatus.COMPLETED
+    assert resumed_calls == ["generate", "verify"]
+    assert first_calls == ["plan", "retrieve", "generate"]
+
+
+@pytest.mark.asyncio
+async def test_resume_rejects_cross_space_and_tampered_state(tmp_path: Path) -> None:
+    registry, pin, run = registry_and_pin(tmp_path)
+    store = InMemoryRuntimeStateStore()
+    calls: list[str] = []
+    interrupted_handlers = handlers(calls=calls)
+
+    async def fail_generate(_context: NodeExecutionContext) -> NodeResult:
+        raise RuntimeError("synthetic interruption")
+
+    interrupted_handlers["generate"] = fail_generate
+    await executor(
+        registry, node_handlers=interrupted_handlers, state_store=store, clock_ms=lambda: 0
+    ).execute(run, pin, {"question": "fixture"})
+    stored_run = await store.get_run(run.context.run_id)
+    checkpoint = await store.get_latest(run.context.run_id)
+    assert stored_run is not None and checkpoint is not None
+
+    runtime = executor(registry, state_store=store, clock_ms=lambda: 0)
+    with pytest.raises(RecoveryRejectedError, match="ownership"):
+        await runtime.resume(
+            stored_run,
+            pin,
+            checkpoint,
+            {"question": "fixture"},
+            caller_id=run.context.caller_id,
+            space_id=UUID(int=999),
+        )
+    with pytest.raises(RecoveryRejectedError, match="digest"):
+        await runtime.resume(
+            stored_run,
+            pin,
+            replace(checkpoint, state={"tampered": True}),
+            {"question": "fixture"},
+            caller_id=run.context.caller_id,
+            space_id=run.context.space_id,
+        )
 
 
 def test_repository_template_workflow_is_declarative_and_valid() -> None:

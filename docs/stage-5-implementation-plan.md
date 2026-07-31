@@ -380,6 +380,19 @@ Provider 可重试错误按节点 `max_retries` 有界执行，并在每次重�
 数据模型或迁移。PostgreSQL 持久化、租约、审批、Worker 重启和重复副作用验证等待阶段 4
 模型交接后继续。
 
+**部分完成情况（2026-07-31）**：阶段 4 已提供共享 AgentRun 投影、Conversation/Evidence
+Repository Port 和内存事务替身，但正式门禁仍禁止新增 QA/Runtime 业务表和迁移。因此本次只完成
+不依赖生产持久化的恢复闭环：扩展共享 `RunCheckpoint` 的规范化状态摘要、下一安全节点和连续序号
+契约；新增 `RuntimeStateStore` 原子提交 Port 与 `InMemoryRuntimeStateStore` 事务替身；执行器在节点
+成功后原子保存运行使用量和下一安全恢复点，并支持从该节点继续。恢复会重新校验调用者、Space、
+固定 Skill、包摘要、checkpoint schema、状态摘要、序号和预算，已完成节点不会重放。故障注入覆盖
+摘要篡改、序号间隙、预算回退和无部分提交。普通 handler 异常同时修正为稳定
+`RUN_NODE_FAILED`，不再因冻结异常对象产生二次故障。
+
+本步骤仍未完成 PostgreSQL Adapter、Alembic revision、租约/心跳、Worker 重启与重复投递、审批
+持久化和旧检查点清理；这些内容继续等待阶段 3 正式退出及阶段 4 正式持久化门禁关闭，不能据此
+宣称 Step 5 或阶段 5 完成。定向验证：Ruff format 通过，Runtime/Skill 相关测试 `30 passed`。
+
 ### 步骤 6：封装 `knowledge_qa` Skill
 
 本步骤必须等待阶段 2 至阶段 4 的相关退出条件和接口完成。
@@ -503,7 +516,7 @@ Registry 不提供旧版本删除 API；AgentRun/Checkpoint/审计引用查询�
 | 2. Tool Registry | 步骤 1；阶段 3/4 Port 可先用 fake | 通用契约与 Registry 已完成；真实 Tool 待阶段 3/4 |
 | 3. Skill Registry | 步骤 0/1；受信目录和摘要规则确定 | 已完成 |
 | 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 已完成 |
-| 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | 已复核并跳过；等待阶段 4 模型 |
+| 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | provisional 内存原子检查点/恢复已完成；PostgreSQL、Worker、租约与清理仍阻塞 |
 | 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | 已复核并跳过；等待前序阶段 |
 | 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 已复核并跳过；等待前序协议 |
 | 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | 已复核并跳过；等待步骤 6/7 |

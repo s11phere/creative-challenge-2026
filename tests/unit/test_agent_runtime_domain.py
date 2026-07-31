@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import UUID, uuid4
 
 import pytest
@@ -105,8 +106,10 @@ def test_recovery_requires_verified_matching_checkpoint() -> None:
         skill_version=run.context.skill_version,
         skill_content_sha256=run.context.skill_content_sha256,
         next_step=RunStep.PLANNING,
+        next_node="plan",
         verified=True,
     )
+    run = replace(run, checkpoint_sequence=1)
     validate_recovery(run, checkpoint, caller_id="user-1", space_id=run.context.space_id)
     with pytest.raises(RecoveryRejectedError):
         validate_recovery(run, checkpoint, caller_id="other", space_id=run.context.space_id)

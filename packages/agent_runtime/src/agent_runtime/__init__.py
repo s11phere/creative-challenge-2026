@@ -1,5 +1,11 @@
 """Bounded Agent Runtime implementations."""
 
+from .checkpoints import (
+    CHECKPOINT_SCHEMA_VERSION,
+    InMemoryRuntimeStateStore,
+    build_checkpoint,
+    checkpoint_state_sha256,
+)
 from .executor import (
     DeterministicWorkflowExecutor,
     NodeBudgetReservation,
@@ -40,10 +46,12 @@ from .tools import (
 )
 
 __all__ = [
+    "CHECKPOINT_SCHEMA_VERSION",
     "DeterministicWorkflowExecutor",
     "FileSystemSkillRegistry",
     "JSONValue",
     "InMemoryToolRegistry",
+    "InMemoryRuntimeStateStore",
     "NodeBudgetReservation",
     "NodeExecutionContext",
     "NodeHandler",
@@ -71,5 +79,7 @@ __all__ = [
     "ToolRegistryErrorCode",
     "WorkflowDefinition",
     "WorkflowNode",
+    "build_checkpoint",
+    "checkpoint_state_sha256",
     "load_workflow",
 ]
