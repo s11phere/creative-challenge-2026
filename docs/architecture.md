@@ -250,10 +250,12 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/qa/generation.py` | `fast_chat` 非流式结构化生成、JSON schema 解析、一次修复、空证据拒答、显式取消、细分模型故障、冲突/发布竞态校验和安全版本/用量结果 |
 | `src/application/qa/persistence.py` | provisional 内存 Grounded QA Repository；验证 Space/owner、幂等、attempt、取消、usage、Evidence/Feedback 和原子终态发布 |
 | `src/application/qa/service.py` | 唯一 provisional `GroundedQAApplicationPort`；编排幂等提交、阶段 3 SearchService、Evidence/上下文、结构化生成、原子发布、取消和稳定失败终态 |
+| `src/application/skills/knowledge_qa.py` | 未激活的 provisional Skill Adapter；仅将 Runtime 服务端上下文映射到唯一 QA Port 并投影其结构化结果 |
 | `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
 | `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
 
-**依赖**：`domain`、`model-gateway`、`jsonschema`
+**依赖**：`agent-runtime`、`domain`、`model-gateway`、`jsonschema`。其中 `agent-runtime` 仅供
+Application 层的 Skill Adapter 编排使用；通用 Runtime 不反向依赖业务 Application。
 
 **模式**：每个用例是一个独立函数或类，接收 Port 作为参数，不直接依赖具体实现。
 
@@ -349,8 +351,9 @@ Embedding/Reranker 仅通过固定镜像、revision 和显式 Compose profile �
 prompt 摘要在运行开始时固定。
 
 **当前边界**：该包只完成离线通用工程基础、fake 契约和内存检查点恢复。没有
-AgentRun/Checkpoint ORM 或 PostgreSQL Adapter、Runtime API、Web 入口或 `knowledge_qa` 等业务
-Skill；活动版本、生命周期事件和检查点当前只在进程内。
+AgentRun/Checkpoint ORM 或 PostgreSQL Adapter、Runtime API、Web 入口或活动业务 Skill；
+`_provisional/knowledge_qa` 只供 fake 契约显式加载，不参与批量注册。活动版本、生命周期事件和
+检查点当前只在进程内。
 
 **依赖**：`domain`、`model-gateway`、`jsonschema`、`packaging`、`pyyaml`
 

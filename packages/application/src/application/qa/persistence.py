@@ -53,8 +53,14 @@ class InMemoryGroundedQARepository:
 
     async def create_conversation(self, conversation: ConversationRecord) -> ConversationRecord:
         async with self._lock:
-            if conversation.conversation_id in self._conversations:
-                raise QAContractError("Conversation identity already exists")
+            existing = self._conversations.get(conversation.conversation_id)
+            if existing is not None:
+                if (
+                    existing.space_id == conversation.space_id
+                    and existing.owner_id == conversation.owner_id
+                ):
+                    return existing
+                raise QAContractError("Conversation identity already exists with another owner")
             self._conversations[conversation.conversation_id] = conversation
             return conversation
 

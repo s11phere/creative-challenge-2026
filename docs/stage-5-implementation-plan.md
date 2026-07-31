@@ -416,6 +416,23 @@ Repository Port 和内存事务替身，但正式门禁仍禁止新增 QA/Runtim
 阶段 4 GroundedAnswer/Citation Application 用例均不存在；当前只能使用合成 Skill 和 fake
 验证 Runtime，不能创建平行问答 schema 或宣称 `knowledge_qa` 可用。
 
+**部分完成情况（2026-07-31）**：阶段 2 已正式完成，阶段 3 SearchService 和阶段 4 唯一
+provisional `GroundedQAApplicationPort` 已存在，因此完成了本步骤当前允许的合成契约部分。新增
+`application.skills.KnowledgeQASkillAdapter`，只向 QA Port 提交并执行问题，不复制 query rewrite、
+检索、Evidence、生成、拒答或 Citation 逻辑；调用者、Space 和幂等键来自服务端 Run 上下文，
+客户端不能注入 Evidence、Skill 版本、权限或 system prompt。固定的 QA/retrieval/profile/prompt/
+schema/corpus/dataset 版本通过服务端配置传入并在执行前交叉校验。
+
+新增 `skills/_provisional/knowledge_qa` 声明式包及输入/输出 schema。该目录被受信根批量 reload
+显式跳过，不能安装、激活或从 API/Web 调用，仅由契约测试显式加载。输出直接投影阶段 4 的
+`QARunRecord/QAResult`；证据不足保持正常 refusal，权限/策略、结构/引用、取消、超时以及
+检索/模型/存储故障保持不同稳定错误。测试使用合成 fake QA Port 和 `repository_fixture` 元数据，
+未读取 corpus 正文、未调用真实 Provider，也未运行 development/holdout。
+
+本步骤仍等待阶段 3 正式退出，以及阶段 4 PostgreSQL、Worker、终态 Citation API 和正式质量
+验收；因此没有生产 handler 注册、活动版本、真实引用解析或 Web/API 入口，不满足 Step 6 完成
+标准，也不能宣称 `knowledge_qa` 可用。
+
 ### 步骤 7：Runtime API 与 Web 调用入口
 
 - 在 `/api/v1/skills` 下提供 Skill/版本查询和受控激活/回滚接口。
@@ -517,7 +534,7 @@ Registry 不提供旧版本删除 API；AgentRun/Checkpoint/审计引用查询�
 | 3. Skill Registry | 步骤 0/1；受信目录和摘要规则确定 | 已完成 |
 | 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 已完成 |
 | 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | provisional 内存原子检查点/恢复已完成；PostgreSQL、Worker、租约与清理仍阻塞 |
-| 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | 已复核并跳过；等待前序阶段 |
+| 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | provisional 未激活包和 QA Port fake 契约已完成；生产接入仍阻塞 |
 | 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 已复核并跳过；等待前序协议 |
 | 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | 已复核并跳过；等待步骤 6/7 |
 | 9. 热加载与回滚 | 步骤 3/5；不可变版本和恢复语义已验证 | 通用部分已完成；持久化引用清理等待步骤 5 |

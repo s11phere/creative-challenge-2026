@@ -25,3 +25,7 @@ The refreshed audit permits Stage 5 schema, workflow and handler contract work a
 QA Port with local deterministic fakes. It does not permit PostgreSQL/Worker/API integration or a
 `knowledge_qa` availability claim. Formal Stage 5 business work remains blocked until Stage 3 formally
 exits and Stage 4 supplies the reviewed persistence, Worker, Citation API and quality evidence.
+
+The permitted contract work is now represented by `skills/_provisional/knowledge_qa` and
+`application.skills.KnowledgeQASkillAdapter`. Trusted-root bulk reload skips the package, and no startup
+path registers it. Tests load it explicitly with a fake QA Port; this does not change the formal gate.

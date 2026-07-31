@@ -20,9 +20,9 @@
 当前 Web 展示系统健康、数据来源和 provisional 知识问答工作区；HTTP API 可创建内存会话、提交问题、查询/取消 queued Run、重放安全 SSE 并提交已发布回答的反馈。由于没有 PostgreSQL QA 表、Worker 完成链和终态 Citation API，Run 不会形成真实回答，证据面板不会伪造引用，因此仍不能宣称真实问答或引用能力已经可用。
 纯 Application 层的 `GroundedQAApplicationPort` 已用合成 Search/Citation/Chat fake 验证幂等提交、
 Evidence 保存、结构化生成、原子发布、失败与取消语义；当前 HTTP/Worker 尚未接入该执行路径。
-阶段 5 当前只有离线通用 Runtime/Registry、合成 fake 契约和内存检查点恢复；没有业务 Skill、
-Runtime API、PostgreSQL 运行/检查点持久化或 Web Skill 入口，不能据此宣称 `knowledge_qa` 可用
-或阶段 5 整体完成。
+阶段 5 当前只有离线通用 Runtime/Registry、内存检查点恢复，以及不会被批量注册的 provisional
+`knowledge_qa` QA Port 合成契约；没有活动业务 Skill、Runtime API、PostgreSQL 运行/检查点持久化
+或 Web Skill 入口，不能据此宣称 `knowledge_qa` 可用或阶段 5 整体完成。
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
 [Stage 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
 [Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；必须先完成真实模型

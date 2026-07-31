@@ -163,6 +163,7 @@ name = "application"
 version = "0.1.0"
 source = { editable = "packages/application" }
 dependencies = [
+    { name = "agent-runtime" },
     { name = "domain" },
     { name = "jsonschema" },
     { name = "model-gateway" },
@@ -170,6 +171,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-runtime", editable = "packages/agent_runtime" },
     { name = "domain", editable = "packages/domain" },
     { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "model-gateway", editable = "packages/model_gateway" },

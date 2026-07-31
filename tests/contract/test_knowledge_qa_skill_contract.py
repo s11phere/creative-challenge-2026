@@ -1,0 +1,237 @@
+from __future__ import annotations
+
+import json
+from dataclasses import replace
+from pathlib import Path
+from uuid import UUID
+
+import pytest
+from agent_runtime import DeterministicWorkflowExecutor, FileSystemSkillRegistry, PinnedSkill
+from application.qa.profile import QAPlanningProfileV1
+from application.qa.service import GroundedQAExecutionProfile
+from application.skills import KnowledgeQASkillAdapter, KnowledgeQASkillConfig
+from domain.agent_runtime import AgentRun, AgentRunContext, RunStatus
+from domain.grounded_qa import (
+    Citation,
+    Claim,
+    GroundedAnswer,
+    QAAttempt,
+    QAOutcome,
+    QAResult,
+    QAStatus,
+    QuestionInput,
+    Refusal,
+    RefusalReason,
+)
+from domain.qa_persistence import ConversationRecord, QARunRecord, QARunVersions
+from domain.retrieval import LocatorKind, RetrievalProfileV1, SearchLocator
+from jsonschema import Draft202012Validator
+from model_gateway import FakeModelGateway
+
+ROOT = Path(__file__).parents[2]
+SKILLS_ROOT = ROOT / "skills"
+PACKAGE_PATH = "_provisional/knowledge_qa"
+SPACE_ID = UUID(int=1)
+RUN_ID = UUID(int=2)
+QA_RUN_ID = UUID(int=3)
+ATTEMPT_ID = UUID(int=4)
+MESSAGE_ID = UUID(int=5)
+EVIDENCE_ID = UUID(int=6)
+
+
+def versions() -> QARunVersions:
+    return QARunVersions(
+        skill_version="0.1.0",
+        profile_version="grounded-qa-provisional-v1",
+        retrieval_profile_version="retrieval-profile-v1",
+        model_identity="fake-fast-chat-v1",
+        prompt_version="grounded-qa-v1-provisional",
+        output_schema_version="grounded-answer-v1",
+        corpus_version="v0-provisional",
+        dataset_version="knowledge-qa-v0-provisional",
+    )
+
+
+def profile() -> GroundedQAExecutionProfile:
+    return GroundedQAExecutionProfile(
+        planning=QAPlanningProfileV1(),
+        retrieval=RetrievalProfileV1(
+            profile_version="retrieval-profile-v1", embedding_version="embedding-v1"
+        ),
+    )
+
+
+def answer_result() -> QAResult:
+    citation = Citation(
+        evidence_id=EVIDENCE_ID,
+        space_id=SPACE_ID,
+        source_id=UUID(int=7),
+        document_id=UUID(int=8),
+        version_id=UUID(int=9),
+        chunk_id=UUID(int=10),
+        locator=SearchLocator(LocatorKind.LINES, 1, 2),
+        excerpt_sha256="a" * 64,
+    )
+    return QAResult(
+        outcome=QAOutcome.ANSWER,
+        answer=GroundedAnswer(
+            text="Synthetic grounded answer.",
+            claims=(Claim("claim-1", "Synthetic grounded answer.", (EVIDENCE_ID,)),),
+            citations=(citation,),
+        ),
+    )
+
+
+class FakeGroundedQA:
+    def __init__(self, *, status: QAStatus = QAStatus.COMPLETED) -> None:
+        self.status = status
+        self.conversations: list[ConversationRecord] = []
+        self.questions: list[QuestionInput] = []
+        self.run: QARunRecord | None = None
+
+    async def create_conversation(self, conversation: ConversationRecord) -> ConversationRecord:
+        self.conversations.append(conversation)
+        return conversation
+
+    async def submit(self, question: QuestionInput, *, versions: QARunVersions) -> QARunRecord:
+        self.questions.append(question)
+        assert question.conversation_id is not None
+        self.run = QARunRecord(
+            run_id=QA_RUN_ID,
+            attempt=QAAttempt(run_id=QA_RUN_ID, attempt_id=ATTEMPT_ID),
+            conversation_id=question.conversation_id,
+            question_message_id=UUID(int=11),
+            space_id=question.space_id,
+            caller_id=question.caller_id,
+            idempotency_key=question.idempotency_key or "missing",
+            versions=versions,
+            status=QAStatus.QUEUED,
+        )
+        return self.run
+
+    async def execute(self, run_id: UUID, *, profile: GroundedQAExecutionProfile) -> QARunRecord:
+        assert run_id == QA_RUN_ID
+        assert profile == globals()["profile"]()
+        assert self.run is not None
+        if self.status is QAStatus.COMPLETED:
+            return replace(
+                self.run,
+                status=QAStatus.COMPLETED,
+                result=answer_result(),
+                answer_message_id=MESSAGE_ID,
+            )
+        if self.status is QAStatus.REFUSED:
+            return replace(
+                self.run,
+                status=QAStatus.REFUSED,
+                result=QAResult(
+                    QAOutcome.REFUSE,
+                    refusal=Refusal(
+                        RefusalReason.INSUFFICIENT_EVIDENCE,
+                        "Insufficient synthetic evidence.",
+                    ),
+                ),
+                answer_message_id=MESSAGE_ID,
+            )
+        return replace(
+            self.run,
+            status=QAStatus.FAILED,
+            error_code="QA_RETRIEVAL_FAILED",
+        )
+
+    async def request_cancel(self, run_id: UUID) -> QARunRecord:
+        raise AssertionError(f"unexpected cancellation for {run_id}")
+
+
+def runtime(qa: FakeGroundedQA) -> tuple[DeterministicWorkflowExecutor, PinnedSkill, AgentRun]:
+    registry = FileSystemSkillRegistry(SKILLS_ROOT)
+    package = registry.register(registry.load(PACKAGE_PATH))
+    registry.activate(package.manifest.name, package.manifest.version)
+    pin = registry.pin(package.manifest.name)
+    adapter = KnowledgeQASkillAdapter(
+        qa=qa, config=KnowledgeQASkillConfig(profile=profile(), versions=versions())
+    )
+    run = AgentRun(
+        context=AgentRunContext(
+            run_id=RUN_ID,
+            space_id=SPACE_ID,
+            skill_name=pin.name,
+            skill_version=pin.version,
+            skill_content_sha256=pin.content_sha256,
+            trace_id="trace-knowledge-qa-fixture",
+            caller_id="synthetic-user",
+            granted_permissions=package.manifest.permissions,
+        ),
+        budget=package.manifest.budgets,
+    )
+    executor = DeterministicWorkflowExecutor(
+        skill_registry=registry,
+        model_gateway=FakeModelGateway(),
+        handlers=adapter.handlers(),
+        clock_ms=lambda: 0,
+    )
+    return executor, pin, run
+
+
+@pytest.mark.asyncio
+async def test_provisional_package_delegates_to_qa_port_and_reuses_its_output() -> None:
+    qa = FakeGroundedQA()
+    executor, pin, run = runtime(qa)
+
+    result = await executor.execute(run, pin, {"question": "Use the synthetic fixture."})
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert result.refused is False
+    assert isinstance(result.output, dict)
+    assert result.output["status"] == "completed"
+    projected = result.output["result"]
+    assert isinstance(projected, dict)
+    assert projected["type"] == "answer"
+    assert qa.questions[0].space_id == SPACE_ID
+    assert qa.questions[0].caller_id == "synthetic-user"
+    assert qa.questions[0].idempotency_key == str(RUN_ID)
+    schema = json.loads(
+        (SKILLS_ROOT / PACKAGE_PATH / "schemas/output.json").read_text(encoding="utf-8")
+    )
+    Draft202012Validator(schema).validate(result.output)
+
+
+@pytest.mark.asyncio
+async def test_refusal_is_normal_result_but_dependency_failure_is_not() -> None:
+    refused_runtime, pin, run = runtime(FakeGroundedQA(status=QAStatus.REFUSED))
+    refused = await refused_runtime.execute(run, pin, {"question": "Unknown synthetic fact?"})
+    assert refused.run.status is RunStatus.COMPLETED
+    assert refused.refused is True
+    assert isinstance(refused.output, dict)
+    assert refused.output["status"] == "refused"
+
+    failed_runtime, failed_pin, failed_run = runtime(FakeGroundedQA(status=QAStatus.FAILED))
+    failed = await failed_runtime.execute(
+        failed_run, failed_pin, {"question": "Unavailable synthetic fact?"}
+    )
+    assert failed.run.status is RunStatus.FAILED
+    assert failed.error is not None
+    assert failed.error.code == "DEPENDENCY_RETRIEVAL_FAILED"
+    assert failed.error.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_client_cannot_supply_space_caller_evidence_or_fixed_skill_fields() -> None:
+    qa = FakeGroundedQA()
+    executor, pin, run = runtime(qa)
+    forbidden = ("space_id", "caller_id", "evidence", "skill_version", "system_prompt")
+    for field in forbidden:
+        result = await executor.execute(
+            run, pin, {"question": "Synthetic question.", field: "attacker-controlled"}
+        )
+        assert result.run.status is RunStatus.FAILED
+        assert result.error is not None
+        assert result.error.code == "SKILL_INPUT_INVALID"
+    assert qa.questions == []
+
+
+def test_provisional_package_is_not_bulk_installed_or_active() -> None:
+    registry = FileSystemSkillRegistry(SKILLS_ROOT)
+    loaded = registry.reload()
+    assert all(package.manifest.name != "knowledge_qa" for package in loaded)
+    assert registry.versions("knowledge_qa") == ()

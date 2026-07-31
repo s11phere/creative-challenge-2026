@@ -36,7 +36,7 @@ AgentRun/Evidence 持久化及 ADR-007 协议。因此没有 `knowledge_qa` 或�
 | 范围 | 状态 | 解阻条件 |
 | --- | --- | --- |
 | Step 5 | 部分完成 | 共享身份、内存原子检查点和确定性恢复已完成；PostgreSQL/Alembic、Worker、租约与清理等待阶段 3/4 正式门禁 |
-| Step 6 | 阻塞 | 阶段 2 摄入、阶段 3 检索和阶段 4 引用问答退出条件完成 |
+| Step 6 | 部分完成 | 未激活声明式包、QA Port Adapter 和合成契约已完成；生产激活等待阶段 3/4 正式退出 |
 | Step 7 | 阻塞 | Step 5/6 完成，ADR-007 或等价 SSE/后台任务协议接受 |
 | Step 8 | 阻塞 | `knowledge_qa` 真实链路和派生知识写入 Application 用例稳定 |
 | Step 9 持久化部分 | 阻塞 | Step 5 提供运行引用查询、保留和清理事实源 |
@@ -49,6 +49,11 @@ AgentRun/Evidence 持久化及 ADR-007 协议。因此没有 `knowledge_qa` 或�
 `RuntimeStateStore` 复用共享 AgentRun 身份，内存事务替身原子保存运行状态与带摘要的下一安全
 检查点；执行器恢复不会重放已完成节点，并拒绝跨 Space、摘要篡改、序号间隙和预算回退。该结论
 仍不覆盖 PostgreSQL、Worker 重启或重复副作用验收。
+
+2026-07-31 Step 6 补充审查：新增的 `skills/_provisional/knowledge_qa` 不参与批量 reload，
+`KnowledgeQASkillAdapter` 只调用唯一 provisional QA Port。服务端 Run 上下文提供调用者、Space 和
+幂等身份；测试验证回答、拒答、依赖故障以及客户端伪造安全字段。该实现没有生产注册、HTTP/Web
+入口、真实 Citation Adapter 或质量结论，仍不构成业务 Skill 可用性。
 
 ## 验证记录
 

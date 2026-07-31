@@ -204,6 +204,26 @@ async def test_conversation_run_and_evidence_are_space_scoped_and_idempotent() -
 
 
 @pytest.mark.asyncio
+async def test_conversation_creation_is_idempotent_only_for_the_same_owner_and_space() -> None:
+    repo = InMemoryGroundedQARepository()
+    conversation = ConversationRecord(
+        conversation_id=CONVERSATION_ID,
+        space_id=SPACE_ID,
+        owner_id="owner-1",
+    )
+    assert await repo.create_conversation(conversation) == conversation
+    assert (
+        await repo.create_conversation(replace(conversation, updated_at=datetime.now(UTC)))
+        == conversation
+    )
+
+    with pytest.raises(QAContractError, match="another owner"):
+        await repo.create_conversation(replace(conversation, owner_id="owner-2"))
+    with pytest.raises(QAContractError, match="another owner"):
+        await repo.create_conversation(replace(conversation, space_id=OTHER_SPACE_ID))
+
+
+@pytest.mark.asyncio
 async def test_invalid_terminal_publication_leaves_no_partial_message_or_result() -> None:
     repo = InMemoryGroundedQARepository()
     _conversation, _question, run = await _seed_run(repo)

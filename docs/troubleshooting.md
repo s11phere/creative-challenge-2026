@@ -128,8 +128,9 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 加速，Compose 已保留实测较快的限制。
 - 需要检索时先确认 Space 存在、Document 有当前 published version，且查询模式所需的 Embedding/Reranker 能力已配置；无命中是成功的空列表，不是系统故障。
 - 模型服务不可用不会阻断 PostgreSQL/Redis 管理面 ready；Dense 会返回明确 Provider 错误，Hybrid 只有 profile 明确允许时才可降级为 Keyword。
-- 已有离线 Agent Runtime、Tool/Skill Registry、声明式执行器和 Skill 模板；它们仅以合成
-  fake 验证，不含业务 Skill、HTTP API、Web 入口或 PostgreSQL 运行/检查点持久化。
+- 已有离线 Agent Runtime、Tool/Skill Registry、声明式执行器、内存检查点恢复和 Skill 模板；
+  `_provisional/knowledge_qa` 仅以合成 fake 验证且不会批量注册，不含活动业务 Skill、HTTP API、
+  Web 入口或 PostgreSQL 运行/检查点持久化。
 - Registry 的活动版本和生命周期事件当前只在进程内；进程重启恢复、旧版本引用清理和
   Worker 接管必须等待阶段 4 AgentRun/Evidence 模型与阶段 5 Step 5。
 - Web 分别展示真实健康状态、真实数据来源/摄入任务和 provisional QA 状态；QA 证据面板刻意不伪造

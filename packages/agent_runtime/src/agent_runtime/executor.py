@@ -102,6 +102,19 @@ class NodeOutcome(StrEnum):
     REFUSE = "refuse"
 
 
+@dataclass(frozen=True)
+class NodeExecutionError(Exception):
+    code: str
+    category: RunErrorCategory
+    message: str
+    retryable: bool = False
+    timed_out: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.code.startswith(("SKILL_", "TOOL_", "RUN_", "AUTH_", "DEPENDENCY_")):
+            raise ValueError("node error code does not use an ADR-006 prefix")
+
+
 class RuntimeAuditEventType(StrEnum):
     RUN_STARTED = "run_started"
     STATE_CHANGED = "state_changed"
@@ -428,6 +441,14 @@ class DeterministicWorkflowExecutor:
                 code="RUN_BUDGET_EXCEEDED",
                 category=RunErrorCategory.BUDGET,
                 message="Run budget is exhausted.",
+            )
+        except NodeExecutionError as exc:
+            failure = _RuntimeError(
+                code=exc.code,
+                category=exc.category,
+                message=exc.message,
+                retryable=exc.retryable,
+                timed_out=exc.timed_out,
             )
         except _RuntimeError as exc:
             failure = exc
