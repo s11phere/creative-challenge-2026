@@ -109,6 +109,19 @@ OpenAPI 一致性、Web lint/typecheck/Vitest `16 passed` 和 production build �
 重建 API/Web 后，API 与 Web 同源代理均返回 1 个 active `knowledge_qa 0.1.0`；版本摘要为 64 位，
 manifest `max_steps=4`。新 QA Run completed，response 中 fixed name/version/digest 与 Catalog 一致。
 
+2026-07-31 persistent active pointer 补充审查：新增 `skill_activations` 迁移，以名称、semver、摘要和
+revision 保存当前版本。配置只初始化缺失 pointer；Catalog 和新 QA Run 均从 PostgreSQL 同步，受控
+activate/rollback 仅能选择受信根已安装版本，并使用 expected revision 防止并发覆盖。Worker 仍按
+QA Run 固定 identity 执行，不读取当前 pointer 改写排队工作。该子集未新增第二套 Run/SSE/Checkpoint，
+也未提供包安装、任意路径或旧版本删除能力；阶段 5 正式状态不变。
+
+本子集验证：Ruff format/check、mypy 92 个源文件、后端全量 pytest
+`616 passed, 45 skipped`、OpenAPI 一致性、Web lint/typecheck/Vitest `16 passed` 和 production build
+通过；隔离 PostgreSQL pointer 集成测试 `1 passed`。保留卷 Compose 完成迁移单一 head、
+downgrade/upgrade 往返和 API 重启恢复；旧 revision 返回 `SKILL_ACTIVATION_CONFLICT`。Worker 停止时
+创建的 Run 保持 queued，pointer revision 更新后恢复 Worker，该 Run 仍以原固定 name/version/digest
+完成，未被当前 pointer 改写。
+
 本补充验证：Ruff format/check、受影响模块 mypy、后端全量 pytest（`613 passed, 44 skipped`）、
 OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）和 production build 通过。保留卷 Compose
 重建 API/Worker 后，新 Run 持久化 `knowledge_qa/0.1.0` 与 64 位摘要并 completed；Worker 停止期间

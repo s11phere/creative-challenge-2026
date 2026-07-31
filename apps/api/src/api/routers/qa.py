@@ -223,7 +223,7 @@ async def submit_question(
             space_id=conversation.space_id,
             caller_id=conversation.owner_id,
             idempotency_key=body.idempotency_key,
-            versions=request.app.state.qa_runtime.versions,
+            versions=await request.app.state.qa_runtime.current_versions(),
         )
         run = await repo.create_run(run)
         if run.status is QAStatus.CREATED:

@@ -8,6 +8,7 @@ from domain.grounded_qa import Citation, CitationResolution, CitationStatus
 from domain.qa_sse import QAEventLog
 from domain.retrieval import LocatorKind, SearchLocator
 from httpx import ASGITransport, AsyncClient
+from infrastructure.skill_lifecycle import InMemorySkillActivationStore
 from model_gateway import FakeModelGateway
 
 
@@ -35,6 +36,7 @@ async def test_provisional_qa_api_creates_run_cancels_and_replays_events() -> No
         enable_qa_execution=False,
         qa_repository=InMemoryGroundedQARepository(),
         qa_event_store=QAEventLog(),
+        skill_activation_store=InMemorySkillActivationStore(),
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post(
@@ -97,6 +99,7 @@ async def test_citation_endpoint_returns_only_the_resolved_published_excerpt() -
         qa_repository=InMemoryGroundedQARepository(),
         qa_event_store=QAEventLog(),
         qa_citation_service=FakeCitationService(),
+        skill_activation_store=InMemorySkillActivationStore(),
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get(f"/api/v1/qa/runs/{UUID(int=20)}/citations/{UUID(int=21)}")
@@ -125,6 +128,7 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
         enable_qa_execution=False,
         qa_repository=InMemoryGroundedQARepository(),
         qa_event_store=QAEventLog(),
+        skill_activation_store=InMemorySkillActivationStore(),
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         listed = await client.get("/api/v1/skills")
@@ -133,7 +137,12 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
 
     assert listed.status_code == 200
     assert listed.json() == [
-        {"name": "knowledge_qa", "active_version": "0.1.0", "versions": ["0.1.0"]}
+        {
+            "name": "knowledge_qa",
+            "active_version": "0.1.0",
+            "active_revision": 1,
+            "versions": ["0.1.0"],
+        }
     ]
     assert versions.status_code == 200
     payload = versions.json()[0]
@@ -148,4 +157,37 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
         "timeout_seconds": 60,
     }
     assert missing.status_code == 404
-    assert missing.json()["code"] == "HTTP_404"
+    assert missing.json()["code"] == "SKILL_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_skill_activation_uses_revision_cas_and_only_installed_versions() -> None:
+    app = create_app(
+        model_gateway=FakeModelGateway(),
+        enable_qa_execution=False,
+        qa_repository=InMemoryGroundedQARepository(),
+        qa_event_store=QAEventLog(),
+        skill_activation_store=InMemorySkillActivationStore(),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        activated = await client.put(
+            "/api/v1/skills/knowledge_qa/active",
+            json={"version": "0.1.0", "expected_revision": 1},
+        )
+        stale = await client.post(
+            "/api/v1/skills/knowledge_qa/rollback",
+            json={"version": "0.1.0", "expected_revision": 1},
+        )
+        missing = await client.put(
+            "/api/v1/skills/knowledge_qa/active",
+            json={"version": "9.9.9", "expected_revision": 2},
+        )
+        listed = await client.get("/api/v1/skills")
+
+    assert activated.status_code == 200
+    assert activated.json()["revision"] == 2
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "SKILL_ACTIVATION_CONFLICT"
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "SKILL_NOT_FOUND"
+    assert listed.json()[0]["active_revision"] == 2

@@ -31,6 +31,7 @@ class SkillVersionView:
 class SkillView:
     name: str
     active_version: str | None
+    active_revision: int | None
     versions: tuple[str, ...]
 
 
@@ -40,4 +41,29 @@ class SkillCatalogPort(Protocol):
     def list_versions(self, name: str) -> tuple[SkillVersionView, ...]: ...
 
 
-__all__ = ["SkillBudgetView", "SkillCatalogPort", "SkillVersionView", "SkillView"]
+@dataclass(frozen=True)
+class SkillActivation:
+    name: str
+    version: str
+    content_sha256: str
+    revision: int
+
+
+class SkillActivationStore(Protocol):
+    async def initialize(self, activation: SkillActivation) -> SkillActivation: ...
+
+    async def get(self, name: str) -> SkillActivation | None: ...
+
+    async def compare_and_set(
+        self, activation: SkillActivation, *, expected_revision: int
+    ) -> SkillActivation | None: ...
+
+
+__all__ = [
+    "SkillActivation",
+    "SkillActivationStore",
+    "SkillBudgetView",
+    "SkillCatalogPort",
+    "SkillVersionView",
+    "SkillView",
+]

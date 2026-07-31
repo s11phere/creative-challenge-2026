@@ -507,6 +507,14 @@ Skill 管理 UI 和 PostgreSQL Checkpoint 仍不存在，故 Step 7 正式完成
 覆盖；激活/回滚仍只能由启动配置控制，等待 active pointer 的持久化事实源。该子集完成 Step 7 的
 版本可见性和三入口身份核对部分，Runtime Run 管理 API、Skill 管理写入口和通用 Checkpoint 仍未完成。
 
+**持久 active pointer 子集（2026-07-31）**：新增 PostgreSQL `skill_activations` 前向迁移，保存
+Skill 名称、active semver、内容摘要和递增 revision。首次启动仅用配置初始化缺失记录，此后数据库为
+事实源；Catalog 与新 QA Run 提交前同步 pointer，API 重启后恢复同一版本。新增受控 activate/rollback
+接口，只接受受信 Registry 中已安装的目标版本和 `expected_revision`，并以
+`SKILL_ACTIVATION_CONFLICT` 拒绝并发覆盖；路径、entrypoint、权限和预算仍不可写。切换只影响后续
+Run，Worker 对排队 Run 继续使用其固定 version/digest。通用 Runtime Run 管理、Checkpoint、Skill
+管理 Web 和旧版本删除仍未完成。
+
 ### 步骤 8：知识整理 Skill 与写入确认
 
 本步骤只在 `knowledge_qa` 的真实链路和引用完整性已经稳定后开始。
@@ -556,6 +564,11 @@ Registry 不提供旧版本删除 API；AgentRun/Checkpoint/审计引用查询�
 继续阻塞。验证结果：Ruff format/check、mypy `apps packages` 通过；pytest
 `158 passed, 22 skipped`，其中 21 个为未启用真实依赖的集成测试，1 个为 Windows 符号链接
 权限限制。
+
+**持久 pointer 补充（2026-07-31）**：active pointer 已从纯进程状态提升为 PostgreSQL 事实源，
+revision CAS 保证并发激活/回滚不会静默覆盖。Registry reload 仍负责安装与摘要校验，数据库不会引入
+任意包位置。该改动关闭 active pointer 的进程重启恢复缺口，但不等同于通用 AgentRun/Checkpoint
+持久化，也未开放旧版本删除；历史和排队 QA Run 的版本引用继续由 `qa_runs.versions` 保留。
 
 ### 步骤 10：测试、文档与阶段验收
 

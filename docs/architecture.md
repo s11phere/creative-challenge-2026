@@ -353,11 +353,12 @@ Embedding/Reranker 仅通过固定镜像、revision 和显式 Compose profile �
 prompt 摘要在运行开始时固定。
 
 **当前边界**：通用部分提供离线 Runtime、Registry、fake 契约和内存检查点恢复；没有独立
-AgentRun/Checkpoint ORM、Runtime API 或 Skill 管理 Web。`skills/knowledge_qa` 已由 API/Worker
-配置显式激活；只读 `/api/v1/skills` 暴露安装版本和 manifest 预算，QA Run 固定名称、版本和内容摘要，
-Worker 按固定包执行唯一 QA Application Port。
-QA PostgreSQL Run/Attempt/Event 是业务恢复事实源；Registry active 指针、通用 Runtime 生命周期
-事件和 Checkpoint 仍只在进程内或由启动配置重建。
+AgentRun/Checkpoint ORM、Runtime API 或 Skill 管理 Web。`skills/knowledge_qa` 的 active pointer
+由 PostgreSQL `skill_activations` 保存，Catalog 暴露安装版本、manifest 预算和 pointer revision，
+受控 activate/rollback API 只允许选择受信根中的已安装版本并使用 revision CAS。新 QA Run 在提交时
+同步 pointer 并固定名称、版本和内容摘要，Worker 按 Run 固定包执行唯一 QA Application Port。
+QA PostgreSQL Run/Attempt/Event 是业务恢复事实源；通用 Runtime 生命周期事件和 Checkpoint 仍只在
+进程内。
 
 **依赖**：`domain`、`model-gateway`、`jsonschema`、`packaging`、`pyyaml`
 
@@ -418,7 +419,7 @@ QA PostgreSQL Run/Attempt/Event 是业务恢复事实源；Registry active 指�
 ```
 
 **OpenAPI**：端点声明 `response_model`；`docs/openapi.json` 由运行时应用确定性导出，当前覆盖
-健康、来源/摄入任务、检索、provisional QA 和只读 Skill Catalog schema。QA 执行复用真实 PostgreSQL SearchService；
+健康、来源/摄入任务、检索、provisional QA 和 Skill Catalog/lifecycle schema。QA 执行复用真实 PostgreSQL SearchService；
 状态、结果、引用和事件由 PostgreSQL 保存，服务启动时恢复安全的非终态 attempt；
 新增或修改公开端点后必须重新导出并运行一致性检查。
 

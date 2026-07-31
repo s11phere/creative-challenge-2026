@@ -12,7 +12,7 @@ from application.qa import (
     PublishedCitationApplicationPort,
     PublishedCitationService,
 )
-from application.skills import SkillCatalogPort
+from application.skills import SkillActivationStore, SkillCatalogPort, SkillLifecycleService
 from domain.grounded_qa import CitationContentKind
 from domain.qa_persistence import GroundedQARepository
 from domain.qa_sse import QAEventStore
@@ -25,6 +25,9 @@ from infrastructure.qa import PostgresCitationTargetPort
 from infrastructure.qa_execution import knowledge_qa_registry
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
 from infrastructure.skill_catalog import FileSystemSkillCatalog
+from infrastructure.skill_lifecycle import (
+    PostgresSkillActivationStore,
+)
 from infrastructure.telemetry import configure_observability
 from model_gateway import (
     GatewayConfig,
@@ -83,6 +86,7 @@ def create_app(
     qa_event_store: QAEventStore | None = None,
     qa_citation_service: PublishedCitationApplicationPort | None = None,
     skill_catalog: SkillCatalogPort | None = None,
+    skill_activation_store: SkillActivationStore | None = None,
 ) -> FastAPI:
     """Application factory. Call once at process start."""
 
@@ -91,9 +95,16 @@ def create_app(
     qa_repository = qa_repository or PostgresGroundedQARepository(database)
     qa_event_log = qa_event_store or PostgresQAEventStore(database)
     skill_registry = knowledge_qa_registry()
+    activation_store = skill_activation_store or PostgresSkillActivationStore(database)
+    skill_lifecycle = SkillLifecycleService(
+        registry=skill_registry,
+        store=activation_store,
+        defaults={"knowledge_qa": settings.knowledge_qa_skill_version},
+    )
     qa_runtime = QAWorkerDispatcher(
         repository=qa_repository,
         skill_registry=skill_registry,
+        skill_lifecycle=skill_lifecycle,
     )
     skill_catalog = skill_catalog or FileSystemSkillCatalog(skill_registry)
     qa_citation_service = qa_citation_service or PublishedCitationService(
@@ -115,6 +126,7 @@ def create_app(
         database.instrument()
         try:
             if enable_qa_execution:
+                await skill_lifecycle.current("knowledge_qa")
                 await qa_runtime.recover()
             yield
         finally:
@@ -138,6 +150,7 @@ def create_app(
     app.state.qa_citation_service = qa_citation_service
     app.state.qa_execution_enabled = enable_qa_execution
     app.state.skill_catalog = skill_catalog
+    app.state.skill_lifecycle = skill_lifecycle
 
     app.add_middleware(TraceMiddleware)
     register_error_handlers(app)

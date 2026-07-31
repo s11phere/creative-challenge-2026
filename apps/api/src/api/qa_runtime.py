@@ -7,7 +7,8 @@ from collections.abc import Callable
 from uuid import UUID
 
 from agent_runtime import FileSystemSkillRegistry
-from domain.qa_persistence import GroundedQARepository
+from application.skills import SkillLifecycleService
+from domain.qa_persistence import GroundedQARepository, QARunVersions
 from infrastructure.qa_execution import qa_execution_versions
 from infrastructure.telemetry_context import new_trace_id
 
@@ -25,11 +26,19 @@ class QAWorkerDispatcher:
         *,
         repository: GroundedQARepository,
         skill_registry: FileSystemSkillRegistry | None = None,
+        skill_lifecycle: SkillLifecycleService | None = None,
         enqueuer: QAEnqueuer | None = None,
     ) -> None:
         self.versions = qa_execution_versions(skill_registry)
+        self._skill_registry = skill_registry
+        self._skill_lifecycle = skill_lifecycle
         self._repository = repository
         self._enqueuer = enqueuer
+
+    async def current_versions(self) -> QARunVersions:
+        if self._skill_lifecycle is not None:
+            await self._skill_lifecycle.current("knowledge_qa")
+        return qa_execution_versions(self._skill_registry)
 
     def start(self, run_id: UUID) -> bool:
         try:

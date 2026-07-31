@@ -9,12 +9,17 @@ from application.skills import SkillBudgetView, SkillCatalogPort, SkillVersionVi
 class FileSystemSkillCatalog(SkillCatalogPort):
     def __init__(self, registry: FileSystemSkillRegistry) -> None:
         self._registry = registry
+        self._active_revisions: dict[str, int] = {}
+
+    def set_active_revision(self, name: str, revision: int) -> None:
+        self._active_revisions[name] = revision
 
     def list_skills(self) -> tuple[SkillView, ...]:
         return tuple(
             SkillView(
                 name=name,
                 active_version=self._active_version(name),
+                active_revision=self._active_revisions.get(name),
                 versions=self._registry.versions(name),
             )
             for name in self._registry.names()

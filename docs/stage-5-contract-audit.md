@@ -26,7 +26,8 @@ The refreshed audit permits Stage 5 schema, workflow and handler contract work a
 QA Port. The user-authorized usable slice additionally permits the existing QA API/Web to execute that
 Port with real PostgreSQL retrieval and citation target validation. QA Run/Attempt/Event are now the durable
 recovery authority, and the Worker executes the fixed Skill package against that same Run. Generic Runtime
-Checkpoint and Registry active state are still process-local/configuration-rebuilt. Formal Stage 5 business
+Checkpoint is still process-local. Registry active state now uses a PostgreSQL pointer with digest and
+revision CAS. Formal Stage 5 business
 completion remains blocked on Stage 3/4 quality gates and remaining generic Runtime/business Skill work.
 
 The implementation is represented by `skills/knowledge_qa` and
@@ -37,6 +38,8 @@ the fake QA Port path and verify that Worker mode never submits a second Run.
 
 Step 7 was re-audited on 2026-07-31. ADR-007's durable PostgreSQL/Worker/restart subset is implemented.
 The usable slice therefore continues to use the existing `/api/v1/qa/runs` and `qa-sse-v1` transport.
-A read-only `/api/v1/skills` catalog exposes installed/fixed identity and manifest budget; it has no
-activation/rollback write path, no arbitrary package path, and no parallel `/api/v1/runs` family or second
-SSE schema. The Web QA entry displays the catalog identity; a separate Skill management UI remains absent.
+The `/api/v1/skills` catalog exposes installed/fixed identity, manifest budget, and active revision. Its
+activate/rollback write paths accept only an installed semver plus the expected revision; they cannot set a
+package path, entrypoint, permissions, or budget. PostgreSQL is the pointer authority across API restarts,
+while queued runs retain their own fixed identity. There is no parallel `/api/v1/runs` family or second SSE
+schema. The Web QA entry displays the catalog identity; a separate Skill management UI remains absent.

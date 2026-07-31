@@ -131,14 +131,16 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 - 需要检索时先确认 Space 存在、Document 有当前 published version，且查询模式所需的 Embedding/Reranker 能力已配置；无命中是成功的空列表，不是系统故障。
 - 模型服务不可用不会阻断 PostgreSQL/Redis 管理面 ready；Dense 会返回明确 Provider 错误，Hybrid 只有 profile 明确允许时才可降级为 Keyword。
 - 已有离线 Agent Runtime、Tool/Skill Registry、声明式执行器、内存检查点恢复和 Skill 模板；
-  `knowledge_qa 0.1.0` 已由配置显式激活，现有 QA HTTP/Web 入口创建的每个 Run 都固定包摘要，
+  `knowledge_qa 0.1.0` 首次由配置初始化，随后以 PostgreSQL active pointer 为准，现有 QA HTTP/Web 入口创建的每个 Run 都固定包摘要，
   Worker 校验后才调用唯一 QA Application Port。可用 `GET /api/v1/skills` 和
   `GET /api/v1/skills/knowledge_qa/versions` 检查安装摘要、active 版本和 manifest 预算。
 - 若 Run 以 `QA_SKILL_INVALID` 失败，检查 API 与 Worker 的 `SKILL_ROOT_PATH`、
   `KNOWLEDGE_QA_SKILL_VERSION` 和镜像内 `skills/knowledge_qa` 内容是否一致。不要就地修改已被 Run
   引用的同名版本；发布新 semver 并保留旧包供排队/恢复 Run 校验。
-- Registry 的 active 指针、通用 Runtime Checkpoint 和生命周期事件仍只在进程内或由启动配置重建；
-  QA 的 PostgreSQL Run/Attempt/Event 是当前重启恢复事实源。通用旧版本引用清理仍待阶段 5 后续实现。
+- Registry active pointer 已持久化到 `skill_activations`；激活或回滚出现
+  `SKILL_ACTIVATION_CONFLICT` 时，应刷新 Catalog 的 `active_revision` 后重试，不能绕过 CAS。
+  QA 的 PostgreSQL Run/Attempt/Event 是当前执行恢复事实源。通用 Runtime Checkpoint、持久生命周期
+  事件和旧版本引用清理仍待阶段 5 后续实现。
 - Web 分别展示真实健康状态、真实数据来源/摄入任务和 provisional QA 状态；QA 证据面板只对
   服务端已发布的 Citation 按需请求原文，不接受客户端提供的 locator 或版本。若返回 `invalid`，
   先检查 Blob hash、parser 版本和 locator 是否仍与固定 DocumentVersion 一致，不要回退到相似文本。

@@ -42,6 +42,32 @@ class Base(DeclarativeBase):
 
 
 # ---------------------------------------------------------------------------
+# Skill lifecycle (ADR-006)
+# ---------------------------------------------------------------------------
+
+
+class SkillActivationModel(Base):
+    __tablename__ = "skill_activations"
+
+    skill_name: Mapped[str] = mapped_column(String(255), primary_key=True)
+    active_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+    __table_args__ = (
+        CheckConstraint("revision >= 1", name="ck_skill_activations_revision_positive"),
+        CheckConstraint(
+            "char_length(content_sha256) = 64",
+            name="ck_skill_activations_content_sha256_length",
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Space
 # ---------------------------------------------------------------------------
 
