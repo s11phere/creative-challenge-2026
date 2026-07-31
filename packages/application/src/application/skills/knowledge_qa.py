@@ -26,6 +26,7 @@ _CONVERSATION_NAMESPACE = UUID("f941116d-dbc0-42f4-a43b-0a041ec50da4")
 class KnowledgeQASkillConfig:
     profile: GroundedQAExecutionProfile
     versions: QARunVersions
+    execute_existing_run: bool = False
 
 
 class KnowledgeQASkillAdapter:
@@ -65,37 +66,44 @@ class KnowledgeQASkillAdapter:
                 RunErrorCategory.MANIFEST,
                 "Grounded QA versions do not match the fixed Skill.",
             )
-        conversation_id = skill_input.conversation_id or uuid5(
-            _CONVERSATION_NAMESPACE, str(context.run.context.run_id)
-        )
-        if skill_input.conversation_id is None:
-            await self._qa.create_conversation(
-                ConversationRecord(
-                    conversation_id=conversation_id,
-                    space_id=context.run.context.space_id,
-                    owner_id=context.run.context.caller_id,
-                )
+        if self._config.execute_existing_run:
+            completed = await self._qa.execute(
+                context.run.context.run_id, profile=self._config.profile
             )
-        submitted = await self._qa.submit(
-            QuestionInput(
-                question=skill_input.question,
-                space_id=context.run.context.space_id,
-                caller_id=context.run.context.caller_id,
-                conversation_id=conversation_id,
-                idempotency_key=str(context.run.context.run_id),
-            ),
-            versions=self._config.versions,
-        )
-        completed = await self._qa.execute(submitted.run_id, profile=self._config.profile)
+        else:
+            conversation_id = skill_input.conversation_id or uuid5(
+                _CONVERSATION_NAMESPACE, str(context.run.context.run_id)
+            )
+            if skill_input.conversation_id is None:
+                await self._qa.create_conversation(
+                    ConversationRecord(
+                        conversation_id=conversation_id,
+                        space_id=context.run.context.space_id,
+                        owner_id=context.run.context.caller_id,
+                    )
+                )
+            submitted = await self._qa.submit(
+                QuestionInput(
+                    question=skill_input.question,
+                    space_id=context.run.context.space_id,
+                    caller_id=context.run.context.caller_id,
+                    conversation_id=conversation_id,
+                    idempotency_key=str(context.run.context.run_id),
+                ),
+                versions=self._config.versions,
+            )
+            completed = await self._qa.execute(submitted.run_id, profile=self._config.profile)
         if completed.status not in {QAStatus.COMPLETED, QAStatus.REFUSED}:
             raise _qa_failure(completed)
-        return NodeResult(
-            state_updates={"qa_result": _project_run(completed)},
-            usage=BudgetUsage(
+        usage = (
+            BudgetUsage()
+            if self._config.execute_existing_run
+            else BudgetUsage(
                 input_tokens=completed.usage.input_tokens,
                 output_tokens=completed.usage.output_tokens,
-            ),
+            )
         )
+        return NodeResult(state_updates={"qa_result": _project_run(completed)}, usage=usage)
 
     async def verify(self, context: NodeExecutionContext) -> NodeResult:
         output = context.state.get("qa_result")

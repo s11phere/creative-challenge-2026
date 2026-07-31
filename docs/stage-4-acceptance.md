@@ -88,6 +88,11 @@ skipped`）、OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）与 
 本轮回归：后端 pytest `609 passed, 44 skipped`，Ruff format/check、mypy（87 个源文件）、
 OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）和 production build 均通过。
 
+Stage 5 Skill 接入补充（2026-07-31）：现有 QA API/Web/Worker 链路现由本地受信根中的
+`knowledge_qa 0.1.0` 声明式包驱动。API 将包摘要固定到 PostgreSQL QA Run，Worker 恢复时校验该
+固定身份并通过唯一 `GroundedQAApplicationPort` 执行同一个 Run；Stage 4 的持久化、SSE、取消、
+Citation 和原文协议没有产生第二套实现。该接入不改变 Stage 4 provisional 状态或正式质量门禁。
+
 ## 正式退出矩阵
 
 | 项目 | 状态 | 原因 |
@@ -105,6 +110,6 @@ OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）和 production bui
 
 Grounded QA schema、SSE v1、安全边界和唯一 provisional QA Application Port 已可供后续设计；
 现有 QA API/Web 也可作为真实检索和引用身份的临时可用入口。QA 状态和事件已有 PostgreSQL
-事实源及 API/Worker 重启恢复，执行已进入独立 Worker，固定版本原文片段可按需解析。阶段 5 可以据此继续开发，不得据此宣称活动
-`knowledge_qa` Skill 或阶段 4/5 正式完成；正式退出仍须关闭 Stage 3、完整反馈旅程、质量和
-holdout 门禁。
+事实源及 API/Worker 重启恢复，执行已进入独立 Worker，固定版本原文片段可按需解析。阶段 5 的
+`knowledge_qa 0.1.0` 已可在该 provisional 链路中活动使用；不得据此宣称阶段 4/5 正式完成，正式
+退出仍须关闭 Stage 3、完整反馈旅程、质量和 holdout 门禁。

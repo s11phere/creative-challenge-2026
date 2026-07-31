@@ -22,7 +22,7 @@ def test_qa_message_contains_control_metadata_only() -> None:
 def test_qa_actor_retries_while_another_worker_holds_lease(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(qa_tasks, "_run_qa_sync", lambda _run_id: False)
+    monkeypatch.setattr(qa_tasks, "_run_qa_sync", lambda _run_id, _trace_id: False)
 
     with pytest.raises(dramatiq.Retry, match="QA attempt lease is active"):
         qa_tasks.qa_run.fn(run_id=str(uuid4()), trace_id="2" * 32, event_version=1)

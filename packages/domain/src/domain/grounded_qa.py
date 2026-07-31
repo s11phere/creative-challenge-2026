@@ -102,6 +102,7 @@ class QAErrorCode(StrEnum):
     TIMED_OUT = "QA_TIMED_OUT"
     CANCELLED = "QA_CANCELLED"
     POLICY_DENIED = "QA_POLICY_DENIED"
+    SKILL_INVALID = "QA_SKILL_INVALID"
 
 
 class QAContractError(ValueError):

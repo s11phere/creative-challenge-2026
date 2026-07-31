@@ -10,9 +10,9 @@
 
 ## 1. 结论摘要
 
-截至 2026-07-19，Step 0～4 和 Step 9 的通用可执行部分已通过实现审查；Step 5～8、
-Step 9 持久化引用清理和 Step 10 仍受前序阶段与数据门禁阻塞。这里的“完成”只表示
-Runtime/Registry 离线工程基础完成，不表示业务 Skill、API、Web 或阶段退出条件完成。
+截至 2026-07-31，Step 0～4 和 Step 9 的通用可执行部分已通过实现审查；Step 5 已完成 QA
+持久化/Worker 子集，Step 6 已交付 active provisional `knowledge_qa`，Step 7 复用现有 QA API/Web。
+通用 Runtime Checkpoint、Skill 管理入口、知识整理 Skill、旧版本清理和正式质量门禁仍未完成。
 
 阶段 5 的目标是把阶段 2 至阶段 4 已验证的摄入、检索、引用和问答能力封装为稳定、
 可版本化、可审计、可恢复的 Skill，并确保同一个 Skill 通过 Web、HTTP API 和测试入口
@@ -449,6 +449,18 @@ schema/corpus/dataset 版本通过服务端配置传入并在执行前交叉校�
 验收；因此没有生产 handler 注册、活动版本、真实引用解析或 Web/API 入口，不满足 Step 6 完成
 标准，也不能宣称 `knowledge_qa` 可用。
 
+**可用 provisional 实现（2026-07-31，用户确认继续）**：前述工程缺口中的 PostgreSQL QA
+Run/Attempt/Event、独立 Worker、终态 Citation API 和固定版本原文解析已经落地。因此声明式包迁移到
+`skills/knowledge_qa`，Registry 从受信根安装并按配置显式激活 `0.1.0`。API 创建新 QA Run 时固定
+`skill_name/skill_version/skill_content_sha256`；Worker 领取同一 Run 后按固定版本重新加载并校验摘要，
+再由确定性 Runtime 的注册 handler 调用唯一 `GroundedQAApplicationPort.execute(run_id)`。该模式不
+创建第二个 Conversation/Run，不复制检索、生成或 Citation 逻辑，QA PostgreSQL 状态仍是恢复事实源。
+
+旧 QA 版本 JSON 缺少摘要时仍可读取；新 Run 必须带摘要。包缺失或摘要变化会在任何 QA 业务执行前以
+`QA_SKILL_INVALID` 安全失败。合成测试同时保留独立 submit 模式，并验证 Worker 模式只执行相同 Run。
+该实现可真实使用但质量仍为 provisional；Stage 3 正式退出、Stage 4 answer holdout 和 Stage 5 通用
+Checkpoint/版本引用清理未完成，因此 Step 6 尚不记为正式完成。
+
 ### 步骤 7：Runtime API 与 Web 调用入口
 
 - 在 `/api/v1/skills` 下提供 Skill/版本查询和受控激活/回滚接口。
@@ -483,8 +495,10 @@ Chat Provider 在策略允许并配置后复用相同生成/校验路径；终�
 实现没有新增平行 Runtime/SSE schema，也没有激活 `_provisional/knowledge_qa`。该子集可用于后续
 开发。Run/Attempt/Event/Evidence/Citation/Feedback 随后已切换为 PostgreSQL 事实源，并验证 API/
 Worker 重启恢复；执行已进入独立 Worker，已发布 Citation 也可按需解析固定版本最小原文片段。
-但仍没有活动 Skill，故 Step 7 正式完成标准仍未满足，
-Stage 3/4/5 状态不变。
+`knowledge_qa 0.1.0` 随后已在该既有链路中显式激活，Web、HTTP API 和契约测试现在共享同一固定包与
+QA Application Port。仍未新增平行 `/skills`、`/runs` 或 SSE 协议；通用 Runtime 查询/恢复/审批、
+Skill 管理 UI 和 PostgreSQL Checkpoint 仍不存在，故 Step 7 正式完成标准仍未满足，Stage 3/4/5
+状态不变。
 
 ### 步骤 8：知识整理 Skill 与写入确认
 

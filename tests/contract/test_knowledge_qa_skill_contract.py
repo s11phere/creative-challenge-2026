@@ -6,7 +6,12 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from agent_runtime import DeterministicWorkflowExecutor, FileSystemSkillRegistry, PinnedSkill
+from agent_runtime import (
+    DeterministicWorkflowExecutor,
+    FileSystemSkillRegistry,
+    PinnedSkill,
+    SkillRegistryError,
+)
 from application.qa.profile import QAPlanningProfileV1
 from application.qa.service import GroundedQAExecutionProfile
 from application.skills import KnowledgeQASkillAdapter, KnowledgeQASkillConfig
@@ -30,7 +35,7 @@ from model_gateway import FakeModelGateway
 
 ROOT = Path(__file__).parents[2]
 SKILLS_ROOT = ROOT / "skills"
-PACKAGE_PATH = "_provisional/knowledge_qa"
+PACKAGE_PATH = "knowledge_qa"
 SPACE_ID = UUID(int=1)
 RUN_ID = UUID(int=2)
 QA_RUN_ID = UUID(int=3)
@@ -87,6 +92,7 @@ class FakeGroundedQA:
         self.status = status
         self.conversations: list[ConversationRecord] = []
         self.questions: list[QuestionInput] = []
+        self.executed_run_ids: list[UUID] = []
         self.run: QARunRecord | None = None
 
     async def create_conversation(self, conversation: ConversationRecord) -> ConversationRecord:
@@ -110,9 +116,10 @@ class FakeGroundedQA:
         return self.run
 
     async def execute(self, run_id: UUID, *, profile: GroundedQAExecutionProfile) -> QARunRecord:
-        assert run_id == QA_RUN_ID
+        self.executed_run_ids.append(run_id)
         assert profile == globals()["profile"]()
         assert self.run is not None
+        assert run_id == self.run.run_id
         if self.status is QAStatus.COMPLETED:
             return replace(
                 self.run,
@@ -143,13 +150,35 @@ class FakeGroundedQA:
         raise AssertionError(f"unexpected cancellation for {run_id}")
 
 
-def runtime(qa: FakeGroundedQA) -> tuple[DeterministicWorkflowExecutor, PinnedSkill, AgentRun]:
+def runtime(
+    qa: FakeGroundedQA, *, execute_existing_run: bool = False
+) -> tuple[DeterministicWorkflowExecutor, PinnedSkill, AgentRun]:
     registry = FileSystemSkillRegistry(SKILLS_ROOT)
     package = registry.register(registry.load(PACKAGE_PATH))
     registry.activate(package.manifest.name, package.manifest.version)
     pin = registry.pin(package.manifest.name)
+    fixed_versions = replace(
+        versions(), skill_name=pin.name, skill_content_sha256=pin.content_sha256
+    )
+    if execute_existing_run:
+        qa.run = QARunRecord(
+            run_id=RUN_ID,
+            attempt=QAAttempt(run_id=RUN_ID, attempt_id=ATTEMPT_ID),
+            conversation_id=UUID(int=12),
+            question_message_id=UUID(int=11),
+            space_id=SPACE_ID,
+            caller_id="synthetic-user",
+            idempotency_key=str(RUN_ID),
+            versions=fixed_versions,
+            status=QAStatus.QUEUED,
+        )
     adapter = KnowledgeQASkillAdapter(
-        qa=qa, config=KnowledgeQASkillConfig(profile=profile(), versions=versions())
+        qa=qa,
+        config=KnowledgeQASkillConfig(
+            profile=profile(),
+            versions=fixed_versions,
+            execute_existing_run=execute_existing_run,
+        ),
     )
     run = AgentRun(
         context=AgentRunContext(
@@ -230,8 +259,33 @@ async def test_client_cannot_supply_space_caller_evidence_or_fixed_skill_fields(
     assert qa.questions == []
 
 
-def test_provisional_package_is_not_bulk_installed_or_active() -> None:
+@pytest.mark.asyncio
+async def test_worker_mode_executes_the_existing_run_without_submitting_another() -> None:
+    qa = FakeGroundedQA()
+    executor, pin, run = runtime(qa, execute_existing_run=True)
+
+    result = await executor.execute(
+        run,
+        pin,
+        {"question": "Use the existing run.", "conversation_id": str(UUID(int=12))},
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert qa.questions == []
+    assert qa.conversations == []
+    assert qa.executed_run_ids == [RUN_ID]
+    assert isinstance(result.output, dict)
+    assert result.output["run_id"] == str(RUN_ID)
+
+
+def test_provisional_package_is_bulk_installed_but_activation_is_explicit() -> None:
     registry = FileSystemSkillRegistry(SKILLS_ROOT)
     loaded = registry.reload()
-    assert all(package.manifest.name != "knowledge_qa" for package in loaded)
-    assert registry.versions("knowledge_qa") == ()
+    package = next(package for package in loaded if package.manifest.name == "knowledge_qa")
+    assert registry.versions("knowledge_qa") == ("0.1.0",)
+    with pytest.raises(SkillRegistryError, match="active version"):
+        registry.active_version("knowledge_qa")
+    registry.activate("knowledge_qa", "0.1.0")
+    pin = registry.pin("knowledge_qa")
+    assert pin.content_sha256 == package.content_sha256
+    assert len(pin.content_sha256) == 64

@@ -7,6 +7,12 @@ import re
 from pathlib import Path
 from uuid import UUID
 
+from agent_runtime import (
+    DeterministicWorkflowExecutor,
+    FileSystemSkillRegistry,
+    PinnedSkill,
+    SkillRegistryError,
+)
 from application.qa import (
     ContextBuilder,
     EvidenceBindingService,
@@ -20,8 +26,15 @@ from application.qa import (
     QueryPlanner,
     StructuredAnswerParser,
 )
-from domain.grounded_qa import QAEvent, QAStatus
-from domain.qa_persistence import GroundedQARepository, QARunRecord, QARunVersions
+from application.skills import KnowledgeQASkillAdapter, KnowledgeQASkillConfig
+from domain.agent_runtime import AgentRun, AgentRunContext
+from domain.grounded_qa import QAErrorCode, QAEvent, QAStatus
+from domain.qa_persistence import (
+    GroundedQARepository,
+    MessageRole,
+    QARunRecord,
+    QARunVersions,
+)
 from domain.qa_sse import QAEventStore, QAEventType
 from domain.retrieval import RetrievalProfileV1
 from model_gateway import (
@@ -131,8 +144,11 @@ class StructuredFakeGateway:
 
 def qa_execution_versions() -> QARunVersions:
     planning, retrieval, generation = _profiles()
+    pin = active_knowledge_qa_pin()
     return QARunVersions(
-        skill_version="knowledge_qa-0.1.0-provisional",
+        skill_name=pin.name,
+        skill_version=pin.version,
+        skill_content_sha256=pin.content_sha256,
         profile_version=planning.profile_id,
         retrieval_profile_version=retrieval.profile_version,
         model_identity=generation.model_identity,
@@ -141,6 +157,19 @@ def qa_execution_versions() -> QARunVersions:
         corpus_version="local-live-provisional",
         dataset_version="knowledge-qa-v0-provisional",
     )
+
+
+def knowledge_qa_registry() -> FileSystemSkillRegistry:
+    """Load the configured trusted root and rebuild its active QA pointer."""
+    registry = FileSystemSkillRegistry(Path(settings.skill_root_path))
+    registry.reload()
+    registry.activate("knowledge_qa", settings.knowledge_qa_skill_version)
+    return registry
+
+
+def active_knowledge_qa_pin() -> PinnedSkill:
+    registry = knowledge_qa_registry()
+    return registry.pin("knowledge_qa")
 
 
 class GroundedQAExecutor:
@@ -153,12 +182,14 @@ class GroundedQAExecutor:
         gateway: ModelGateway,
         repository: GroundedQARepository,
         events: QAEventStore,
+        skill_registry: FileSystemSkillRegistry | None = None,
     ) -> None:
         planning, retrieval, generation = _profiles()
         self.profile = GroundedQAExecutionProfile(planning=planning, retrieval=retrieval)
-        self.versions = qa_execution_versions()
+        self._gateway = gateway
         self._repository = repository
         self._events = events
+        self._skill_registry = skill_registry
         self._service = GroundedQAService(
             repository=repository,
             planner=QueryPlanner(),
@@ -171,16 +202,27 @@ class GroundedQAExecutor:
                 verifier=EvidenceVerifier(PostgresCitationTargetPort(database)),
                 profile=generation,
                 prompt_contract=_PROMPT.read_text(encoding="utf-8"),
-                corpus_version=self.versions.corpus_version,
-                dataset_version=self.versions.dataset_version,
+                corpus_version="local-live-provisional",
+                dataset_version="knowledge-qa-v0-provisional",
             ),
         )
 
-    async def execute(self, run_id: UUID) -> QARunRecord | None:
+    async def execute(self, run_id: UUID, *, trace_id: str) -> QARunRecord | None:
         await self._events.append(run_id, QAEventType.STARTED, {"status": QAStatus.RUNNING.value})
         resolved_run: QARunRecord | None
         try:
-            resolved_run = await self._service.execute(run_id, profile=self.profile)
+            persisted = await self._repository.get_run(run_id)
+            if persisted is None or persisted.status in _TERMINAL:
+                resolved_run = persisted
+            else:
+                resolved_run = await self._execute_skill(persisted, trace_id=trace_id)
+        except SkillRegistryError:
+            recovered_run = await self._repository.get_run(run_id)
+            if recovered_run is not None and recovered_run.status not in _TERMINAL:
+                recovered_run = await self._repository.transition_run(
+                    run_id, QAEvent.FAIL, error_code=QAErrorCode.SKILL_INVALID.value
+                )
+            resolved_run = recovered_run
         except Exception:
             recovered_run = await self._repository.get_run(run_id)
             if recovered_run is not None and recovered_run.status not in _TERMINAL:
@@ -203,6 +245,69 @@ class GroundedQAExecutor:
         )
         return resolved_run
 
+    async def _execute_skill(self, run: QARunRecord, *, trace_id: str) -> QARunRecord:
+        registry = self._skill_registry or knowledge_qa_registry()
+        pin = registry.pin(run.versions.skill_name, run.versions.skill_version)
+        if (
+            run.versions.skill_content_sha256 is None
+            or pin.content_sha256 != run.versions.skill_content_sha256
+        ):
+            return await self._repository.transition_run(
+                run.run_id, QAEvent.FAIL, error_code=QAErrorCode.SKILL_INVALID.value
+            )
+        package = registry.validate_pin(pin)
+        question = await self._repository.get_message(run.question_message_id)
+        if question is None or question.role is not MessageRole.USER:
+            return await self._repository.transition_run(
+                run.run_id, QAEvent.FAIL, error_code="QA_RUNTIME_FAILED"
+            )
+        adapter = KnowledgeQASkillAdapter(
+            qa=self._service,
+            config=KnowledgeQASkillConfig(
+                profile=self.profile,
+                versions=run.versions,
+                execute_existing_run=True,
+            ),
+        )
+        runtime_run = AgentRun(
+            context=AgentRunContext(
+                run_id=run.run_id,
+                space_id=run.space_id,
+                skill_name=pin.name,
+                skill_version=pin.version,
+                skill_content_sha256=pin.content_sha256,
+                trace_id=trace_id,
+                caller_id=run.caller_id,
+                granted_permissions=package.manifest.permissions,
+            ),
+            budget=package.manifest.budgets,
+        )
+        result = await DeterministicWorkflowExecutor(
+            skill_registry=registry,
+            model_gateway=self._gateway,
+            handlers=adapter.handlers(),
+        ).execute(
+            runtime_run,
+            pin,
+            {
+                "question": question.content,
+                "conversation_id": str(run.conversation_id),
+            },
+        )
+        persisted = await self._repository.get_run(run.run_id)
+        if persisted is None:
+            raise RuntimeError("Grounded QA run disappeared during Skill execution")
+        if result.error is not None and persisted.status not in _TERMINAL:
+            error_code = (
+                QAErrorCode.SKILL_INVALID.value
+                if result.error.code.startswith("SKILL_")
+                else "QA_RUNTIME_FAILED"
+            )
+            return await self._repository.transition_run(
+                run.run_id, QAEvent.FAIL, error_code=error_code
+            )
+        return persisted
+
 
 def _profiles() -> tuple[QAPlanningProfileV1, RetrievalProfileV1, QAGenerationProfileV1]:
     identity = settings.active_embedding_identity()
@@ -215,4 +320,10 @@ def _profiles() -> tuple[QAPlanningProfileV1, RetrievalProfileV1, QAGenerationPr
     return planning, retrieval, generation
 
 
-__all__ = ["GroundedQAExecutor", "StructuredFakeGateway", "qa_execution_versions"]
+__all__ = [
+    "GroundedQAExecutor",
+    "StructuredFakeGateway",
+    "active_knowledge_qa_pin",
+    "knowledge_qa_registry",
+    "qa_execution_versions",
+]

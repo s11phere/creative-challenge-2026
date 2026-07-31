@@ -109,6 +109,10 @@ class Settings(BaseSettings):
     retrieval_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     retrieval_debug_diagnostics: bool = False
 
+    # --- Skill Registry ---
+    skill_root_path: str = "./skills"
+    knowledge_qa_skill_version: str = "0.1.0"
+
     def active_embedding_identity(self, *, allow_unconfigured: bool = False) -> EmbeddingIdentity:
         """Return the one identity shared by ingestion and online retrieval."""
         self.query_embedding_prefix()

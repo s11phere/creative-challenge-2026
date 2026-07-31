@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -92,10 +93,28 @@ class QARunVersions:
     output_schema_version: str
     corpus_version: str
     dataset_version: str
+    skill_name: str = "knowledge_qa"
+    skill_content_sha256: str | None = None
 
     def __post_init__(self) -> None:
-        if any(not value for value in self.__dict__.values()):
+        required = (
+            self.skill_name,
+            self.skill_version,
+            self.profile_version,
+            self.retrieval_profile_version,
+            self.model_identity,
+            self.prompt_version,
+            self.output_schema_version,
+            self.corpus_version,
+            self.dataset_version,
+        )
+        if any(not value for value in required):
             raise ValueError("QA run version values must not be blank")
+        if (
+            self.skill_content_sha256 is not None
+            and re.fullmatch(r"[0-9a-f]{64}", self.skill_content_sha256) is None
+        ):
+            raise ValueError("QA Skill content digest must be a lowercase SHA-256")
 
 
 @dataclass(frozen=True)

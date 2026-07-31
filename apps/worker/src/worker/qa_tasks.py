@@ -97,19 +97,19 @@ def qa_run(*, run_id: str, trace_id: str, event_version: int) -> None:
         ),
         bind_observability_context(trace_id=canonical_trace_id, task_id=run_id),
     ):
-        if not _run_qa_sync(uid):
+        if not _run_qa_sync(uid, canonical_trace_id):
             raise dramatiq.Retry(
                 message="QA attempt lease is active",
                 delay=settings.qa_task_retry_delay_ms,
             )
 
 
-def _run_qa_sync(run_id: UUID) -> bool:
+def _run_qa_sync(run_id: UUID, trace_id: str) -> bool:
     loop = asyncio.new_event_loop()
     gateway = _create_gateway()
     asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(_run_qa_async(run_id, gateway))
+        return loop.run_until_complete(_run_qa_async(run_id, trace_id, gateway))
     finally:
         try:
             loop.run_until_complete(gateway.aclose())
@@ -117,7 +117,7 @@ def _run_qa_sync(run_id: UUID) -> bool:
             loop.close()
 
 
-async def _run_qa_async(run_id: UUID, gateway: ModelGateway) -> bool:
+async def _run_qa_async(run_id: UUID, trace_id: str, gateway: ModelGateway) -> bool:
     repository = PostgresGroundedQARepository(database)
     lease_owner = str(uuid4())
     claimed = await repository.claim_run(
@@ -142,7 +142,7 @@ async def _run_qa_async(run_id: UUID, gateway: ModelGateway) -> bool:
             repository=repository,
             events=PostgresQAEventStore(database),
         )
-        await executor.execute(run_id)
+        await executor.execute(run_id, trace_id=trace_id)
         return True
     finally:
         stop.set()

@@ -15,7 +15,7 @@
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
 | 阶段 3 🟡 工程 Step 0-10 | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；真实模型 development 最佳 Dense Recall@5 为 51.90%，未达到 85%，默认配置未冻结且正式 holdout 未执行 |
 | 阶段 4 🟡 provisional Step 0-10 | ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测 validate-only 已完成；默认配置与 holdout 未完成 |
-| 阶段 5 🟡 通用基础 + 可用 provisional 链路 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、版本固定、预算/权限/审计、事务式 reload/回滚和 Skill 模板已通过审查；现有 QA Web/API 已作为后续业务 Skill 开发的临时可用链路 |
+| 阶段 5 🟡 通用基础 + active provisional Skill | ADR-006、Runtime/Registry 通用基础已通过审查；`knowledge_qa 0.1.0` 已固定摘要并由现有持久 QA Web/API/Worker 执行 |
 
 当前 Web 展示系统健康、数据来源和 provisional 知识问答工作区；HTTP API 可创建持久会话、提交
 问题，由 API 仅向 Redis 投递 Run ID，再由独立 Worker 调用唯一 `GroundedQAApplicationPort`、
@@ -28,9 +28,10 @@ Chat Provider 仍走相同结构化生成与引用校验路径。Web 会展示�
 Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL；API/Worker 重启可恢复
 未完成运行，重复投递不会重复发布终态；Citation 原文解析不会接受客户端伪造的版本、locator 或 Blob 路径；
 阶段 3 默认检索配置和质量门禁也尚未冻结。
-阶段 5 当前只有离线通用 Runtime/Registry、内存检查点恢复，以及不会被批量注册的 provisional
-`knowledge_qa` QA Port 合成契约；没有活动业务 Skill、Runtime API、PostgreSQL 运行/检查点持久化
-或 Web Skill 入口，不能据此宣称 `knowledge_qa` 可用或阶段 5 整体完成。
+阶段 5 的 `knowledge_qa 0.1.0` 已从本地受信根显式激活：API 在新 QA Run 中固定 Skill 名称、
+版本和内容摘要，Worker 恢复时按该固定身份校验声明式 workflow，再调用唯一 QA Application Port。
+现有 QA Web/API 因此已是该 provisional Skill 的真实入口，但尚无通用 Runtime API、PostgreSQL
+Runtime Checkpoint、Skill 管理 Web 或旧版本清理，不能据此宣称阶段 5 整体完成。
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
 [Stage 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
 [Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；必须先完成真实模型

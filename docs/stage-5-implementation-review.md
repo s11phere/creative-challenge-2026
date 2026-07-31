@@ -13,8 +13,9 @@ ADR-003、ADR-006 和阶段 5 实施计划一致：领域状态与 Port、Tool/S
 
 这不是阶段 5 整体验收。阶段 5 的目标是封装阶段 2～4 已验证的知识能力。当前仓库已有摄入闭环、
 RetrievalStore、GroundedAnswer/Citation Application 用例、QA Conversation/Run/Evidence 持久化及
-ADR-007 协议，但仍没有活动 `knowledge_qa` 或三个知识整理业务 Skill，也没有通用 Runtime API、
-Web Skill 入口、PostgreSQL Runtime Checkpoint 恢复或三入口端到端旅程。
+ADR-007 协议；`knowledge_qa 0.1.0` 现已通过既有 QA Web/API/Worker 成为 active provisional Skill。
+仍没有三个知识整理业务 Skill、通用 Runtime API、Skill 管理 Web、PostgreSQL Runtime Checkpoint
+恢复或正式三入口验收。
 
 ## 已审查实现
 
@@ -36,8 +37,8 @@ Web Skill 入口、PostgreSQL Runtime Checkpoint 恢复或三入口端到端旅�
 | 范围 | 状态 | 解阻条件 |
 | --- | --- | --- |
 | Step 5 | 部分完成 | PostgreSQL QA Run/Attempt、Worker lease/heartbeat、重复投递和重启恢复已完成；通用 Runtime Checkpoint、审批与清理仍待实现 |
-| Step 6 | 部分完成 | 未激活声明式包、QA Port Adapter 和合成契约已完成；生产激活等待阶段 3/4 正式退出 |
-| Step 7 | provisional 可用子集 | 现有 QA API/Web/Worker 已接真实检索、持久 Run、回答、引用身份、原文解析和重启恢复；正式完成仍等待活动 Skill |
+| Step 6 | active provisional | 声明式包固定名称/版本/摘要，由 Worker 对同一 QA Run 调用唯一 QA Port；正式质量仍待阶段 3/4 门禁 |
+| Step 7 | provisional 可用子集 | 现有 QA API/Web/Worker 已执行固定 Skill，并提供真实检索、持久 Run、引用原文和重启恢复；通用 Runtime/Skill 管理入口未实现 |
 | Step 8 | 阻塞 | `knowledge_qa` 真实链路和派生知识写入 Application 用例稳定 |
 | Step 9 持久化部分 | 阻塞 | Step 5 提供运行引用查询、保留和清理事实源 |
 | Step 10 | 阻塞 | Step 0～9 全部交付，阶段 0 数据门禁关闭 |
@@ -90,6 +91,20 @@ Chunk、locator、Blob 和 excerpt 摘要。真实 Compose 历史 Run 的 Markdo
 原文跳转缺口由此关闭；活动 Skill、通用 Runtime Checkpoint 和正式质量门禁仍未完成。
 本轮回归为后端 pytest `609 passed, 44 skipped`、mypy 87 个源文件、Web Vitest `16 passed`，
 Ruff、OpenAPI 一致性、Web lint/typecheck/build 和保留 Compose 全栈健康检查均通过。
+
+2026-07-31 active `knowledge_qa` 补充审查：声明式包已迁移到受信根可扫描目录，API 启动时按配置
+显式激活 `0.1.0` 并将名称、semver 和内容 SHA-256 固定到新 QA Run。Worker 不读取当前 active
+指针决定已排队 Run，而是按 Run 固定版本重新 pin 并校验摘要，再通过确定性 Runtime handler 执行
+同一个现有 Run；不会再次 submit 或建立第二套持久状态。包缺失/摘要不一致投影为
+`QA_SKILL_INVALID`。Registry active 指针和通用 Runtime Checkpoint 仍由进程内状态/启动配置重建，
+阶段 5 正式退出状态不变。
+
+本补充验证：Ruff format/check、受影响模块 mypy、后端全量 pytest（`613 passed, 44 skipped`）、
+OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）和 production build 通过。保留卷 Compose
+重建 API/Worker 后，新 Run 持久化 `knowledge_qa/0.1.0` 与 64 位摘要并 completed；Worker 停止期间
+第二个 Run 保持 queued，重启后接管完成，Attempt/Event 为 `1/3`。5 条既有 Citation 在重建后仍为
+`valid` 且返回非空原文。新问题的一条 Citation 因既有 excerpt 再校验返回 `invalid`，按 provisional
+协议显式展示而未回退到相似文本；未据此形成引用质量结论。
 
 ## 验证记录
 
