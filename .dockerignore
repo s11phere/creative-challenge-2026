@@ -7,6 +7,16 @@
 .env.*
 !.env.example
 cases
+!cases/
+cases/*
+!cases/evals/
+cases/evals/*
+!cases/evals/configs/
+cases/evals/configs/*
+!cases/evals/configs/grounded-answer-v1.schema.json
+!cases/evals/prompts/
+cases/evals/prompts/*
+!cases/evals/prompts/grounded-qa-v1-provisional.txt
 tmp
 **/__pycache__
 **/*.py[cod]
@@ -17,4 +27,3 @@ tmp
 **/dist
 **/build
 **/*.egg-info
-

@@ -105,7 +105,60 @@ describe('QAWorkspace', () => {
     renderWorkspace()
 
     expect(screen.getByRole('heading', { name: '引用证据' })).toBeInTheDocument()
-    expect(screen.getByText('完成回答后显示引用')).toBeInTheDocument()
+    expect(screen.getByText('当前回答没有可显示的引用')).toBeInTheDocument()
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  it('renders a completed answer and its verified citation identity', async () => {
+    const completed = {
+      run_id: 'run-1',
+      attempt_id: 'attempt-1',
+      status: 'completed',
+      conversation_id: 'conversation-1',
+      question_message_id: 'message-1',
+      cancellation_requested: false,
+      error_code: null,
+      result: {
+        type: 'answer',
+        text: 'A grounded answer.',
+        limitations: ['Provisional quality.'],
+      },
+      citations: [
+        {
+          evidence_id: 'evidence-1',
+          source_id: '00000000-0000-0000-0000-000000000002',
+          document_id: '00000000-0000-0000-0000-000000000003',
+          version_id: '00000000-0000-0000-0000-000000000004',
+          chunk_id: '00000000-0000-0000-0000-000000000005',
+          locator: { kind: 'lines', start: 4, end: 8 },
+        },
+      ],
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/conversations')) {
+        return Promise.resolve(
+          response({
+            conversation_id: 'conversation-1',
+            space_id: 'space-1',
+            owner_id: 'local',
+          }),
+        )
+      }
+      return Promise.resolve(response(completed, url.endsWith('/questions') ? 202 : 200))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'idempotency-1' })
+
+    renderWorkspace()
+    fireEvent.change(screen.getByLabelText('问题'), {
+      target: { value: 'Show the supported conclusion.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '提问' }))
+
+    expect(await screen.findByText('A grounded answer.')).toBeInTheDocument()
+    expect(screen.getByText('Provisional quality.')).toBeInTheDocument()
+    expect(screen.getByText('lines 4-8')).toBeInTheDocument()
+    expect(screen.getByText('00000000 / 00000000')).toBeInTheDocument()
   })
 })

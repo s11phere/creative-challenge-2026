@@ -551,10 +551,21 @@ Application 用例；`docs/openapi.json` 与运行时 schema 一致。
   SSE 重放。提交顺序固定为先写内存 Repository Port，再发布 accepted 事件；客户端断开不会取消 Run。
 - 已完成：事件 payload 只包含安全状态和 ID；契约测试证明问题正文不会进入 SSE。新增 API 已重新
   导出到 `docs/openapi.json`，受影响 Ruff、mypy 和 pytest 通过。
-- 未关闭：当前只有门禁允许的内存 Repository/EventLog，Run 在 queued 后不会投递正式 Worker；
+- 截至该记录未关闭：只有门禁允许的内存 Repository/EventLog，Run 在 queued 后不会投递正式 Worker；
   PostgreSQL 事件序列、Dramatiq 投递、执行恢复、retry/feedback HTTP 端点、长连接 heartbeat、并发
   取消/发布和 API 重启恢复仍依赖 Step 6 正式迁移及 Worker Adapter。因此本 Step 只完成 provisional
-  传输主链，不满足正式完成标准，也不宣称问答 API 已可用。
+  传输主链，不满足正式完成标准；后续可用 provisional 执行见下方补充。
+
+#### 可用 provisional 执行补充（2026-07-31）
+
+- 用户明确接受当前质量不足并要求先跑通真实流程后，现有 QA API 已在 API 进程内启动唯一
+  `GroundedQAApplicationPort`，不再让 Run 永久停留于 queued。
+- 检索复用真实 PostgreSQL `SearchService`，Citation 发布前通过 PostgreSQL adapter 重新验证
+  Space、Source、Document、当前 published Version、Chunk 和 locator；不复制 FTS/向量/RRF 逻辑。
+- 默认 fake Chat 输出确定性抽取式 `grounded-answer-v1`，外部 Chat Provider 仍复用既有结构化生成、
+  修复和引用校验路径。异常只发布安全错误码，幂等重复提交不会重复启动进程内任务。
+- 未关闭：Repository/EventLog 仍在内存中，无 Worker 投递、租约、重启恢复或持久取消；因此本补充
+  是可用 provisional 路径，不改变 Step 7 或阶段 4 的正式完成状态。
 
 ### Step 8：实现 Web 对话工作台与证据查看器
 
@@ -584,6 +595,9 @@ Application 用例；`docs/openapi.json` 与运行时 schema 一致。
 - 未关闭：Step 7 尚无 Worker 完成链、终态结果读取、Citation resolver、retry/feedback API 和正式
   PostgreSQL 会话持久化，因此本步不能展示真实回答、引用原文、高亮、重试或反馈，也未执行完整
   Playwright/API E2E。当前只完成可由 provisional API 支持的 Web 主链，不满足正式完成标准。
+
+2026-07-31 补充：Web 现已读取终态结构化回答/拒答和服务端校验后的 Citation 身份，并展示
+document/version 摘要与 locator。引用原文跳转、高亮、重试、持久会话和 Worker 恢复仍未实现。
 
 ### Step 9：实现反馈审核和评测候选导出
 

@@ -37,7 +37,7 @@ AgentRun/Evidence 持久化及 ADR-007 协议。因此没有 `knowledge_qa` 或�
 | --- | --- | --- |
 | Step 5 | 部分完成 | 共享身份、内存原子检查点和确定性恢复已完成；PostgreSQL/Alembic、Worker、租约与清理等待阶段 3/4 正式门禁 |
 | Step 6 | 部分完成 | 未激活声明式包、QA Port Adapter 和合成契约已完成；生产激活等待阶段 3/4 正式退出 |
-| Step 7 | 阻塞 | Step 5/6 完成，ADR-007 或等价 SSE/后台任务协议接受 |
+| Step 7 | provisional 可用子集 | 现有 QA API/Web 已接真实检索、回答和引用身份；正式完成仍等待 PostgreSQL Run、Worker、重启恢复和活动 Skill |
 | Step 8 | 阻塞 | `knowledge_qa` 真实链路和派生知识写入 Application 用例稳定 |
 | Step 9 持久化部分 | 阻塞 | Step 5 提供运行引用查询、保留和清理事实源 |
 | Step 10 | 阻塞 | Step 0～9 全部交付，阶段 0 数据门禁关闭 |
@@ -54,6 +54,17 @@ AgentRun/Evidence 持久化及 ADR-007 协议。因此没有 `knowledge_qa` 或�
 `KnowledgeQASkillAdapter` 只调用唯一 provisional QA Port。服务端 Run 上下文提供调用者、Space 和
 幂等身份；测试验证回答、拒答、依赖故障以及客户端伪造安全字段。该实现没有生产注册、HTTP/Web
 入口、真实 Citation Adapter 或质量结论，仍不构成业务 Skill 可用性。
+
+2026-07-31 Step 7 再次复核：当前 OpenAPI 没有 `/api/v1/skills` 或 `/api/v1/runs`，Web 也没有
+Skill 入口；这与门禁一致，不是遗漏。只有在 Step 5/6 提供持久 Run、Worker 完成/恢复和活动
+`knowledge_qa` 后，才能基于 ADR-007 的既有 `qa-sse-v1` 接入三入口，不能先发布进程内临时 API。
+
+2026-07-31 用户随后明确接受当前表现不足，并要求先交付真实可用版本。基于该方向，Step 7 增加
+不改变正式门禁的 provisional 子集：复用现有 QA API、`qa-sse-v1` 和 Web 问答入口，在 API 进程
+内调用唯一 QA Application Port、真实 PostgreSQL SearchService 与 Citation target adapter。
+默认 fake Chat 返回确定性证据摘录，终态 API/Web 展示回答或拒答及引用身份。未新增第二套 Runtime
+API/SSE，未激活 `_provisional/knowledge_qa`；QA 状态重启丢失、无 Worker、无原文跳转，故不能把
+该可用子集记为 Step 7 或阶段 5 正式完成。
 
 ## 验证记录
 
@@ -83,6 +94,16 @@ corepack pnpm@10.20.0 --dir apps/web build
   集成测试；1 个为当前 Windows 环境无权限创建符号链接。`.pytest_cache` 写权限警告不影响结果。
 - Web lint/typecheck/build 通过；Vitest `6 passed`。Web 未发生阶段 5 功能变化，本次只做基线回归。
 - `git diff --check` 在文档更新后再次执行。
+
+2026-07-31 可用 provisional 子集新增验证：
+
+- Ruff format/check 与 mypy 通过；全量 pytest 为 `601 passed, 41 skipped`，skip 均为未启用的真实
+  依赖测试或既有平台限制，`.pytest_cache` 权限警告不影响结果。
+- Web lint/typecheck、Vitest `16 passed` 和 production build 通过；新增测试覆盖终态回答与引用展示。
+- OpenAPI 已重新导出并通过一致性测试；回答、拒答、冲突、Citation 和 locator 均为显式 schema。
+- 隔离 Compose project 使用空 PostgreSQL/Redis 命名卷完成构建、迁移与健康启动；上传前校验
+  manifest 允许的 `omnistudio/README.md` SHA-256，摄入任务成功，QA Run 返回 completed、回答和
+  `lines 120-126` Citation。未读取非允许来源、未调用外部 Provider、未执行 development/holdout。
 
 ## 审查决定
 

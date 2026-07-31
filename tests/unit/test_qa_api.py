@@ -9,7 +9,7 @@ from model_gateway import FakeModelGateway
 
 @pytest.mark.asyncio
 async def test_provisional_qa_api_creates_run_cancels_and_replays_events() -> None:
-    app = create_app(model_gateway=FakeModelGateway())
+    app = create_app(model_gateway=FakeModelGateway(), enable_qa_execution=False)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         created = await client.post(
             "/api/v1/spaces/00000000-0000-0000-0000-000000000001/conversations",

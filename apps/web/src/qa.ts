@@ -16,6 +16,20 @@ export type QARun = {
   question_message_id: string
   cancellation_requested: boolean
   error_code: string | null
+  result?: {
+    type: 'answer' | 'refusal' | 'conflict'
+    text?: string
+    message?: string
+    limitations?: string[]
+  } | null
+  citations?: Array<{
+    evidence_id: string
+    source_id: string
+    document_id: string
+    version_id: string
+    chunk_id: string
+    locator: { kind: string; start: number; end: number }
+  }>
 }
 
 export class QAApiError extends Error {

@@ -45,8 +45,14 @@ holdout 149，`formal_run_eligible=false`，未产生模型调用或回答执行
 
 继续实现补充（2026-07-31）：`GroundedQAApplicationPort` 已通过合成 SearchService、Citation target、
 结构化 Chat fake 和内存 Repository 验证幂等提交、Evidence 保存、回答原子发布、检索失败与显式取消；
-定向 QA service/persistence/API 测试为 `15 passed`。该服务没有接入 API/Worker，也没有新增受正式门禁
-约束的数据库实现。
+定向 QA service/persistence/API 测试为 `15 passed`。截至该次记录，该服务尚未接入 API/Worker，
+也没有新增受正式门禁约束的数据库实现。
+
+可用 provisional 补充（2026-07-31）：按用户明确方向，现有 QA API 已在 API 进程内接入该唯一
+Application Port，并复用真实 PostgreSQL SearchService 和新增 Citation target adapter。隔离 Compose
+空卷完成迁移、摄入 manifest 允许的 `omnistudio/README.md`（上传前 SHA-256 与 manifest 一致）后，
+QA Run 从 queued 到 completed，返回回答及绑定同一 Space 的 source/document/version/chunk 和
+`lines 120-126` locator。默认模型仍为确定性抽取 fake；未运行 development 或 holdout。
 
 ## 正式退出矩阵
 
@@ -55,15 +61,15 @@ holdout 149，`formal_run_eligible=false`，未产生模型调用或回答执行
 | 领域、Application、SSE/API、Web 契约回归 | 已完成（provisional） | 仅内存态与 fake/合成验证 |
 | QA PostgreSQL 迁移、upgrade/downgrade、保留语义 | 未执行 | 不新增受门禁限制的业务表 |
 | Worker/Dramatiq 执行、取消恢复、API 重启恢复 | 未执行 | 没有 QA Worker 完成链 |
-| 导入到引用、原文、反馈的 Compose E2E | 未执行 | 无真实回答与 Citation 发布 |
+| 导入到回答与引用身份的 Compose E2E | provisional 已执行 | 真实摄入/检索/引用身份通过；原文解析与反馈旅程未执行 |
 | Playwright 桌面/移动截图 | 未执行 | 真实回答/Citation 用户旅程不存在 |
 | development 消融、默认 QA 配置冻结、正式 holdout | 未执行 | Stage 3 质量门禁及 Stage 4 正式门禁未关闭 |
-| Citation target resolution 与回答质量结论 | 未执行 | 不存在真实 Citation 或 answer report |
+| Citation target resolution 与回答质量结论 | 部分执行 | PostgreSQL target 身份校验通过；无原文 API、质量冻结或正式 answer report |
 
 ## 阶段 5 边界
 
-Grounded QA schema、SSE v1、安全边界和唯一 provisional QA Application Port 已可供后续设计及
-fake 契约复用，但当前 API/SSE 为进程内 provisional 实现，没有持久执行、终态 Citation 或唯一生产
-QA Application Port。阶段 5 不得据此实现、接入或
-宣称 `knowledge_qa` Skill；必须先完成阶段 3 正式退出，再按 ADR-007 完成阶段 4 的持久化、Worker、
-真实 Citation 和评测门禁。
+Grounded QA schema、SSE v1、安全边界和唯一 provisional QA Application Port 已可供后续设计；
+现有 QA API/Web 也可作为真实检索和引用身份的临时可用入口。但执行和状态仍在 API 进程内，
+没有持久恢复、Worker 或引用原文 API。阶段 5 可以据此继续开发，不得据此宣称活动
+`knowledge_qa` Skill 或阶段 4/5 正式完成；正式退出仍须关闭 Stage 3、持久化、Worker、质量和
+holdout 门禁。

@@ -454,6 +454,20 @@ schema/corpus/dataset 版本通过服务端配置传入并在执行前交叉校�
 后台任务、取消和恢复协议尚未接受；因此未新增 `/api/v1/skills`、`/api/v1/runs`、Web
 入口或 OpenAPI 内容，避免形成第二套临时协议。
 
+**再次复核（2026-07-31）**：ADR-007 已接受，阶段 4 也已有 `qa-sse-v1` 和 provisional
+内存 API，但 Step 5 仍只有内存检查点恢复，Step 6 仍是不会批量注册的 provisional QA Port
+契约。当前缺少 PostgreSQL AgentRun/Event、Worker 完成链、API 重启恢复、持久取消/审批和活动
+`knowledge_qa`，因此本步骤仍无可安全接入的公开子集。继续跳过 Runtime API、Web 和 OpenAPI
+变更；不得用进程内 Repository、fake 结果或新的 Runtime SSE schema 绕过持久化门禁。
+
+**可用 provisional 子集（2026-07-31，用户明确授权）**：为先跑通真实使用流程，现有 QA
+transport 和 Web 问答入口已接入唯一 `GroundedQAApplicationPort`，由 API 进程执行真实 PostgreSQL
+`SearchService` 检索和 Citation target 再校验。默认 fake Chat 产生确定性抽取式结构化回答，外部
+Chat Provider 在策略允许并配置后复用相同生成/校验路径；终态查询与 Web 展示回答、限制和引用身份。
+实现没有新增平行 Runtime/SSE schema，也没有激活 `_provisional/knowledge_qa`。该子集可用于后续
+开发，但 Run/Event/Evidence/Citation 仍为进程内状态、无 Worker/重启恢复和引用原文跳转，故 Step 7
+正式完成标准仍未满足，Stage 3/4/5 状态不变。
+
 ### 步骤 8：知识整理 Skill 与写入确认
 
 本步骤只在 `knowledge_qa` 的真实链路和引用完整性已经稳定后开始。
@@ -535,7 +549,7 @@ Registry 不提供旧版本删除 API；AgentRun/Checkpoint/审计引用查询�
 | 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 已完成 |
 | 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | provisional 内存原子检查点/恢复已完成；PostgreSQL、Worker、租约与清理仍阻塞 |
 | 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | provisional 未激活包和 QA Port fake 契约已完成；生产接入仍阻塞 |
-| 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 已复核并跳过；等待前序协议 |
+| 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 现有 QA API/Web 的真实检索、回答和引用 provisional 子集已完成；持久 Run/Worker/恢复及活动 Skill 仍阻塞 |
 | 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | 已复核并跳过；等待步骤 6/7 |
 | 9. 热加载与回滚 | 步骤 3/5；不可变版本和恢复语义已验证 | 通用部分已完成；持久化引用清理等待步骤 5 |
 | 10. 测试与验收 | 步骤 0～9；阶段 0 数据门禁关闭 | 已复核并跳过；等待全部交付和数据门禁 |

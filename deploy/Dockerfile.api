@@ -10,6 +10,8 @@ COPY apps/api/ apps/api/
 COPY apps/worker/ apps/worker/
 COPY alembic.ini ./
 COPY migrations/ migrations/
+COPY cases/evals/configs/grounded-answer-v1.schema.json cases/evals/configs/grounded-answer-v1.schema.json
+COPY cases/evals/prompts/grounded-qa-v1-provisional.txt cases/evals/prompts/grounded-qa-v1-provisional.txt
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package api

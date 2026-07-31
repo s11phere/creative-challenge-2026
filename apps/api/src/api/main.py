@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from .errors import ErrorResponse, register_error_handlers
 from .observability import TraceMiddleware
+from .qa_runtime import InProcessQARuntime
 from .routers import qa, search, sources
 
 
@@ -64,11 +65,20 @@ def create_app(
     model_gateway: ModelGateway | None = None,
     *,
     database: Database | None = None,
+    enable_qa_execution: bool = True,
 ) -> FastAPI:
     """Application factory. Call once at process start."""
 
     database = database or Database(settings.database_url)
     gateway = model_gateway or _create_configured_model_gateway()
+    qa_repository = InMemoryGroundedQARepository()
+    qa_event_log = QAEventLog()
+    qa_runtime = InProcessQARuntime(
+        database=database,
+        gateway=gateway,
+        repository=qa_repository,
+        events=qa_event_log,
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -78,6 +88,7 @@ def create_app(
         try:
             yield
         finally:
+            await qa_runtime.aclose()
             await database.dispose()
             await gateway.aclose()
             await asyncio.to_thread(
@@ -92,8 +103,10 @@ def create_app(
     )
     app.state.database = database
     app.state.model_gateway = gateway
-    app.state.qa_repository = InMemoryGroundedQARepository()
-    app.state.qa_event_log = QAEventLog()
+    app.state.qa_repository = qa_repository
+    app.state.qa_event_log = qa_event_log
+    app.state.qa_runtime = qa_runtime
+    app.state.qa_execution_enabled = enable_qa_execution
 
     app.add_middleware(TraceMiddleware)
     register_error_handlers(app)

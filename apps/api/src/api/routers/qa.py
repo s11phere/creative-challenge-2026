@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from typing import Literal
 from uuid import UUID, uuid4
 
 from application.qa.persistence import InMemoryGroundedQARepository
@@ -16,7 +17,6 @@ from domain.qa_persistence import (
     MessageRecord,
     MessageRole,
     QARunRecord,
-    QARunVersions,
 )
 from domain.qa_sse import QAEventLog, QAEventType
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -41,6 +41,39 @@ class QuestionRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=200)
 
 
+class AnswerResultResponse(BaseModel):
+    type: Literal["answer"] = "answer"
+    text: str
+    limitations: list[str] = Field(default_factory=list)
+
+
+class RefusalResultResponse(BaseModel):
+    type: Literal["refusal"] = "refusal"
+    code: str
+    message: str
+
+
+class ConflictResultResponse(BaseModel):
+    type: Literal["conflict"] = "conflict"
+    message: str
+    evidence_ids: list[UUID]
+
+
+class CitationLocatorResponse(BaseModel):
+    kind: str
+    start: int
+    end: int
+
+
+class CitationResponse(BaseModel):
+    evidence_id: UUID
+    source_id: UUID
+    document_id: UUID
+    version_id: UUID
+    chunk_id: UUID
+    locator: CitationLocatorResponse
+
+
 class RunResponse(BaseModel):
     run_id: UUID
     attempt_id: UUID
@@ -49,6 +82,8 @@ class RunResponse(BaseModel):
     question_message_id: UUID
     cancellation_requested: bool
     error_code: str | None = None
+    result: AnswerResultResponse | RefusalResultResponse | ConflictResultResponse | None = None
+    citations: list[CitationResponse] = Field(default_factory=list)
 
 
 class FeedbackRequest(BaseModel):
@@ -77,7 +112,53 @@ def _run_response(run: QARunRecord) -> RunResponse:
         question_message_id=run.question_message_id,
         cancellation_requested=run.cancellation_requested,
         error_code=run.error_code,
+        result=_result_payload(run),
+        citations=_citation_payloads(run),
     )
+
+
+def _result_payload(
+    run: QARunRecord,
+) -> AnswerResultResponse | RefusalResultResponse | ConflictResultResponse | None:
+    result = run.result
+    if result is None:
+        return None
+    if result.answer is not None:
+        return AnswerResultResponse(
+            text=result.answer.text,
+            limitations=list(result.answer.limitations),
+        )
+    if result.refusal is not None:
+        return RefusalResultResponse(
+            code=result.refusal.code.value,
+            message=result.refusal.message,
+        )
+    if result.conflict is not None:
+        return ConflictResultResponse(
+            message=result.conflict.message,
+            evidence_ids=list(result.conflict.evidence_ids),
+        )
+    return None
+
+
+def _citation_payloads(run: QARunRecord) -> list[CitationResponse]:
+    if run.result is None or run.result.answer is None:
+        return []
+    return [
+        CitationResponse(
+            evidence_id=citation.evidence_id,
+            source_id=citation.source_id,
+            document_id=citation.document_id,
+            version_id=citation.version_id,
+            chunk_id=citation.chunk_id,
+            locator=CitationLocatorResponse(
+                kind=citation.locator.kind.value,
+                start=citation.locator.start,
+                end=citation.locator.end,
+            ),
+        )
+        for citation in run.result.answer.citations
+    ]
 
 
 @router.post(
@@ -125,16 +206,7 @@ async def submit_question(
             space_id=conversation.space_id,
             caller_id=conversation.owner_id,
             idempotency_key=body.idempotency_key,
-            versions=QARunVersions(
-                "provisional",
-                "qa-profile-v1",
-                "retrieval-v1",
-                "fake-fast-chat-v1",
-                "prompt-v1",
-                "grounded-answer-v1",
-                "provisional",
-                "provisional",
-            ),
+            versions=request.app.state.qa_runtime.versions,
         )
         run = await repo.create_run(run)
         if run.status is QAStatus.CREATED:
@@ -142,6 +214,8 @@ async def submit_question(
     except Exception as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     events.append(run.run_id, QAEventType.ACCEPTED, {"status": QAStatus.QUEUED.value})
+    if request.app.state.qa_execution_enabled:
+        request.app.state.qa_runtime.start(run.run_id)
     return _run_response(run)
 
 

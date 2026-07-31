@@ -119,6 +119,14 @@ export function QAWorkspace() {
                   <strong>{statusLabel(currentRun?.status ?? 'created')}</strong>
                 </div>
                 {currentRun?.error_code && <code>{currentRun.error_code}</code>}
+                {currentRun?.result && (
+                  <div className="qa-answer">
+                    <p>{currentRun.result.text ?? currentRun.result.message}</p>
+                    {currentRun.result.limitations?.map((limitation) => (
+                      <small key={limitation}>{limitation}</small>
+                    ))}
+                  </div>
+                )}
               </article>
             </>
           )}
@@ -176,10 +184,25 @@ export function QAWorkspace() {
           <Quote size={18} aria-hidden="true" />
           <h2 id="qa-evidence-title">引用证据</h2>
         </div>
-        <div className="qa-evidence-empty">
-          <FileText size={25} aria-hidden="true" />
-          <span>{isActive ? '等待证据校验' : '完成回答后显示引用'}</span>
-        </div>
+        {currentRun?.citations?.length ? (
+          <div className="qa-citation-list">
+            {currentRun.citations.map((citation, index) => (
+              <article className="qa-citation" key={citation.evidence_id}>
+                <FileText size={17} aria-hidden="true" />
+                <div>
+                  <strong>证据 {index + 1}</strong>
+                  <span>{citation.locator.kind} {citation.locator.start}-{citation.locator.end}</span>
+                  <code>{citation.document_id.slice(0, 8)} / {citation.version_id.slice(0, 8)}</code>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="qa-evidence-empty">
+            <FileText size={25} aria-hidden="true" />
+            <span>{isActive ? '等待证据校验' : '当前回答没有可显示的引用'}</span>
+          </div>
+        )}
       </aside>
     </section>
   )

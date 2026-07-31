@@ -1,6 +1,32 @@
 {
   "components": {
     "schemas": {
+      "AnswerResultResponse": {
+        "properties": {
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "answer",
+            "default": "answer",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "AnswerResultResponse",
+        "type": "object"
+      },
       "Body_upload_file_api_v1_spaces__space_id__sources__source_id__upload_post": {
         "properties": {
           "file": {
@@ -46,6 +72,99 @@
           "final"
         ],
         "title": "CandidateCountsResponse",
+        "type": "object"
+      },
+      "CitationLocatorResponse": {
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "start",
+          "end"
+        ],
+        "title": "CitationLocatorResponse",
+        "type": "object"
+      },
+      "CitationResponse": {
+        "properties": {
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "evidence_id": {
+            "format": "uuid",
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "locator": {
+            "$ref": "#/components/schemas/CitationLocatorResponse"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "source_id",
+          "document_id",
+          "version_id",
+          "chunk_id",
+          "locator"
+        ],
+        "title": "CitationResponse",
+        "type": "object"
+      },
+      "ConflictResultResponse": {
+        "properties": {
+          "evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "const": "conflict",
+            "default": "conflict",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "evidence_ids"
+        ],
+        "title": "ConflictResultResponse",
         "type": "object"
       },
       "ConversationCreate": {
@@ -433,6 +552,30 @@
         "title": "ReadyResponse",
         "type": "object"
       },
+      "RefusalResultResponse": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "const": "refusal",
+            "default": "refusal",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "RefusalResultResponse",
+        "type": "object"
+      },
       "RetrievalMode": {
         "enum": [
           "keyword",
@@ -454,6 +597,13 @@
             "title": "Cancellation Requested",
             "type": "boolean"
           },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/CitationResponse"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
           "conversation_id": {
             "format": "uuid",
             "title": "Conversation Id",
@@ -474,6 +624,23 @@
             "format": "uuid",
             "title": "Question Message Id",
             "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnswerResultResponse"
+              },
+              {
+                "$ref": "#/components/schemas/RefusalResultResponse"
+              },
+              {
+                "$ref": "#/components/schemas/ConflictResultResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
           },
           "run_id": {
             "format": "uuid",

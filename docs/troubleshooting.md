@@ -110,13 +110,13 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 
 - 已有阶段 2 的 6 张核心业务表、摄入流水线和 Worker 消费者；当前支持上传文件，尚无目录监听。
 - 阶段 3 的 Keyword/Dense/Hybrid/Hybrid+Reranker 检索 API 已可用。provisional 知识问答 Web/API
-  可以创建进程内会话、提交问题、查询/取消 queued Run 并重放安全 SSE；这不是已完成的问答业务能力。
-  当前没有 QA PostgreSQL 表或 Worker 完成链，Run 会保持 queued，证据区为空，不能将其视为模型或检索故障。
+  可以创建进程内会话、提交问题，并在 API 进程内调用真实 PostgreSQL SearchService 产出回答或拒答；
+  终态响应和 Web 证据区展示经过当前 Space/版本/Chunk 再校验的 Citation 身份。
 - provisional QA 的会话、Run 与事件均只在 API 进程内保存。重启 API 会丢失这些状态；断开 SSE 连接不会
-  取消 Run，只有显式取消请求才会记录取消意图。真实回答、Citation、原文跳转、重试、反馈审核和恢复语义
-  必须等待阶段 4 正式门禁、持久化和 Worker 实现。
-- `GroundedQAApplicationPort` 已在纯 Application 层用内存 Repository 和合成 fake 跑通完整终态，
-  但 API/Worker 当前未装配该执行服务；因此通过服务单测不代表 Web/API Run 会离开 queued。
+  取消 Run，只有显式取消请求才会记录取消意图。执行不经过 Worker，进程退出时运行中的任务会被取消；
+  原文跳转、重试、反馈审核和恢复语义仍等待正式持久化与 Worker 实现。
+- 默认 `FakeModelGateway` 使用确定性抽取式回答，返回相关证据片段而不是高质量综合回答；这是当前
+  流程验证基线。Stage 3 达标并冻结检索配置后再调整召回、重排和回答表现，不得把当前结果用于 holdout。
 - 阶段 3 评测配置仍为 provisional：阶段 0 和阶段 2 已正式关闭，但 2026-07-29 冻结语料
   development 的最佳 Dense Recall@5 只有 51.90%，BGE Reranker 没有净收益且 P95 为
   3523.9 ms，因此 holdout 仍被配置门禁拒绝。不要手工打开 `formal_runs_enabled`。
@@ -133,8 +133,8 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
   Web 入口或 PostgreSQL 运行/检查点持久化。
 - Registry 的活动版本和生命周期事件当前只在进程内；进程重启恢复、旧版本引用清理和
   Worker 接管必须等待阶段 4 AgentRun/Evidence 模型与阶段 5 Step 5。
-- Web 分别展示真实健康状态、真实数据来源/摄入任务和 provisional QA 状态；QA 证据面板刻意不伪造
-  Citation 或原文内容。
+- Web 分别展示真实健康状态、真实数据来源/摄入任务和 provisional QA 状态；QA 证据面板只展示
+  服务端已校验的 Citation 身份和 locator，不伪造原文内容。
 - 阶段 0 语料已按 `docs/stage-0-acceptance.md` 冻结为 `internal_team_only`；真实语料只可在
   manifest 允许列表内用于本地/组内评测，禁止 Git 分发、公开演示和未经策略允许的外部 Provider
   外发。阶段 2 Step 9 已关闭，但阶段 3 正式质量门禁仍未关闭；阶段 4 因此仍未正式启动。
