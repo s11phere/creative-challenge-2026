@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 from uuid import UUID
 
+from agent_runtime import FileSystemSkillRegistry
 from domain.qa_persistence import GroundedQARepository
 from infrastructure.qa_execution import qa_execution_versions
 from infrastructure.telemetry_context import new_trace_id
@@ -23,9 +24,10 @@ class QAWorkerDispatcher:
         self,
         *,
         repository: GroundedQARepository,
+        skill_registry: FileSystemSkillRegistry | None = None,
         enqueuer: QAEnqueuer | None = None,
     ) -> None:
-        self.versions = qa_execution_versions()
+        self.versions = qa_execution_versions(skill_registry)
         self._repository = repository
         self._enqueuer = enqueuer
 

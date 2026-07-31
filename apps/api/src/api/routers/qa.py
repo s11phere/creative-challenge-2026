@@ -79,6 +79,12 @@ class CitationExcerptResponse(CitationResponse):
     excerpt: str | None = None
 
 
+class RunSkillResponse(BaseModel):
+    name: str
+    version: str
+    content_sha256: str | None
+
+
 class RunResponse(BaseModel):
     run_id: UUID
     attempt_id: UUID
@@ -87,6 +93,7 @@ class RunResponse(BaseModel):
     question_message_id: UUID
     cancellation_requested: bool
     error_code: str | None = None
+    skill: RunSkillResponse
     result: AnswerResultResponse | RefusalResultResponse | ConflictResultResponse | None = None
     citations: list[CitationResponse] = Field(default_factory=list)
 
@@ -117,6 +124,11 @@ def _run_response(run: QARunRecord) -> RunResponse:
         question_message_id=run.question_message_id,
         cancellation_requested=run.cancellation_requested,
         error_code=run.error_code,
+        skill=RunSkillResponse(
+            name=run.versions.skill_name,
+            version=run.versions.skill_version,
+            content_sha256=run.versions.skill_content_sha256,
+        ),
         result=_result_payload(run),
         citations=_citation_payloads(run),
     )

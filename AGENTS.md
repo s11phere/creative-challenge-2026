@@ -32,13 +32,13 @@
 | 阶段 2 | 正式完成 | Step 0～8 工程闭环和 Step 9 冻结语料验收完成；74 个 P0 来源解析/定位/分块成功率 100%，隔离依赖和 Compose E2E 通过 | 仅保留 `internal_team_only` 分发边界和已记录运行限制 |
 | 阶段 3 | 工程 Step 0～10 验收完成 | Keyword/Dense/Hybrid/Hybrid+Reranker、上下文扩展、Space/版本边界、检索 API、离线评测和移交已落地 | 真实模型 development 消融、默认配置冻结和正式 holdout 未完成，阶段 3 未正式退出 |
 | 阶段 4 | provisional Step 0～10 | GroundedAnswer/Citation、PostgreSQL QA 持久化、API/SSE/Web、Worker 重启恢复、原文解析和回答评测门禁已落地 | Stage 3 正式退出、默认配置冻结和正式 answer holdout 未完成 |
-| 阶段 5 | 通用基础 + active provisional Skill | 通用 Runtime/Registry 已审查；`knowledge_qa 0.1.0` 已固定摘要并由现有 QA Web/API/Worker 执行 | 通用 AgentRun/Checkpoint 持久化、Runtime/Skill 管理入口、知识整理 Skill 和正式验收未完成 |
+| 阶段 5 | 通用基础 + active provisional Skill | 通用 Runtime/Registry 已审查；`knowledge_qa 0.1.0` 已固定摘要并由现有 QA Web/API/Worker 执行；只读 Skill Catalog 已提供 | 通用 AgentRun/Checkpoint 持久化、Skill 激活/回滚写入口、知识整理 Skill 和正式验收未完成 |
 
 当前可见能力和数据面：
 
 - Web 提供系统健康、数据来源/摄入任务和 provisional 知识问答；Citation 可按需解析固定版本原文。
-- OpenAPI 提供健康、来源创建/上传/摄入、任务查询/取消/重试，以及
-  `POST /api/v1/spaces/{space_id}/search`。
+- OpenAPI 提供健康、来源创建/上传/摄入、任务查询/取消/重试、检索、provisional QA/Citation，
+  以及只读 Skill/版本查询。
 - PostgreSQL 除摄入/检索表外，已有 QA Conversation、Message、Run/Attempt、Evidence、Citation、
   Feedback 和 SSE Event 持久化；`chunks` 含 768 维 pgvector、IVFFlat 和阶段 3 FTS 列/索引。
 - `ModelGateway` 的 `fast_chat` 能力当前只提供非流式完整响应；阶段 4 的 SSE、断线重连、取消和最终

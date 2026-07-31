@@ -717,6 +717,9 @@
             "title": "Run Id",
             "type": "string"
           },
+          "skill": {
+            "$ref": "#/components/schemas/RunSkillResponse"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -728,9 +731,40 @@
           "status",
           "conversation_id",
           "question_message_id",
-          "cancellation_requested"
+          "cancellation_requested",
+          "skill"
         ],
         "title": "RunResponse",
+        "type": "object"
+      },
+      "RunSkillResponse": {
+        "properties": {
+          "content_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Sha256"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "content_sha256"
+        ],
+        "title": "RunSkillResponse",
         "type": "object"
       },
       "SearchApiRequest": {
@@ -1225,6 +1259,125 @@
           "end"
         ],
         "title": "SearchLocatorResponse",
+        "type": "object"
+      },
+      "SkillBudgetResponse": {
+        "properties": {
+          "max_input_tokens": {
+            "title": "Max Input Tokens",
+            "type": "integer"
+          },
+          "max_output_tokens": {
+            "title": "Max Output Tokens",
+            "type": "integer"
+          },
+          "max_steps": {
+            "title": "Max Steps",
+            "type": "integer"
+          },
+          "max_tool_calls": {
+            "title": "Max Tool Calls",
+            "type": "integer"
+          },
+          "timeout_seconds": {
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_steps",
+          "max_tool_calls",
+          "max_input_tokens",
+          "max_output_tokens",
+          "timeout_seconds"
+        ],
+        "title": "SkillBudgetResponse",
+        "type": "object"
+      },
+      "SkillSummaryResponse": {
+        "properties": {
+          "active_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Version"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "active_version",
+          "versions"
+        ],
+        "title": "SkillSummaryResponse",
+        "type": "object"
+      },
+      "SkillVersionResponse": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/SkillBudgetResponse"
+          },
+          "content_sha256": {
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "array"
+          },
+          "required_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Capabilities",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "content_sha256",
+          "description",
+          "active",
+          "permissions",
+          "required_capabilities",
+          "budget"
+        ],
+        "title": "SkillVersionResponse",
         "type": "object"
       },
       "SourceDetailResponse": {
@@ -1831,6 +1984,77 @@
           }
         },
         "summary": "Submit Feedback"
+      }
+    },
+    "/api/v1/skills": {
+      "get": {
+        "operationId": "list_skills_api_v1_skills_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SkillSummaryResponse"
+                  },
+                  "title": "Response List Skills Api V1 Skills Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Skills",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/api/v1/skills/{skill_name}/versions": {
+      "get": {
+        "operationId": "list_skill_versions_api_v1_skills__skill_name__versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SkillVersionResponse"
+                  },
+                  "title": "Response List Skill Versions Api V1 Skills  Skill Name  Versions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Skill Versions",
+        "tags": [
+          "skills"
+        ]
       }
     },
     "/api/v1/spaces/{space_id}/conversations": {

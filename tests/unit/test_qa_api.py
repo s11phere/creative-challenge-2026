@@ -51,6 +51,9 @@ async def test_provisional_qa_api_creates_run_cancels_and_replays_events() -> No
         assert submitted.status_code == 202
         run_id = UUID(submitted.json()["run_id"])
         assert submitted.json()["status"] == "queued"
+        assert submitted.json()["skill"]["name"] == "knowledge_qa"
+        assert submitted.json()["skill"]["version"] == "0.1.0"
+        assert len(submitted.json()["skill"]["content_sha256"]) == 64
 
         replayed_submission = await client.post(
             f"/api/v1/conversations/{conversation_id}/questions",
@@ -111,4 +114,38 @@ async def test_citation_endpoint_returns_only_the_resolved_published_excerpt() -
         "excerpt": "minimal excerpt",
     }
     assert missing.status_code == 404
+    assert missing.json()["code"] == "HTTP_404"
     assert "minimal excerpt" not in missing.text
+
+
+@pytest.mark.asyncio
+async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() -> None:
+    app = create_app(
+        model_gateway=FakeModelGateway(),
+        enable_qa_execution=False,
+        qa_repository=InMemoryGroundedQARepository(),
+        qa_event_store=QAEventLog(),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        listed = await client.get("/api/v1/skills")
+        versions = await client.get("/api/v1/skills/knowledge_qa/versions")
+        missing = await client.get("/api/v1/skills/not_installed/versions")
+
+    assert listed.status_code == 200
+    assert listed.json() == [
+        {"name": "knowledge_qa", "active_version": "0.1.0", "versions": ["0.1.0"]}
+    ]
+    assert versions.status_code == 200
+    payload = versions.json()[0]
+    assert payload["active"] is True
+    assert payload["content_sha256"]
+    assert payload["permissions"] == ["model", "read_knowledge"]
+    assert payload["budget"] == {
+        "max_steps": 4,
+        "max_tool_calls": 1,
+        "max_input_tokens": 8192,
+        "max_output_tokens": 4096,
+        "timeout_seconds": 60,
+    }
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "HTTP_404"

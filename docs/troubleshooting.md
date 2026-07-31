@@ -132,7 +132,8 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 - 模型服务不可用不会阻断 PostgreSQL/Redis 管理面 ready；Dense 会返回明确 Provider 错误，Hybrid 只有 profile 明确允许时才可降级为 Keyword。
 - 已有离线 Agent Runtime、Tool/Skill Registry、声明式执行器、内存检查点恢复和 Skill 模板；
   `knowledge_qa 0.1.0` 已由配置显式激活，现有 QA HTTP/Web 入口创建的每个 Run 都固定包摘要，
-  Worker 校验后才调用唯一 QA Application Port。
+  Worker 校验后才调用唯一 QA Application Port。可用 `GET /api/v1/skills` 和
+  `GET /api/v1/skills/knowledge_qa/versions` 检查安装摘要、active 版本和 manifest 预算。
 - 若 Run 以 `QA_SKILL_INVALID` 失败，检查 API 与 Worker 的 `SKILL_ROOT_PATH`、
   `KNOWLEDGE_QA_SKILL_VERSION` 和镜像内 `skills/knowledge_qa` 内容是否一致。不要就地修改已被 Run
   引用的同名版本；发布新 semver 并保留旧包供排队/恢复 Run 校验。

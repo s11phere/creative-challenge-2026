@@ -36,6 +36,7 @@ Worker recovery pins the Run's version rather than choosing the current active v
 the fake QA Port path and verify that Worker mode never submits a second Run.
 
 Step 7 was re-audited on 2026-07-31. ADR-007's durable PostgreSQL/Worker/restart subset is implemented.
-The usable slice therefore continues to use the existing `/api/v1/qa/runs`
-and `qa-sse-v1` transport rather than adding `/api/v1/skills`, a parallel `/api/v1/runs` family, or a
-second SSE schema. The Web QA entry is usable; a Web Skill entry remains intentionally absent.
+The usable slice therefore continues to use the existing `/api/v1/qa/runs` and `qa-sse-v1` transport.
+A read-only `/api/v1/skills` catalog exposes installed/fixed identity and manifest budget; it has no
+activation/rollback write path, no arbitrary package path, and no parallel `/api/v1/runs` family or second
+SSE schema. The Web QA entry displays the catalog identity; a separate Skill management UI remains absent.

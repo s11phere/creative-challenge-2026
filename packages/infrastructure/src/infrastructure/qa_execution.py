@@ -142,9 +142,11 @@ class StructuredFakeGateway:
         return None
 
 
-def qa_execution_versions() -> QARunVersions:
+def qa_execution_versions(
+    skill_registry: FileSystemSkillRegistry | None = None,
+) -> QARunVersions:
     planning, retrieval, generation = _profiles()
-    pin = active_knowledge_qa_pin()
+    pin = active_knowledge_qa_pin(skill_registry)
     return QARunVersions(
         skill_name=pin.name,
         skill_version=pin.version,
@@ -167,8 +169,10 @@ def knowledge_qa_registry() -> FileSystemSkillRegistry:
     return registry
 
 
-def active_knowledge_qa_pin() -> PinnedSkill:
-    registry = knowledge_qa_registry()
+def active_knowledge_qa_pin(
+    skill_registry: FileSystemSkillRegistry | None = None,
+) -> PinnedSkill:
+    registry = skill_registry or knowledge_qa_registry()
     return registry.pin("knowledge_qa")
 
 

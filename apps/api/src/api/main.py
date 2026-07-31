@@ -12,6 +12,7 @@ from application.qa import (
     PublishedCitationApplicationPort,
     PublishedCitationService,
 )
+from application.skills import SkillCatalogPort
 from domain.grounded_qa import CitationContentKind
 from domain.qa_persistence import GroundedQARepository
 from domain.qa_sse import QAEventStore
@@ -21,7 +22,9 @@ from infrastructure.config import settings
 from infrastructure.database import Database
 from infrastructure.parsers import MarkdownParser, PdfParser
 from infrastructure.qa import PostgresCitationTargetPort
+from infrastructure.qa_execution import knowledge_qa_registry
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
+from infrastructure.skill_catalog import FileSystemSkillCatalog
 from infrastructure.telemetry import configure_observability
 from model_gateway import (
     GatewayConfig,
@@ -36,7 +39,7 @@ from pydantic import BaseModel
 from .errors import ErrorResponse, register_error_handlers
 from .observability import TraceMiddleware
 from .qa_runtime import QAWorkerDispatcher
-from .routers import qa, search, sources
+from .routers import qa, search, skills, sources
 
 
 class LiveResponse(BaseModel):
@@ -79,6 +82,7 @@ def create_app(
     qa_repository: GroundedQARepository | None = None,
     qa_event_store: QAEventStore | None = None,
     qa_citation_service: PublishedCitationApplicationPort | None = None,
+    skill_catalog: SkillCatalogPort | None = None,
 ) -> FastAPI:
     """Application factory. Call once at process start."""
 
@@ -86,7 +90,12 @@ def create_app(
     gateway = model_gateway or _create_configured_model_gateway()
     qa_repository = qa_repository or PostgresGroundedQARepository(database)
     qa_event_log = qa_event_store or PostgresQAEventStore(database)
-    qa_runtime = QAWorkerDispatcher(repository=qa_repository)
+    skill_registry = knowledge_qa_registry()
+    qa_runtime = QAWorkerDispatcher(
+        repository=qa_repository,
+        skill_registry=skill_registry,
+    )
+    skill_catalog = skill_catalog or FileSystemSkillCatalog(skill_registry)
     qa_citation_service = qa_citation_service or PublishedCitationService(
         runs=qa_repository,
         resolver=CitationResolver(
@@ -128,6 +137,7 @@ def create_app(
     app.state.qa_runtime = qa_runtime
     app.state.qa_citation_service = qa_citation_service
     app.state.qa_execution_enabled = enable_qa_execution
+    app.state.skill_catalog = skill_catalog
 
     app.add_middleware(TraceMiddleware)
     register_error_handlers(app)
@@ -139,6 +149,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(sources.router)
     app.include_router(search.router)
     app.include_router(qa.router)
+    app.include_router(skills.router)
 
     @app.get(
         "/api/v1/health/live",

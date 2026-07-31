@@ -16,6 +16,11 @@ export type QARun = {
   question_message_id: string
   cancellation_requested: boolean
   error_code: string | null
+  skill: {
+    name: string
+    version: string
+    content_sha256: string | null
+  }
   result?: {
     type: 'answer' | 'refusal' | 'conflict'
     text?: string
@@ -30,6 +35,12 @@ export type QARun = {
     chunk_id: string
     locator: { kind: string; start: number; end: number }
   }>
+}
+
+export type SkillSummary = {
+  name: string
+  active_version: string | null
+  versions: string[]
 }
 
 export type CitationExcerpt = NonNullable<QARun['citations']>[number] & {
@@ -86,6 +97,10 @@ export function cancelRun(runId: string): Promise<QARun> {
     method: 'POST',
     body: JSON.stringify({}),
   })
+}
+
+export function fetchSkills(signal?: AbortSignal): Promise<SkillSummary[]> {
+  return request('/api/v1/skills', { signal })
 }
 
 export function fetchCitationExcerpt(

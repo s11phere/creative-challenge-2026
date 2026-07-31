@@ -99,6 +99,16 @@ Ruff、OpenAPI 一致性、Web lint/typecheck/build 和保留 Compose 全栈健�
 `QA_SKILL_INVALID`。Registry active 指针和通用 Runtime Checkpoint 仍由进程内状态/启动配置重建，
 阶段 5 正式退出状态不变。
 
+2026-07-31 Step 7 只读 Catalog 补充审查：新增 `/api/v1/skills` 及版本查询，返回受信包摘要、
+manifest 权限/能力/预算和 active 配置版本；QA Run response 返回持久化 Skill identity，Web 工作区
+显示 active/fixed 版本。Catalog 没有任意路径、entrypoint、版本、权限或预算写入能力；激活/回滚仍由
+启动配置控制，未创建第二套 Runtime Run 或 Checkpoint API。
+
+本子集验证：后端全量 pytest `614 passed, 44 skipped`，Ruff format/check、受影响模块 mypy、
+OpenAPI 一致性、Web lint/typecheck/Vitest `16 passed` 和 production build 通过。保留卷 Compose
+重建 API/Web 后，API 与 Web 同源代理均返回 1 个 active `knowledge_qa 0.1.0`；版本摘要为 64 位，
+manifest `max_steps=4`。新 QA Run completed，response 中 fixed name/version/digest 与 Catalog 一致。
+
 本补充验证：Ruff format/check、受影响模块 mypy、后端全量 pytest（`613 passed, 44 skipped`）、
 OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）和 production build 通过。保留卷 Compose
 重建 API/Worker 后，新 Run 持久化 `knowledge_qa/0.1.0` 与 64 位摘要并 completed；Worker 停止期间

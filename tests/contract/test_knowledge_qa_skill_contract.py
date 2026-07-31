@@ -282,6 +282,7 @@ def test_provisional_package_is_bulk_installed_but_activation_is_explicit() -> N
     registry = FileSystemSkillRegistry(SKILLS_ROOT)
     loaded = registry.reload()
     package = next(package for package in loaded if package.manifest.name == "knowledge_qa")
+    assert registry.names() == ("knowledge_qa",)
     assert registry.versions("knowledge_qa") == ("0.1.0",)
     with pytest.raises(SkillRegistryError, match="active version"):
         registry.active_version("knowledge_qa")

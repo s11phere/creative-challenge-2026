@@ -113,7 +113,8 @@ Agent Runtime → Domain + ModelGateway
 │   └── evals/
 │
 ├── skills/
-│   └── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
+│   ├── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
+│   └── knowledge_qa/               # active provisional Grounded QA Skill
 │
 ├── scripts/                        # OpenAPI 导出、Embedding 重建和检索评测 CLI
 │
@@ -353,7 +354,8 @@ prompt 摘要在运行开始时固定。
 
 **当前边界**：通用部分提供离线 Runtime、Registry、fake 契约和内存检查点恢复；没有独立
 AgentRun/Checkpoint ORM、Runtime API 或 Skill 管理 Web。`skills/knowledge_qa` 已由 API/Worker
-配置显式激活，QA Run 固定名称、版本和内容摘要，Worker 按固定包执行唯一 QA Application Port。
+配置显式激活；只读 `/api/v1/skills` 暴露安装版本和 manifest 预算，QA Run 固定名称、版本和内容摘要，
+Worker 按固定包执行唯一 QA Application Port。
 QA PostgreSQL Run/Attempt/Event 是业务恢复事实源；Registry active 指针、通用 Runtime 生命周期
 事件和 Checkpoint 仍只在进程内或由启动配置重建。
 
@@ -391,6 +393,8 @@ QA PostgreSQL Run/Attempt/Event 是业务恢复事实源；Registry active 指�
      Run 查询/取消、SSE 重放和反馈契约；终态响应包含结构化回答/拒答及已校验 Citation 身份
    - `GET /api/v1/qa/runs/{run_id}/citations/{evidence_id}` — 只解析该 Run 已原子发布的 Citation，
      重新校验 Space、固定 DocumentVersion、Chunk、locator 和 Blob hash 后返回最小必要片段
+   - `GET /api/v1/skills`、`GET /api/v1/skills/{skill_name}/versions` — 只读查询受信 Registry
+     已安装/active 版本、摘要、权限、能力和预算；不提供激活/回滚写操作
 4. **请求可观测性**：`observability.py` 校验或生成 trace/request ID，返回
    `X-Trace-ID`、`X-Request-ID`，并创建 HTTP server span 与开始/完成 JSON 日志。
 
@@ -414,7 +418,7 @@ QA PostgreSQL Run/Attempt/Event 是业务恢复事实源；Registry active 指�
 ```
 
 **OpenAPI**：端点声明 `response_model`；`docs/openapi.json` 由运行时应用确定性导出，当前覆盖
-健康、来源/摄入任务、检索和 provisional QA schema。QA 执行复用真实 PostgreSQL SearchService；
+健康、来源/摄入任务、检索、provisional QA 和只读 Skill Catalog schema。QA 执行复用真实 PostgreSQL SearchService；
 状态、结果、引用和事件由 PostgreSQL 保存，服务启动时恢复安全的非终态 attempt；
 新增或修改公开端点后必须重新导出并运行一致性检查。
 

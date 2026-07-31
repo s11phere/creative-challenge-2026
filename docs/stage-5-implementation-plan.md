@@ -500,6 +500,13 @@ QA Application Port。仍未新增平行 `/skills`、`/runs` 或 SSE 协议；�
 Skill 管理 UI 和 PostgreSQL Checkpoint 仍不存在，故 Step 7 正式完成标准仍未满足，Stage 3/4/5
 状态不变。
 
+**只读 Catalog 子集（2026-07-31）**：新增 `/api/v1/skills` 和
+`/api/v1/skills/{skill_name}/versions`，仅返回受信 Registry 已安装版本、active 配置版本、内容摘要、
+权限、能力和 manifest 预算；QA Run 响应同时返回其持久化 Skill 名称、版本和摘要。Web 问答工作区
+显示 active 版本，并在提交后显示 Run 的 fixed 版本。接口不接受路径、entrypoint、版本、权限或预算
+覆盖；激活/回滚仍只能由启动配置控制，等待 active pointer 的持久化事实源。该子集完成 Step 7 的
+版本可见性和三入口身份核对部分，Runtime Run 管理 API、Skill 管理写入口和通用 Checkpoint 仍未完成。
+
 ### 步骤 8：知识整理 Skill 与写入确认
 
 本步骤只在 `knowledge_qa` 的真实链路和引用完整性已经稳定后开始。
@@ -580,8 +587,8 @@ Registry 不提供旧版本删除 API；AgentRun/Checkpoint/审计引用查询�
 | 3. Skill Registry | 步骤 0/1；受信目录和摘要规则确定 | 已完成 |
 | 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 已完成 |
 | 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | PostgreSQL QA Run/Attempt、Worker lease/heartbeat 和重启恢复已完成；通用 Runtime Checkpoint、审批与清理仍阻塞 |
-| 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | provisional 未激活包和 QA Port fake 契约已完成；生产接入仍阻塞 |
-| 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 现有 QA API/Web/Worker 的真实检索、持久 Run、回答、引用和重启恢复 provisional 子集已完成；活动 Skill 仍阻塞 |
+| 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | active provisional `0.1.0` 已由固定摘要 Worker 执行；正式质量门禁仍未关闭 |
+| 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 现有 QA API/Web/Worker 加只读 Skill Catalog、Run fixed identity 已完成；通用 Run 管理和 Skill 写入口仍阻塞 |
 | 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | 已复核并跳过；等待步骤 6/7 |
 | 9. 热加载与回滚 | 步骤 3/5；不可变版本和恢复语义已验证 | 通用部分已完成；持久化引用清理等待步骤 5 |
 | 10. 测试与验收 | 步骤 0～9；阶段 0 数据门禁关闭 | 已复核并跳过；等待全部交付和数据门禁 |

@@ -431,6 +431,10 @@ class FileSystemSkillRegistry:
             versions = [version for package_name, version in self._packages if package_name == name]
             return tuple(sorted(versions, key=Version))
 
+    def names(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(sorted({name for name, _version in self._packages}))
+
     def active_version(self, name: str) -> str:
         with self._lock:
             try:

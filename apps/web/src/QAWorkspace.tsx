@@ -8,6 +8,7 @@ import {
   Quote,
   Send,
   Square,
+  Workflow,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -15,6 +16,7 @@ import {
   createConversation,
   fetchCitationExcerpt,
   fetchRun,
+  fetchSkills,
   submitQuestion,
   type QARun,
 } from './qa'
@@ -51,6 +53,13 @@ export function QAWorkspace() {
   const excerptRef = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
 
+  const skillsQuery = useQuery({
+    queryKey: ['skills'],
+    queryFn: ({ signal }) => fetchSkills(signal),
+    staleTime: 60_000,
+    retry: false,
+  })
+
   const runQuery = useQuery({
     queryKey: ['qa-run', question?.run.run_id],
     queryFn: ({ signal }) => fetchRun(question!.run.run_id, signal),
@@ -61,6 +70,11 @@ export function QAWorkspace() {
   })
 
   const currentRun = runQuery.data ?? question?.run
+  const activeSkill = skillsQuery.data?.find((skill) => skill.name === 'knowledge_qa')
+  const displayedSkill = currentRun?.skill ?? {
+    name: 'knowledge_qa',
+    version: activeSkill?.active_version ?? null,
+  }
   const isActive = currentRun ? activeStatuses.has(currentRun.status) : false
   const citationQuery = useQuery({
     queryKey: ['qa-citation', currentRun?.run_id, selectedEvidenceId],
@@ -119,6 +133,12 @@ export function QAWorkspace() {
     <section className="qa-layout" aria-label="知识问答工作区">
       <div className="qa-conversation">
         <div className="qa-thread" aria-live="polite">
+          <div className="qa-skill-context">
+            <Workflow size={16} aria-hidden="true" />
+            <strong>{displayedSkill.name}</strong>
+            <code>{displayedSkill.version ? `v${displayedSkill.version}` : '版本不可用'}</code>
+            {currentRun?.skill && <span>已固定</span>}
+          </div>
           {!question ? (
             <div className="qa-empty">
               <MessageSquareText size={28} aria-hidden="true" />

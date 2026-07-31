@@ -31,7 +31,8 @@ Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL
 阶段 5 的 `knowledge_qa 0.1.0` 已从本地受信根显式激活：API 在新 QA Run 中固定 Skill 名称、
 版本和内容摘要，Worker 恢复时按该固定身份校验声明式 workflow，再调用唯一 QA Application Port。
 现有 QA Web/API 因此已是该 provisional Skill 的真实入口，但尚无通用 Runtime API、PostgreSQL
-Runtime Checkpoint、Skill 管理 Web 或旧版本清理，不能据此宣称阶段 5 整体完成。
+Runtime Checkpoint、Skill 管理 Web 或旧版本清理。只读 `/api/v1/skills` 可查询 active/已安装版本、
+摘要和预算，但不提供激活/回滚写操作；不能据此宣称阶段 5 整体完成。
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
 [Stage 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
 [Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；必须先完成真实模型
