@@ -8,9 +8,10 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .contracts import ModelErrorCode, ModelGateway, ModelProvider
+from .contracts import CapabilityAlias, ModelErrorCode, ModelGateway, ModelProvider
 from .fake import FakeModelGateway, FakeScenario
 from .openai_compatible import OpenAICompatibleGateway
+from .routed import CapabilityRoutedModelGateway
 from .unavailable import UnavailableModelGateway
 
 
@@ -34,6 +35,8 @@ class GatewayConfig:
     retry_backoff_seconds: float = 0.1
     fake_scenario: FakeScenario = FakeScenario.NORMAL
     embedding_protocol: str = "openai-compatible"
+    fake_embedding: bool = False
+    fake_reranker: bool = False
 
 
 def create_model_gateway(
@@ -63,7 +66,7 @@ def create_model_gateway(
             config.reranker_model,
             allow_external=config.allow_external,
         )
-        return OpenAICompatibleGateway(
+        gateway = OpenAICompatibleGateway(
             embedding_endpoint=endpoint if error is None else None,
             embedding_model=config.embedding_model,
             reranker_endpoint=reranker_endpoint if reranker_error is None else None,
@@ -81,6 +84,7 @@ def create_model_gateway(
             provider=ModelProvider.TEXT_EMBEDDINGS_INFERENCE,
             embedding_protocol="tei",
         )
+        return _with_fake_fallback(gateway, config)
     chat_endpoint = config.fast_chat_endpoint or config.endpoint
     embedding_endpoint = config.embedding_endpoint or config.endpoint
     chat_status, chat_error = _capability_configuration_status(
@@ -99,7 +103,7 @@ def create_model_gateway(
         config.reranker_model,
         allow_external=config.allow_external,
     )
-    return OpenAICompatibleGateway(
+    gateway = OpenAICompatibleGateway(
         endpoint=None,
         fast_chat_endpoint=chat_endpoint if chat_error is None else None,
         embedding_endpoint=embedding_endpoint if embedding_error is None else None,
@@ -123,6 +127,25 @@ def create_model_gateway(
         max_retries=config.max_retries,
         retry_backoff_seconds=config.retry_backoff_seconds,
         client=client,
+    )
+    return _with_fake_fallback(gateway, config)
+
+
+def _with_fake_fallback(gateway: ModelGateway, config: GatewayConfig) -> ModelGateway:
+    capabilities = frozenset(
+        capability
+        for enabled, capability in (
+            (config.fake_embedding, CapabilityAlias.EMBEDDING_ZH),
+            (config.fake_reranker, CapabilityAlias.RERANKER_MULTILINGUAL),
+        )
+        if enabled
+    )
+    if not capabilities:
+        return gateway
+    return CapabilityRoutedModelGateway(
+        primary=gateway,
+        fallback=FakeModelGateway(scenario=config.fake_scenario),
+        fallback_capabilities=capabilities,
     )
 
 

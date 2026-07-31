@@ -62,6 +62,8 @@ docker compose -f deploy/compose.yaml run --rm migrate
 默认 `MODEL_PROVIDER=fake` 不需要凭据。接入 OpenAI-compatible Chat Provider 时，只在被 Git 忽略的
 `.env` 中配置 `MODEL_PROVIDER=openai-compatible`、`MODEL_ALLOW_EXTERNAL=true`、
 `FAST_CHAT_ENDPOINT`、`FAST_CHAT_MODEL` 和 `FAST_CHAT_API_KEY`；API 与 Worker 必须使用相同配置。
+若只接入 Chat，额外设置 `EMBEDDING_PROVIDER=fake` 和 `RERANKER_PROVIDER=fake`，避免把已有
+fake/local 索引误判为缺少外部 Embedding revision。
 不要把密钥、问题、模型原始响应、Tool 输出或引用原文写入日志或 Issue。
 
 `RUN_LLM_DECISION_INVALID` 表示 Provider 没有返回严格的单个 JSON 决策；检查模型是否遵循

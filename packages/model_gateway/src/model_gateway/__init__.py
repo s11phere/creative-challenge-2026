@@ -22,6 +22,7 @@ from .contracts import (
 from .factory import GatewayConfig, create_model_gateway
 from .fake import FakeModelGateway, FakeScenario
 from .openai_compatible import OpenAICompatibleGateway
+from .routed import CapabilityRoutedModelGateway
 from .unavailable import UnavailableModelGateway
 
 __all__ = [
@@ -43,6 +44,7 @@ __all__ = [
     "ModelProvider",
     "ModelUsage",
     "OpenAICompatibleGateway",
+    "CapabilityRoutedModelGateway",
     "RerankRequest",
     "RerankResponse",
     "RerankScore",

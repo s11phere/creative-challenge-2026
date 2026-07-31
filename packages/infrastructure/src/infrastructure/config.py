@@ -96,6 +96,8 @@ class Settings(BaseSettings):
     reranker_api_key: SecretStr | None = None
     reranker_model: str | None = None
     embedding_protocol: Literal["openai-compatible", "tei"] = "openai-compatible"
+    embedding_provider: Literal["inherit", "fake"] = "inherit"
+    reranker_provider: Literal["inherit", "fake"] = "inherit"
     embedding_query_instruction_version: str = "none-v1"
     embedding_document_instruction_version: str = "none-v1"
     embedding_normalization: str = "none"
@@ -120,7 +122,9 @@ class Settings(BaseSettings):
         model_revision = self.embedding_model_revision
         if not model_revision:
             model_revision = (
-                "fake-sha256-v1" if self.model_provider == "fake" else self.embedding_model
+                "fake-sha256-v1"
+                if self.model_provider == "fake" or self.embedding_provider == "fake"
+                else self.embedding_model
             )
         if not model_revision:
             if allow_unconfigured:

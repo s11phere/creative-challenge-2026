@@ -138,6 +138,16 @@ class StructuredAnswerParser:
         except SchemaError as exc:
             raise QAContractError("Grounded answer schema is invalid") from exc
         self._validator = Draft202012Validator(schema)
+        self._format_instruction = (
+            "Return exactly one JSON object and no Markdown or explanatory text. "
+            "For an answer, the answer field must equal the claim texts joined in order with "
+            "a newline. The JSON object must conform to this schema:\n"
+            + json.dumps(schema, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        )
+
+    @property
+    def format_instruction(self) -> str:
+        return self._format_instruction
 
     def parse(self, text: str) -> StructuredQADraft:
         try:
@@ -423,7 +433,9 @@ class GroundedAnswerGenerator:
             raise QAError(QAErrorCode.CANCELLED, "QA generation was cancelled.")
 
     def _initial_request(self, context: ContextBundle) -> ChatRequest:
-        system = "\n".join((*context.system_rules, self._prompt_contract))
+        system = "\n".join(
+            (*context.system_rules, self._prompt_contract, self._parser.format_instruction)
+        )
         user_sections = [f"<question>\n{context.question}\n</question>"]
         user_sections.extend(
             f'<history role="{turn.role.value}">\n{turn.content}\n</history>'
@@ -443,6 +455,7 @@ class GroundedAnswerGenerator:
         system = "\n".join(
             (
                 self._prompt_contract,
+                self._parser.format_instruction,
                 "Repair the candidate into exact grounded-answer-v1 JSON. Do not add facts or IDs.",
             )
         )

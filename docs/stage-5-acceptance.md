@@ -23,6 +23,9 @@ Runtime Run、Worker、SSE、取消、检索、问答或 Citation 协议。
 `knowledge_agent` 只接受严格 `call_tool/complete/refuse` JSON，并由 Runtime 强制 Tool 白名单、最大
 轮数、Token/Tool 预算、权限、Space 和 schema。当前 Tool 输出给模型的内容仅含状态、Citation 数和
 结果类型；回答和原文不进入外层模型上下文，写 Tool 在持久审批/幂等事实源完成前保持禁止。
+真实 Provider 增量还验证了 `fast_chat` 外部路由与 fake Embedding/Reranker 能力级隔离，以及
+`grounded-answer-v1` schema 指令对真实模型结构化输出的约束。隔离 Compose Run 完成并发布 3 条
+Citation，3 条均可解析为 `valid` 且版本一致；API/Worker 重启后终态、Citation 和幂等重放保持一致。
 
 ## 实际验证
 
@@ -40,8 +43,8 @@ corepack pnpm@10.20.0 --dir apps/web build
 git diff --check
 ```
 
-结果：Ruff format/check 通过；mypy 覆盖 96 个源文件；后端全量 pytest 为
-`634 passed, 45 skipped`；Web lint/typecheck、Vitest `16 passed` 和 production build 通过；
+结果：Ruff format/check 通过；mypy 覆盖 97 个源文件；后端全量 pytest 为
+`636 passed, 45 skipped`；Web lint/typecheck、Vitest `16 passed` 和 production build 通过；
 OpenAPI 重导出及一致性测试通过。Windows 沙箱不能写 `.pytest_cache` 的既有警告不影响结果。
 
 一次性隔离 PostgreSQL 已验证迁移 `upgrade head -> downgrade 29d0e1f2a3b4 -> upgrade head`、

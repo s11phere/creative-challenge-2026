@@ -22,7 +22,7 @@ profile:
   sha256: 3dc3f39ccda55ffa094f133d203c0a1343bd2bb196efc942aa277c2073dc67bc
 prompt:
   path: cases/evals/prompts/grounded-qa-v1-provisional.txt
-  sha256: 7dfa4886951ed86d4e59b3633e9c246491fb57f791c2415dab6e4ac53690e3d1
+  sha256: a05344c70c2b56fddd3d575f5a452260a4d981c18c9e0975652d3494611d74a8
   template_id: grounded-qa-v1-provisional
 protocol:
   outcome_labels:

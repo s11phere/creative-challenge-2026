@@ -473,6 +473,14 @@ Checkpoint/版本引用清理未完成，因此 Step 6 尚不记为正式完成�
 取消、SSE 与 Citation 的唯一事实源。默认 fake 产生确定性路由决策，允许的 OpenAI-compatible
 Provider 使用同一边界执行真实模型决策。该增量不等于通用 AgentRun/Checkpoint 或写入审批完成。
 
+**真实 Provider 能力路由修复（2026-07-31）**：验证发现单一 `MODEL_PROVIDER=openai-compatible`
+会错误要求同时配置 Embedding revision。新增能力级 `CapabilityRoutedModelGateway`；通过
+`EMBEDDING_PROVIDER`/`RERANKER_PROVIDER` 显式选择 `inherit` 或 `fake`，使真实 `fast_chat` 与既有
+fake/local 检索索引并存。Grounded QA 还将版本化 `grounded-answer-v1` JSON Schema 和“无 Markdown、
+answer 必须等于 claims 按序拼接”约束注入 system prompt，真实 Provider 的结构化响应继续由服务端
+严格解析、Evidence 校验和一次修复预算控制。隔离 Compose 已验证外部 Chat 200 响应、3 次 Chat
+调用（Agent 路由、QA 生成、Agent 终止）、3 条 Citation、原文定位、API/Worker 重启和幂等重放。
+
 ### 步骤 7：Runtime API 与 Web 调用入口
 
 - 在 `/api/v1/skills` 下提供 Skill/版本查询和受控激活/回滚接口。

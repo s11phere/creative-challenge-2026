@@ -19,6 +19,7 @@ from model_gateway import (
     ModelGatewayError,
     ModelProvider,
     OpenAICompatibleGateway,
+    RerankRequest,
     create_model_gateway,
 )
 from model_gateway import openai_compatible as provider_module
@@ -314,6 +315,42 @@ async def test_external_endpoint_requires_explicit_opt_in() -> None:
     assert isinstance(gateway, OpenAICompatibleGateway)
     assert gateway.status.available is True
     await gateway.aclose()
+
+
+async def test_real_chat_can_route_auxiliary_capabilities_to_fake() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "https://models.example.test/v1/chat/completions"
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "real-chat"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = create_model_gateway(
+        GatewayConfig(
+            provider=ModelProvider.OPENAI_COMPATIBLE,
+            fast_chat_endpoint="https://models.example.test/v1",
+            fast_chat_model="chat-model",
+            allow_external=True,
+            fake_embedding=True,
+            fake_reranker=True,
+        ),
+        client=client,
+    )
+
+    assert gateway.status.code == "MODEL_CAPABILITIES_ROUTED"
+    assert gateway.status.provider is ModelProvider.OPENAI_COMPATIBLE
+    assert gateway.status.capabilities == tuple(CapabilityAlias)
+    assert (await gateway.chat(chat_request())).text == "real-chat"
+    embedding = await gateway.embed(EmbeddingRequest(texts=("synthetic",)))
+    assert len(embedding.vectors[0]) == 768
+    reranked = await gateway.rerank(RerankRequest(query="synthetic", documents=("first", "second")))
+    assert len(reranked.scores) == 2
+    await gateway.aclose()
+    await client.aclose()
 
 
 async def test_local_endpoint_is_allowed_without_external_opt_in() -> None:

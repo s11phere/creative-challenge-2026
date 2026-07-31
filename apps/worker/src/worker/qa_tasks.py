@@ -59,6 +59,8 @@ def _create_gateway() -> ModelGateway:
             ),
             reranker_model=settings.reranker_model,
             embedding_protocol=settings.embedding_protocol,
+            fake_embedding=settings.embedding_provider == "fake",
+            fake_reranker=settings.reranker_provider == "fake",
             allow_external=settings.model_allow_external,
             timeout_seconds=settings.model_timeout_seconds,
             max_retries=settings.model_max_retries,
