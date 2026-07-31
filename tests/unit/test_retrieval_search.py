@@ -175,14 +175,16 @@ def _candidate(
     version_id: UUID | None = None,
     ordinal: int = 0,
     metadata: tuple[tuple[str, str], ...] = (),
+    text: str | None = None,
+    source_key: str | None = None,
 ) -> RetrievalCandidate:
     return RetrievalCandidate(
         chunk_id=UUID(int=chunk),
         version_id=version_id or UUID(int=100 + chunk),
         document_id=document_id,
         source_id=source_id,
-        source_key=f"space/source-{source_id.int}",
-        text=f"chunk {chunk}",
+        source_key=source_key or f"space/source-{source_id.int}",
+        text=text or f"chunk {chunk}",
         chunk_hash=f"{chunk:064x}",
         locators=(SearchLocator(LocatorKind.LINES, chunk, chunk + 1),),
         channel=channel,
@@ -298,6 +300,108 @@ async def test_dense_mode_passes_versioned_vector_query(repos) -> None:
     assert result.diagnostics.dense_query_kind is KeywordQueryKind.NATURAL_LANGUAGE
     assert store.dense_queries[0].embedding_version == "fake-embedding-v1"
     assert len(store.dense_queries[0].query_vector) == 768
+
+
+async def test_dense_keeps_same_source_candidates_from_different_documents(repos) -> None:
+    shared_source_key = "file:///knowledge"
+    store = _FakeStore(
+        dense=(
+            _candidate(
+                1,
+                channel=CandidateChannel.DENSE,
+                rank=1,
+                score=0.9,
+                document_id=DOCUMENT_ID,
+                source_key=shared_source_key,
+                text=(
+                    "The same repeated boundary text is deliberately long enough "
+                    "to trigger matching."
+                ),
+            ),
+            _candidate(
+                2,
+                channel=CandidateChannel.DENSE,
+                rank=2,
+                score=0.8,
+                document_id=UUID(int=22),
+                source_key=shared_source_key,
+                text=(
+                    "The same repeated boundary text is deliberately long enough "
+                    "to trigger matching."
+                ),
+            ),
+        )
+    )
+    result = await _service(repos, store, _FakeEmbedder()).search(
+        SearchRequest("boundary", SPACE_ID, mode=RetrievalMode.DENSE), _profile()
+    )
+    assert [hit.chunk_id for hit in result.hits] == [UUID(int=1), UUID(int=2)]
+
+
+async def test_dense_deduplicates_boundary_overlap_before_document_quota(repos) -> None:
+    version_id = UUID(int=300)
+    boundary = "repeated sliding window boundary text"
+    store = _FakeStore(
+        dense=(
+            _candidate(
+                1,
+                channel=CandidateChannel.DENSE,
+                rank=1,
+                score=0.9,
+                version_id=version_id,
+                text=f"First paragraph ends with {boundary}",
+            ),
+            _candidate(
+                2,
+                channel=CandidateChannel.DENSE,
+                rank=2,
+                score=0.8,
+                version_id=version_id,
+                text=f"{boundary} and the second paragraph continues",
+            ),
+            _candidate(
+                3,
+                channel=CandidateChannel.DENSE,
+                rank=3,
+                score=0.7,
+                version_id=version_id,
+                text="A distinct candidate from the same document.",
+            ),
+        )
+    )
+    result = await _service(repos, store, _FakeEmbedder()).search(
+        SearchRequest("boundary", SPACE_ID, mode=RetrievalMode.DENSE),
+        _profile(final_k=2, max_chunks_per_document=2),
+    )
+    assert [hit.chunk_id for hit in result.hits] == [UUID(int=1), UUID(int=3)]
+
+
+async def test_dense_does_not_deduplicate_locator_overlap_without_text_overlap(repos) -> None:
+    version_id = UUID(int=301)
+    store = _FakeStore(
+        dense=(
+            _candidate(
+                1,
+                channel=CandidateChannel.DENSE,
+                rank=1,
+                score=0.9,
+                version_id=version_id,
+                text="Alpha content with no shared boundary.",
+            ),
+            _candidate(
+                2,
+                channel=CandidateChannel.DENSE,
+                rank=2,
+                score=0.8,
+                version_id=version_id,
+                text="Beta content remains independently relevant.",
+            ),
+        )
+    )
+    result = await _service(repos, store, _FakeEmbedder()).search(
+        SearchRequest("content", SPACE_ID, mode=RetrievalMode.DENSE), _profile()
+    )
+    assert [hit.chunk_id for hit in result.hits] == [UUID(int=1), UUID(int=2)]
 
 
 async def test_dense_mode_has_a_profile_timeout(repos) -> None:
@@ -500,6 +604,58 @@ async def test_hybrid_rerank_maps_scores_back_to_chunks(repos) -> None:
     assert [hit.rerank_rank for hit in result.hits] == [1, 2]
     assert result.diagnostics.reranker_version == "fake-reranker-v1"
     assert result.diagnostics.executed_mode is RetrievalMode.HYBRID_RERANK
+
+
+async def test_hybrid_rerank_filters_toc_and_boundary_duplicates_before_reranking(repos) -> None:
+    version_id = UUID(int=400)
+    boundary = "repeated sliding window boundary text"
+    toc = _candidate(
+        1,
+        channel=CandidateChannel.KEYWORD,
+        rank=1,
+        score=0.95,
+        metadata=(("node_type", "table_of_contents"),),
+    )
+    first = _candidate(
+        2,
+        channel=CandidateChannel.KEYWORD,
+        rank=2,
+        score=0.9,
+        version_id=version_id,
+        text=f"First paragraph ends with {boundary}",
+    )
+    duplicate = _candidate(
+        3,
+        channel=CandidateChannel.DENSE,
+        rank=1,
+        score=0.9,
+        version_id=version_id,
+        text=f"{boundary} and the second paragraph continues",
+    )
+    distinct = _candidate(
+        4,
+        channel=CandidateChannel.DENSE,
+        rank=2,
+        score=0.8,
+        version_id=version_id,
+        text="A distinct candidate remains available.",
+    )
+    reranker = _FakeReranker(scores=(RerankScore(0, 0.8), RerankScore(1, 0.7)))
+    result = await _service(
+        repos,
+        _FakeStore(keyword=(toc, first), dense=(duplicate, distinct)),
+        _FakeEmbedder(),
+        reranker,
+    ).search(
+        SearchRequest("query", SPACE_ID, mode=RetrievalMode.HYBRID_RERANK),
+        # 基线 fusion_alpha=0.5：dense rank-1 在融合中胜出，去重保留它
+        _profile(reranker_enabled=True, adjacent_window=0, fusion_alpha=0.5),
+    )
+    assert [document.text for document in reranker.requests[0].documents] == [
+        duplicate.text,
+        distinct.text,
+    ]
+    assert [hit.chunk_id for hit in result.hits] == [UUID(int=3), UUID(int=4)]
 
 
 async def test_empty_candidate_sets_are_successful(repos) -> None:
