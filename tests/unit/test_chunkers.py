@@ -457,6 +457,56 @@ class TestStructureChunker:
         # All chunks should have text
         assert all(c.text for c in result.chunks)
 
+    async def test_oversize_single_line_splits_on_word_boundaries(self, chunker) -> None:
+        """A single unwrapped line longer than chunk_size must not be cut mid-word."""
+        words = [f"word{i:04d}" for i in range(200)]  # each word is a distinct token
+        text = " ".join(words)  # ~1900 chars, exceeds chunk_size
+        node = StructNode(
+            node_type=StructNodeType.RAW_TEXT,
+            text=text,
+            start_line=1,
+            end_line=1,
+            start_page=1,
+            end_page=1,
+        )
+        doc = ParsedDocument(
+            metadata=ParseMetadata(file_name="test.pdf", mime_type="application/pdf"),
+            text=text,
+            structure=(node,),
+            total_lines=1,
+        )
+        cfg = ChunkerConfig(chunk_size=500, chunk_overlap=0)
+        result = await chunker.chunk(doc, config=cfg)
+        assert result.total_ordinals > 1
+        token_set = set(words)
+        for chunk in result.chunks:
+            first_token = chunk.text.split()[0]
+            assert first_token in token_set, f"chunk starts mid-word: {chunk.text[:30]!r}"
+
+    async def test_oversize_line_preserves_all_content(self, chunker) -> None:
+        """Splitting an oversized line must not drop or reorder any text."""
+        words = [f"word{i:04d}" for i in range(200)]
+        text = " ".join(words)
+        node = StructNode(
+            node_type=StructNodeType.RAW_TEXT,
+            text=text,
+            start_line=1,
+            end_line=1,
+            start_page=1,
+            end_page=1,
+        )
+        doc = ParsedDocument(
+            metadata=ParseMetadata(file_name="test.pdf", mime_type="application/pdf"),
+            text=text,
+            structure=(node,),
+            total_lines=1,
+        )
+        cfg = ChunkerConfig(chunk_size=500, chunk_overlap=0)
+        result = await chunker.chunk(doc, config=cfg)
+        # Reconstruct the joined text and confirm it still contains every token in order
+        joined = " ".join(chunk.text.strip() for chunk in result.chunks)
+        assert set(joined.split()) == set(words)
+
     # -- Min chunk size ---------------------------------------------------
 
     async def test_min_chunk_size_merge(self, chunker) -> None:

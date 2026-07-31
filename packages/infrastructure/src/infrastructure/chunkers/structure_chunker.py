@@ -477,15 +477,43 @@ class StructureChunker:
         return normalized.strip(" .:-")
 
     @staticmethod
+    def _split_oversize_line(line: str, max_size: int) -> list[str]:
+        """Split a single over-size line at word boundaries, never mid-word.
+
+        Each piece is cut at the last space inside the window so tokens stay
+        intact.  Falls back to a hard character split only when a single token
+        spans more than *max_size* characters (pathological).
+        """
+        pieces: list[str] = []
+        remaining = line
+        while len(remaining) > max_size:
+            cut = remaining.rfind(" ", 0, max_size)
+            if cut <= 0:
+                # No space inside the window: hard character split
+                cut = max_size
+            pieces.append(remaining[:cut])
+            remaining = remaining[cut:].lstrip(" ")
+        if remaining:
+            pieces.append(remaining)
+        return pieces
+
+    @staticmethod
     def _split_oversize_segment(seg: _Segment, max_size: int) -> list[_Segment]:
         """Split a single large segment into smaller ones.
 
         First attempts line-level splitting; if a single line still exceeds
-        *max_size*, splits by character count.
+        *max_size*, splits it at word boundaries instead of mid-word.
         """
         lines = seg.text.splitlines(keepends=False)
         if not lines:
             return [seg]
+
+        source_line_count = seg.end_line - seg.start_line + 1
+        preserve_source_span = (
+            seg.start_line > 0
+            and seg.end_line >= seg.start_line
+            and len(lines) != source_line_count
+        )
 
         result: list[_Segment] = []
         current_lines: list[str] = []
@@ -494,15 +522,34 @@ class StructureChunker:
 
         for line in lines:
             line_len = len(line)
-            # If a single line exceeds max_size, split it by characters
-            if line_len > max_size and not current_lines:
-                for i in range(0, line_len, max_size):
-                    chunk_text = line[i : i + max_size]
+            # If a single line exceeds max_size, flush any accumulated lines
+            # first and split the oversized line on word boundaries.
+            if line_len > max_size:
+                if current_lines:
+                    result.append(
+                        _Segment(
+                            text="\n".join(current_lines),
+                            start_line=seg.start_line if preserve_source_span else line_offset,
+                            end_line=(
+                                seg.end_line
+                                if preserve_source_span
+                                else line_offset + len(current_lines) - 1
+                            ),
+                            heading_path=seg.heading_path,
+                            primary_type=seg.primary_type,
+                            start_page=seg.start_page,
+                            end_page=seg.end_page,
+                        )
+                    )
+                    line_offset += len(current_lines)
+                    current_lines = []
+                    current_len = 0
+                for chunk_text in StructureChunker._split_oversize_line(line, max_size):
                     result.append(
                         _Segment(
                             text=chunk_text,
-                            start_line=line_offset,
-                            end_line=line_offset,
+                            start_line=seg.start_line if preserve_source_span else line_offset,
+                            end_line=seg.end_line if preserve_source_span else line_offset,
                             heading_path=seg.heading_path,
                             primary_type=seg.primary_type,
                             start_page=seg.start_page,
@@ -518,8 +565,12 @@ class StructureChunker:
                 result.append(
                     _Segment(
                         text="\n".join(current_lines),
-                        start_line=line_offset,
-                        end_line=line_offset + len(current_lines) - 1,
+                        start_line=seg.start_line if preserve_source_span else line_offset,
+                        end_line=(
+                            seg.end_line
+                            if preserve_source_span
+                            else line_offset + len(current_lines) - 1
+                        ),
                         heading_path=seg.heading_path,
                         primary_type=seg.primary_type,
                         start_page=seg.start_page,
@@ -536,8 +587,12 @@ class StructureChunker:
             result.append(
                 _Segment(
                     text="\n".join(current_lines),
-                    start_line=line_offset,
-                    end_line=line_offset + len(current_lines) - 1,
+                    start_line=seg.start_line if preserve_source_span else line_offset,
+                    end_line=(
+                        seg.end_line
+                        if preserve_source_span
+                        else line_offset + len(current_lines) - 1
+                    ),
                     heading_path=seg.heading_path,
                     primary_type=seg.primary_type,
                     start_page=seg.start_page,
