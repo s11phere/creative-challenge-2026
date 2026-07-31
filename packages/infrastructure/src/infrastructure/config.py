@@ -112,6 +112,7 @@ class Settings(BaseSettings):
     # --- Skill Registry ---
     skill_root_path: str = "./skills"
     knowledge_qa_skill_version: str = "0.1.0"
+    knowledge_agent_skill_version: str = "0.1.0"
 
     def active_embedding_identity(self, *, allow_unconfigured: bool = False) -> EmbeddingIdentity:
         """Return the one identity shared by ingestion and online retrieval."""

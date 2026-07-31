@@ -464,6 +464,15 @@ Run/Attempt/Event、独立 Worker、终态 Citation API 和固定版本原文解
 该实现可真实使用但质量仍为 provisional；Stage 3 正式退出、Stage 4 answer holdout 和 Stage 5 通用
 Checkpoint/版本引用清理未完成，因此 Step 6 尚不记为正式完成。
 
+**受约束 LLM Agent 增量（2026-07-31）**：新增 `knowledge_agent 0.1.0` 完整受信包和公开提交入口，
+但不建立第二套 Run、Worker 或 SSE。Worker 从固定 QA Run 加载包后，通过 `ModelGateway.fast_chat`
+执行严格 JSON 决策；模型仅能调用服务端固定的只读 `grounded_qa 1.0.0`，最多两次决策和一次 Tool
+调用。Tool Registry 强制版本、权限、Space、预算、schema 和幂等键，拒绝未知、未允许模型查看输出
+或具备写权限的 Tool。Tool 复用同一 `GroundedQAApplicationPort.execute(run_id)`，仅向外层模型返回
+状态、Citation 数和结果类型，不返回回答、Evidence 或原文；QA PostgreSQL Run 继续作为终态、恢复、
+取消、SSE 与 Citation 的唯一事实源。默认 fake 产生确定性路由决策，允许的 OpenAI-compatible
+Provider 使用同一边界执行真实模型决策。该增量不等于通用 AgentRun/Checkpoint 或写入审批完成。
+
 ### 步骤 7：Runtime API 与 Web 调用入口
 
 - 在 `/api/v1/skills` 下提供 Skill/版本查询和受控激活/回滚接口。

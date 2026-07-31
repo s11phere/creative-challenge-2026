@@ -289,6 +289,25 @@ async def submit_question(
 
 
 @router.post(
+    "/conversations/{conversation_id}/skills/knowledge_agent/runs",
+    response_model=RunResponse,
+    status_code=202,
+)
+async def run_knowledge_agent(
+    conversation_id: UUID, body: QuestionRequest, request: Request
+) -> RunResponse:
+    conversation = await _conversation(request, conversation_id)
+    return await _submit_scoped_skill(
+        request,
+        conversation,
+        skill_name="knowledge_agent",
+        question=normalize_question(body.question),
+        idempotency_key=body.idempotency_key,
+        scope=QARetrievalScope(),
+    )
+
+
+@router.post(
     "/conversations/{conversation_id}/skills/summarize_document/runs",
     response_model=RunResponse,
     status_code=202,

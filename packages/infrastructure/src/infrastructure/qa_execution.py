@@ -27,7 +27,12 @@ from application.qa import (
     QueryPlanner,
     StructuredAnswerParser,
 )
-from application.skills import KnowledgeQASkillAdapter, KnowledgeQASkillConfig
+from application.skills import (
+    KnowledgeAgentSkillAdapter,
+    KnowledgeAgentSkillConfig,
+    KnowledgeQASkillAdapter,
+    KnowledgeQASkillConfig,
+)
 from domain.agent_runtime import AgentRun, AgentRunContext
 from domain.grounded_qa import QAErrorCode, QAEvent, QAStatus
 from domain.qa_persistence import (
@@ -112,6 +117,62 @@ class StructuredFakeGateway:
                 ],
             }
         text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        return ChatResponse(
+            text=text,
+            finish_reason="stop",
+            usage=ModelUsage(
+                input_tokens=sum(max(1, len(item.content.split())) for item in request.messages),
+                output_tokens=max(1, len(text.split())),
+            ),
+            capability=capability,
+            latency_ms=0.0,
+        )
+
+    async def embed(
+        self,
+        request: EmbeddingRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.EMBEDDING_ZH,
+    ) -> EmbeddingResponse:
+        return await self._delegate.embed(request, capability=capability)
+
+    async def rerank(
+        self,
+        request: RerankRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.RERANKER_MULTILINGUAL,
+    ) -> RerankResponse:
+        return await self._delegate.rerank(request, capability=capability)
+
+    async def aclose(self) -> None:
+        return None
+
+
+class StructuredAgentGateway:
+    """Return deterministic Agent decisions only for the default fake provider."""
+
+    def __init__(self, delegate: ModelGateway) -> None:
+        self._delegate = delegate
+
+    @property
+    def status(self) -> GatewayStatus:
+        return self._delegate.status
+
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        if not isinstance(self._delegate, FakeModelGateway):
+            return await self._delegate.chat(request, capability=capability)
+        has_tool_result = '"tool_result"' in request.messages[-1].content
+        payload = (
+            {"action": "complete", "reason": "Grounded QA completed."}
+            if has_tool_result
+            else {"action": "call_tool", "tool_name": "grounded_qa", "arguments": {}}
+        )
+        text = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
         return ChatResponse(
             text=text,
             finish_reason="stop",
@@ -269,17 +330,35 @@ class GroundedQAExecutor:
             return await self._repository.transition_run(
                 run.run_id, QAEvent.FAIL, error_code="QA_RUNTIME_FAILED"
             )
-        adapter = KnowledgeQASkillAdapter(
-            qa=self._service,
-            config=KnowledgeQASkillConfig(
-                profile=self.profile,
-                versions=run.versions,
-                execute_existing_run=True,
-                skill_name=run.versions.skill_name,
-                output_schema_version=_skill_output_schema(run.versions.skill_name),
-                preview_only_write=run.versions.skill_name == "create_review_cards",
-            ),
-        )
+        if run.versions.skill_name == "knowledge_agent":
+            agent_adapter = KnowledgeAgentSkillAdapter(
+                qa=self._service,
+                config=KnowledgeAgentSkillConfig(
+                    profile=self.profile,
+                    versions=run.versions,
+                    system_prompt=(package.root / package.manifest.prompts[0]).read_text(
+                        encoding="utf-8"
+                    ),
+                ),
+            )
+            runtime_gateway: ModelGateway = StructuredAgentGateway(self._gateway)
+            runtime_tool_registry = agent_adapter.tool_registry
+            runtime_handlers = agent_adapter.handlers()
+        else:
+            qa_adapter = KnowledgeQASkillAdapter(
+                qa=self._service,
+                config=KnowledgeQASkillConfig(
+                    profile=self.profile,
+                    versions=run.versions,
+                    execute_existing_run=True,
+                    skill_name=run.versions.skill_name,
+                    output_schema_version=_skill_output_schema(run.versions.skill_name),
+                    preview_only_write=run.versions.skill_name == "create_review_cards",
+                ),
+            )
+            runtime_gateway = self._gateway
+            runtime_tool_registry = None
+            runtime_handlers = qa_adapter.handlers()
         runtime_run = AgentRun(
             context=AgentRunContext(
                 run_id=run.run_id,
@@ -295,8 +374,9 @@ class GroundedQAExecutor:
         )
         result = await DeterministicWorkflowExecutor(
             skill_registry=registry,
-            model_gateway=self._gateway,
-            handlers=adapter.handlers(),
+            model_gateway=runtime_gateway,
+            handlers=runtime_handlers,
+            tool_registry=runtime_tool_registry,
         ).execute(
             runtime_run,
             pin,
@@ -337,6 +417,7 @@ def _skill_output_schema(skill_name: str) -> str:
         "summarize_document": "summarize-document-skill-output-v1",
         "compare_sources": "compare-sources-skill-output-v1",
         "create_review_cards": "review-cards-skill-output-v1",
+        "knowledge_agent": "knowledge-agent-skill-output-v1",
     }
     try:
         return schemas[skill_name]

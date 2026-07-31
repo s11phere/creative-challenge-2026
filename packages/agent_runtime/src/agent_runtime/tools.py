@@ -44,6 +44,7 @@ class ToolRegistryErrorCode(StrEnum):
     OUTPUT_INVALID = "TOOL_OUTPUT_INVALID"
     BUDGET_EXCEEDED = "TOOL_BUDGET_EXCEEDED"
     APPROVAL_REQUIRED = "TOOL_APPROVAL_REQUIRED"
+    MODEL_OUTPUT_DENIED = "TOOL_MODEL_OUTPUT_DENIED"
     TIMEOUT = "TOOL_TIMEOUT"
     EXECUTION_FAILED = "TOOL_EXECUTION_FAILED"
 
@@ -85,6 +86,7 @@ class ToolDefinition:
     idempotent: bool = True
     required_capabilities: frozenset[str] = field(default_factory=frozenset)
     audit_event: str = "tool_invoked"
+    model_visible: bool = False
 
     def __post_init__(self) -> None:
         if not _NAME_PATTERN.fullmatch(self.name):

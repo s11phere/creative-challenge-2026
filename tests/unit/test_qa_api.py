@@ -158,6 +158,7 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
     assert {item["name"] for item in listed.json()} == {
         "compare_sources",
         "create_review_cards",
+        "knowledge_agent",
         "knowledge_qa",
         "summarize_document",
     }
@@ -266,4 +267,34 @@ async def test_document_organization_skill_fixes_scope_on_the_shared_qa_run() ->
         "status": "blocked",
         "code": "SKILL_WRITE_PORT_UNAVAILABLE",
         "side_effects": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_knowledge_agent_uses_the_shared_qa_run_and_fixed_skill_identity() -> None:
+    app = create_app(
+        model_gateway=FakeModelGateway(),
+        enable_qa_execution=False,
+        qa_repository=InMemoryGroundedQARepository(),
+        qa_event_store=QAEventLog(),
+        skill_activation_store=InMemorySkillActivationStore(),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            f"/api/v1/spaces/{UUID(int=1)}/conversations",
+            json={"owner_id": "local-user"},
+        )
+        submitted = await client.post(
+            f"/api/v1/conversations/{created.json()['conversation_id']}"
+            "/skills/knowledge_agent/runs",
+            json={"question": "Use the bounded Agent.", "idempotency_key": "agent-1"},
+        )
+
+    assert submitted.status_code == 202
+    assert submitted.json()["skill"]["name"] == "knowledge_agent"
+    assert submitted.json()["skill"]["version"] == "0.1.0"
+    assert submitted.json()["fixed_scope"] == {
+        "source_ids": [],
+        "document_ids": [],
+        "version_ids": [],
     }

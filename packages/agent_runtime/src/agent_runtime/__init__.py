@@ -23,10 +23,13 @@ from .executor import (
     load_workflow,
 )
 from .llm_decision import (
+    AgentToolRegistry,
+    BoundedLLMAgentNode,
     LLMDecision,
     LLMDecisionAction,
     LLMDecisionError,
     LLMDecisionNode,
+    LLMDecisionVerifyNode,
     parse_llm_decision,
 )
 from .skills import (
@@ -92,6 +95,9 @@ __all__ = [
     "checkpoint_state_sha256",
     "load_workflow",
     "LLMDecision",
+    "AgentToolRegistry",
+    "BoundedLLMAgentNode",
+    "LLMDecisionVerifyNode",
     "LLMDecisionAction",
     "LLMDecisionError",
     "LLMDecisionNode",

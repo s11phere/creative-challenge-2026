@@ -14,7 +14,12 @@ from agent_runtime import (
 )
 from application.qa.profile import QAPlanningProfileV1
 from application.qa.service import GroundedQAExecutionProfile
-from application.skills import KnowledgeQASkillAdapter, KnowledgeQASkillConfig
+from application.skills import (
+    KnowledgeAgentSkillAdapter,
+    KnowledgeAgentSkillConfig,
+    KnowledgeQASkillAdapter,
+    KnowledgeQASkillConfig,
+)
 from domain.agent_runtime import AgentRun, AgentRunContext, RunStatus
 from domain.grounded_qa import (
     Citation,
@@ -31,7 +36,13 @@ from domain.grounded_qa import (
 from domain.qa_persistence import ConversationRecord, QARetrievalScope, QARunRecord, QARunVersions
 from domain.retrieval import LocatorKind, RetrievalProfileV1, SearchLocator
 from jsonschema import Draft202012Validator
-from model_gateway import FakeModelGateway
+from model_gateway import (
+    CapabilityAlias,
+    ChatRequest,
+    ChatResponse,
+    FakeModelGateway,
+    ModelUsage,
+)
 
 ROOT = Path(__file__).parents[2]
 SKILLS_ROOT = ROOT / "skills"
@@ -148,6 +159,29 @@ class FakeGroundedQA:
 
     async def request_cancel(self, run_id: UUID) -> QARunRecord:
         raise AssertionError(f"unexpected cancellation for {run_id}")
+
+
+class AgentGateway(FakeModelGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.responses = [
+            '{"action":"call_tool","tool_name":"grounded_qa","arguments":{}}',
+            '{"action":"complete","reason":"Grounded QA completed."}',
+        ]
+
+    async def chat(
+        self,
+        _request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        return ChatResponse(
+            text=self.responses.pop(0),
+            finish_reason="stop",
+            usage=ModelUsage(input_tokens=3, output_tokens=2),
+            capability=capability,
+            latency_ms=0.0,
+        )
 
 
 def runtime(
@@ -337,6 +371,81 @@ async def test_organization_skills_execute_the_fixed_qa_run(
         }
 
 
+@pytest.mark.asyncio
+async def test_knowledge_agent_calls_grounded_qa_for_the_existing_run() -> None:
+    registry = FileSystemSkillRegistry(SKILLS_ROOT)
+    package = registry.register(registry.load("knowledge_agent"))
+    registry.activate(package.manifest.name, package.manifest.version)
+    pin = registry.pin(package.manifest.name)
+    fixed_versions = replace(
+        versions(),
+        skill_name=pin.name,
+        skill_content_sha256=pin.content_sha256,
+        output_schema_version="knowledge-agent-skill-output-v1",
+    )
+    qa = FakeGroundedQA()
+    qa.run = QARunRecord(
+        run_id=RUN_ID,
+        attempt=QAAttempt(run_id=RUN_ID, attempt_id=ATTEMPT_ID),
+        conversation_id=UUID(int=12),
+        question_message_id=UUID(int=11),
+        space_id=SPACE_ID,
+        caller_id="synthetic-user",
+        idempotency_key=str(RUN_ID),
+        versions=fixed_versions,
+        status=QAStatus.QUEUED,
+    )
+    adapter = KnowledgeAgentSkillAdapter(
+        qa=qa,
+        config=KnowledgeAgentSkillConfig(
+            profile=profile(),
+            versions=fixed_versions,
+            system_prompt=(SKILLS_ROOT / "knowledge_agent/prompts/system.md").read_text(
+                encoding="utf-8"
+            ),
+        ),
+    )
+    run = AgentRun(
+        context=AgentRunContext(
+            run_id=RUN_ID,
+            space_id=SPACE_ID,
+            skill_name=pin.name,
+            skill_version=pin.version,
+            skill_content_sha256=pin.content_sha256,
+            trace_id="trace-knowledge-agent-fixture",
+            caller_id="synthetic-user",
+            granted_permissions=package.manifest.permissions,
+        ),
+        budget=package.manifest.budgets,
+    )
+    gateway = AgentGateway()
+    executor = DeterministicWorkflowExecutor(
+        skill_registry=registry,
+        model_gateway=gateway,
+        handlers=adapter.handlers(),
+        tool_registry=adapter.tool_registry,
+        clock_ms=lambda: 0,
+    )
+
+    result = await executor.execute(
+        run,
+        pin,
+        {"question": "Use the existing run.", "conversation_id": str(UUID(int=12))},
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert result.run.usage.tool_calls == 1
+    assert result.run.usage.input_tokens == 6
+    assert result.run.usage.output_tokens == 4
+    assert result.output == {"action": "complete", "reason": "Grounded QA completed."}
+    assert qa.questions == []
+    assert qa.conversations == []
+    assert qa.executed_run_ids == [RUN_ID]
+    assert qa.run.versions.skill_name == "knowledge_agent"
+    assert qa.run.versions.skill_version == "0.1.0"
+    assert len(gateway.responses) == 0
+
+
 def test_provisional_package_is_bulk_installed_but_activation_is_explicit() -> None:
     registry = FileSystemSkillRegistry(SKILLS_ROOT)
     loaded = registry.reload()
@@ -344,6 +453,7 @@ def test_provisional_package_is_bulk_installed_but_activation_is_explicit() -> N
     assert registry.names() == (
         "compare_sources",
         "create_review_cards",
+        "knowledge_agent",
         "knowledge_qa",
         "summarize_document",
     )

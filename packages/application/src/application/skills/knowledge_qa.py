@@ -97,7 +97,7 @@ class KnowledgeQASkillAdapter:
             )
             completed = await self._qa.execute(submitted.run_id, profile=self._config.profile)
         if completed.status not in {QAStatus.COMPLETED, QAStatus.REFUSED}:
-            raise _qa_failure(completed)
+            raise qa_failure(completed)
         usage = (
             BudgetUsage()
             if self._config.execute_existing_run
@@ -168,7 +168,7 @@ def _parse_input(value: object) -> _SkillInput:
     return _SkillInput(question=question, conversation_id=conversation_id)
 
 
-def _qa_failure(run: QARunRecord) -> NodeExecutionError:
+def qa_failure(run: QARunRecord) -> NodeExecutionError:
     code = run.error_code or "QA_FAILED"
     if run.status is QAStatus.CANCELLED:
         return NodeExecutionError(
@@ -298,4 +298,4 @@ def _json_uuid_list(values: frozenset[UUID]) -> list[JSONValue]:
     return [str(value) for value in sorted(values, key=str)]
 
 
-__all__ = ["KnowledgeQASkillAdapter", "KnowledgeQASkillConfig"]
+__all__ = ["KnowledgeQASkillAdapter", "KnowledgeQASkillConfig", "qa_failure"]

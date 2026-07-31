@@ -1999,6 +1999,56 @@
         "summary": "Create Review Cards"
       }
     },
+    "/api/v1/conversations/{conversation_id}/skills/knowledge_agent/runs": {
+      "post": {
+        "operationId": "run_knowledge_agent_api_v1_conversations__conversation_id__skills_knowledge_agent_runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuestionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Knowledge Agent"
+      }
+    },
     "/api/v1/conversations/{conversation_id}/skills/summarize_document/runs": {
       "post": {
         "operationId": "summarize_document_api_v1_conversations__conversation_id__skills_summarize_document_runs_post",

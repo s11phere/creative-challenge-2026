@@ -15,7 +15,7 @@
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
 | 阶段 3 🟡 工程 Step 0-10 | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；真实模型 development 最佳 Dense Recall@5 为 51.90%，未达到 85%，默认配置未冻结且正式 holdout 未执行 |
 | 阶段 4 🟡 provisional Step 0-10 | ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测 validate-only 已完成；默认配置与 holdout 未完成 |
-| 阶段 5 🟡 provisional Skills | ADR-006、Runtime/Registry 通用基础已通过审查；`knowledge_qa` 与三个知识整理 Skill `0.1.0` 复用现有持久 QA Run/Worker/SSE；Step 10 provisional 验收已记录 |
+| 阶段 5 🟡 provisional Skills | ADR-006、Runtime/Registry 通用基础已通过审查；`knowledge_agent`、`knowledge_qa` 与三个知识整理 Skill `0.1.0` 复用现有持久 QA Run/Worker/SSE；Step 10 provisional 验收已记录 |
 
 当前 Web 展示系统健康、数据来源和 provisional 知识问答工作区；HTTP API 可创建持久会话、提交
 问题，由 API 仅向 Redis 投递 Run ID，再由独立 Worker 调用唯一 `GroundedQAApplicationPort`、
@@ -38,6 +38,11 @@ Runtime Checkpoint、Skill 管理 Web 或旧版本清理。`/api/v1/skills` 可�
 入口并固定提交时的 Source/Document/DocumentVersion 范围；版本变更、撤下或跨 Space 选择不会
 扩大检索范围。比较结果必须引用至少两个来源，否则按证据不足拒答。复习卡当前只返回带引用预览，
 并以 `SKILL_WRITE_PORT_UNAVAILABLE` 明确报告 `side_effects=0`，尚无派生知识写入或确认流程。
+`knowledge_agent 0.1.0` 提供真实的受约束 LLM/Tool 循环：模型只能在服务端白名单中选择只读
+`grounded_qa 1.0.0`，由现有 QA Run、Worker、SSE、Grounded QA Port 和 Citation 链路完成问答。
+严格 JSON 决策、最多两轮决策、一次 Tool 调用以及 Token/权限/Space 预算均由 Runtime 强制执行；
+Tool 仅向外层模型返回状态和计数，不返回回答或原文。默认 fake 可跑通流程，配置允许的
+OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。写 Tool 仍被明确拒绝。
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
 [Stage 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
 [Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；必须先完成真实模型

@@ -349,7 +349,7 @@ Embedding/Reranker 仅通过固定镜像、revision 和显式 Compose profile �
 | `tools.py` | Tool 定义、JSON Schema、显式 handler、权限/Space/预算/审批校验和脱敏调用记录 |
 | `skills.py` | 受信目录 Skill manifest、包摘要、版本固定、事务式 reload、原子激活/回滚和恢复兼容检查 |
 | `checkpoints.py` | 规范化状态摘要、下一安全节点和内存原子 Run/Checkpoint 事务替身 |
-| `llm_decision.py` | 通过 `ModelGateway.fast_chat` 解析严格 `LLMDecision`；只产生受白名单约束的意图，不直接执行 Tool |
+| `llm_decision.py` | 通过 `ModelGateway.fast_chat` 解析严格 `LLMDecision`，并在有限循环中只调用服务端白名单内、明确允许模型查看输出的只读 Tool |
 | `executor.py` | 声明式 workflow、状态迁移、预算预留、有限重试、取消/超时、检查点恢复和审计事件 v1 |
 | `__init__.py` | 稳定公开导出 |
 
@@ -358,7 +358,7 @@ Embedding/Reranker 仅通过固定镜像、revision 和显式 Compose profile �
 prompt 摘要在运行开始时固定。
 
 **当前边界**：通用部分提供离线 Runtime、Registry、fake 契约和内存检查点恢复；没有独立
-AgentRun/Checkpoint ORM、Runtime API 或 Skill 管理 Web。四个 `0.1.0` Skill 的 active pointer
+AgentRun/Checkpoint ORM、Runtime API 或 Skill 管理 Web。五个 `0.1.0` Skill 的 active pointer
 由 PostgreSQL `skill_activations` 保存，Catalog 暴露安装版本、manifest 预算和 pointer revision，
 受控 activate/rollback API 只允许选择受信根中的已安装版本并使用 revision CAS。新 QA Run 在提交时
 同步 pointer 并固定名称、版本和内容摘要，Worker 按 Run 固定包执行唯一 QA Application Port。
@@ -366,6 +366,12 @@ QA PostgreSQL Run/Attempt/Event 是业务恢复事实源；通用 Runtime 生命
 进程内。知识整理 Run 还持久化固定 Source/Document/DocumentVersion 范围；检索要求这些版本仍为
 所选文档的 current published version，避免排队期间跟随新版本或扩大范围。比较结果若没有至少两个
 来源的 Citation 则拒答；复习卡仅预览并返回零副作用写入阻塞标记。
+
+`knowledge_agent` 是当前 LLM Agent 业务入口。它通过现有 `fast_chat` 能力产生严格的
+`call_tool/complete/refuse` 决策，最多调用一次 `grounded_qa 1.0.0`；Tool Registry 在服务端重验
+版本、权限、Space、预算和输入/输出 schema。`grounded_qa` 仍是回答、引用、终态发布和恢复的唯一
+权威，不向外层模型回传回答正文或引用原文。通用 Runtime 决策历史尚未单独持久化，写 Tool 在持久
+审批和幂等事实源落地前禁止进入 LLM 循环。
 
 **依赖**：`domain`、`model-gateway`、`jsonschema`、`packaging`、`pyyaml`
 
@@ -396,6 +402,8 @@ QA PostgreSQL Run/Attempt/Event 是业务恢复事实源；通用 Runtime 生命
    - `POST /api/v1/spaces/{space_id}/search` — Space-scoped Keyword/Dense/Hybrid 检索
    - `POST /api/v1/spaces/{space_id}/conversations`、`POST /api/v1/conversations/{conversation_id}/questions`
      — provisional PostgreSQL 会话与 Run 创建；API 只投递 Run ID，由独立 Worker 执行唯一 Grounded QA 用例
+   - `POST /api/v1/conversations/{conversation_id}/skills/knowledge_agent/runs` — 在同一 QA Run/Worker/SSE
+     协议中启动固定版本的只读 LLM Agent，不接受客户端指定 Tool、prompt、权限或版本
    - `GET /api/v1/qa/runs/{run_id}`、`POST /api/v1/qa/runs/{run_id}/cancel`、
      `GET /api/v1/qa/runs/{run_id}/events`、`POST /api/v1/qa/runs/{run_id}/feedback` — provisional
      Run 查询/取消、SSE 重放和反馈契约；终态响应包含结构化回答/拒答及已校验 Citation 身份

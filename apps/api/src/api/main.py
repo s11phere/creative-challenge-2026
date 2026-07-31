@@ -105,6 +105,7 @@ def create_app(
             "summarize_document": "0.1.0",
             "compare_sources": "0.1.0",
             "create_review_cards": "0.1.0",
+            "knowledge_agent": settings.knowledge_agent_skill_version,
         },
     )
     qa_runtime = QAWorkerDispatcher(

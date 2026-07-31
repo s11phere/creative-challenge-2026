@@ -57,6 +57,18 @@ docker compose -f deploy/compose.yaml run --rm migrate
 健康响应不会返回主机、密码或底层异常。进一步定位使用响应头中的 `X-Trace-ID` 和
 `X-Request-ID` 关联结构化日志。
 
+## knowledge_agent 模型决策失败
+
+默认 `MODEL_PROVIDER=fake` 不需要凭据。接入 OpenAI-compatible Chat Provider 时，只在被 Git 忽略的
+`.env` 中配置 `MODEL_PROVIDER=openai-compatible`、`MODEL_ALLOW_EXTERNAL=true`、
+`FAST_CHAT_ENDPOINT`、`FAST_CHAT_MODEL` 和 `FAST_CHAT_API_KEY`；API 与 Worker 必须使用相同配置。
+不要把密钥、问题、模型原始响应、Tool 输出或引用原文写入日志或 Issue。
+
+`RUN_LLM_DECISION_INVALID` 表示 Provider 没有返回严格的单个 JSON 决策；检查模型是否遵循
+`call_tool/complete/refuse` schema。`RUN_LLM_MAX_ITERATIONS` 表示模型在两轮内未终止；
+`TOOL_NOT_ALLOWED`、`TOOL_MODEL_OUTPUT_DENIED` 或 `TOOL_APPROVAL_REQUIRED` 表示服务端安全边界拒绝
+模型选择。当前唯一允许的 Agent Tool 是只读 `grounded_qa 1.0.0`，写 Tool 不可通过 prompt 开启。
+
 ## Web 显示 API 连接失败
 
 先直连 `http://127.0.0.1:8000/api/v1/health/live`。直连成功但 Web 同源 `/api` 失败时，检查
@@ -134,6 +146,9 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
   `knowledge_qa 0.1.0` 首次由配置初始化，随后以 PostgreSQL active pointer 为准，现有 QA HTTP/Web 入口创建的每个 Run 都固定包摘要，
   Worker 校验后才调用唯一 QA Application Port。可用 `GET /api/v1/skills` 和
   `GET /api/v1/skills/knowledge_qa/versions` 检查安装摘要、active 版本和 manifest 预算。
+- `knowledge_agent 0.1.0` 通过 `fast_chat` 执行受约束 LLM 决策，并在同一持久 QA Run 中调用一次
+  `grounded_qa`。外层模型只看到 Tool 状态/计数，不看到回答或引用原文；通用 Runtime 决策历史仍未
+  单独持久化，恢复和最终结果以 QA PostgreSQL 状态为准。
 - 若 Run 以 `QA_SKILL_INVALID` 失败，检查 API 与 Worker 的 `SKILL_ROOT_PATH`、
   `KNOWLEDGE_QA_SKILL_VERSION` 和镜像内 `skills/knowledge_qa` 内容是否一致。不要就地修改已被 Run
   引用的同名版本；发布新 semver 并保留旧包供排队/恢复 Run 校验。
