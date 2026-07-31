@@ -272,6 +272,8 @@ active -> TIMED_OUT
 - 将阶段 3/4 能力通过 Application Port 暴露为只读 Tool；Tool 不直接访问检索表或 ORM。
 - 写 Tool 必须接收幂等键，并在执行前生成持久化审批请求；模型输出不能视为用户确认。
 - Tool handler 由应用启动代码显式注册；manifest 只引用已注册名称和版本。
+- LLM 决策节点只允许严格版本化 JSON 的 `call_tool`、`complete`、`refuse` 三种动作；模型不能
+  直接执行 Tool，所有调用仍需经过 Tool Registry 的权限、Space、预算、审批和幂等校验。
 
 **完成标准**：未知 Tool、版本不匹配、非法 schema、越权调用、预算不足、跨 Space 访问和
 未确认写入都在副作用发生前被拒绝；Tool 契约测试可使用确定性 fake 独立运行。

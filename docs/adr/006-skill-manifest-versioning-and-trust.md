@@ -38,6 +38,14 @@ registered by application startup. A manifest cannot import arbitrary Python, ex
 shell/SQL, fetch URLs, or select an unregistered handler. The initial implementation
 may use a declaration-only workflow or a repository-owned handler allowlist.
 
+An LLM decision node, when enabled by an application-owned handler, may call only the
+provider-neutral `ModelGateway.fast_chat` capability and must return the versioned
+`LLMDecision` schema. The allowed actions are `call_tool`, `complete`, and `refuse`.
+The node validates JSON and the server-side Tool allowlist; it never invokes a Tool
+itself. Tool Registry permission, Space, budget, approval, idempotency, and output
+validation remain mandatory before any side effect. User and document content is
+untrusted prompt input and cannot change the system instruction or allowlist.
+
 ### Identity, compatibility, and activation
 
 The immutable registration identity is `(name, version, content_sha256)`, where the

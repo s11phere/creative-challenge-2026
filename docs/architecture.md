@@ -349,6 +349,7 @@ Embedding/Reranker 仅通过固定镜像、revision 和显式 Compose profile �
 | `tools.py` | Tool 定义、JSON Schema、显式 handler、权限/Space/预算/审批校验和脱敏调用记录 |
 | `skills.py` | 受信目录 Skill manifest、包摘要、版本固定、事务式 reload、原子激活/回滚和恢复兼容检查 |
 | `checkpoints.py` | 规范化状态摘要、下一安全节点和内存原子 Run/Checkpoint 事务替身 |
+| `llm_decision.py` | 通过 `ModelGateway.fast_chat` 解析严格 `LLMDecision`；只产生受白名单约束的意图，不直接执行 Tool |
 | `executor.py` | 声明式 workflow、状态迁移、预算预留、有限重试、取消/超时、检查点恢复和审计事件 v1 |
 | `__init__.py` | 稳定公开导出 |
 

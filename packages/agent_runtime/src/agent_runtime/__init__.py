@@ -22,6 +22,13 @@ from .executor import (
     WorkflowNode,
     load_workflow,
 )
+from .llm_decision import (
+    LLMDecision,
+    LLMDecisionAction,
+    LLMDecisionError,
+    LLMDecisionNode,
+    parse_llm_decision,
+)
 from .skills import (
     FileSystemSkillRegistry,
     PinnedSkill,
@@ -84,4 +91,9 @@ __all__ = [
     "build_checkpoint",
     "checkpoint_state_sha256",
     "load_workflow",
+    "LLMDecision",
+    "LLMDecisionAction",
+    "LLMDecisionError",
+    "LLMDecisionNode",
+    "parse_llm_decision",
 ]
