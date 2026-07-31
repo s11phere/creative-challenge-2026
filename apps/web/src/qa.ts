@@ -21,6 +21,16 @@ export type QARun = {
     version: string
     content_sha256: string | null
   }
+  fixed_scope: {
+    source_ids: string[]
+    document_ids: string[]
+    version_ids: string[]
+  }
+  write?: {
+    status: 'blocked'
+    code: 'SKILL_WRITE_PORT_UNAVAILABLE'
+    side_effects: 0
+  } | null
   result?: {
     type: 'answer' | 'refusal' | 'conflict'
     text?: string
@@ -40,6 +50,7 @@ export type QARun = {
 export type SkillSummary = {
   name: string
   active_version: string | null
+  active_revision: number | null
   versions: string[]
 }
 

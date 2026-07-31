@@ -12,6 +12,7 @@ from agent_runtime import (
     FileSystemSkillRegistry,
     PinnedSkill,
     SkillRegistryError,
+    SkillRegistryErrorCode,
 )
 from application.qa import (
     ContextBuilder,
@@ -144,9 +145,12 @@ class StructuredFakeGateway:
 
 def qa_execution_versions(
     skill_registry: FileSystemSkillRegistry | None = None,
+    *,
+    skill_name: str = "knowledge_qa",
 ) -> QARunVersions:
     planning, retrieval, generation = _profiles()
-    pin = active_knowledge_qa_pin(skill_registry)
+    registry = skill_registry or knowledge_qa_registry()
+    pin = registry.pin(skill_name)
     return QARunVersions(
         skill_name=pin.name,
         skill_version=pin.version,
@@ -271,6 +275,9 @@ class GroundedQAExecutor:
                 profile=self.profile,
                 versions=run.versions,
                 execute_existing_run=True,
+                skill_name=run.versions.skill_name,
+                output_schema_version=_skill_output_schema(run.versions.skill_name),
+                preview_only_write=run.versions.skill_name == "create_review_cards",
             ),
         )
         runtime_run = AgentRun(
@@ -322,6 +329,22 @@ def _profiles() -> tuple[QAPlanningProfileV1, RetrievalProfileV1, QAGenerationPr
         model_identity=(settings.fast_chat_model or "fake-fast-chat-v1"),
     )
     return planning, retrieval, generation
+
+
+def _skill_output_schema(skill_name: str) -> str:
+    schemas = {
+        "knowledge_qa": "knowledge-qa-skill-output-v1",
+        "summarize_document": "summarize-document-skill-output-v1",
+        "compare_sources": "compare-sources-skill-output-v1",
+        "create_review_cards": "review-cards-skill-output-v1",
+    }
+    try:
+        return schemas[skill_name]
+    except KeyError as exc:
+        raise SkillRegistryError(
+            SkillRegistryErrorCode.NOT_FOUND,
+            "No Grounded QA adapter is registered for this Skill.",
+        ) from exc
 
 
 __all__ = [

@@ -5,6 +5,7 @@ import pytest
 from api.main import create_app
 from application.qa import InMemoryGroundedQARepository
 from domain.grounded_qa import Citation, CitationResolution, CitationStatus
+from domain.qa_persistence import QARetrievalScope
 from domain.qa_sse import QAEventLog
 from domain.retrieval import LocatorKind, SearchLocator
 from httpx import ASGITransport, AsyncClient
@@ -27,6 +28,24 @@ class FakeCitationService:
             excerpt_sha256="a" * 64,
         )
         return CitationResolution(citation, CitationStatus.VALID, "minimal excerpt")
+
+
+class FakeOrganizationScope:
+    async def document_scope(
+        self, *, space_id: UUID, document_id: UUID, version_id: UUID
+    ) -> QARetrievalScope:
+        assert space_id
+        return QARetrievalScope(
+            source_ids=frozenset({UUID(int=30)}),
+            document_ids=frozenset({document_id}),
+            version_ids=frozenset({version_id}),
+        )
+
+    async def sources_scope(
+        self, *, space_id: UUID, source_ids: frozenset[UUID]
+    ) -> QARetrievalScope:
+        assert space_id
+        return QARetrievalScope(source_ids=source_ids)
 
 
 @pytest.mark.asyncio
@@ -136,14 +155,19 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
         missing = await client.get("/api/v1/skills/not_installed/versions")
 
     assert listed.status_code == 200
-    assert listed.json() == [
-        {
-            "name": "knowledge_qa",
-            "active_version": "0.1.0",
-            "active_revision": 1,
-            "versions": ["0.1.0"],
-        }
-    ]
+    assert {item["name"] for item in listed.json()} == {
+        "compare_sources",
+        "create_review_cards",
+        "knowledge_qa",
+        "summarize_document",
+    }
+    knowledge_qa = next(item for item in listed.json() if item["name"] == "knowledge_qa")
+    assert knowledge_qa == {
+        "name": "knowledge_qa",
+        "active_version": "0.1.0",
+        "active_revision": 1,
+        "versions": ["0.1.0"],
+    }
     assert versions.status_code == 200
     payload = versions.json()[0]
     assert payload["active"] is True
@@ -190,4 +214,56 @@ async def test_skill_activation_uses_revision_cas_and_only_installed_versions() 
     assert stale.json()["code"] == "SKILL_ACTIVATION_CONFLICT"
     assert missing.status_code == 404
     assert missing.json()["code"] == "SKILL_NOT_FOUND"
-    assert listed.json()[0]["active_revision"] == 2
+    knowledge_qa = next(item for item in listed.json() if item["name"] == "knowledge_qa")
+    assert knowledge_qa["active_revision"] == 2
+
+
+@pytest.mark.asyncio
+async def test_document_organization_skill_fixes_scope_on_the_shared_qa_run() -> None:
+    app = create_app(
+        model_gateway=FakeModelGateway(),
+        enable_qa_execution=False,
+        qa_repository=InMemoryGroundedQARepository(),
+        qa_event_store=QAEventLog(),
+        skill_activation_store=InMemorySkillActivationStore(),
+    )
+    app.state.organization_scope = FakeOrganizationScope()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            f"/api/v1/spaces/{UUID(int=1)}/conversations",
+            json={"owner_id": "local-user"},
+        )
+        submitted = await client.post(
+            f"/api/v1/conversations/{created.json()['conversation_id']}"
+            "/skills/summarize_document/runs",
+            json={
+                "document_id": str(UUID(int=31)),
+                "version_id": str(UUID(int=32)),
+                "focus": "key constraints",
+                "idempotency_key": "summary-1",
+            },
+        )
+        preview = await client.post(
+            f"/api/v1/conversations/{created.json()['conversation_id']}"
+            "/skills/create_review_cards/runs",
+            json={
+                "document_id": str(UUID(int=31)),
+                "version_id": str(UUID(int=32)),
+                "idempotency_key": "cards-1",
+            },
+        )
+
+    assert submitted.status_code == 202
+    assert submitted.json()["skill"]["name"] == "summarize_document"
+    assert submitted.json()["skill"]["version"] == "0.1.0"
+    assert submitted.json()["fixed_scope"] == {
+        "source_ids": [str(UUID(int=30))],
+        "document_ids": [str(UUID(int=31))],
+        "version_ids": [str(UUID(int=32))],
+    }
+    assert preview.status_code == 202
+    assert preview.json()["write"] == {
+        "status": "blocked",
+        "code": "SKILL_WRITE_PORT_UNAVAILABLE",
+        "side_effects": 0,
+    }

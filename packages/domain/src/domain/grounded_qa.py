@@ -145,6 +145,9 @@ class QuestionInput:
     caller_id: str
     conversation_id: UUID | None = None
     idempotency_key: str | None = None
+    source_ids: frozenset[UUID] = frozenset()
+    document_ids: frozenset[UUID] = frozenset()
+    version_ids: frozenset[UUID] = frozenset()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "question", normalize_question(self.question))
@@ -152,6 +155,8 @@ class QuestionInput:
             raise QAContractError("Question caller_id must not be blank")
         if self.idempotency_key is not None and not self.idempotency_key:
             raise QAContractError("Question idempotency_key must not be blank when provided")
+        if self.version_ids and not self.document_ids:
+            raise QAContractError("Version-scoped questions must also fix their documents")
 
 
 @dataclass(frozen=True)

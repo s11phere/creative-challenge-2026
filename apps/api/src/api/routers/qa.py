@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Literal
 from uuid import UUID, uuid4
 
+from application.skills import OrganizationScopeError
 from domain.grounded_qa import CitationStatus, QAAttempt, QAEvent, QAStatus, normalize_question
 from domain.qa_persistence import (
     ConversationRecord,
@@ -16,12 +17,15 @@ from domain.qa_persistence import (
     GroundedQARepository,
     MessageRecord,
     MessageRole,
+    QARetrievalScope,
     QARunRecord,
 )
 from domain.qa_sse import QAEventStore, QAEventType
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from ..errors import AppError
 
 router = APIRouter(prefix="/api/v1")
 
@@ -85,6 +89,18 @@ class RunSkillResponse(BaseModel):
     content_sha256: str | None
 
 
+class RunScopeResponse(BaseModel):
+    source_ids: list[UUID]
+    document_ids: list[UUID]
+    version_ids: list[UUID]
+
+
+class RunWriteResponse(BaseModel):
+    status: Literal["blocked"]
+    code: Literal["SKILL_WRITE_PORT_UNAVAILABLE"]
+    side_effects: Literal[0]
+
+
 class RunResponse(BaseModel):
     run_id: UUID
     attempt_id: UUID
@@ -94,6 +110,8 @@ class RunResponse(BaseModel):
     cancellation_requested: bool
     error_code: str | None = None
     skill: RunSkillResponse
+    fixed_scope: RunScopeResponse
+    write: RunWriteResponse | None = None
     result: AnswerResultResponse | RefusalResultResponse | ConflictResultResponse | None = None
     citations: list[CitationResponse] = Field(default_factory=list)
 
@@ -109,6 +127,26 @@ class FeedbackResponse(BaseModel):
     run_id: UUID
     message_id: UUID
     review_status: str
+
+
+class DocumentSkillRequest(BaseModel):
+    document_id: UUID
+    version_id: UUID
+    focus: str | None = Field(default=None, min_length=1, max_length=1000)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class CompareSourcesRequest(BaseModel):
+    source_ids: list[UUID] = Field(min_length=2, max_length=8)
+    focus: str | None = Field(default=None, min_length=1, max_length=1000)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+    @field_validator("source_ids")
+    @classmethod
+    def unique_sources(cls, value: list[UUID]) -> list[UUID]:
+        if len(value) != len(set(value)):
+            raise ValueError("source_ids must be unique")
+        return value
 
 
 def _state(request: Request) -> tuple[GroundedQARepository, QAEventStore]:
@@ -128,6 +166,20 @@ def _run_response(run: QARunRecord) -> RunResponse:
             name=run.versions.skill_name,
             version=run.versions.skill_version,
             content_sha256=run.versions.skill_content_sha256,
+        ),
+        fixed_scope=RunScopeResponse(
+            source_ids=sorted(run.retrieval_scope.source_ids, key=str),
+            document_ids=sorted(run.retrieval_scope.document_ids, key=str),
+            version_ids=sorted(run.retrieval_scope.version_ids, key=str),
+        ),
+        write=(
+            RunWriteResponse(
+                status="blocked",
+                code="SKILL_WRITE_PORT_UNAVAILABLE",
+                side_effects=0,
+            )
+            if run.versions.skill_name == "create_review_cards"
+            else None
         ),
         result=_result_payload(run),
         citations=_citation_payloads(run),
@@ -228,6 +280,145 @@ async def submit_question(
         run = await repo.create_run(run)
         if run.status is QAStatus.CREATED:
             run = await repo.transition_run(run.run_id, QAEvent.QUEUE)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await events.append(run.run_id, QAEventType.ACCEPTED, {"status": QAStatus.QUEUED.value})
+    if request.app.state.qa_execution_enabled:
+        request.app.state.qa_runtime.start(run.run_id)
+    return _run_response(run)
+
+
+@router.post(
+    "/conversations/{conversation_id}/skills/summarize_document/runs",
+    response_model=RunResponse,
+    status_code=202,
+)
+async def summarize_document(
+    conversation_id: UUID, body: DocumentSkillRequest, request: Request
+) -> RunResponse:
+    conversation = await _conversation(request, conversation_id)
+    try:
+        scope = await request.app.state.organization_scope.document_scope(
+            space_id=conversation.space_id,
+            document_id=body.document_id,
+            version_id=body.version_id,
+        )
+    except OrganizationScopeError as exc:
+        raise AppError(exc.code.value, str(exc), 409) from exc
+    focus = f" Focus on: {body.focus}" if body.focus else ""
+    return await _submit_scoped_skill(
+        request,
+        conversation,
+        skill_name="summarize_document",
+        question=f"Summarize the selected fixed document version.{focus}",
+        idempotency_key=body.idempotency_key,
+        scope=scope,
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/skills/compare_sources/runs",
+    response_model=RunResponse,
+    status_code=202,
+)
+async def compare_sources(
+    conversation_id: UUID, body: CompareSourcesRequest, request: Request
+) -> RunResponse:
+    conversation = await _conversation(request, conversation_id)
+    try:
+        scope = await request.app.state.organization_scope.sources_scope(
+            space_id=conversation.space_id,
+            source_ids=frozenset(body.source_ids),
+        )
+    except OrganizationScopeError as exc:
+        raise AppError(exc.code.value, str(exc), 409) from exc
+    focus = f" Focus on: {body.focus}" if body.focus else ""
+    return await _submit_scoped_skill(
+        request,
+        conversation,
+        skill_name="compare_sources",
+        question=(
+            "Compare the selected fixed sources and distinguish agreement, conflict, and gaps."
+            f"{focus}"
+        ),
+        idempotency_key=body.idempotency_key,
+        scope=scope,
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/skills/create_review_cards/runs",
+    response_model=RunResponse,
+    status_code=202,
+)
+async def create_review_cards(
+    conversation_id: UUID, body: DocumentSkillRequest, request: Request
+) -> RunResponse:
+    conversation = await _conversation(request, conversation_id)
+    try:
+        scope = await request.app.state.organization_scope.document_scope(
+            space_id=conversation.space_id,
+            document_id=body.document_id,
+            version_id=body.version_id,
+        )
+    except OrganizationScopeError as exc:
+        raise AppError(exc.code.value, str(exc), 409) from exc
+    focus = f" Focus on: {body.focus}" if body.focus else ""
+    return await _submit_scoped_skill(
+        request,
+        conversation,
+        skill_name="create_review_cards",
+        question=f"Create a citation-backed review-card preview from the selected version.{focus}",
+        idempotency_key=body.idempotency_key,
+        scope=scope,
+    )
+
+
+async def _conversation(request: Request, conversation_id: UUID) -> ConversationRecord:
+    repo, _events = _state(request)
+    conversation = await repo.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conversation
+
+
+async def _submit_scoped_skill(
+    request: Request,
+    conversation: ConversationRecord,
+    *,
+    skill_name: str,
+    question: str,
+    idempotency_key: str,
+    scope: QARetrievalScope,
+) -> RunResponse:
+    repo, events = _state(request)
+    try:
+        message = await repo.append_message(
+            MessageRecord(
+                conversation_id=conversation.conversation_id,
+                space_id=conversation.space_id,
+                role=MessageRole.USER,
+                content=question,
+                idempotency_key=idempotency_key,
+            )
+        )
+        run_id = uuid4()
+        run = QARunRecord(
+            run_id=run_id,
+            attempt=QAAttempt(run_id=run_id),
+            conversation_id=conversation.conversation_id,
+            question_message_id=message.message_id,
+            space_id=conversation.space_id,
+            caller_id=conversation.owner_id,
+            idempotency_key=idempotency_key,
+            versions=await request.app.state.qa_runtime.current_versions(skill_name),
+            retrieval_scope=scope,
+        )
+        run = await repo.create_run(run)
+        if run.status is QAStatus.CREATED:
+            run = await repo.transition_run(run.run_id, QAEvent.QUEUE)
+    except AppError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await events.append(run.run_id, QAEventType.ACCEPTED, {"status": QAStatus.QUEUED.value})

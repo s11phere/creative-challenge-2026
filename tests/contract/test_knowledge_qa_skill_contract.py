@@ -28,7 +28,7 @@ from domain.grounded_qa import (
     Refusal,
     RefusalReason,
 )
-from domain.qa_persistence import ConversationRecord, QARunRecord, QARunVersions
+from domain.qa_persistence import ConversationRecord, QARetrievalScope, QARunRecord, QARunVersions
 from domain.retrieval import LocatorKind, RetrievalProfileV1, SearchLocator
 from jsonschema import Draft202012Validator
 from model_gateway import FakeModelGateway
@@ -151,10 +151,14 @@ class FakeGroundedQA:
 
 
 def runtime(
-    qa: FakeGroundedQA, *, execute_existing_run: bool = False
+    qa: FakeGroundedQA,
+    *,
+    execute_existing_run: bool = False,
+    package_path: str = PACKAGE_PATH,
+    retrieval_scope: QARetrievalScope | None = None,
 ) -> tuple[DeterministicWorkflowExecutor, PinnedSkill, AgentRun]:
     registry = FileSystemSkillRegistry(SKILLS_ROOT)
-    package = registry.register(registry.load(PACKAGE_PATH))
+    package = registry.register(registry.load(package_path))
     registry.activate(package.manifest.name, package.manifest.version)
     pin = registry.pin(package.manifest.name)
     fixed_versions = replace(
@@ -170,6 +174,7 @@ def runtime(
             caller_id="synthetic-user",
             idempotency_key=str(RUN_ID),
             versions=fixed_versions,
+            retrieval_scope=retrieval_scope or QARetrievalScope(),
             status=QAStatus.QUEUED,
         )
     adapter = KnowledgeQASkillAdapter(
@@ -178,6 +183,14 @@ def runtime(
             profile=profile(),
             versions=fixed_versions,
             execute_existing_run=execute_existing_run,
+            skill_name=pin.name,
+            output_schema_version={
+                "knowledge_qa": "knowledge-qa-skill-output-v1",
+                "summarize_document": "summarize-document-skill-output-v1",
+                "compare_sources": "compare-sources-skill-output-v1",
+                "create_review_cards": "review-cards-skill-output-v1",
+            }[pin.name],
+            preview_only_write=pin.name == "create_review_cards",
         ),
     )
     run = AgentRun(
@@ -278,11 +291,62 @@ async def test_worker_mode_executes_the_existing_run_without_submitting_another(
     assert result.output["run_id"] == str(RUN_ID)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("skill_name", "schema_version"),
+    [
+        ("summarize_document", "summarize-document-skill-output-v1"),
+        ("compare_sources", "compare-sources-skill-output-v1"),
+        ("create_review_cards", "review-cards-skill-output-v1"),
+    ],
+)
+async def test_organization_skills_execute_the_fixed_qa_run(
+    skill_name: str, schema_version: str
+) -> None:
+    qa = FakeGroundedQA()
+    scope = QARetrievalScope(
+        source_ids=frozenset({UUID(int=7), UUID(int=17)}),
+        document_ids=frozenset({UUID(int=8), UUID(int=18)}),
+        version_ids=frozenset({UUID(int=9), UUID(int=19)}),
+    )
+    executor, pin, run = runtime(
+        qa,
+        execute_existing_run=True,
+        package_path=skill_name,
+        retrieval_scope=scope,
+    )
+
+    result = await executor.execute(
+        run,
+        pin,
+        {"question": "Use the fixed organization scope.", "conversation_id": str(UUID(int=12))},
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert isinstance(result.output, dict)
+    assert result.output["schema_version"] == schema_version
+    assert result.output["operation"] == skill_name
+    fixed_scope = result.output["fixed_scope"]
+    assert isinstance(fixed_scope, dict)
+    assert fixed_scope["version_ids"] == [str(UUID(int=9)), str(UUID(int=19))]
+    if skill_name == "create_review_cards":
+        assert result.output["write"] == {
+            "status": "blocked",
+            "code": "SKILL_WRITE_PORT_UNAVAILABLE",
+            "side_effects": 0,
+        }
+
+
 def test_provisional_package_is_bulk_installed_but_activation_is_explicit() -> None:
     registry = FileSystemSkillRegistry(SKILLS_ROOT)
     loaded = registry.reload()
     package = next(package for package in loaded if package.manifest.name == "knowledge_qa")
-    assert registry.names() == ("knowledge_qa",)
+    assert registry.names() == (
+        "compare_sources",
+        "create_review_cards",
+        "knowledge_qa",
+        "summarize_document",
+    )
     assert registry.versions("knowledge_qa") == ("0.1.0",)
     with pytest.raises(SkillRegistryError, match="active version"):
         registry.active_version("knowledge_qa")

@@ -118,6 +118,17 @@ class QARunVersions:
 
 
 @dataclass(frozen=True)
+class QARetrievalScope:
+    source_ids: frozenset[UUID] = frozenset()
+    document_ids: frozenset[UUID] = frozenset()
+    version_ids: frozenset[UUID] = frozenset()
+
+    def __post_init__(self) -> None:
+        if self.version_ids and not self.document_ids:
+            raise ValueError("QA version scope must also fix its documents")
+
+
+@dataclass(frozen=True)
 class ConversationRecord:
     space_id: UUID
     owner_id: str
@@ -163,6 +174,7 @@ class QARunRecord:
     caller_id: str
     idempotency_key: str
     versions: QARunVersions
+    retrieval_scope: QARetrievalScope = QARetrievalScope()
     status: QAStatus = QAStatus.CREATED
     cancellation_requested: bool = False
     error_code: str | None = None
@@ -327,6 +339,7 @@ __all__ = [
     "MessageRole",
     "QAPhase",
     "QAPhaseTiming",
+    "QARetrievalScope",
     "QARunRecord",
     "QARunUsage",
     "QARunVersions",

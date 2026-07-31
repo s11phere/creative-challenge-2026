@@ -241,6 +241,8 @@ class PostgresRetrievalStore:
             statement = statement.where(SourceModel.id.in_(filters.source_ids))
         if filters.document_ids:
             statement = statement.where(DocumentModel.id.in_(filters.document_ids))
+        if filters.version_ids:
+            statement = statement.where(DocumentVersionModel.id.in_(filters.version_ids))
         return statement
 
     def _dense_statement(self, query: DenseCandidateQuery) -> Select[tuple[Any, ...]]:

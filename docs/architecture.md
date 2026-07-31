@@ -114,7 +114,10 @@ Agent Runtime → Domain + ModelGateway
 │
 ├── skills/
 │   ├── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
-│   └── knowledge_qa/               # active provisional Grounded QA Skill
+│   ├── knowledge_qa/               # active provisional Grounded QA Skill
+│   ├── summarize_document/         # 固定单文档版本的引用摘要
+│   ├── compare_sources/            # 固定多来源的引用比较
+│   └── create_review_cards/        # 带引用预览；派生知识写入明确阻塞
 │
 ├── scripts/                        # OpenAPI 导出、Embedding 重建和检索评测 CLI
 │
@@ -252,6 +255,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/qa/persistence.py` | provisional 内存 Grounded QA Repository；验证 Space/owner、幂等、attempt、取消、usage、Evidence/Feedback 和原子终态发布 |
 | `src/application/qa/service.py` | 唯一 provisional `GroundedQAApplicationPort`；编排幂等提交、阶段 3 SearchService、Evidence/上下文、结构化生成、原子发布、取消和稳定失败终态 |
 | `src/application/skills/knowledge_qa.py` | provisional Skill Adapter；Worker 模式执行同一既有 QA Run，仅将 Runtime 服务端上下文映射到唯一 QA Port 并投影其结构化结果 |
+| `src/application/skills/organization.py` | 校验知识整理 Skill 的 Space 归属和当前 published Source/Document/DocumentVersion，并生成固定检索范围 |
 | `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
 | `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
 
@@ -353,12 +357,14 @@ Embedding/Reranker 仅通过固定镜像、revision 和显式 Compose profile �
 prompt 摘要在运行开始时固定。
 
 **当前边界**：通用部分提供离线 Runtime、Registry、fake 契约和内存检查点恢复；没有独立
-AgentRun/Checkpoint ORM、Runtime API 或 Skill 管理 Web。`skills/knowledge_qa` 的 active pointer
+AgentRun/Checkpoint ORM、Runtime API 或 Skill 管理 Web。四个 `0.1.0` Skill 的 active pointer
 由 PostgreSQL `skill_activations` 保存，Catalog 暴露安装版本、manifest 预算和 pointer revision，
 受控 activate/rollback API 只允许选择受信根中的已安装版本并使用 revision CAS。新 QA Run 在提交时
 同步 pointer 并固定名称、版本和内容摘要，Worker 按 Run 固定包执行唯一 QA Application Port。
 QA PostgreSQL Run/Attempt/Event 是业务恢复事实源；通用 Runtime 生命周期事件和 Checkpoint 仍只在
-进程内。
+进程内。知识整理 Run 还持久化固定 Source/Document/DocumentVersion 范围；检索要求这些版本仍为
+所选文档的 current published version，避免排队期间跟随新版本或扩大范围。比较结果若没有至少两个
+来源的 Citation 则拒答；复习卡仅预览并返回零副作用写入阻塞标记。
 
 **依赖**：`domain`、`model-gateway`、`jsonschema`、`packaging`、`pyyaml`
 
@@ -754,7 +760,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 2** | **✅ 正式完成** | **Step 0～9 完成；冻结 manifest 的 74 个 P0 来源成功率 100%，退出记录见 `docs/stage-2-acceptance.md`** |
 | **阶段 3** | **🟡 工程 Step 0～10 验收完成** | **检索 API、离线评测和安全边界已落地；真实模型定版及正式 holdout 未关闭，阶段未正式退出** |
 | 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、PostgreSQL QA 持久化、SSE/API/Web、Worker lease/重启恢复、原文解析和回答评测门禁已落地；默认配置和 holdout 未落地 |
-| **阶段 5** | **🟡 通用基础 + active provisional Skill** | **Step 0～4 和 Step 9 通用部分通过；`knowledge_qa 0.1.0` 已固定摘要并由现有 QA Web/API/Worker 执行，通用 Runtime Checkpoint、Skill 管理入口和正式验收仍阻塞** |
+| **阶段 5** | **🟡 provisional Skills** | **Step 0～4、Step 8 只读子集和 Step 9 通用部分通过；四个 `0.1.0` Skill 复用现有 QA Run/Worker/SSE，通用 Runtime Checkpoint、派生知识写入、Skill 管理 Web 和正式验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 
@@ -784,8 +790,9 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 Reranker 无净收益且超出 P95 预算。因此阶段 3 保持工程完成、正式质量未通过，配置未冻结且
 holdout 未执行。
 
-阶段 5 通用基础审查见 `docs/stage-5-implementation-review.md`。该并行实现不改变主推进顺序：
-仍应先完成阶段 4 引用问答，再接入阶段 5 业务 Skill。
+阶段 5 通用基础和 provisional 业务 Skill 审查见 `docs/stage-5-implementation-review.md`。这些
+可用子集不改变 Stage 3/4/5 的正式状态，也不替代通用 Runtime Checkpoint、派生知识持久写入或
+正式质量门禁。
 
 阶段 0 和阶段 2 已分别按 `docs/stage-0-acceptance.md`、`docs/stage-2-acceptance.md` 交接，不能因此直接运行 holdout；仍须按
 `docs/stage-3-acceptance.md` 完成真实模型 development 消融、默认配置冻结和一次性正式

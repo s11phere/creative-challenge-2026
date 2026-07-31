@@ -14,8 +14,8 @@ ADR-003、ADR-006 和阶段 5 实施计划一致：领域状态与 Port、Tool/S
 这不是阶段 5 整体验收。阶段 5 的目标是封装阶段 2～4 已验证的知识能力。当前仓库已有摄入闭环、
 RetrievalStore、GroundedAnswer/Citation Application 用例、QA Conversation/Run/Evidence 持久化及
 ADR-007 协议；`knowledge_qa 0.1.0` 现已通过既有 QA Web/API/Worker 成为 active provisional Skill。
-仍没有三个知识整理业务 Skill、通用 Runtime API、Skill 管理 Web、PostgreSQL Runtime Checkpoint
-恢复或正式三入口验收。
+三个知识整理业务 Skill 已提供 provisional 只读版本；仍没有派生知识写入/持久确认、通用 Runtime
+API、Skill 管理 Web、PostgreSQL Runtime Checkpoint 恢复或正式质量验收。
 
 ## 已审查实现
 
@@ -39,7 +39,7 @@ ADR-007 协议；`knowledge_qa 0.1.0` 现已通过既有 QA Web/API/Worker 成�
 | Step 5 | 部分完成 | PostgreSQL QA Run/Attempt、Worker lease/heartbeat、重复投递和重启恢复已完成；通用 Runtime Checkpoint、审批与清理仍待实现 |
 | Step 6 | active provisional | 声明式包固定名称/版本/摘要，由 Worker 对同一 QA Run 调用唯一 QA Port；正式质量仍待阶段 3/4 门禁 |
 | Step 7 | provisional 可用子集 | 现有 QA API/Web/Worker 已执行固定 Skill，并提供真实检索、持久 Run、引用原文和重启恢复；通用 Runtime/Skill 管理入口未实现 |
-| Step 8 | 阻塞 | `knowledge_qa` 真实链路和派生知识写入 Application 用例稳定 |
+| Step 8 | provisional 只读完成 | 三个 Skill 固定来源并复用既有 QA Run/Worker/SSE；派生知识写入 Application Port 与持久确认仍阻塞 |
 | Step 9 持久化部分 | 阻塞 | Step 5 提供运行引用查询、保留和清理事实源 |
 | Step 10 | 阻塞 | Step 0～9 全部交付，阶段 0 数据门禁关闭 |
 
@@ -121,6 +121,26 @@ QA Run 固定 identity 执行，不读取当前 pointer 改写排队工作。该
 downgrade/upgrade 往返和 API 重启恢复；旧 revision 返回 `SKILL_ACTIVATION_CONFLICT`。Worker 停止时
 创建的 Run 保持 queued，pointer revision 更新后恢复 Worker，该 Run 仍以原固定 name/version/digest
 完成，未被当前 pointer 改写。
+
+2026-07-31 Step 8 补充审查：新增 `summarize_document`、`compare_sources` 和
+`create_review_cards 0.1.0` 完整受信包及既有 QA transport 下的三个提交入口。它们复用同一 QA
+Run、Worker、`qa-sse-v1`、确定性 Runtime 和唯一 Grounded QA Application Port；未创建第二套
+Runtime Run、SSE 或业务问答逻辑。Run 新增固定 Source/Document/DocumentVersion 范围，提交校验
+Space、current published 状态，SearchService 在执行时再次要求精确版本一致，避免排队工作跟随新
+版本或扩大范围。比较结果必须引用至少两个来源，否则发布为证据不足拒答。
+
+`create_review_cards` 当前只生成带引用预览，HTTP response 与 Runtime Skill output 都返回
+`SKILL_WRITE_PORT_UNAVAILABLE`、`side_effects=0`；没有直接写表或文件。故本步骤只记为
+provisional 只读完成，派生知识 Application Port、持久审批、幂等写入、Skill 管理 Web、通用
+Runtime Checkpoint 和正式质量门禁仍未完成。
+
+本子集验证：Ruff format/check、mypy 94 个源文件、后端全量 pytest `624 passed, 45 skipped`、
+OpenAPI 一致性、Web lint/typecheck/Vitest `16 passed` 和 production build 通过。一次性隔离
+PostgreSQL 完成迁移 `upgrade -> downgrade -> upgrade`、单一 head 和 QA persistence 集成测试
+`3 passed`，测试数据库均已清理。保留卷 Compose 重建 API/Worker 后，摘要以 1 个固定版本和
+Citation 完成；比较固定 2 个来源，但 deterministic fake 仅给出单来源证据，故按新门禁拒答；
+复习卡以 Citation 完成预览且写入副作用为 0。伪造版本和跨 Space 文档分别返回稳定
+`SKILL_VERSION_INVALID` 与 `SKILL_DOCUMENT_INVALID`，未读取或记录回答与原文。
 
 本补充验证：Ruff format/check、受影响模块 mypy、后端全量 pytest（`613 passed, 44 skipped`）、
 OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）和 production build 通过。保留卷 Compose

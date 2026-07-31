@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Protocol
 from uuid import UUID, uuid4
@@ -13,9 +13,13 @@ from domain.grounded_qa import (
     QAError,
     QAErrorCode,
     QAEvent,
+    QAOutcome,
     QAResult,
     QAStatus,
     QuestionInput,
+    QuestionType,
+    Refusal,
+    RefusalReason,
 )
 from domain.qa_persistence import (
     CitationRecord,
@@ -26,11 +30,12 @@ from domain.qa_persistence import (
     MessageRole,
     QAPhase,
     QAPhaseTiming,
+    QARetrievalScope,
     QARunRecord,
     QARunUsage,
     QARunVersions,
 )
-from domain.retrieval import RetrievalError, RetrievalProfileV1, SearchRequest
+from domain.retrieval import RetrievalError, RetrievalProfileV1, SearchFilters, SearchRequest
 
 from .context_builder import ContextBuilder, ConversationRole, ConversationTurn
 from .evidence import EvidenceBindingService
@@ -116,6 +121,11 @@ class GroundedQAService:
                 caller_id=question.caller_id,
                 idempotency_key=question.idempotency_key,
                 versions=versions,
+                retrieval_scope=QARetrievalScope(
+                    source_ids=question.source_ids,
+                    document_ids=question.document_ids,
+                    version_ids=question.version_ids,
+                ),
             )
         )
         if created.status is QAStatus.CREATED:
@@ -150,7 +160,15 @@ class GroundedQAService:
 
             started = perf_counter()
             merged = await self._search.search(
-                base_request=SearchRequest(query=question.question, space_id=run.space_id),
+                base_request=SearchRequest(
+                    query=question.question,
+                    space_id=run.space_id,
+                    filters=SearchFilters(
+                        source_ids=run.retrieval_scope.source_ids,
+                        document_ids=run.retrieval_scope.document_ids,
+                        version_ids=run.retrieval_scope.version_ids,
+                    ),
+                ),
                 plan=planning.plan,
                 profile=profile.retrieval,
                 limit=profile.planning.max_evidence_items,
@@ -176,6 +194,7 @@ class GroundedQAService:
 
             started = perf_counter()
             generated = await self._generator.generate(question=question, context=context)
+            generated = _enforce_question_type_grounding(generated, planning.plan.question_type)
             timings.append(QAPhaseTiming(QAPhase.GENERATION, _elapsed_ms(started)))
             await self._ensure_not_cancelled(run_id)
 
@@ -277,6 +296,29 @@ _TERMINAL_STATUSES = frozenset(
 
 def _elapsed_ms(started: float) -> float:
     return max(0.0, (perf_counter() - started) * 1000)
+
+
+def _enforce_question_type_grounding(
+    generated: GenerationResult, question_type: QuestionType
+) -> GenerationResult:
+    result = generated.result
+    if (
+        question_type is QuestionType.COMPARISON
+        and result.outcome is QAOutcome.ANSWER
+        and result.answer is not None
+        and len({citation.source_id for citation in result.answer.citations}) < 2
+    ):
+        return replace(
+            generated,
+            result=QAResult(
+                QAOutcome.REFUSE,
+                refusal=Refusal(
+                    RefusalReason.INSUFFICIENT_EVIDENCE,
+                    "A comparison requires grounded evidence from at least two selected sources.",
+                ),
+            ),
+        )
+    return generated
 
 
 def _usage(generated: GenerationResult, timings: list[QAPhaseTiming]) -> QARunUsage:

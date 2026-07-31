@@ -141,6 +141,12 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
   `SKILL_ACTIVATION_CONFLICT` 时，应刷新 Catalog 的 `active_revision` 后重试，不能绕过 CAS。
   QA 的 PostgreSQL Run/Attempt/Event 是当前执行恢复事实源。通用 Runtime Checkpoint、持久生命周期
   事件和旧版本引用清理仍待阶段 5 后续实现。
+- 知识整理入口会把选中的 Source/Document/DocumentVersion 固定到 QA Run。若排队期间来源撤下、
+  文档发布新版本或 selector 不再匹配，运行会以稳定范围错误失败，不会自动跟随新版本；重新确认
+  当前版本后创建新 Run。`compare_sources` 缺少两个来源的 Citation 时会拒答。
+- `create_review_cards` 当前只生成预览。`write.code=SKILL_WRITE_PORT_UNAVAILABLE` 且
+  `side_effects=0` 是预期结果；在派生知识 Application Port 和持久确认协议落地前不要绕过该标记
+  直接写表或文件。
 - Web 分别展示真实健康状态、真实数据来源/摄入任务和 provisional QA 状态；QA 证据面板只对
   服务端已发布的 Citation 按需请求原文，不接受客户端提供的 locator 或版本。若返回 `invalid`，
   先检查 Blob hash、parser 版本和 locator 是否仍与固定 DocumentVersion 一致，不要回退到相似文本。

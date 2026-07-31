@@ -28,7 +28,8 @@ Port with real PostgreSQL retrieval and citation target validation. QA Run/Attem
 recovery authority, and the Worker executes the fixed Skill package against that same Run. Generic Runtime
 Checkpoint is still process-local. Registry active state now uses a PostgreSQL pointer with digest and
 revision CAS. Formal Stage 5 business
-completion remains blocked on Stage 3/4 quality gates and remaining generic Runtime/business Skill work.
+completion remains blocked on Stage 3/4 quality gates, generic Runtime persistence, derived-knowledge
+writes, and formal business quality gates.
 
 The implementation is represented by `skills/knowledge_qa` and
 `application.skills.KnowledgeQASkillAdapter`. Trusted-root reload installs the declaration-only package;
@@ -43,3 +44,11 @@ activate/rollback write paths accept only an installed semver plus the expected 
 package path, entrypoint, permissions, or budget. PostgreSQL is the pointer authority across API restarts,
 while queued runs retain their own fixed identity. There is no parallel `/api/v1/runs` family or second SSE
 schema. The Web QA entry displays the catalog identity; a separate Skill management UI remains absent.
+
+Step 8 was re-audited on 2026-07-31. `summarize_document`, `compare_sources`, and
+`create_review_cards 0.1.0` use the same QA Run identity, Worker, `qa-sse-v1`, Runtime handler, and
+Grounded QA Port. Submission resolves an exact Space-owned Source/Document/DocumentVersion scope and
+persists it on the Run; SearchService rejects stale, withdrawn, deleted, or mismatched fixed versions
+instead of following a new publication. Comparison publication requires citations from at least two
+sources. Review cards are preview-only and expose `SKILL_WRITE_PORT_UNAVAILABLE` with zero side effects;
+there is no derived-knowledge write adapter or durable approval flow.

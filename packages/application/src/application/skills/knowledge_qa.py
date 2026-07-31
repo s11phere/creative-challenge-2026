@@ -27,6 +27,9 @@ class KnowledgeQASkillConfig:
     profile: GroundedQAExecutionProfile
     versions: QARunVersions
     execute_existing_run: bool = False
+    skill_name: str = "knowledge_qa"
+    output_schema_version: str = "knowledge-qa-skill-output-v1"
+    preview_only_write: bool = False
 
 
 class KnowledgeQASkillAdapter:
@@ -54,11 +57,11 @@ class KnowledgeQASkillAdapter:
 
     async def delegate(self, context: NodeExecutionContext) -> NodeResult:
         skill_input = _parse_input(context.input)
-        if context.pin.name != "knowledge_qa":
+        if context.pin.name != self._config.skill_name:
             raise NodeExecutionError(
                 "SKILL_IDENTITY_MISMATCH",
                 RunErrorCategory.MANIFEST,
-                "Grounded QA adapter requires the knowledge_qa Skill.",
+                "Grounded QA adapter does not match the fixed Skill identity.",
             )
         if context.pin.version != self._config.versions.skill_version:
             raise NodeExecutionError(
@@ -103,7 +106,17 @@ class KnowledgeQASkillAdapter:
                 output_tokens=completed.usage.output_tokens,
             )
         )
-        return NodeResult(state_updates={"qa_result": _project_run(completed)}, usage=usage)
+        return NodeResult(
+            state_updates={
+                "qa_result": _project_run(
+                    completed,
+                    schema_version=self._config.output_schema_version,
+                    operation=self._config.skill_name,
+                    preview_only_write=self._config.preview_only_write,
+                )
+            },
+            usage=usage,
+        )
 
     async def verify(self, context: NodeExecutionContext) -> NodeResult:
         output = context.state.get("qa_result")
@@ -190,7 +203,13 @@ def _qa_failure(run: QARunRecord) -> NodeExecutionError:
     )
 
 
-def _project_run(run: QARunRecord) -> dict[str, JSONValue]:
+def _project_run(
+    run: QARunRecord,
+    *,
+    schema_version: str,
+    operation: str,
+    preview_only_write: bool,
+) -> dict[str, JSONValue]:
     result = run.result
     if result is None:
         raise NodeExecutionError(
@@ -199,7 +218,7 @@ def _project_run(run: QARunRecord) -> dict[str, JSONValue]:
             "Grounded QA terminal result is missing.",
         )
     payload: dict[str, JSONValue] = {
-        "schema_version": "knowledge-qa-skill-output-v1",
+        "schema_version": schema_version,
         "status": run.status.value,
         "run_id": str(run.run_id),
         "conversation_id": str(run.conversation_id),
@@ -210,6 +229,19 @@ def _project_run(run: QARunRecord) -> dict[str, JSONValue]:
             "model_calls": run.usage.model_calls,
         },
     }
+    if operation != "knowledge_qa":
+        payload["operation"] = operation
+        payload["fixed_scope"] = {
+            "source_ids": _json_uuid_list(run.retrieval_scope.source_ids),
+            "document_ids": _json_uuid_list(run.retrieval_scope.document_ids),
+            "version_ids": _json_uuid_list(run.retrieval_scope.version_ids),
+        }
+    if preview_only_write:
+        payload["write"] = {
+            "status": "blocked",
+            "code": "SKILL_WRITE_PORT_UNAVAILABLE",
+            "side_effects": 0,
+        }
     if result.outcome is QAOutcome.ANSWER and result.answer is not None:
         payload["result"] = {
             "type": "answer",
@@ -260,6 +292,10 @@ def _project_run(run: QARunRecord) -> dict[str, JSONValue]:
             "Grounded QA result cannot be projected.",
         )
     return payload
+
+
+def _json_uuid_list(values: frozenset[UUID]) -> list[JSONValue]:
+    return [str(value) for value in sorted(values, key=str)]
 
 
 __all__ = ["KnowledgeQASkillAdapter", "KnowledgeQASkillConfig"]

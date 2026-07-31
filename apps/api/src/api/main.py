@@ -20,6 +20,7 @@ from fastapi import FastAPI, Response
 from infrastructure.blob_store import LocalFileBlobStore
 from infrastructure.config import settings
 from infrastructure.database import Database
+from infrastructure.organization import PostgresKnowledgeOrganizationScope
 from infrastructure.parsers import MarkdownParser, PdfParser
 from infrastructure.qa import PostgresCitationTargetPort
 from infrastructure.qa_execution import knowledge_qa_registry
@@ -99,7 +100,12 @@ def create_app(
     skill_lifecycle = SkillLifecycleService(
         registry=skill_registry,
         store=activation_store,
-        defaults={"knowledge_qa": settings.knowledge_qa_skill_version},
+        defaults={
+            "knowledge_qa": settings.knowledge_qa_skill_version,
+            "summarize_document": "0.1.0",
+            "compare_sources": "0.1.0",
+            "create_review_cards": "0.1.0",
+        },
     )
     qa_runtime = QAWorkerDispatcher(
         repository=qa_repository,
@@ -151,6 +157,7 @@ def create_app(
     app.state.qa_execution_enabled = enable_qa_execution
     app.state.skill_catalog = skill_catalog
     app.state.skill_lifecycle = skill_lifecycle
+    app.state.organization_scope = PostgresKnowledgeOrganizationScope(database)
 
     app.add_middleware(TraceMiddleware)
     register_error_handlers(app)

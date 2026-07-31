@@ -269,6 +269,32 @@ async def test_application_port_keeps_retrieval_failure_distinct_from_refusal() 
 
 
 @pytest.mark.asyncio
+async def test_comparison_answer_requires_citations_from_two_sources() -> None:
+    profile = _profile()
+    service = _service(StaticSearchService(_search_result()))
+    conversation = await service.create_conversation(
+        ConversationRecord(space_id=SPACE_ID, owner_id="synthetic-user")
+    )
+    submitted = await service.submit(
+        QuestionInput(
+            question="Compare the selected sources.",
+            space_id=SPACE_ID,
+            caller_id="synthetic-user",
+            conversation_id=conversation.conversation_id,
+            idempotency_key="comparison-1",
+        ),
+        versions=_versions(profile),
+    )
+
+    refused = await service.execute(submitted.run_id, profile=profile)
+
+    assert refused.status.value == "refused"
+    assert refused.result is not None
+    assert refused.result.refusal is not None
+    assert refused.result.refusal.code.value == "REFUSED_INSUFFICIENT_EVIDENCE"
+
+
+@pytest.mark.asyncio
 async def test_application_port_honors_persisted_cancellation_before_execution() -> None:
     profile = _profile()
     service = _service(StaticSearchService(_search_result()))

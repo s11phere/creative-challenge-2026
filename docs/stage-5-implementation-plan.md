@@ -12,7 +12,8 @@
 
 截至 2026-07-31，Step 0～4 和 Step 9 的通用可执行部分已通过实现审查；Step 5 已完成 QA
 持久化/Worker 子集，Step 6 已交付 active provisional `knowledge_qa`，Step 7 复用现有 QA API/Web。
-通用 Runtime Checkpoint、Skill 管理入口、知识整理 Skill、旧版本清理和正式质量门禁仍未完成。
+Step 8 已交付三个知识整理 Skill 的 provisional 只读子集。通用 Runtime Checkpoint、派生知识
+写入/确认、Skill 管理 Web、旧版本清理和正式质量门禁仍未完成。
 
 阶段 5 的目标是把阶段 2 至阶段 4 已验证的摄入、检索、引用和问答能力封装为稳定、
 可版本化、可审计、可恢复的 Skill，并确保同一个 Skill 通过 Web、HTTP API 和测试入口
@@ -536,6 +537,17 @@ Run，Worker 对排队 Run 继续使用其固定 version/digest。通用 Runtime
 **暂缓情况（2026-07-19）**：已复核并跳过。真实 `knowledge_qa`、可定位引用和派生知识写入
 Application 用例均未落地；当前不创建只有固定 fixture、无法满足引用完整性的三个业务 Skill。
 
+**Provisional 只读实现（2026-07-31）**：`summarize_document`、`compare_sources` 和
+`create_review_cards 0.1.0` 已作为完整受信包注册，并通过现有 QA API、QA Run、Worker、SSE、
+Runtime handler 和唯一 Grounded QA Application Port 执行，不新增平行 Run/Checkpoint 协议。
+提交时校验 Space 归属并持久化 Source/Document/DocumentVersion 固定范围；检索要求固定版本仍是
+对应文档的 current published version，版本更新、撤下、删除或选择器不一致会失败而不会扩大范围。
+比较回答必须包含至少两个来源的 Citation，否则按证据不足拒答。复习卡只生成带引用预览，response
+和 Skill output 均以 `SKILL_WRITE_PORT_UNAVAILABLE`、`side_effects=0` 标记写入阻塞。
+
+本子集达到三个 Skill 的只读可追溯标准，但没有派生知识 Application Port、持久审批或幂等写入，
+因此仅记为 Step 8 provisional 只读完成，不记为完整完成或阶段 5 正式退出。
+
 ### 步骤 9：热加载、版本回滚与恢复兼容
 
 - 热加载只扫描 ADR-006 指定的受信目录，并在完整校验通过后注册新不可变版本。
@@ -602,7 +614,7 @@ revision CAS 保证并发激活/回滚不会静默覆盖。Registry reload 仍�
 | 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | PostgreSQL QA Run/Attempt、Worker lease/heartbeat 和重启恢复已完成；通用 Runtime Checkpoint、审批与清理仍阻塞 |
 | 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | active provisional `0.1.0` 已由固定摘要 Worker 执行；正式质量门禁仍未关闭 |
 | 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 现有 QA API/Web/Worker 加只读 Skill Catalog、Run fixed identity 已完成；通用 Run 管理和 Skill 写入口仍阻塞 |
-| 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | 已复核并跳过；等待步骤 6/7 |
+| 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | provisional 只读完成；固定版本摘要/比较/复习卡预览可用，派生知识写入与确认仍阻塞 |
 | 9. 热加载与回滚 | 步骤 3/5；不可变版本和恢复语义已验证 | 通用部分已完成；持久化引用清理等待步骤 5 |
 | 10. 测试与验收 | 步骤 0～9；阶段 0 数据门禁关闭 | 已复核并跳过；等待全部交付和数据门禁 |
 

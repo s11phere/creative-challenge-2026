@@ -461,12 +461,14 @@ def _same_run_command(existing: QARunRecord, requested: QARunRecord) -> bool:
         existing.space_id,
         existing.caller_id,
         existing.versions,
+        existing.retrieval_scope,
     ) == (
         requested.conversation_id,
         requested.question_message_id,
         requested.space_id,
         requested.caller_id,
         requested.versions,
+        requested.retrieval_scope,
     )
 
 

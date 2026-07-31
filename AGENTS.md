@@ -32,7 +32,7 @@
 | 阶段 2 | 正式完成 | Step 0～8 工程闭环和 Step 9 冻结语料验收完成；74 个 P0 来源解析/定位/分块成功率 100%，隔离依赖和 Compose E2E 通过 | 仅保留 `internal_team_only` 分发边界和已记录运行限制 |
 | 阶段 3 | 工程 Step 0～10 验收完成 | Keyword/Dense/Hybrid/Hybrid+Reranker、上下文扩展、Space/版本边界、检索 API、离线评测和移交已落地 | 真实模型 development 消融、默认配置冻结和正式 holdout 未完成，阶段 3 未正式退出 |
 | 阶段 4 | provisional Step 0～10 | GroundedAnswer/Citation、PostgreSQL QA 持久化、API/SSE/Web、Worker 重启恢复、原文解析和回答评测门禁已落地 | Stage 3 正式退出、默认配置冻结和正式 answer holdout 未完成 |
-| 阶段 5 | 通用基础 + active provisional Skill | 通用 Runtime/Registry 已审查；`knowledge_qa 0.1.0` 已固定摘要并由现有 QA Web/API/Worker 执行；Skill Catalog、PostgreSQL active pointer 和受控激活/回滚已提供 | 通用 AgentRun/Checkpoint 持久化、知识整理 Skill、旧版本清理和正式验收未完成 |
+| 阶段 5 | provisional Skills | 通用 Runtime/Registry 已审查；四个 `0.1.0` Skill 固定摘要并复用现有 QA Run/Worker/SSE；Skill Catalog、PostgreSQL active pointer 和受控激活/回滚已提供 | 通用 AgentRun/Checkpoint 持久化、派生知识写入/确认、Skill 管理 Web、旧版本清理和正式验收未完成 |
 
 当前可见能力和数据面：
 
@@ -47,6 +47,9 @@
   holdout 门禁，不得宣称正式检索基线、引用问答或产品闭环达标。
 - 阶段 5 的 `knowledge_qa 0.1.0` 已作为 active provisional Skill 复用现有 QA Web/API/Worker；
   不得据此宣称正式质量基线、通用 Runtime 持久化或阶段 5 整体退出。
+- `summarize_document`、`compare_sources` 和 `create_review_cards 0.1.0` 已通过现有 QA API/Worker
+  提供 provisional 只读执行；Run 固定 Source/Document/DocumentVersion，复习卡写入仍明确阻塞且
+  必须保持零副作用。
 - ADR-001～007 和 ADR-009 已接受；除非触发其重新评估条件，不重复讨论已固定基线。
 
 当前事实的权威文档：
@@ -140,6 +143,8 @@
 - 运行开始后固定 Skill 版本；旧版本必须可回滚。
 - 阶段 5 `knowledge_qa` 只通过已存在的唯一 QA Application Port 和 QA Run 身份接入现有 Worker；
   不得复制业务问答逻辑或新增平行 Runtime Run、持久化、SSE/取消协议。
+- 知识整理 Skill 同样只复用该 QA Run/Worker/SSE；`compare_sources` 至少需要两个来源的 Citation，
+  `create_review_cards` 在稳定派生知识 Application Port 和持久确认存在前只能生成预览。
 
 ## 4. 技术基线
 

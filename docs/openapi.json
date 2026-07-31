@@ -209,6 +209,45 @@
         "title": "CitationStatus",
         "type": "string"
       },
+      "CompareSourcesRequest": {
+        "properties": {
+          "focus": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Focus"
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "source_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 8,
+            "minItems": 2,
+            "title": "Source Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "source_ids",
+          "idempotency_key"
+        ],
+        "title": "CompareSourcesRequest",
+        "type": "object"
+      },
       "ConflictResultResponse": {
         "properties": {
           "evidence_ids": {
@@ -384,6 +423,46 @@
           "created_at"
         ],
         "title": "DocumentItem",
+        "type": "object"
+      },
+      "DocumentSkillRequest": {
+        "properties": {
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "focus": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Focus"
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "version_id",
+          "idempotency_key"
+        ],
+        "title": "DocumentSkillRequest",
         "type": "object"
       },
       "ErrorResponse": {
@@ -690,6 +769,9 @@
             ],
             "title": "Error Code"
           },
+          "fixed_scope": {
+            "$ref": "#/components/schemas/RunScopeResponse"
+          },
           "question_message_id": {
             "format": "uuid",
             "title": "Question Message Id",
@@ -723,6 +805,16 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "write": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunWriteResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -732,9 +824,45 @@
           "conversation_id",
           "question_message_id",
           "cancellation_requested",
-          "skill"
+          "skill",
+          "fixed_scope"
         ],
         "title": "RunResponse",
+        "type": "object"
+      },
+      "RunScopeResponse": {
+        "properties": {
+          "document_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Document Ids",
+            "type": "array"
+          },
+          "source_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Source Ids",
+            "type": "array"
+          },
+          "version_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Version Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "source_ids",
+          "document_ids",
+          "version_ids"
+        ],
+        "title": "RunScopeResponse",
         "type": "object"
       },
       "RunSkillResponse": {
@@ -765,6 +893,32 @@
           "content_sha256"
         ],
         "title": "RunSkillResponse",
+        "type": "object"
+      },
+      "RunWriteResponse": {
+        "properties": {
+          "code": {
+            "const": "SKILL_WRITE_PORT_UNAVAILABLE",
+            "title": "Code",
+            "type": "string"
+          },
+          "side_effects": {
+            "const": 0,
+            "title": "Side Effects",
+            "type": "integer"
+          },
+          "status": {
+            "const": "blocked",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "code",
+          "side_effects"
+        ],
+        "title": "RunWriteResponse",
         "type": "object"
       },
       "SearchApiRequest": {
@@ -1743,6 +1897,156 @@
           }
         },
         "summary": "Submit Question"
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/skills/compare_sources/runs": {
+      "post": {
+        "operationId": "compare_sources_api_v1_conversations__conversation_id__skills_compare_sources_runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompareSourcesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compare Sources"
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/skills/create_review_cards/runs": {
+      "post": {
+        "operationId": "create_review_cards_api_v1_conversations__conversation_id__skills_create_review_cards_runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentSkillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Review Cards"
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/skills/summarize_document/runs": {
+      "post": {
+        "operationId": "summarize_document_api_v1_conversations__conversation_id__skills_summarize_document_runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentSkillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Summarize Document"
       }
     },
     "/api/v1/health/live": {

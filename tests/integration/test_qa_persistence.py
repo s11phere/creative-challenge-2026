@@ -24,6 +24,7 @@ from domain.qa_persistence import (
     FeedbackRecord,
     MessageRecord,
     MessageRole,
+    QARetrievalScope,
     QARunRecord,
     QARunUsage,
     QARunVersions,
@@ -102,6 +103,11 @@ async def _queued_run(
             caller_id="integration",
             idempotency_key=key,
             versions=_versions(),
+            retrieval_scope=QARetrievalScope(
+                source_ids=frozenset({SOURCE_ID}),
+                document_ids=frozenset({DOCUMENT_ID}),
+                version_ids=frozenset({VERSION_ID}),
+            ),
         )
     )
     return conversation, await repository.transition_run(created.run_id, QAEvent.QUEUE)
@@ -113,6 +119,7 @@ async def test_terminal_answer_events_and_feedback_survive_repository_restart() 
     repository = PostgresGroundedQARepository(database)
     events = PostgresQAEventStore(database)
     conversation, queued = await _queued_run(repository, key=f"durable-answer-{uuid4()}")
+    assert queued.retrieval_scope.version_ids == frozenset({VERSION_ID})
     await events.append(queued.run_id, QAEventType.ACCEPTED, {"status": "queued"})
     running = await repository.transition_run(queued.run_id, QAEvent.START)
     locator = SearchLocator(LocatorKind.LINES, 4, 8)

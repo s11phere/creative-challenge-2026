@@ -362,6 +362,7 @@ class QARunModel(Base):
     cancellation_requested: Mapped[bool] = mapped_column(default=False)
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     versions: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    retrieval_scope: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     usage: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

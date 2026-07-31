@@ -31,6 +31,7 @@ from domain.qa_persistence import (
     FeedbackReviewStatus,
     MessageRecord,
     MessageRole,
+    QARetrievalScope,
     QARunRecord,
     QARunUsage,
     QARunVersions,
@@ -54,6 +55,7 @@ from .orm import (
 )
 
 _VERSIONS = TypeAdapter(QARunVersions)
+_RETRIEVAL_SCOPE = TypeAdapter(QARetrievalScope)
 _USAGE = TypeAdapter(QARunUsage)
 _RESULT = TypeAdapter(QAResult)
 _EVIDENCE = TypeAdapter(EvidenceCandidate)
@@ -207,6 +209,7 @@ class PostgresGroundedQARepository:
                 cancellation_requested=False,
                 error_code=None,
                 versions=_dump(_VERSIONS, run.versions),
+                retrieval_scope=_dump(_RETRIEVAL_SCOPE, run.retrieval_scope),
                 usage=_dump(_USAGE, run.usage),
                 result=None,
                 created_at=run.created_at,
@@ -688,6 +691,7 @@ def _run(base: QARunModel, attempt: QARunAttemptModel) -> QARunRecord:
         caller_id=base.caller_id,
         idempotency_key=base.idempotency_key,
         versions=_VERSIONS.validate_python(base.versions),
+        retrieval_scope=_RETRIEVAL_SCOPE.validate_python(base.retrieval_scope),
         status=QAStatus(attempt.status),
         cancellation_requested=attempt.cancellation_requested,
         error_code=attempt.error_code,
@@ -805,6 +809,7 @@ def _same_run(existing: QARunRecord, requested: QARunRecord) -> bool:
         existing.caller_id,
         existing.idempotency_key,
         existing.versions,
+        existing.retrieval_scope,
     ) == (
         requested.conversation_id,
         requested.question_message_id,
@@ -812,6 +817,7 @@ def _same_run(existing: QARunRecord, requested: QARunRecord) -> bool:
         requested.caller_id,
         requested.idempotency_key,
         requested.versions,
+        requested.retrieval_scope,
     )
 
 

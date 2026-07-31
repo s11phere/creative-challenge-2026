@@ -10,10 +10,18 @@ from .catalog import (
 )
 from .knowledge_qa import KnowledgeQASkillAdapter, KnowledgeQASkillConfig
 from .lifecycle import SkillLifecycleError, SkillLifecycleErrorCode, SkillLifecycleService
+from .organization import (
+    KnowledgeOrganizationScopeService,
+    OrganizationScopeError,
+    OrganizationScopeErrorCode,
+)
 
 __all__ = [
     "KnowledgeQASkillAdapter",
     "KnowledgeQASkillConfig",
+    "KnowledgeOrganizationScopeService",
+    "OrganizationScopeError",
+    "OrganizationScopeErrorCode",
     "SkillActivation",
     "SkillActivationStore",
     "SkillBudgetView",

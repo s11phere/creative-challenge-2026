@@ -6,6 +6,7 @@ import asyncio
 import math
 from dataclasses import dataclass
 from time import perf_counter
+from uuid import UUID
 
 from domain.repositories import DocumentRepository, SourceRepository, SpaceRepository
 from domain.retrieval import (
@@ -316,6 +317,7 @@ class SearchService:
                     "A source filter does not belong to the requested Space.",
                 )
 
+        current_version_ids: set[UUID] = set()
         for document_id in sorted(request.filters.document_ids, key=str):
             document = await self._document_repo.get(document_id)
             if document is None or document.deleted_at is not None:
@@ -329,6 +331,14 @@ class SearchService:
                     RetrievalErrorCode.INVALID_FILTER,
                     "A document filter does not belong to the requested Space.",
                 )
+            if document.current_version_id is not None:
+                current_version_ids.add(document.current_version_id)
+
+        if request.filters.version_ids and current_version_ids != set(request.filters.version_ids):
+            raise RetrievalError(
+                RetrievalErrorCode.INVALID_FILTER,
+                "Version filters must exactly match the selected current document versions.",
+            )
 
     async def _keyword(self, request: SearchRequest, profile: RetrievalProfileV1) -> CandidateBatch:
         try:
@@ -639,6 +649,7 @@ class SearchService:
                 for reason, active in (
                     ("source_filter", bool(request.filters.source_ids)),
                     ("document_filter", bool(request.filters.document_ids)),
+                    ("version_filter", bool(request.filters.version_ids)),
                 )
                 if active
             ),
