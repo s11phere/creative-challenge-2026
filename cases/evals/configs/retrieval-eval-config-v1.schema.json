@@ -58,7 +58,7 @@
           "uniqueItems": true,
           "items": {"enum": ["evidence_recall", "mrr", "evidence_ndcg", "full_evidence_coverage", "must_exclude_violations", "latency_p50_p95", "failure_rate"]}
         },
-        "recall_k": {"const": 5},
+        "recall_k": {"enum": [5, 10]},
         "ndcg_k": {"type": "integer", "minimum": 1},
         "no_evidence_policy": {"const": "exclude_from_recall_and_ranking_denominators"},
         "safety_slices": {
