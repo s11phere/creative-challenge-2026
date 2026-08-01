@@ -60,6 +60,7 @@ from model_gateway import (
 from .config import settings
 from .database import Database
 from .qa import DatabaseSearchService, PostgresCitationTargetPort
+from .runtime_state import PostgresRuntimeStateStore
 
 _ROOT = Path(__file__).resolve().parents[4]
 _SCHEMA = _ROOT / "cases/evals/configs/grounded-answer-v1.schema.json"
@@ -253,6 +254,7 @@ class GroundedQAExecutor:
         events: QAEventStore,
         skill_registry: FileSystemSkillRegistry | None = None,
     ) -> None:
+        self._database = database
         planning, retrieval, generation = _profiles()
         self.profile = GroundedQAExecutionProfile(planning=planning, retrieval=retrieval)
         self._gateway = gateway
@@ -377,6 +379,7 @@ class GroundedQAExecutor:
             model_gateway=runtime_gateway,
             handlers=runtime_handlers,
             tool_registry=runtime_tool_registry,
+            state_store=PostgresRuntimeStateStore(self._database),
         ).execute(
             runtime_run,
             pin,

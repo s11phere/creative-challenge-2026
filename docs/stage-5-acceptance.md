@@ -79,7 +79,7 @@ Citation 完成预览且写入副作用为 0。伪造版本和跨 Space 文档�
 | `knowledge_qa` Web/API/测试同一链路 | provisional 已完成 | 固定 Skill identity 并调用唯一 QA Port |
 | `knowledge_agent` LLM/Tool 只读链路 | provisional 已完成 | 真实 Provider 接口已接线；QA Run 仍是结果和恢复权威 |
 | 三个知识整理 Skill | provisional 只读完成 | HTTP/Worker/契约可用；尚无专用 Web 工作流 |
-| 通用 AgentRun/Checkpoint PostgreSQL 持久化 | 未完成 | 仅 QA 业务运行持久化，通用 Runtime Checkpoint 仍在内存 |
+| 通用 AgentRun/Checkpoint PostgreSQL 持久化 | provisional 已完成 | 复用 `qa_runs.id` 的 Runtime 快照与 append-only checkpoint 已持久化；Worker 自动 resume、租约恢复仍未完成 |
 | 持久审批与派生知识幂等写入 | 未完成 | 复习卡明确零写入副作用 |
 | Skill 管理 Web 与旧版本受控清理 | 未完成 | 只有 Catalog 和 CAS API；无完整引用事实源时禁止删除旧包 |
 | Stage 3/4 正式质量门禁 | 未完成 | 默认检索/回答配置、真实模型门禁和正式 holdout 未关闭 |

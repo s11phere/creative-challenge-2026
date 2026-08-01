@@ -522,3 +522,65 @@ class QAFeedbackModel(Base):
         ),
         Index("idx_qa_feedback_review_status", "review_status", "created_at"),
     )
+
+
+class RuntimeRunModel(Base):
+    """Durable Runtime snapshot sharing the QA run identity."""
+
+    __tablename__ = "runtime_runs"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    caller_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    trace_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    skill_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    skill_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    skill_content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    granted_permissions: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    budget: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    usage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    current_step: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    checkpoint_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+    __table_args__ = (
+        CheckConstraint("checkpoint_sequence >= 0", name="ck_runtime_runs_checkpoint_sequence"),
+        Index("idx_runtime_runs_status", "status", "updated_at"),
+    )
+
+
+class RuntimeCheckpointModel(Base):
+    """Append-only verified recovery points for a shared QA/Runtime run."""
+
+    __tablename__ = "runtime_checkpoints"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("runtime_runs.run_id", ondelete="CASCADE"), primary_key=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    skill_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    skill_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    skill_content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    state_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    usage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    next_step: Mapped[str] = mapped_column(String(32), nullable=False)
+    next_node: Mapped[str] = mapped_column(String(255), nullable=False)
+    verified: Mapped[bool] = mapped_column(nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    __table_args__ = (
+        CheckConstraint("sequence >= 1", name="ck_runtime_checkpoints_sequence_positive"),
+        CheckConstraint("schema_version >= 1", name="ck_runtime_checkpoints_schema_positive"),
+        CheckConstraint(
+            "char_length(state_sha256) = 64", name="ck_runtime_checkpoints_state_sha256"
+        ),
+    )

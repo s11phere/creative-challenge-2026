@@ -25,6 +25,7 @@ from .repositories import (
     SpaceRepository,
 )
 from .retrieval import DensePathComparison, DenseSearchMode, PostgresRetrievalStore
+from .runtime_state import PostgresRuntimeStateStore
 
 __all__ = [
     "Base",
@@ -42,6 +43,7 @@ __all__ = [
     "ParserFactory",
     "PdfParser",
     "PostgresRetrievalStore",
+    "PostgresRuntimeStateStore",
     "SourceModel",
     "SourceRepository",
     "SpaceModel",

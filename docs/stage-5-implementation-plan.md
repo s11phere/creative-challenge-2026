@@ -10,10 +10,10 @@
 
 ## 1. 结论摘要
 
-截至 2026-07-31，Step 0～4 和 Step 9 的通用可执行部分已通过实现审查；Step 5 已完成 QA
-持久化/Worker 子集，Step 6 已交付 active provisional `knowledge_qa`，Step 7 复用现有 QA API/Web。
-Step 8 已交付三个知识整理 Skill 的 provisional 只读子集。通用 Runtime Checkpoint、派生知识
-写入/确认、旧版本清理和正式质量门禁仍未完成。
+截至 2026-08-01，Step 0～4 和 Step 9 的通用可执行部分已通过实现审查；Step 5 已完成 QA
+持久化/Worker 子集和通用 Runtime Checkpoint PostgreSQL 子集，Step 6 已交付 active provisional
+`knowledge_qa`，Step 7 复用现有 QA API/Web。Step 8 已交付三个知识整理 Skill 的 provisional
+只读子集。Worker 检查点恢复、派生知识写入/确认、旧版本清理和正式质量门禁仍未完成。
 
 阶段 5 的目标是把阶段 2 至阶段 4 已验证的摄入、检索、引用和问答能力封装为稳定、
 可版本化、可审计、可恢复的 Skill，并确保同一个 Skill 通过 Web、HTTP API 和测试入口
@@ -411,6 +411,13 @@ Application Port。Worker 启动扫描未租用 queued/cancel_requested 和租�
 completed；重复投递前后 Attempt/Citation/Event 均为 `1/1/3`。这关闭 QA 范围的 Worker、租约和
 重复投递缺口，但不等于通用 Agent Runtime Checkpoint、审批或旧 Skill 版本清理已完成，Step 5
 仍为部分完成。
+
+**通用 Runtime Checkpoint PostgreSQL 子集（2026-08-01）**：新增 `runtime_runs` 快照表和
+append-only `runtime_checkpoints` 表，并通过 `PostgresRuntimeStateStore` 复用现有 `qa_runs.id`
+作为唯一运行身份。提交校验固定 Space/Skill 摘要、连续序号、预算用量和 verified checkpoint；
+相同序号重投递幂等返回已提交检查点，跨 Adapter 实例可恢复最近检查点。新增 Alembic revision
+`4bf6c7d8e9f0` 和隔离 PostgreSQL 集成测试，覆盖升级后的写入、读取、幂等重放及级联清理。
+Worker 自动 resume、租约恢复、审批和派生知识写入仍属于后续步骤。
 
 ### 步骤 6：封装 `knowledge_qa` Skill
 
