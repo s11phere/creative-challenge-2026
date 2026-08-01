@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 from uuid import UUID, uuid5
 
 from agent_runtime import (
@@ -13,7 +14,7 @@ from agent_runtime import (
     NodeOutcome,
     NodeResult,
 )
-from domain.agent_runtime import BudgetUsage, RunErrorCategory
+from domain.agent_runtime import ApprovalPort, BudgetUsage, RunErrorCategory
 from domain.grounded_qa import MAX_QUESTION_CHARS, QAOutcome, QAStatus, QuestionInput
 from domain.qa_persistence import ConversationRecord, QARunRecord, QARunVersions
 
@@ -30,6 +31,22 @@ class KnowledgeQASkillConfig:
     skill_name: str = "knowledge_qa"
     output_schema_version: str = "knowledge-qa-skill-output-v1"
     preview_only_write: bool = False
+    approval_port: ApprovalPort | None = None
+    approval_id: str | None = None
+    derived_writer: DerivedKnowledgeWriter | None = None
+
+
+class DerivedKnowledgeWriter(Protocol):
+    async def write_review_cards(
+        self,
+        *,
+        run_id: UUID,
+        space_id: UUID,
+        created_by: str,
+        idempotency_key: str,
+        content: dict[str, JSONValue],
+        citation_ids: tuple[str, ...],
+    ) -> object: ...
 
 
 class KnowledgeQASkillAdapter:
@@ -106,15 +123,63 @@ class KnowledgeQASkillAdapter:
                 output_tokens=completed.usage.output_tokens,
             )
         )
-        return NodeResult(
-            state_updates={
-                "qa_result": _project_run(
-                    completed,
-                    schema_version=self._config.output_schema_version,
-                    operation=self._config.skill_name,
-                    preview_only_write=self._config.preview_only_write,
+        output = _project_run(
+            completed,
+            schema_version=self._config.output_schema_version,
+            operation=self._config.skill_name,
+            preview_only_write=self._config.preview_only_write,
+        )
+        if (
+            self._config.skill_name == "create_review_cards"
+            and not self._config.preview_only_write
+            and self._config.derived_writer is not None
+        ):
+            if self._config.approval_port is None or self._config.approval_id is None:
+                raise NodeExecutionError(
+                    "TOOL_APPROVAL_REQUIRED",
+                    RunErrorCategory.PERMISSION,
+                    "Review-card writes require a durable approval.",
                 )
-            },
+            approved = await self._config.approval_port.is_approved(
+                self._config.approval_id,
+                context.run.context,
+            )
+            if not approved:
+                raise NodeExecutionError(
+                    "TOOL_APPROVAL_REQUIRED",
+                    RunErrorCategory.PERMISSION,
+                    "Review-card approval is missing or expired.",
+                )
+            result_payload = output.get("result")
+            if not isinstance(result_payload, dict):
+                raise NodeExecutionError(
+                    "RUN_WORKFLOW_INVALID",
+                    RunErrorCategory.SCHEMA,
+                    "Review-card result is unavailable for persistence.",
+                )
+            raw_citations = result_payload.get("citations")
+            if not isinstance(raw_citations, list):
+                raise NodeExecutionError(
+                    "RUN_WORKFLOW_INVALID",
+                    RunErrorCategory.SCHEMA,
+                    "Review-card citations are unavailable for persistence.",
+                )
+            citations = tuple(
+                str(item.get("evidence_id"))
+                for item in raw_citations
+                if isinstance(item, dict) and isinstance(item.get("evidence_id"), str)
+            )
+            await self._config.derived_writer.write_review_cards(
+                run_id=context.run.context.run_id,
+                space_id=context.run.context.space_id,
+                created_by=context.run.context.caller_id,
+                idempotency_key=str(context.run.context.run_id),
+                content=result_payload,
+                citation_ids=citations,
+            )
+            output["write"] = {"status": "persisted", "side_effects": 1}
+        return NodeResult(
+            state_updates={"qa_result": output},
             usage=usage,
         )
 
@@ -298,4 +363,9 @@ def _json_uuid_list(values: frozenset[UUID]) -> list[JSONValue]:
     return [str(value) for value in sorted(values, key=str)]
 
 
-__all__ = ["KnowledgeQASkillAdapter", "KnowledgeQASkillConfig", "qa_failure"]
+__all__ = [
+    "DerivedKnowledgeWriter",
+    "KnowledgeQASkillAdapter",
+    "KnowledgeQASkillConfig",
+    "qa_failure",
+]

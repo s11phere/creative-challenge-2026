@@ -9,7 +9,7 @@ from .catalog import (
     SkillView,
 )
 from .knowledge_agent import KnowledgeAgentSkillAdapter, KnowledgeAgentSkillConfig
-from .knowledge_qa import KnowledgeQASkillAdapter, KnowledgeQASkillConfig
+from .knowledge_qa import DerivedKnowledgeWriter, KnowledgeQASkillAdapter, KnowledgeQASkillConfig
 from .lifecycle import SkillLifecycleError, SkillLifecycleErrorCode, SkillLifecycleService
 from .organization import (
     KnowledgeOrganizationScopeService,
@@ -20,6 +20,7 @@ from .organization import (
 __all__ = [
     "KnowledgeQASkillAdapter",
     "KnowledgeQASkillConfig",
+    "DerivedKnowledgeWriter",
     "KnowledgeAgentSkillAdapter",
     "KnowledgeAgentSkillConfig",
     "KnowledgeOrganizationScopeService",

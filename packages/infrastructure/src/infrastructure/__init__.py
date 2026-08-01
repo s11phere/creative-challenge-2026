@@ -25,6 +25,11 @@ from .repositories import (
     SpaceRepository,
 )
 from .retrieval import DensePathComparison, DenseSearchMode, PostgresRetrievalStore
+from .runtime_approval import (
+    DerivedKnowledgeRecord,
+    PostgresApprovalPort,
+    PostgresDerivedKnowledgeStore,
+)
 from .runtime_state import PostgresRuntimeStateStore
 
 __all__ = [
@@ -44,6 +49,9 @@ __all__ = [
     "PdfParser",
     "PostgresRetrievalStore",
     "PostgresRuntimeStateStore",
+    "DerivedKnowledgeRecord",
+    "PostgresApprovalPort",
+    "PostgresDerivedKnowledgeStore",
     "SourceModel",
     "SourceRepository",
     "SpaceModel",

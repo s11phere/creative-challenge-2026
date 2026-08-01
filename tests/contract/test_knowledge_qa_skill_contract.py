@@ -9,18 +9,26 @@ import pytest
 from agent_runtime import (
     DeterministicWorkflowExecutor,
     FileSystemSkillRegistry,
+    JSONValue,
     PinnedSkill,
     SkillRegistryError,
 )
 from application.qa.profile import QAPlanningProfileV1
 from application.qa.service import GroundedQAExecutionProfile
 from application.skills import (
+    DerivedKnowledgeWriter,
     KnowledgeAgentSkillAdapter,
     KnowledgeAgentSkillConfig,
     KnowledgeQASkillAdapter,
     KnowledgeQASkillConfig,
 )
-from domain.agent_runtime import AgentRun, AgentRunContext, RunStatus
+from domain.agent_runtime import (
+    AgentRun,
+    AgentRunContext,
+    ApprovalPort,
+    RunStatus,
+    ToolCallRecord,
+)
 from domain.grounded_qa import (
     Citation,
     Claim,
@@ -190,6 +198,9 @@ def runtime(
     execute_existing_run: bool = False,
     package_path: str = PACKAGE_PATH,
     retrieval_scope: QARetrievalScope | None = None,
+    approval_port: ApprovalPort | None = None,
+    approval_id: str | None = None,
+    derived_writer: DerivedKnowledgeWriter | None = None,
 ) -> tuple[DeterministicWorkflowExecutor, PinnedSkill, AgentRun]:
     registry = FileSystemSkillRegistry(SKILLS_ROOT)
     package = registry.register(registry.load(package_path))
@@ -224,7 +235,10 @@ def runtime(
                 "compare_sources": "compare-sources-skill-output-v1",
                 "create_review_cards": "review-cards-skill-output-v1",
             }[pin.name],
-            preview_only_write=pin.name == "create_review_cards",
+            preview_only_write=pin.name == "create_review_cards" and derived_writer is None,
+            approval_port=approval_port,
+            approval_id=approval_id,
+            derived_writer=derived_writer,
         ),
     )
     run = AgentRun(
@@ -270,6 +284,66 @@ async def test_provisional_package_delegates_to_qa_port_and_reuses_its_output() 
         (SKILLS_ROOT / PACKAGE_PATH / "schemas/output.json").read_text(encoding="utf-8")
     )
     Draft202012Validator(schema).validate(result.output)
+
+
+class ApprovedWrite(ApprovalPort):
+    async def request(self, _context: AgentRunContext, _tool: ToolCallRecord) -> str:
+        return "approval-1"
+
+    async def is_approved(self, approval_id: str, _context: AgentRunContext) -> bool:
+        return approval_id == "approval-1"
+
+
+class RecordingDerivedWriter(DerivedKnowledgeWriter):
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def write_review_cards(
+        self,
+        *,
+        run_id: UUID,
+        space_id: UUID,
+        created_by: str,
+        idempotency_key: str,
+        content: dict[str, JSONValue],
+        citation_ids: tuple[str, ...],
+    ) -> object:
+        self.calls.append(
+            {
+                "run_id": run_id,
+                "space_id": space_id,
+                "created_by": created_by,
+                "idempotency_key": idempotency_key,
+                "content": content,
+                "citation_ids": citation_ids,
+            }
+        )
+        return object()
+
+
+@pytest.mark.asyncio
+async def test_review_cards_write_requires_approval_and_calls_idempotent_port() -> None:
+    writer = RecordingDerivedWriter()
+    qa = FakeGroundedQA()
+    executor, pin, run = runtime(
+        qa,
+        execute_existing_run=True,
+        package_path="create_review_cards",
+        approval_port=ApprovedWrite(),
+        approval_id="approval-1",
+        derived_writer=writer,
+    )
+
+    result = await executor.execute(
+        run,
+        pin,
+        {"question": "Create cards.", "conversation_id": str(UUID(int=12))},
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert result.output["write"] == {"status": "persisted", "side_effects": 1}
+    assert len(writer.calls) == 1
+    assert writer.calls[0]["idempotency_key"] == str(RUN_ID)
 
 
 @pytest.mark.asyncio

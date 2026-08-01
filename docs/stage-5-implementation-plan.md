@@ -587,6 +587,13 @@ Runtime handler 和唯一 Grounded QA Application Port 执行，不新增平行 
 本子集达到三个 Skill 的只读可追溯标准，但没有派生知识 Application Port、持久审批或幂等写入，
 因此仅记为 Step 8 provisional 只读完成，不记为完整完成或阶段 5 正式退出。
 
+**持久审批与派生写入子集（2026-08-01）**：新增 `runtime_approvals` 和
+`derived_knowledge_items` PostgreSQL 表及对应 Adapter。审批请求按 `run_id/action/idempotency_key`
+固定身份，只有 approved 且未过期的记录可授权写 Tool；派生知识按 `run_id/idempotency_key`
+唯一约束写入，并保存结构化内容、Space、创建者和 Citation evidence IDs，重复提交返回原记录。
+`create_review_cards` 已支持注入审批 Port 与 DerivedKnowledgeWriter；默认 QA Worker 仍保持预览模式，
+后续 API/SSE 步骤负责提供审批申请/决定入口。隔离 PostgreSQL 验证迁移、审批幂等和派生写入幂等。
+
 ### 步骤 9：热加载、版本回滚与恢复兼容
 
 - 热加载只扫描 ADR-006 指定的受信目录，并在完整校验通过后注册新不可变版本。

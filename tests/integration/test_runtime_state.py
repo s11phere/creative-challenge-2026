@@ -11,6 +11,7 @@ from domain.agent_runtime import (
     RunBudget,
     RunEvent,
     RunStep,
+    ToolCallRecord,
     ToolPermission,
 )
 from domain.grounded_qa import QAAttempt
@@ -27,6 +28,7 @@ from infrastructure.database import Database
 from infrastructure.orm import SpaceModel
 from infrastructure.qa_persistence import PostgresGroundedQARepository
 from infrastructure.repositories import SpaceRepository
+from infrastructure.runtime_approval import PostgresApprovalPort, PostgresDerivedKnowledgeStore
 from infrastructure.runtime_state import PostgresRuntimeStateStore
 from sqlalchemy import delete
 
@@ -112,6 +114,99 @@ async def test_runtime_checkpoint_is_persistent_and_idempotent() -> None:
         assert await PostgresRuntimeStateStore(database).get_latest(run_id) == checkpoint
         replayed, _ = await store.commit(run, checkpoint)
         assert replayed.checkpoint_sequence == 1
+    finally:
+        async with database.transaction() as session:
+            await session.execute(delete(SpaceModel).where(SpaceModel.id == space_id))
+        await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_approval_and_derived_write_are_durable_and_idempotent() -> None:
+    database = Database(settings.database_url)
+    space_id = uuid4()
+    run_id = uuid4()
+    caller_id = "runtime-write-integration"
+    qa = PostgresGroundedQARepository(database)
+    try:
+        async with database.transaction() as session:
+            await SpaceRepository(session).create(
+                Space(id=space_id, name="runtime-write-test", owner_id=caller_id)
+            )
+        conversation = ConversationRecord(space_id=space_id, owner_id=caller_id)
+        await qa.create_conversation(conversation)
+        message = await qa.append_message(
+            MessageRecord(
+                conversation_id=conversation.conversation_id,
+                space_id=space_id,
+                role=MessageRole.USER,
+                content="review card fixture",
+                idempotency_key="review-card-question",
+            )
+        )
+        await qa.create_run(
+            QARunRecord(
+                run_id=run_id,
+                attempt=QAAttempt(run_id=run_id),
+                conversation_id=conversation.conversation_id,
+                question_message_id=message.message_id,
+                space_id=space_id,
+                caller_id=caller_id,
+                idempotency_key="review-card-run",
+                versions=QARunVersions(
+                    skill_name="create_review_cards",
+                    skill_version="0.1.0",
+                    skill_content_sha256="b" * 64,
+                    profile_version="qa-profile-v1",
+                    retrieval_profile_version="retrieval-profile-v1",
+                    model_identity="fake",
+                    prompt_version="prompt-v1",
+                    output_schema_version="review-cards-skill-output-v1",
+                    corpus_version="corpus-v1",
+                    dataset_version="dataset-v1",
+                ),
+            )
+        )
+        context = AgentRunContext(
+            run_id=run_id,
+            space_id=space_id,
+            skill_name="create_review_cards",
+            skill_version="0.1.0",
+            skill_content_sha256="b" * 64,
+            trace_id="2" * 32,
+            caller_id=caller_id,
+            granted_permissions=frozenset({ToolPermission.WRITE_KNOWLEDGE}),
+        )
+        tool = ToolCallRecord(
+            tool_name="write_review_cards",
+            tool_version="1.0.0",
+            permissions=frozenset({ToolPermission.WRITE_KNOWLEDGE}),
+            idempotency_key="review-card-write",
+        )
+        approvals = PostgresApprovalPort(database)
+        approval_id = await approvals.request(context, tool)
+        assert await approvals.request(context, tool) == approval_id
+        assert not await approvals.is_approved(approval_id, context)
+        assert await approvals.decide(approval_id, approved=True, decided_by=caller_id)
+        assert await PostgresApprovalPort(database).is_approved(approval_id, context)
+
+        writer = PostgresDerivedKnowledgeStore(database)
+        first = await writer.write_review_cards(
+            run_id=run_id,
+            space_id=space_id,
+            created_by=caller_id,
+            idempotency_key="review-card-write",
+            content={"cards": [{"front": "fixture", "back": "supported"}]},
+            citation_ids=(str(uuid4()),),
+        )
+        replay = await PostgresDerivedKnowledgeStore(database).write_review_cards(
+            run_id=run_id,
+            space_id=space_id,
+            created_by=caller_id,
+            idempotency_key="review-card-write",
+            content={"cards": [{"front": "fixture", "back": "supported"}]},
+            citation_ids=first.citation_ids,
+        )
+        assert replay.id == first.id
     finally:
         async with database.transaction() as session:
             await session.execute(delete(SpaceModel).where(SpaceModel.id == space_id))

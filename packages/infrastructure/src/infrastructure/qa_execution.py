@@ -28,12 +28,13 @@ from application.qa import (
     StructuredAnswerParser,
 )
 from application.skills import (
+    DerivedKnowledgeWriter,
     KnowledgeAgentSkillAdapter,
     KnowledgeAgentSkillConfig,
     KnowledgeQASkillAdapter,
     KnowledgeQASkillConfig,
 )
-from domain.agent_runtime import AgentRun, AgentRunContext, RunStatus
+from domain.agent_runtime import AgentRun, AgentRunContext, ApprovalPort, RunStatus
 from domain.grounded_qa import QAErrorCode, QAEvent, QAStatus
 from domain.qa_persistence import (
     GroundedQARepository,
@@ -253,6 +254,9 @@ class GroundedQAExecutor:
         repository: GroundedQARepository,
         events: QAEventStore,
         skill_registry: FileSystemSkillRegistry | None = None,
+        approval_port: ApprovalPort | None = None,
+        approval_id: str | None = None,
+        derived_writer: DerivedKnowledgeWriter | None = None,
     ) -> None:
         self._database = database
         planning, retrieval, generation = _profiles()
@@ -261,6 +265,9 @@ class GroundedQAExecutor:
         self._repository = repository
         self._events = events
         self._skill_registry = skill_registry
+        self._approval_port = approval_port
+        self._approval_id = approval_id
+        self._derived_writer = derived_writer
         self._service = GroundedQAService(
             repository=repository,
             planner=QueryPlanner(),
@@ -355,7 +362,13 @@ class GroundedQAExecutor:
                     execute_existing_run=True,
                     skill_name=run.versions.skill_name,
                     output_schema_version=_skill_output_schema(run.versions.skill_name),
-                    preview_only_write=run.versions.skill_name == "create_review_cards",
+                    preview_only_write=(
+                        run.versions.skill_name == "create_review_cards"
+                        and self._derived_writer is None
+                    ),
+                    approval_port=self._approval_port,
+                    approval_id=self._approval_id,
+                    derived_writer=self._derived_writer,
                 ),
             )
             runtime_gateway = self._gateway

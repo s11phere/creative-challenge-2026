@@ -36,7 +36,7 @@ API、PostgreSQL Runtime Checkpoint 恢复或正式质量验收。
 
 | 范围 | 状态 | 解阻条件 |
 | --- | --- | --- |
-| Step 5 | 部分完成 | PostgreSQL QA Run/Attempt、Worker lease/heartbeat、重复投递和重启恢复已完成；Runtime Checkpoint 持久化、QA Worker resume 与 lease-loss 取消子集已完成，持久审批、跨进程故障注入验收与清理仍待实现 |
+| Step 5 | 部分完成 | PostgreSQL QA Run/Attempt、Worker lease/heartbeat、重复投递和重启恢复已完成；Runtime Checkpoint、QA Worker resume、lease-loss 取消及审批/派生写入 Adapter 子集已完成，审批 API、跨进程故障注入验收与清理仍待实现 |
 | Step 6 | active provisional | 声明式包固定名称/版本/摘要，由 Worker 对同一 QA Run 调用唯一 QA Port；正式质量仍待阶段 3/4 门禁 |
 | Step 7 | provisional 可用子集 | 现有 QA API/Web/Worker 已执行固定 Skill，并提供真实检索、持久 Run、引用原文和重启恢复；通用 Runtime/Skill 管理入口未实现 |
 | Step 8 | provisional 只读完成 | 三个 Skill 固定来源并复用既有 QA Run/Worker/SSE；派生知识写入 Application Port 与持久确认仍阻塞 |

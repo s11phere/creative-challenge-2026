@@ -584,3 +584,61 @@ class RuntimeCheckpointModel(Base):
             "char_length(state_sha256) = 64", name="ck_runtime_checkpoints_state_sha256"
         ),
     )
+
+
+class RuntimeApprovalModel(Base):
+    """Durable approval for a bounded Runtime write operation."""
+
+    __tablename__ = "runtime_approvals"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    caller_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    tool_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    details: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "action", "idempotency_key", name="uq_runtime_approvals_idempotency"
+        ),
+        CheckConstraint(
+            "status in ('pending', 'approved', 'rejected')", name="ck_runtime_approval_status"
+        ),
+        Index("idx_runtime_approvals_run_status", "run_id", "status"),
+    )
+
+
+class DerivedKnowledgeItemModel(Base):
+    """Idempotent, citation-backed derived knowledge produced by a Skill."""
+
+    __tablename__ = "derived_knowledge_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    citation_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    __table_args__ = (
+        UniqueConstraint("run_id", "idempotency_key", name="uq_derived_knowledge_idempotency"),
+        Index("idx_derived_knowledge_space_created", "space_id", "created_at"),
+    )
