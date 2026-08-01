@@ -63,10 +63,16 @@ from .query_planning import (
     SearchServicePort,
     classify_question,
 )
-from .service import GroundedQAApplicationPort, GroundedQAExecutionProfile, GroundedQAService
+from .service import (
+    AgentRetrievalPlan,
+    GroundedQAApplicationPort,
+    GroundedQAExecutionProfile,
+    GroundedQAService,
+)
 
 __all__ = [
     "BoundEvidence",
+    "AgentRetrievalPlan",
     "AnswerEvaluationObservation",
     "AnswerFailureStage",
     "CitationResolver",

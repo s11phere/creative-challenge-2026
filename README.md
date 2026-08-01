@@ -38,10 +38,12 @@ Runtime Checkpoint、Skill 管理 Web 或旧版本清理。`/api/v1/skills` 可�
 入口并固定提交时的 Source/Document/DocumentVersion 范围；版本变更、撤下或跨 Space 选择不会
 扩大检索范围。比较结果必须引用至少两个来源，否则按证据不足拒答。复习卡当前只返回带引用预览，
 并以 `SKILL_WRITE_PORT_UNAVAILABLE` 明确报告 `side_effects=0`，尚无派生知识写入或确认流程。
-`knowledge_agent 0.1.0` 提供真实的受约束 LLM/Tool 循环：模型只能在服务端白名单中选择只读
-`grounded_qa 1.0.0`，由现有 QA Run、Worker、SSE、Grounded QA Port 和 Citation 链路完成问答。
-严格 JSON 决策、最多两轮决策、一次 Tool 调用以及 Token/权限/Space 预算均由 Runtime 强制执行；
-Tool 仅向外层模型返回状态和计数，不返回回答或原文。默认 fake 可跑通流程，配置允许的
+`knowledge_agent 0.2.0` 提供真实的受约束 LLM/Tool 循环：模型可先调用只读
+`inspect_retrieval 1.0.0` 调整多查询、候选数和上下文预算，再调用一次 `grounded_qa 1.0.0`，
+由现有 QA Run、Worker、SSE、Grounded QA Port 和 Citation 链路完成问答。动态数值由服务端
+profile 封顶，Space/版本边界不能由模型扩大；规划失败会降级到原问题的 Grounded QA，而不是
+把 Run 变成基础设施失败。Tool 仅向外层模型返回状态和覆盖计数，不返回回答或原文。旧
+`0.1.0` 保留用于固定 Run 恢复和回滚。默认 fake 可跑通流程，配置允许的
 OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。写 Tool 仍被明确拒绝。
 真实本地组合使用外部 OpenAI-compatible `fast_chat`、
 `EMBEDDING_PROVIDER=text-embeddings-inference` 和本地 Qwen3 TEI Embedding；当前

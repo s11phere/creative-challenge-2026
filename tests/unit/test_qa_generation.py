@@ -14,6 +14,7 @@ from application.qa.evidence import BoundEvidence, EvidenceVerifier
 from application.qa.generation import (
     GroundedAnswerGenerator,
     GroundedConfidence,
+    StructuredAnswerDraft,
     StructuredAnswerParser,
     StructuredOutputError,
 )
@@ -257,8 +258,9 @@ def test_parser_requires_exact_schema_json_and_does_not_guess_markdown_citations
 
     decoded = json.loads(payload)
     decoded["answer"] = "Extra unsupported prose."
-    with pytest.raises(StructuredOutputError, match="concatenation"):
-        _parser().parse(json.dumps(decoded))
+    parsed = _parser().parse(json.dumps(decoded))
+    assert isinstance(parsed, StructuredAnswerDraft)
+    assert parsed.text == "Supported synthetic claim 1."
 
 
 @pytest.mark.asyncio
@@ -286,7 +288,7 @@ async def test_valid_answer_uses_fixed_chat_contract_and_server_owned_citations(
 
     request = gateway.requests[0]
     assert request.temperature == 0.0
-    assert request.max_tokens == 2_048
+    assert request.max_tokens == 6_144
     assert request.messages[0].role.value == "system"
     assert '"grounded-answer-v1"' in request.messages[0].content
     assert "no Markdown or explanatory text" in request.messages[0].content
@@ -347,6 +349,31 @@ async def test_context_only_support_below_threshold_becomes_a_refusal() -> None:
     assert generated.verification.claim_support_rate == 0.0
     assert generated.verification.confidence is GroundedConfidence.LIMITED
     assert targets.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_context_only_claim_is_omitted_without_discarding_supported_claims() -> None:
+    evidence = (_candidate(1), _candidate(2, matched=False))
+    gateway = ScriptedChatGateway(
+        (_answer_payload(evidence[0].evidence_id, evidence[1].evidence_id),)
+    )
+    generator, targets = _generator(gateway=gateway, evidence=evidence)
+
+    generated = await generator.generate(question=_question(), context=_context(evidence))
+
+    assert generated.result.outcome is QAOutcome.ANSWER
+    assert generated.result.answer is not None
+    assert generated.result.answer.text == "Supported synthetic claim 1."
+    assert [claim.claim_id for claim in generated.result.answer.claims] == ["c1"]
+    assert [citation.evidence_id for citation in generated.result.answer.citations] == [
+        evidence[0].evidence_id
+    ]
+    assert generated.verification.claim_support_rate == 0.5
+    assert generated.verification.confidence is GroundedConfidence.LIMITED
+    assert any(
+        "context expansion" in limitation for limitation in generated.result.answer.limitations
+    )
+    assert targets.calls == 3
 
 
 @pytest.mark.asyncio

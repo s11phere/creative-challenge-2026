@@ -71,11 +71,18 @@ class OpenAICompatibleGateway:
         provider: ModelProvider = ModelProvider.OPENAI_COMPATIBLE,
         embedding_protocol: str = "openai-compatible",
         timeout_seconds: float = 15.0,
+        fast_chat_timeout_seconds: float = 120.0,
+        fast_chat_reasoning_enabled: bool = False,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.1,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        if timeout_seconds <= 0 or max_retries < 0 or retry_backoff_seconds < 0:
+        if (
+            timeout_seconds <= 0
+            or fast_chat_timeout_seconds <= 0
+            or max_retries < 0
+            or retry_backoff_seconds < 0
+        ):
             raise ValueError("Model timeout must be positive and retry settings non-negative")
         resolved_chat_endpoint = fast_chat_endpoint or endpoint
         resolved_embedding_endpoint = embedding_endpoint or endpoint
@@ -112,6 +119,8 @@ class OpenAICompatibleGateway:
         self.max_retries = max_retries
         self.retry_backoff_seconds = retry_backoff_seconds
         self.timeout_seconds = timeout_seconds
+        self.fast_chat_timeout_seconds = fast_chat_timeout_seconds
+        self.fast_chat_reasoning_enabled = fast_chat_reasoning_enabled
         self._owns_client = client is None
         self.client = client
 
@@ -190,8 +199,13 @@ class OpenAICompatibleGateway:
                     **(
                         {"max_tokens": request.max_tokens} if request.max_tokens is not None else {}
                     ),
+                    "thinking": {
+                        "type": "enabled" if self.fast_chat_reasoning_enabled else "disabled"
+                    },
                 },
                 capability=capability,
+                timeout_seconds=self.fast_chat_timeout_seconds,
+                retry_read_timeouts=False,
             )
             text, finish_reason = self._parse_chat(
                 data if isinstance(data, dict) else {},
@@ -331,6 +345,8 @@ class OpenAICompatibleGateway:
         payload: dict[str, Any],
         *,
         capability: CapabilityAlias,
+        timeout_seconds: float | None = None,
+        retry_read_timeouts: bool = True,
     ) -> tuple[dict[str, Any] | list[Any], int]:
         config = self._require_capability(capability)
         assert config.endpoint is not None
@@ -342,6 +358,7 @@ class OpenAICompatibleGateway:
                     config.endpoint.join(path),
                     json=payload,
                     headers=headers,
+                    timeout=timeout_seconds or self.timeout_seconds,
                 )
                 error = self._http_error(response.status_code, capability)
                 if error is not None:
@@ -350,7 +367,7 @@ class OpenAICompatibleGateway:
                 if not isinstance(parsed, (dict, list)):
                     raise self._invalid_response(capability)
                 return parsed, attempt
-            except httpx.TimeoutException as exc:
+            except httpx.ReadTimeout as exc:
                 error = ModelGatewayError(
                     ModelErrorCode.TIMEOUT,
                     "The model request timed out.",
@@ -358,6 +375,16 @@ class OpenAICompatibleGateway:
                     capability=capability,
                 )
                 cause: Exception = exc
+                should_retry = retry_read_timeouts
+            except httpx.TimeoutException as exc:
+                error = ModelGatewayError(
+                    ModelErrorCode.TIMEOUT,
+                    "The model request timed out.",
+                    retryable=True,
+                    capability=capability,
+                )
+                cause = exc
+                should_retry = True
             except httpx.TransportError as exc:
                 error = ModelGatewayError(
                     ModelErrorCode.UNAVAILABLE,
@@ -366,14 +393,17 @@ class OpenAICompatibleGateway:
                     capability=capability,
                 )
                 cause = exc
+                should_retry = True
             except ModelGatewayError as exc:
                 error = exc
                 cause = exc
+                should_retry = error.retryable
             except ValueError as exc:
                 error = self._invalid_response(capability)
                 cause = exc
+                should_retry = False
 
-            if not error.retryable or attempt >= self.max_retries:
+            if not error.retryable or not should_retry or attempt >= self.max_retries:
                 raise error from cause
             logger.warning(
                 "model_request_retry",
@@ -467,12 +497,15 @@ class OpenAICompatibleGateway:
         )
 
     @staticmethod
-    def _invalid_response(capability: CapabilityAlias) -> ModelGatewayError:
+    def _invalid_response(
+        capability: CapabilityAlias, *, debug_details: Any = None
+    ) -> ModelGatewayError:
         return ModelGatewayError(
             ModelErrorCode.INVALID_RESPONSE,
             "The model provider returned an invalid response.",
             retryable=False,
             capability=capability,
+            debug_details=debug_details,
         )
 
     @staticmethod
@@ -490,16 +523,16 @@ class OpenAICompatibleGateway:
     ) -> tuple[str, str | None]:
         choices = data.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-            raise cls._invalid_response(capability)
+            raise cls._invalid_response(capability, debug_details=data)
         message = choices[0].get("message")
         if not isinstance(message, dict) or not isinstance(message.get("content"), str):
-            raise cls._invalid_response(capability)
+            raise cls._invalid_response(capability, debug_details=data)
         content = message["content"]
         if not content:
-            raise cls._invalid_response(capability)
+            raise cls._invalid_response(capability, debug_details=data)
         finish_reason = choices[0].get("finish_reason")
         if finish_reason is not None and not isinstance(finish_reason, str):
-            raise cls._invalid_response(capability)
+            raise cls._invalid_response(capability, debug_details=data)
         return content, finish_reason
 
     @classmethod

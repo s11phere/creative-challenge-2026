@@ -156,7 +156,7 @@ class LLMDecisionNode:
     async def decide(self, context: NodeExecutionContext) -> tuple[LLMDecision, BudgetUsage]:
         user_input = json.dumps(
             {"input": context.input, "state": context.state},
-            ensure_ascii=True,
+            ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -190,6 +190,8 @@ class LLMDecisionNode:
 
 
 class AgentToolRegistry(Protocol):
+    def is_available(self, name: str, version: str) -> bool: ...
+
     def get(self, ref: ToolRef) -> ToolDefinition: ...
 
     async def invoke(self, run: AgentRun, invocation: ToolInvocation) -> ToolInvocationResult: ...
@@ -204,11 +206,14 @@ class BoundedLLMAgentNode:
     system_prompt: str
     max_iterations: int = 4
     max_tokens_per_decision: int = 512
+    terminal_tools: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         names = tuple(ref.name for ref in self.allowed_tools)
         if not self.allowed_tools or len(names) != len(set(names)):
             raise ValueError("LLM Agent Tools must have unique names")
+        if not self.terminal_tools.issubset(names):
+            raise ValueError("LLM Agent terminal Tools must be in the allowlist")
         if self.max_iterations < 1:
             raise ValueError("LLM Agent max_iterations must be positive")
 
@@ -310,6 +315,19 @@ class BoundedLLMAgentNode:
                     "output_summary": result.record.output_summary,
                 }
             )
+            if definition.name in self.terminal_tools:
+                terminal_decision: dict[str, JSONValue] = {
+                    "action": LLMDecisionAction.COMPLETE.value,
+                    "reason": f"Terminal Tool {definition.name} completed.",
+                }
+                return NodeResult(
+                    state_updates={
+                        "agent_decision": terminal_decision,
+                        "agent_tool_calls": tool_calls,
+                    },
+                    output=terminal_decision,
+                    usage=usage,
+                )
 
         raise NodeExecutionError(
             code="RUN_LLM_MAX_ITERATIONS",

@@ -119,6 +119,20 @@ def test_budget_skips_whole_evidence_and_never_changes_locator_mapping() -> None
     assert "z" * 20 not in bundle.evidence[0].rendered_block
 
 
+def test_default_context_keeps_cross_document_evidence_from_one_upload_source() -> None:
+    source = UUID(int=20)
+    evidence = tuple(
+        _bound(index, source_id=source, document_id=UUID(int=30 + index)) for index in range(1, 9)
+    )
+
+    bundle = ContextBuilder().build(
+        question=_question(), history=(), evidence=evidence, profile=QAPlanningProfileV1()
+    )
+
+    assert len(bundle.evidence) == 8
+    assert len({item.candidate.document_id for item in bundle.evidence}) == 8
+
+
 def test_system_and_question_must_fit_before_optional_context() -> None:
     with pytest.raises(QAContractError, match="System rules and question"):
         ContextBuilder().build(

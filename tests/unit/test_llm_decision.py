@@ -218,6 +218,29 @@ async def test_bounded_agent_calls_registered_tool_then_completes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_bounded_agent_completes_without_another_model_call_after_terminal_tool() -> None:
+    registry = InMemoryToolRegistry(handlers={"search": search_handler})
+    tool = registry.register(search_tool())
+    gateway = DecisionGateway(
+        '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"safe"}}'
+    )
+
+    result = await BoundedLLMAgentNode(
+        tool_registry=registry,
+        allowed_tools=(tool.ref,),
+        terminal_tools=frozenset({tool.name}),
+        system_prompt="Use only authorized evidence.",
+    )(agent_context(agent_run(permissions=tool.permissions), gateway))
+
+    assert result.output == {
+        "action": "complete",
+        "reason": "Terminal Tool search_knowledge completed.",
+    }
+    assert result.usage.tool_calls == 1
+    assert len(gateway.requests) == 1
+
+
+@pytest.mark.asyncio
 async def test_bounded_agent_rejects_non_visible_or_write_tool() -> None:
     registry = InMemoryToolRegistry(handlers={"search": search_handler})
     hidden = registry.register(search_tool(model_visible=False))

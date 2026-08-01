@@ -67,9 +67,48 @@ fake/local 索引误判为缺少外部 Embedding revision。
 不要把密钥、问题、模型原始响应、Tool 输出或引用原文写入日志或 Issue。
 
 `RUN_LLM_DECISION_INVALID` 表示 Provider 没有返回严格的单个 JSON 决策；检查模型是否遵循
-`call_tool/complete/refuse` schema。`RUN_LLM_MAX_ITERATIONS` 表示模型在两轮内未终止；
+`call_tool/complete/refuse` schema。`RUN_LLM_MAX_ITERATIONS` 表示模型在五轮内未终止；
 `TOOL_NOT_ALLOWED`、`TOOL_MODEL_OUTPUT_DENIED` 或 `TOOL_APPROVAL_REQUIRED` 表示服务端安全边界拒绝
-模型选择。当前唯一允许的 Agent Tool 是只读 `grounded_qa 1.0.0`，写 Tool 不可通过 prompt 开启。
+模型选择。当前允许的 Agent Tool 是只读 `inspect_retrieval 1.0.0` 和 `grounded_qa 1.0.0`，写 Tool
+不可通过 prompt 开启。
+
+### 开发环境记录完整 QA 运行轨迹
+
+普通 Worker 日志会为模型失败记录 `error_code`、`error_type`、`capability` 和 `retryable`，但不会
+记录问题、prompt、文档正文、模型响应或 Tool 内容。需要定位 `QA_MODEL_FAILED` 或优化 Agent 时，
+可在被 Git 忽略的本地环境文件中显式启用：
+
+```text
+QA_DEBUG_TRACE_ENABLED=true
+QA_DEBUG_TRACE_MAX_BYTES=10000000
+```
+
+Compose 将每个 Run 写入宿主机 `tmp/qa-debug/<run_id>.jsonl`，事件包括 `llm_request`、
+`llm_response`、`llm_error`、`tool_call`、`tool_result`、`runtime_result` 和 `run_result`。单文件达到
+上限后轮转为 `.jsonl.1`。该文件包含完整问题、证据上下文、模型结果和 Tool payload，只能用于本地
+开发排查，不得提交、上传或粘贴到 Issue；使用完毕后关闭开关并删除相应文件。`APP_ENV=production`
+时该能力强制禁用，即使误设开关也不会写入内容。
+
+若轨迹显示 Chat 请求已收到 HTTP 200，随后以 `MODEL_TIMEOUT` 或 `QA_TIMED_OUT` 结束，通常是
+Provider 在非流式响应体生成阶段超过 read timeout，而不是连接失败。Chat 使用独立的
+`FAST_CHAT_TIMEOUT_SECONDS`（开发默认 120 秒）；Embedding/Reranker 继续使用
+`MODEL_TIMEOUT_SECONDS`。为避免重复计费和重复生成，Chat 在收到响应头后的 read timeout 不会整单
+重发，连接错误和限流仍遵循有限重试。最终 Grounded QA 生成预算为 150 秒，Worker 外层任务预算为
+300 秒；三者应保持 `FAST_CHAT_TIMEOUT_SECONDS < generation timeout < QA_TASK_TIMEOUT_MS`。
+
+若 Provider 返回 HTTP 200，但 `message.content` 为空、`reasoning_content` 占满 completion token
+且 `finish_reason=length`，则 `QA_MODEL_FAILED` 的直接原因是隐藏推理耗尽了结构化回答预算。默认
+`FAST_CHAT_REASONING_ENABLED=false` 会为 OpenAI-compatible Chat 显式发送
+`thinking.type=disabled`；只有确实需要推理模型且已单独配置足够的推理与回答预算时才应开启。
+
+`QA_STRUCTURED_RESPONSE_INVALID` 表示模型响应不是可验证的 `grounded-answer-v1`。回答正文由服务端
+根据已校验、带 Evidence ID 的 `claims` 规范化生成；模型返回的冗余 `answer` 字段不会再因排版或
+连接文本差异导致整个 Run 失败。JSON schema、Claim ID 唯一性、Evidence ID 白名单和 Citation 完整性
+仍严格校验。
+
+若模型已经生成多条带引用 claim，最终却显示证据不足，应检查引用是否仅指向 `context_only`
+上下文扩展块。`context_only` 可共同支撑 claim，但按 ADR-007 不能成为唯一证据。系统会剔除这类
+候选 claim，并发布其余至少含一个直接 `matched` 证据的 claims；只有没有可发布 claim 时才拒答。
 
 ## Web 显示 API 连接失败
 

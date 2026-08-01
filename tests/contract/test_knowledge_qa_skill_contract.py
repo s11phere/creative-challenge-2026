@@ -134,7 +134,14 @@ class FakeGroundedQA:
         )
         return self.run
 
-    async def execute(self, run_id: UUID, *, profile: GroundedQAExecutionProfile) -> QARunRecord:
+    async def execute(
+        self,
+        run_id: UUID,
+        *,
+        profile: GroundedQAExecutionProfile,
+        agent_plan: object | None = None,
+    ) -> QARunRecord:
+        _ = agent_plan
         self.executed_run_ids.append(run_id)
         assert profile == globals()["profile"]()
         assert self.run is not None

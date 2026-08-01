@@ -292,7 +292,7 @@ async def test_knowledge_agent_uses_the_shared_qa_run_and_fixed_skill_identity()
 
     assert submitted.status_code == 202
     assert submitted.json()["skill"]["name"] == "knowledge_agent"
-    assert submitted.json()["skill"]["version"] == "0.1.0"
+    assert submitted.json()["skill"]["version"] == "0.2.0"
     assert submitted.json()["fixed_scope"] == {
         "source_ids": [],
         "document_ids": [],

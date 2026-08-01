@@ -65,7 +65,7 @@
         "temperature": {"const": 0.0},
         "max_output_tokens": {"type": "integer", "minimum": 1},
         "max_repair_attempts": {"type": "integer", "minimum": 0, "maximum": 1},
-        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 60}
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 180}
       }
     },
     "verification": {

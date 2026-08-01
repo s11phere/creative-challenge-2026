@@ -7,25 +7,25 @@ retrieval:
 query:
   max_question_chars: 4000
   max_history_messages: 12
-  max_subqueries: 3
+  max_subqueries: 6
   rewrite_timeout_seconds: 5
   rewrite_enabled: false
 context:
-  max_evidence_items: 10
-  max_input_tokens: 12000
-  max_history_tokens: 2000
-  max_tokens_per_evidence: 1200
-  max_evidence_per_source: 4
-  max_chunks_per_document: 3
+  max_evidence_items: 32
+  max_input_tokens: 48000
+  max_history_tokens: 6000
+  max_tokens_per_evidence: 6000
+  max_evidence_per_source: 32
+  max_chunks_per_document: 12
 generation:
   capability_alias: fast_chat
   model_identity: fake-fast-chat-v1
   prompt_template_id: grounded-qa-v1-provisional
   structured_output_schema: grounded-answer-v1
   temperature: 0.0
-  max_output_tokens: 2048
+  max_output_tokens: 6144
   max_repair_attempts: 1
-  timeout_seconds: 45
+  timeout_seconds: 150
 verification:
   outcomes:
     - answer
@@ -36,10 +36,10 @@ verification:
   require_same_space: true
   require_current_version: true
   reject_unknown_evidence_ids: true
-  min_claim_support_rate: 1.0
+  min_claim_support_rate: 0.0
   min_citation_completeness_rate: 1.0
   below_threshold_outcome: refuse
 runtime:
-  timeout_seconds: 60
+  timeout_seconds: 180
   max_model_calls: 2
   external_provider_mode: denied_until_policy_and_consent

@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     worker_processes: int = Field(default=1, ge=1)
     worker_threads: int = Field(default=4, ge=1)
     worker_shutdown_timeout_ms: int = Field(default=30_000, ge=1_000)
-    qa_task_timeout_ms: int = Field(default=120_000, ge=10_000)
+    qa_task_timeout_ms: int = Field(default=300_000, ge=10_000)
     qa_task_max_retries: int = Field(default=12, ge=0, le=100)
     qa_task_retry_delay_ms: int = Field(default=3_000, ge=100, le=60_000)
     qa_task_lease_seconds: int = Field(default=30, ge=10, le=600)
@@ -104,6 +104,8 @@ class Settings(BaseSettings):
     embedding_precision: str = "float32"
     model_allow_external: bool = False
     model_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    fast_chat_timeout_seconds: float = Field(default=120.0, gt=0, le=300)
+    fast_chat_reasoning_enabled: bool = False
     model_max_retries: int = Field(default=2, ge=0, le=5)
     model_retry_backoff_seconds: float = Field(default=0.1, ge=0, le=10)
 
@@ -111,10 +113,15 @@ class Settings(BaseSettings):
     retrieval_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     retrieval_debug_diagnostics: bool = False
 
+    # --- Development QA diagnostics (full content, local-only, opt-in) ---
+    qa_debug_trace_enabled: bool = False
+    qa_debug_trace_path: str = "./tmp/qa-debug"
+    qa_debug_trace_max_bytes: int = Field(default=10_000_000, ge=100_000, le=500_000_000)
+
     # --- Skill Registry ---
     skill_root_path: str = "./skills"
     knowledge_qa_skill_version: str = "0.1.0"
-    knowledge_agent_skill_version: str = "0.1.0"
+    knowledge_agent_skill_version: str = "0.2.0"
 
     def active_embedding_identity(self, *, allow_unconfigured: bool = False) -> EmbeddingIdentity:
         """Return the one identity shared by ingestion and online retrieval."""

@@ -374,7 +374,9 @@ QA PostgreSQL Run/Attempt/Event 是业务恢复事实源；通用 Runtime 生命
 来源的 Citation 则拒答；复习卡仅预览并返回零副作用写入阻塞标记。
 
 `knowledge_agent` 是当前 LLM Agent 业务入口。它通过现有 `fast_chat` 能力产生严格的
-`call_tool/complete/refuse` 决策，最多调用一次 `grounded_qa 1.0.0`；Tool Registry 在服务端重验
+`call_tool/complete/refuse` 决策。`knowledge_agent 0.2.0` 最多三次调用
+`inspect_retrieval 1.0.0` 调整多查询和上下文预算，最后调用一次 `grounded_qa 1.0.0`；Tool
+Registry 在服务端重验
 版本、权限、Space、预算和输入/输出 schema。`grounded_qa` 仍是回答、引用、终态发布和恢复的唯一
 权威，不向外层模型回传回答正文或引用原文。通用 Runtime 决策历史尚未单独持久化，写 Tool 在持久
 审批和幂等事实源落地前禁止进入 LLM 循环。

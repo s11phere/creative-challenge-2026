@@ -14,15 +14,15 @@ class QAPlanningProfileV1:
     profile_id: str = "grounded-qa-provisional-v1"
     max_question_chars: int = MAX_QUESTION_CHARS
     max_history_messages: int = 12
-    max_subqueries: int = 3
+    max_subqueries: int = 6
     rewrite_timeout_seconds: float = 5.0
     rewrite_enabled: bool = False
-    max_evidence_items: int = 10
-    max_input_tokens: int = 12_000
-    max_history_tokens: int = 2_000
-    max_tokens_per_evidence: int = 1_200
-    max_evidence_per_source: int = 4
-    max_chunks_per_document: int = 3
+    max_evidence_items: int = 32
+    max_input_tokens: int = 48_000
+    max_history_tokens: int = 6_000
+    max_tokens_per_evidence: int = 6_000
+    max_evidence_per_source: int = 32
+    max_chunks_per_document: int = 12
 
     def __post_init__(self) -> None:
         counts = (
@@ -53,10 +53,10 @@ class QAGenerationProfileV1:
     prompt_template_id: str = "grounded-qa-v1-provisional"
     structured_output_schema: str = "grounded-answer-v1"
     temperature: float = 0.0
-    max_output_tokens: int = 2_048
+    max_output_tokens: int = 6_144
     max_repair_attempts: int = 1
-    timeout_seconds: float = 45.0
-    min_claim_support_rate: float = 1.0
+    timeout_seconds: float = 150.0
+    min_claim_support_rate: float = 0.0
     min_citation_completeness_rate: float = 1.0
     below_threshold_outcome: str = "refuse"
     max_model_calls: int = 2

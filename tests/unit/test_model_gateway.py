@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 import httpx
@@ -72,6 +73,35 @@ def test_fake_default_embedding_matches_initial_vector_schema() -> None:
     assert FakeModelGateway().embedding_dimensions == 768
 
 
+@pytest.mark.parametrize(("enabled", "expected"), [(False, "disabled"), (True, "enabled")])
+async def test_provider_sends_explicit_chat_reasoning_mode(enabled: bool, expected: str) -> None:
+    payload: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = OpenAICompatibleGateway(
+        endpoint="http://localhost:11434/v1",
+        fast_chat_model="chat-model",
+        embedding_model="embedding-model",
+        fast_chat_reasoning_enabled=enabled,
+        client=client,
+    )
+
+    await gateway.chat(chat_request())
+
+    assert payload["thinking"] == {"type": expected}
+    await client.aclose()
+
+
 async def test_provider_retries_rate_limit_then_succeeds() -> None:
     calls = 0
 
@@ -130,7 +160,7 @@ async def test_provider_does_not_retry_authentication_failure() -> None:
     await client.aclose()
 
 
-async def test_provider_retries_timeout_with_a_finite_limit() -> None:
+async def test_provider_does_not_retry_chat_read_timeout() -> None:
     calls = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -150,6 +180,33 @@ async def test_provider_retries_timeout_with_a_finite_limit() -> None:
 
     with pytest.raises(ModelGatewayError) as captured:
         await gateway.chat(chat_request())
+
+    assert captured.value.code is ModelErrorCode.TIMEOUT
+    assert captured.value.retryable is True
+    assert calls == 1
+    await client.aclose()
+
+
+async def test_provider_retries_embedding_read_timeout_with_a_finite_limit() -> None:
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("synthetic timeout", request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = OpenAICompatibleGateway(
+        endpoint="http://localhost:11434/v1",
+        fast_chat_model="chat-model",
+        embedding_model="embedding-model",
+        max_retries=1,
+        retry_backoff_seconds=0,
+        client=client,
+    )
+
+    with pytest.raises(ModelGatewayError) as captured:
+        await gateway.embed(EmbeddingRequest(texts=("synthetic",)))
 
     assert captured.value.code is ModelErrorCode.TIMEOUT
     assert captured.value.retryable is True

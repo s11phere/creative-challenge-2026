@@ -1,12 +1,10 @@
 manifest_version: "1"
 name: knowledge_agent
-version: 0.2.0
-description: Bounded LLM Agent that iteratively inspects and configures grounded retrieval.
+version: 0.1.0
+description: Bounded LLM Agent routing one question through the grounded QA Tool.
 input_schema: schemas/input.json
 output_schema: schemas/output.json
 required_tools:
-  - name: inspect_retrieval
-    version: 1.0.0
   - name: grounded_qa
     version: 1.0.0
 required_capabilities:
@@ -16,10 +14,10 @@ permissions:
   - model
 budgets:
   max_steps: 4
-  max_tool_calls: 4
-  max_input_tokens: 32768
-  max_output_tokens: 8192
-  timeout_seconds: 240
+  max_tool_calls: 1
+  max_input_tokens: 8192
+  max_output_tokens: 2048
+  timeout_seconds: 90
 entrypoint: workflow.yaml
 compatibility:
   runtime: ">=0.1.0,<1.0.0"

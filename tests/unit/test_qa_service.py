@@ -13,7 +13,7 @@ from application.qa.generation import GroundedAnswerGenerator, StructuredAnswerP
 from application.qa.persistence import InMemoryGroundedQARepository
 from application.qa.profile import QAGenerationProfileV1, QAPlanningProfileV1
 from application.qa.query_planning import QASearchCoordinator, QueryPlanner
-from application.qa.service import GroundedQAExecutionProfile, GroundedQAService
+from application.qa.service import AgentRetrievalPlan, GroundedQAExecutionProfile, GroundedQAService
 from domain.grounded_qa import (
     CitationContentKind,
     CitationTargetQuery,
@@ -46,6 +46,23 @@ SOURCE_ID = UUID(int=2)
 DOCUMENT_ID = UUID(int=3)
 VERSION_ID = UUID(int=4)
 CHUNK_ID = UUID(int=5)
+
+
+def test_agent_retrieval_preferences_are_clamped_to_trusted_server_limits() -> None:
+    trusted = QAPlanningProfileV1()
+    effective = AgentRetrievalPlan(
+        max_evidence_items=100_000,
+        max_input_tokens=100_000,
+        max_tokens_per_evidence=100_000,
+        max_evidence_per_source=100_000,
+        max_chunks_per_document=100_000,
+    ).apply(trusted)
+
+    assert effective.max_evidence_items == trusted.max_evidence_items
+    assert effective.max_input_tokens == trusted.max_input_tokens
+    assert effective.max_tokens_per_evidence == trusted.max_tokens_per_evidence
+    assert effective.max_evidence_per_source == trusted.max_evidence_per_source
+    assert effective.max_chunks_per_document == trusted.max_chunks_per_document
 
 
 class StaticSearchService:

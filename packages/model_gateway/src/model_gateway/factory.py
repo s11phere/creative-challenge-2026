@@ -31,6 +31,8 @@ class GatewayConfig:
     reranker_model: str | None = None
     allow_external: bool = False
     timeout_seconds: float = 15.0
+    fast_chat_timeout_seconds: float = 120.0
+    fast_chat_reasoning_enabled: bool = False
     max_retries: int = 2
     retry_backoff_seconds: float = 0.1
     fake_scenario: FakeScenario = FakeScenario.NORMAL
@@ -115,6 +117,8 @@ def create_model_gateway(
         provider=config.provider,
         embedding_protocol=config.embedding_protocol,
         timeout_seconds=config.timeout_seconds,
+        fast_chat_timeout_seconds=config.fast_chat_timeout_seconds,
+        fast_chat_reasoning_enabled=config.fast_chat_reasoning_enabled,
         max_retries=config.max_retries,
         retry_backoff_seconds=config.retry_backoff_seconds,
         client=client,
@@ -165,6 +169,8 @@ def _create_tei_gateway(
         reranker_status_code=reranker_status,
         reranker_error_code=reranker_error or ModelErrorCode.UNAVAILABLE,
         timeout_seconds=config.timeout_seconds,
+        fast_chat_timeout_seconds=config.fast_chat_timeout_seconds,
+        fast_chat_reasoning_enabled=config.fast_chat_reasoning_enabled,
         max_retries=config.max_retries,
         retry_backoff_seconds=config.retry_backoff_seconds,
         client=client,

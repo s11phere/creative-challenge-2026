@@ -69,6 +69,8 @@ def _create_gateway() -> ModelGateway:
             fake_reranker=settings.reranker_provider == "fake",
             allow_external=settings.model_allow_external,
             timeout_seconds=settings.model_timeout_seconds,
+            fast_chat_timeout_seconds=settings.fast_chat_timeout_seconds,
+            fast_chat_reasoning_enabled=settings.fast_chat_reasoning_enabled,
             max_retries=settings.model_max_retries,
             retry_backoff_seconds=settings.model_retry_backoff_seconds,
         )

@@ -114,9 +114,9 @@ def test_repository_profile_loads_all_planning_limits() -> None:
     )
     profile = load_qa_planning_profile(data)
 
-    assert profile.max_subqueries == 3
-    assert profile.max_history_tokens == 2000
-    assert profile.max_evidence_per_source == 4
+    assert profile.max_subqueries == 6
+    assert profile.max_history_tokens == 6000
+    assert profile.max_evidence_per_source == 32
     assert profile.rewrite_enabled is False
 
 

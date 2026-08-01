@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from uuid import UUID
@@ -61,7 +62,10 @@ from model_gateway import (
 from .config import settings
 from .database import Database
 from .qa import DatabaseSearchService, PostgresCitationTargetPort
+from .qa_debug_trace import QADebugTrace, TracingModelGateway, TracingToolRegistry
 from .runtime_state import PostgresRuntimeStateStore
+
+logger = logging.getLogger(__name__)
 
 _ROOT = Path(__file__).resolve().parents[4]
 _SCHEMA = _ROOT / "cases/evals/configs/grounded-answer-v1.schema.json"
@@ -268,17 +272,25 @@ class GroundedQAExecutor:
         self._approval_port = approval_port
         self._approval_id = approval_id
         self._derived_writer = derived_writer
-        self._service = GroundedQAService(
-            repository=repository,
+        self._generation = generation
+
+    def _build_service(
+        self,
+        gateway: ModelGateway,
+        *,
+        generation_gateway: ModelGateway,
+    ) -> GroundedQAService:
+        return GroundedQAService(
+            repository=self._repository,
             planner=QueryPlanner(),
-            search=QASearchCoordinator(DatabaseSearchService(database, gateway)),
+            search=QASearchCoordinator(DatabaseSearchService(self._database, gateway)),
             evidence_binding=EvidenceBindingService(),
             context_builder=ContextBuilder(),
             generator=GroundedAnswerGenerator(
-                gateway=StructuredFakeGateway(gateway),
+                gateway=generation_gateway,
                 parser=StructuredAnswerParser(json.loads(_SCHEMA.read_text(encoding="utf-8"))),
-                verifier=EvidenceVerifier(PostgresCitationTargetPort(database)),
-                profile=generation,
+                verifier=EvidenceVerifier(PostgresCitationTargetPort(self._database)),
+                profile=self._generation,
                 prompt_contract=_PROMPT.read_text(encoding="utf-8"),
                 corpus_version="local-live-provisional",
                 dataset_version="knowledge-qa-v0-provisional",
@@ -287,21 +299,42 @@ class GroundedQAExecutor:
 
     async def execute(self, run_id: UUID, *, trace_id: str) -> QARunRecord | None:
         await self._events.append(run_id, QAEventType.STARTED, {"status": QAStatus.RUNNING.value})
+        trace = QADebugTrace.from_settings(run_id=run_id, trace_id=trace_id, settings=settings)
+        initial = await self._repository.get_run(run_id)
+        await trace.record(
+            "run_started",
+            skill_name=initial.versions.skill_name if initial is not None else None,
+            skill_version=initial.versions.skill_version if initial is not None else None,
+        )
         resolved_run: QARunRecord | None
         try:
-            persisted = await self._repository.get_run(run_id)
+            persisted = initial
             if persisted is None or persisted.status in _TERMINAL:
                 resolved_run = persisted
             else:
-                resolved_run = await self._execute_skill(persisted, trace_id=trace_id)
-        except SkillRegistryError:
+                resolved_run = await self._execute_skill(persisted, trace_id=trace_id, trace=trace)
+        except SkillRegistryError as error:
+            logger.error(
+                "qa_run_failed",
+                extra={"error_code": "QA_SKILL_INVALID", "error_type": type(error).__name__},
+            )
+            await trace.record(
+                "run_error", error=_safe_error(error), error_code=QAErrorCode.SKILL_INVALID.value
+            )
             recovered_run = await self._repository.get_run(run_id)
             if recovered_run is not None and recovered_run.status not in _TERMINAL:
                 recovered_run = await self._repository.transition_run(
                     run_id, QAEvent.FAIL, error_code=QAErrorCode.SKILL_INVALID.value
                 )
             resolved_run = recovered_run
-        except Exception:
+        except Exception as error:
+            logger.error(
+                "qa_run_failed",
+                extra={"error_code": "QA_RUNTIME_FAILED", "error_type": type(error).__name__},
+            )
+            await trace.record(
+                "run_error", error=_safe_error(error), error_code="QA_RUNTIME_FAILED"
+            )
             recovered_run = await self._repository.get_run(run_id)
             if recovered_run is not None and recovered_run.status not in _TERMINAL:
                 recovered_run = await self._repository.transition_run(
@@ -321,9 +354,19 @@ class GroundedQAExecutor:
             event_type,
             {"status": resolved_run.status.value, "error_code": resolved_run.error_code},
         )
+        await trace.record(
+            "run_result",
+            status=resolved_run.status.value,
+            error_code=resolved_run.error_code,
+            outcome=resolved_run.result.outcome.value if resolved_run.result is not None else None,
+            result=resolved_run.result,
+            usage=resolved_run.usage,
+        )
         return resolved_run
 
-    async def _execute_skill(self, run: QARunRecord, *, trace_id: str) -> QARunRecord:
+    async def _execute_skill(
+        self, run: QARunRecord, *, trace_id: str, trace: QADebugTrace
+    ) -> QARunRecord:
         registry = self._skill_registry or knowledge_qa_registry()
         pin = registry.pin(run.versions.skill_name, run.versions.skill_version)
         if (
@@ -334,14 +377,21 @@ class GroundedQAExecutor:
                 run.run_id, QAEvent.FAIL, error_code=QAErrorCode.SKILL_INVALID.value
             )
         package = registry.validate_pin(pin)
+        service = self._build_service(
+            self._gateway,
+            generation_gateway=TracingModelGateway(
+                StructuredFakeGateway(self._gateway), trace, phase="grounded_generation"
+            ),
+        )
         question = await self._repository.get_message(run.question_message_id)
         if question is None or question.role is not MessageRole.USER:
             return await self._repository.transition_run(
                 run.run_id, QAEvent.FAIL, error_code="QA_RUNTIME_FAILED"
             )
+        runtime_gateway: ModelGateway
         if run.versions.skill_name == "knowledge_agent":
             agent_adapter = KnowledgeAgentSkillAdapter(
-                qa=self._service,
+                qa=service,
                 config=KnowledgeAgentSkillConfig(
                     profile=self.profile,
                     versions=run.versions,
@@ -350,12 +400,15 @@ class GroundedQAExecutor:
                     ),
                 ),
             )
-            runtime_gateway: ModelGateway = StructuredAgentGateway(self._gateway)
-            runtime_tool_registry = agent_adapter.tool_registry
+            runtime_gateway = TracingModelGateway(
+                StructuredAgentGateway(self._gateway), trace, phase="agent_decision"
+            )
+            runtime_tool_registry = TracingToolRegistry(agent_adapter.tool_registry, trace)
+            agent_adapter.replace_tool_registry(runtime_tool_registry)
             runtime_handlers = agent_adapter.handlers()
         else:
             qa_adapter = KnowledgeQASkillAdapter(
-                qa=self._service,
+                qa=service,
                 config=KnowledgeQASkillConfig(
                     profile=self.profile,
                     versions=run.versions,
@@ -434,6 +487,25 @@ class GroundedQAExecutor:
             return await self._repository.transition_run(
                 run.run_id, QAEvent.FAIL, error_code=error_code
             )
+        if result.error is not None:
+            logger.error(
+                "qa_runtime_result_failed",
+                extra={
+                    "error_code": persisted.error_code or result.error.code,
+                    "retryable": result.error.retryable,
+                },
+            )
+            await trace.record(
+                "runtime_result",
+                status=result.run.status.value,
+                error={
+                    "error_code": result.error.code,
+                    "category": result.error.category.value,
+                    "message": result.error.message,
+                    "retryable": result.error.retryable,
+                },
+                qa_error_code=persisted.error_code,
+            )
         return persisted
 
 
@@ -463,6 +535,15 @@ def _skill_output_schema(skill_name: str) -> str:
             SkillRegistryErrorCode.NOT_FOUND,
             "No Grounded QA adapter is registered for this Skill.",
         ) from exc
+
+
+def _safe_error(error: BaseException) -> dict[str, str]:
+    """Keep terminal diagnostics useful without logging request/document bodies."""
+    payload = {"error_type": type(error).__name__, "message": str(error)[:2000]}
+    code = getattr(error, "code", None)
+    if code is not None:
+        payload["error_code"] = getattr(code, "value", str(code))
+    return payload
 
 
 __all__ = [

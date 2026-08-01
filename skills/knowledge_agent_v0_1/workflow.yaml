@@ -30,9 +30,9 @@ nodes:
       - read_knowledge
       - model
     reserve:
-      tool_calls: 4
-      input_tokens: 32768
-      output_tokens: 8192
+      tool_calls: 1
+      input_tokens: 8192
+      output_tokens: 2048
   - id: verify
     step: verifying
     handler: knowledge_agent_verify
