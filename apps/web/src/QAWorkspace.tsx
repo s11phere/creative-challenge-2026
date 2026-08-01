@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Square,
   Workflow,
+  X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -55,6 +56,18 @@ function statusLabel(status: string): string {
     timed_out: '运行超时',
   }
   return labels[status] ?? status
+}
+
+function citationStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    source_updated: '来源已更新，显示的是回答时固定版本的原文',
+    withdrawn: '来源已撤回，原文不可再访问',
+    deleted: '文档已删除，原文不可再访问',
+    retention_expired: '固定版本已超过保留期限',
+    unavailable: '固定版本或分块当前不可用',
+    invalid: '引用内容与固定版本校验不一致',
+  }
+  return labels[status] ?? `原文当前不可用（${status}）`
 }
 
 export function QAWorkspace() {
@@ -185,7 +198,7 @@ export function QAWorkspace() {
   return (
     <section className="qa-layout" aria-label="知识问答工作区">
       <div className="qa-conversation">
-        <div className="qa-thread" aria-live="polite">
+        <div className="qa-thread" data-empty={!question} aria-live="polite">
           <div className="qa-skill-context">
             <Workflow size={16} aria-hidden="true" />
             <strong>{displayedSkill.name}</strong>
@@ -344,9 +357,10 @@ export function QAWorkspace() {
         <div className="qa-evidence-heading">
           <Quote size={18} aria-hidden="true" />
           <h2 id="qa-evidence-title">引用证据</h2>
+          <span className="qa-evidence-count">{currentRun?.citations?.length ?? 0}</span>
         </div>
         {currentRun?.citations?.length ? (
-          <>
+          <div className="qa-evidence-content">
             <div className="qa-citation-list">
               {currentRun.citations.map((citation, index) => (
                 <button
@@ -355,7 +369,9 @@ export function QAWorkspace() {
                   key={citation.evidence_id}
                   type="button"
                   aria-pressed={selectedEvidenceId === citation.evidence_id}
-                  onClick={() => setSelectedEvidenceId(citation.evidence_id)}
+                  onClick={() => setSelectedEvidenceId((current) =>
+                    current === citation.evidence_id ? null : citation.evidence_id
+                  )}
                 >
                   <FileText size={17} aria-hidden="true" />
                   <span className="qa-citation-copy">
@@ -370,12 +386,18 @@ export function QAWorkspace() {
             </div>
             {selectedEvidenceId && (
               <div className="qa-excerpt" ref={excerptRef} tabIndex={-1} aria-live="polite">
+                <button className="qa-excerpt-close" type="button" onClick={() => setSelectedEvidenceId(null)} aria-label="关闭原文" title="关闭原文">
+                  <X size={16} aria-hidden="true" />
+                </button>
                 {citationQuery.isPending ? (
                   <LoaderCircle className="spin" size={18} aria-label="正在加载原文" />
                 ) : citationQuery.error ? (
                   <div className="qa-excerpt-status" role="alert">
                     <AlertCircle size={18} aria-hidden="true" />
-                    <span>原文加载失败</span>
+                    <span>{citationQuery.error instanceof Error ? citationQuery.error.message : '原文加载失败'}</span>
+                    <button type="button" onClick={() => void citationQuery.refetch()}>
+                      <RotateCcw size={14} aria-hidden="true" />重试
+                    </button>
                   </div>
                 ) : citationQuery.data?.excerpt ? (
                   <>
@@ -391,12 +413,12 @@ export function QAWorkspace() {
                 ) : (
                   <div className="qa-excerpt-status">
                     <AlertCircle size={18} aria-hidden="true" />
-                    <span>原文当前不可用（{citationQuery.data?.status ?? 'unavailable'}）</span>
+                    <span>{citationStatusLabel(citationQuery.data?.status ?? 'unavailable')}</span>
                   </div>
                 )}
               </div>
             )}
-          </>
+          </div>
         ) : (
           <div className="qa-evidence-empty">
             <FileText size={25} aria-hidden="true" />

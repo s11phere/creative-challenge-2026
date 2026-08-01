@@ -276,6 +276,21 @@ async def test_markdown_citation_uses_structured_text_within_exact_source_lines(
 
 
 @pytest.mark.asyncio
+async def test_citation_prefers_fixed_chunk_text_when_parser_reconstruction_differs() -> None:
+    raw = b"```text\nraw source line\n```\n"
+    locator = SearchLocator(LocatorKind.LINES, 1, 3)
+    chunk_text = "raw source line"
+    snapshot = replace(_snapshot(raw, locator=locator), chunk_text=chunk_text)
+
+    resolution = await CitationResolver(
+        targets=FakeTargets(snapshot), blob_store=FakeBlobStore(raw)
+    ).resolve(_citation(locator=locator, excerpt=chunk_text))
+
+    assert resolution.status is CitationStatus.VALID
+    assert resolution.excerpt == chunk_text
+
+
+@pytest.mark.asyncio
 async def test_pdf_citation_resolves_only_the_declared_one_based_page() -> None:
     raw = b"synthetic-pdf-bytes"
     locator = SearchLocator(LocatorKind.PDF_PAGE, 2, 2)

@@ -607,9 +607,11 @@
 .workspace-qa {
   width: min(1380px, 100%);
   height: 100svh;
+  max-height: 100svh;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   padding-bottom: 32px;
+  overflow: hidden;
 }
 
 .qa-layout {
@@ -634,11 +636,19 @@
   min-height: 0;
   padding: 22px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.qa-thread[data-empty='true'] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .qa-empty {
-  height: 100%;
-  min-height: 220px;
+  min-height: 0;
+  flex: 1 1 auto;
   display: grid;
   place-content: center;
   justify-items: center;
@@ -814,10 +824,14 @@
 }
 
 .qa-citation-list {
+  min-height: 0;
   display: grid;
+  align-content: start;
   gap: 8px;
   padding: 12px 16px 18px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .qa-citation {
@@ -859,9 +873,14 @@
 }
 
 .qa-excerpt {
-  margin: 0 16px 18px;
+  position: relative;
+  max-height: min(34svh, 320px);
+  margin: 0;
+  padding: 14px 44px 16px 16px;
+  overflow: auto;
+  overscroll-behavior: contain;
   border-top: 1px solid var(--border);
-  padding-top: 14px;
+  background: #eef3f1;
 }
 
 .qa-excerpt:focus {
@@ -887,11 +906,32 @@
   font-size: 13px;
 }
 
+.qa-excerpt-close {
+  position: absolute;
+  top: 9px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.qa-excerpt-close:hover,
+.qa-excerpt-close:focus-visible {
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--border);
+}
+
 .qa-excerpt pre {
-  max-height: 320px;
   margin: 9px 0 0;
   padding: 12px;
-  overflow: auto;
   color: var(--ink-soft);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -907,6 +947,20 @@
 
 .qa-excerpt-status {
   color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.qa-excerpt-status button {
+  min-height: 30px;
+  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
 }
 
 .qa-error {
@@ -1006,6 +1060,10 @@
 
 .qa-evidence {
   min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
   background: #f7f9f8;
   border-left: 1px solid var(--border);
 }
@@ -1038,10 +1096,32 @@
   text-align: center;
 }
 
+.qa-evidence-count {
+  min-width: 24px;
+  margin-left: auto;
+  padding: 1px 6px;
+  color: var(--muted);
+  background: #e8eeeb;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.qa-evidence-content {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
 @media (max-width: 900px) {
   .workspace-qa {
     height: auto;
+    max-height: none;
     min-height: calc(100svh - 142px);
+    overflow: visible;
   }
 
   .qa-layout {
@@ -1049,16 +1129,40 @@
   }
 
   .qa-conversation {
-    min-height: 580px;
+    min-height: 0;
+    grid-template-rows: auto auto;
+  }
+
+  .qa-thread {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .qa-thread[data-empty='true'] {
+    min-height: 360px;
   }
 
   .qa-evidence {
+    overflow: visible;
     border-top: 1px solid var(--border);
     border-left: 0;
   }
 
   .qa-evidence-empty {
     min-height: 120px;
+  }
+
+  .qa-evidence-content {
+    display: block;
+    overflow: visible;
+  }
+
+  .qa-citation-list {
+    max-height: 420px;
+  }
+
+  .qa-excerpt {
+    max-height: 360px;
   }
 }
 
@@ -1069,10 +1173,6 @@
 
   .qa-thread {
     padding: 15px;
-  }
-
-  .qa-conversation {
-    min-height: 540px;
   }
 
   .qa-message {

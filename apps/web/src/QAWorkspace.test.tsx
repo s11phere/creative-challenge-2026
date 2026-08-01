@@ -363,5 +363,49 @@ describe('QAWorkspace', () => {
       expect.stringContaining('/api/v1/qa/runs/run-1/citations/evidence-1'),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
+    fireEvent.click(screen.getByRole('button', { name: '关闭原文' }))
+    expect(screen.queryByText('The exact source lines.')).not.toBeInTheDocument()
+  })
+
+  it('shows a useful citation error and retries it', async () => {
+    const completed = {
+      run_id: 'run-error', attempt_id: 'attempt-error', status: 'completed',
+      conversation_id: 'conversation-1', question_message_id: 'message-1',
+      cancellation_requested: false, error_code: null,
+      skill: { name: 'knowledge_agent', version: '0.1.0', content_sha256: 'a'.repeat(64) },
+      result: { type: 'answer', text: 'Answer.', limitations: [] },
+      citations: [{
+        evidence_id: 'evidence-error', source_id: 'source-1', document_id: 'document-1',
+        version_id: 'version-1', chunk_id: 'chunk-1',
+        locator: { kind: 'lines', start: 1, end: 2 },
+      }],
+    }
+    let citationCalls = 0
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/skills')) return Promise.resolve(response(activeSkills))
+      if (url.endsWith('/conversations')) {
+        return Promise.resolve(response({ conversation_id: 'conversation-1', space_id: 'space-1', owner_id: 'local' }))
+      }
+      if (url.includes('/citations/evidence-error')) {
+        citationCalls += 1
+        return citationCalls === 1
+          ? Promise.resolve(response({ detail: '固定版本暂时无法读取' }, 503))
+          : Promise.resolve(response({ ...completed.citations[0], status: 'valid', excerpt: 'Recovered excerpt.' }))
+      }
+      return Promise.resolve(response(completed, url.includes('/skills/knowledge_agent/runs') ? 202 : 200))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'idempotency-error' })
+
+    renderWorkspace()
+    fireEvent.change(screen.getByLabelText('问题'), { target: { value: 'Question.' } })
+    fireEvent.click(screen.getByRole('button', { name: '提问' }))
+    fireEvent.click(await screen.findByRole('button', { name: /查看原文/ }))
+
+    expect(await screen.findByText('固定版本暂时无法读取')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByText('Recovered excerpt.')).toBeInTheDocument()
+    expect(citationCalls).toBe(2)
   })
 })

@@ -263,6 +263,7 @@ class CitationTargetSnapshot:
     storage_key: str
     content_kind: CitationContentKind
     metadata: ParseMetadata
+    chunk_text: str | None = None
     source_withdrawn: bool = False
     document_deleted: bool = False
     retention_expired: bool = False
@@ -275,6 +276,8 @@ class CitationTargetSnapshot:
             raise QAContractError("Citation target blob_hash must be lowercase SHA-256")
         if not self.storage_key:
             raise QAContractError("Citation target storage_key must not be blank")
+        if self.chunk_text is not None and not self.chunk_text.strip():
+            raise QAContractError("Citation target chunk_text must not be blank when provided")
 
 
 class CitationTargetPort(Protocol):

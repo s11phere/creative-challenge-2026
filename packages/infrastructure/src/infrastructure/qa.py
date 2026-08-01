@@ -105,6 +105,7 @@ class PostgresCitationTargetPort:
                     mime_type=mime_type,
                     encoding="utf-8",
                 ),
+                chunk_text=chunk.text,
                 document_deleted=document.deleted_at is not None,
                 chunk_available=version.status == "published",
             )

@@ -176,7 +176,8 @@ class CitationResolver:
         if hashlib.sha256(raw).hexdigest() != snapshot.blob_hash:
             return CitationResolution(citation, CitationStatus.INVALID)
 
-        excerpts = await self._extract(snapshot, citation.locator, raw)
+        excerpts = (snapshot.chunk_text,) if snapshot.chunk_text is not None else ()
+        excerpts += await self._extract(snapshot, citation.locator, raw)
         excerpt = next(
             (item for item in excerpts if compute_excerpt_sha256(item) == citation.excerpt_sha256),
             None,
