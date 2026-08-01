@@ -33,7 +33,7 @@ from application.skills import (
     KnowledgeQASkillAdapter,
     KnowledgeQASkillConfig,
 )
-from domain.agent_runtime import AgentRun, AgentRunContext
+from domain.agent_runtime import AgentRun, AgentRunContext, RunStatus
 from domain.grounded_qa import QAErrorCode, QAEvent, QAStatus
 from domain.qa_persistence import (
     GroundedQARepository,
@@ -374,20 +374,41 @@ class GroundedQAExecutor:
             ),
             budget=package.manifest.budgets,
         )
-        result = await DeterministicWorkflowExecutor(
+        runtime_executor = DeterministicWorkflowExecutor(
             skill_registry=registry,
             model_gateway=runtime_gateway,
             handlers=runtime_handlers,
             tool_registry=runtime_tool_registry,
             state_store=PostgresRuntimeStateStore(self._database),
-        ).execute(
-            runtime_run,
-            pin,
-            {
-                "question": question.content,
-                "conversation_id": str(run.conversation_id),
-            },
         )
+        runtime_input = {
+            "question": question.content,
+            "conversation_id": str(run.conversation_id),
+        }
+        state_store = PostgresRuntimeStateStore(self._database)
+        persisted_runtime = await state_store.get_run(run.run_id)
+        checkpoint = await state_store.get_latest(run.run_id)
+        if (
+            persisted_runtime is not None
+            and checkpoint is not None
+            and persisted_runtime.status
+            not in {
+                RunStatus.COMPLETED,
+                RunStatus.FAILED,
+                RunStatus.CANCELLED,
+                RunStatus.TIMED_OUT,
+            }
+        ):
+            result = await runtime_executor.resume(
+                persisted_runtime,
+                pin,
+                checkpoint,
+                runtime_input,
+                caller_id=run.caller_id,
+                space_id=run.space_id,
+            )
+        else:
+            result = await runtime_executor.execute(runtime_run, pin, runtime_input)
         persisted = await self._repository.get_run(run.run_id)
         if persisted is None:
             raise RuntimeError("Grounded QA run disappeared during Skill execution")

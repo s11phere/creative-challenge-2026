@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import suppress
 from uuid import UUID, uuid4
 
 import dramatiq
@@ -133,8 +134,9 @@ async def _run_qa_async(run_id: UUID, trace_id: str, gateway: ModelGateway) -> b
         return True
 
     stop = asyncio.Event()
+    lease_lost = asyncio.Event()
     heartbeat = asyncio.create_task(
-        _heartbeat(repository, run_id, lease_owner, stop),
+        _heartbeat(repository, run_id, lease_owner, stop, lease_lost),
         name=f"qa-heartbeat-{run_id}",
     )
     try:
@@ -144,12 +146,37 @@ async def _run_qa_async(run_id: UUID, trace_id: str, gateway: ModelGateway) -> b
             repository=repository,
             events=PostgresQAEventStore(database),
         )
-        await executor.execute(run_id, trace_id=trace_id)
-        return True
+        execution = asyncio.create_task(
+            executor.execute(run_id, trace_id=trace_id),
+            name=f"qa-execution-{run_id}",
+        )
+        return await _wait_for_execution(execution, lease_lost, run_id=run_id)
     finally:
         stop.set()
         await heartbeat
         await repository.release_run_lease(run_id, lease_owner=lease_owner)
+
+
+async def _wait_for_execution(
+    execution: asyncio.Task[object], lease_lost: asyncio.Event, *, run_id: UUID
+) -> bool:
+    lease_guard = asyncio.create_task(
+        lease_lost.wait(),
+        name=f"qa-lease-guard-{run_id}",
+    )
+    done, _pending = await asyncio.wait(
+        {execution, lease_guard}, return_when=asyncio.FIRST_COMPLETED
+    )
+    if lease_guard in done and lease_lost.is_set() and not execution.done():
+        execution.cancel()
+        with suppress(asyncio.CancelledError):
+            await execution
+        return False
+    lease_guard.cancel()
+    with suppress(asyncio.CancelledError):
+        await lease_guard
+    await execution
+    return True
 
 
 async def _heartbeat(
@@ -157,6 +184,7 @@ async def _heartbeat(
     run_id: UUID,
     lease_owner: str,
     stop: asyncio.Event,
+    lease_lost: asyncio.Event,
 ) -> None:
     interval = min(settings.qa_task_heartbeat_interval_s, settings.qa_task_lease_seconds / 2)
     while True:
@@ -170,6 +198,7 @@ async def _heartbeat(
                 lease_seconds=settings.qa_task_lease_seconds,
             )
             if not renewed:
+                lease_lost.set()
                 return
 
 

@@ -419,6 +419,13 @@ append-only `runtime_checkpoints` 表，并通过 `PostgresRuntimeStateStore` �
 `4bf6c7d8e9f0` 和隔离 PostgreSQL 集成测试，覆盖升级后的写入、读取、幂等重放及级联清理。
 Worker 自动 resume、租约恢复、审批和派生知识写入仍属于后续步骤。
 
+**Runtime Worker 恢复子集（2026-08-01）**：唯一 QA Worker 执行入口现在在取得 QA lease 后，
+按同一 `run_id` 查询 Runtime 快照与最新 checkpoint；对非终态且身份匹配的运行调用
+`DeterministicWorkflowExecutor.resume`，否则从初始 Runtime 状态执行。这样 Worker 重启或重复
+投递会从最近安全节点继续，已提交节点不会再次调用 handler；QA lease/heartbeat 仍是并发与租约
+过期接管的权威事实源；续租失败会取消旧 Worker 的在途执行，避免失去 lease 后继续调用 Tool。
+持久审批、跨进程故障注入验收和派生知识写入仍未完成。
+
 ### 步骤 6：封装 `knowledge_qa` Skill
 
 本步骤必须等待阶段 2 至阶段 4 的相关退出条件和接口完成。
