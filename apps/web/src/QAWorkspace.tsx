@@ -7,28 +7,37 @@ import {
   LoaderCircle,
   MessageSquareText,
   Quote,
+  RotateCcw,
   Send,
   Search,
+  ShieldCheck,
   Square,
   Workflow,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   cancelRun,
+  createReviewCards,
+  decideApproval,
   createConversation,
   fetchCitationExcerpt,
   fetchRun,
   fetchSkills,
+  requestApproval,
+  resumeRun,
   submitQuestion,
   type QASkillName,
   type QARun,
 } from './qa'
+import { fetchSourceDetail, fetchSources, type SourceDetail } from './sources'
 
 type LocalQuestion = {
   id: string
   text: string
   run: QARun
 }
+
+const resumableStatuses = new Set(['created', 'queued', 'running', 'verifying', 'cancel_requested'])
 
 const activeStatuses = new Set(['created', 'queued', 'running', 'verifying', 'cancel_requested'])
 
@@ -54,6 +63,10 @@ export function QAWorkspace() {
   const [question, setQuestion] = useState<LocalQuestion | null>(null)
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null)
   const [selectedSkill, setSelectedSkill] = useState<QASkillName>('knowledge_agent')
+  const [selectedSourceId, setSelectedSourceId] = useState('')
+  const [selectedDocumentId, setSelectedDocumentId] = useState('')
+  const [focus, setFocus] = useState('')
+  const [approval, setApproval] = useState<Awaited<ReturnType<typeof requestApproval>> | null>(null)
   const excerptRef = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
 
@@ -75,6 +88,13 @@ export function QAWorkspace() {
 
   const currentRun = runQuery.data ?? question?.run
   const activeSkill = skillsQuery.data?.find((skill) => skill.name === selectedSkill)
+  const sourcesQuery = useQuery({ queryKey: ['sources'], queryFn: ({ signal }) => fetchSources(signal), enabled: selectedSkill === 'create_review_cards', retry: false })
+  const sourceDetailQuery = useQuery<SourceDetail>({
+    queryKey: ['source', selectedSourceId],
+    queryFn: ({ signal }) => fetchSourceDetail(selectedSourceId, signal),
+    enabled: selectedSkill === 'create_review_cards' && Boolean(selectedSourceId),
+    retry: false,
+  })
   const displayedSkill = currentRun?.skill ?? {
     name: selectedSkill,
     version: activeSkill?.active_version ?? null,
@@ -103,20 +123,41 @@ export function QAWorkspace() {
         setConversationId(currentConversationId)
       }
       const idempotencyKey = crypto.randomUUID()
-      const run = await submitQuestion(currentConversationId, text, idempotencyKey, selectedSkill)
+      const run = selectedSkill === 'create_review_cards'
+        ? await createReviewCards(currentConversationId, selectedDocumentId, sourceDetailQuery.data?.documents.find((doc) => doc.id === selectedDocumentId)?.current_version_id ?? '', focus.trim() || undefined, idempotencyKey)
+        : await submitQuestion(currentConversationId, text, idempotencyKey, selectedSkill)
       return { id: idempotencyKey, text, run }
     },
     onSuccess: (nextQuestion) => {
       setQuestion(nextQuestion)
+      setApproval(null)
       setSelectedEvidenceId(null)
       setDraft('')
     },
+  })
+
+  const resumeMutation = useMutation({
+    mutationFn: () => resumeRun(currentRun!.run_id),
+    onSuccess: (run) => {
+      setQuestion((current) => current ? { ...current, run } : current)
+      queryClient.setQueryData(['qa-run', run.run_id], run)
+    },
+  })
+
+  const approvalMutation = useMutation({
+    mutationFn: () => requestApproval(currentRun!.run_id, crypto.randomUUID()),
+    onSuccess: setApproval,
+  })
+  const decisionMutation = useMutation({
+    mutationFn: (approved: boolean) => decideApproval(currentRun!.run_id, approval!.approval_id, approved),
+    onSuccess: setApproval,
   })
 
   const chooseSkill = (skill: QASkillName) => {
     if (isActive || submitMutation.isPending) return
     setSelectedSkill(skill)
     setQuestion(null)
+    setApproval(null)
     setSelectedEvidenceId(null)
   }
 
@@ -129,14 +170,15 @@ export function QAWorkspace() {
   })
 
   const errorMessage = useMemo(() => {
-    const error = submitMutation.error ?? runQuery.error ?? cancelMutation.error
+    const error = submitMutation.error ?? runQuery.error ?? cancelMutation.error ?? resumeMutation.error ?? approvalMutation.error ?? decisionMutation.error
     return error instanceof Error ? error.message : null
-  }, [cancelMutation.error, runQuery.error, submitMutation.error])
+  }, [approvalMutation.error, cancelMutation.error, decisionMutation.error, resumeMutation.error, runQuery.error, submitMutation.error])
 
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const text = draft.trim()
     if (!text || submitMutation.isPending || isActive) return
+    if (selectedSkill === 'create_review_cards' && (!selectedDocumentId || !sourceDetailQuery.data?.documents.find((doc) => doc.id === selectedDocumentId)?.current_version_id)) return
     submitMutation.mutate(text)
   }
 
@@ -169,7 +211,31 @@ export function QAWorkspace() {
               <Search size={16} aria-hidden="true" />
               直接问答
             </button>
+            <button
+              type="button"
+              aria-pressed={selectedSkill === 'create_review_cards'}
+              onClick={() => chooseSkill('create_review_cards')}
+              disabled={submitMutation.isPending || isActive}
+            >
+              <Workflow size={16} aria-hidden="true" />复习卡
+            </button>
           </div>
+          {selectedSkill === 'create_review_cards' && !question && (
+            <div className="qa-skill-config">
+              <label htmlFor="review-source">来源</label>
+              <select id="review-source" value={selectedSourceId} onChange={(event) => { setSelectedSourceId(event.target.value); setSelectedDocumentId('') }}>
+                <option value="">选择来源</option>
+                {sourcesQuery.data?.sources.map((source) => <option key={source.id} value={source.id}>{source.uri}</option>)}
+              </select>
+              <label htmlFor="review-document">固定文档版本</label>
+              <select id="review-document" value={selectedDocumentId} onChange={(event) => setSelectedDocumentId(event.target.value)} disabled={!sourceDetailQuery.data}>
+                <option value="">选择文档</option>
+                {sourceDetailQuery.data?.documents.filter((doc) => doc.current_version_id).map((doc) => <option key={doc.id} value={doc.id}>{doc.display_name}</option>)}
+              </select>
+              <label htmlFor="review-focus">重点（可选）</label>
+              <input id="review-focus" value={focus} onChange={(event) => setFocus(event.target.value)} maxLength={1000} />
+            </div>
+          )}
           {!question ? (
             <div className="qa-empty">
               <MessageSquareText size={28} aria-hidden="true" />
@@ -204,6 +270,26 @@ export function QAWorkspace() {
                 )}
               </article>
             </>
+          )}
+          {currentRun && resumableStatuses.has(currentRun.status) && (
+            <button type="button" className="panel-action-button qa-resume-button" onClick={() => resumeMutation.mutate()} disabled={resumeMutation.isPending}>
+              <RotateCcw size={15} />{resumeMutation.isPending ? '恢复中…' : '恢复执行'}
+            </button>
+          )}
+          {currentRun?.skill?.name === 'create_review_cards' && currentRun.result && currentRun.citations?.length && !approval && (
+            <button type="button" className="panel-action-button qa-approval-button" onClick={() => approvalMutation.mutate()} disabled={approvalMutation.isPending}>
+              <ShieldCheck size={15} />申请写入审批
+            </button>
+          )}
+          {approval && approval.status === 'pending' && (
+            <div className="qa-approval-actions">
+              <span>复习卡写入审批待决策</span>
+              <button type="button" className="panel-action-button" onClick={() => decisionMutation.mutate(true)} disabled={decisionMutation.isPending}>批准写入</button>
+              <button type="button" className="panel-action-button" onClick={() => decisionMutation.mutate(false)} disabled={decisionMutation.isPending}>拒绝</button>
+            </div>
+          )}
+          {approval && approval.status !== 'pending' && (
+            <div className="qa-approval-status" role="status">审批{approval.status === 'approved' ? '已批准' : '已拒绝'}{approval.side_effects ? '，已写入派生知识' : ''}</div>
           )}
           {errorMessage && (
             <div className="qa-error" role="alert">
@@ -240,7 +326,7 @@ export function QAWorkspace() {
               <button
                 className="qa-send-button"
                 type="submit"
-                disabled={!draft.trim() || submitMutation.isPending}
+                disabled={!draft.trim() || submitMutation.isPending || (selectedSkill === 'create_review_cards' && !selectedDocumentId)}
               >
                 {submitMutation.isPending ? (
                   <LoaderCircle className="spin" size={17} />

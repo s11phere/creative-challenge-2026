@@ -43,8 +43,9 @@ Runtime Checkpoint、Skill 管理 Web 或旧版本清理。`/api/v1/skills` 可�
 严格 JSON 决策、最多两轮决策、一次 Tool 调用以及 Token/权限/Space 预算均由 Runtime 强制执行；
 Tool 仅向外层模型返回状态和计数，不返回回答或原文。默认 fake 可跑通流程，配置允许的
 OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。写 Tool 仍被明确拒绝。
-当只配置外部 Chat 时，将 `EMBEDDING_PROVIDER=fake` 和 `RERANKER_PROVIDER=fake` 保持现有本地
-索引与默认 reranker；这两个能力与 `fast_chat` 独立路由，不要求额外模型服务。
+真实本地组合使用外部 OpenAI-compatible `fast_chat`、
+`EMBEDDING_PROVIDER=text-embeddings-inference` 和本地 Qwen3 TEI Embedding；当前
+`RERANKER_PROVIDER=fake`。三项能力独立路由，Embedding 不会随外部 Chat 回退为 fake。
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
 [Stage 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
 [Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；必须先完成真实模型
@@ -72,6 +73,11 @@ POSTGRES_PASSWORD=your-database-password
 ```bash
 docker compose -f deploy/compose.yaml --env-file .env up --build --detach --wait
 ```
+
+真实模型组合需要在被 Git 忽略的 `.env` 中同时配置外部 Chat、
+`EMBEDDING_PROVIDER=text-embeddings-inference`、`EMBEDDING_ENDPOINT=http://tei:80`、固定的
+Qwen3 Embedding 模型/revision，以及适配 TEI 限制的 `EMBEDDING_BATCH_SIZE`。完整字段见
+`.env.example`，凭据不得提交仓库。
 
 > **注意**：Docker Compose v5 可能需要显式指定 `--env-file .env`；若不加也能正常运行则无需此参数。
 

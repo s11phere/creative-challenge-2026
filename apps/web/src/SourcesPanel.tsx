@@ -282,6 +282,14 @@ function DirectUpload({ sources }: { sources: SourceInfo[] }) {
   )
 }
 
+const documentStatusLabels: Record<string, string> = {
+  active: '可用',
+  available: '可用',
+  unavailable: '不可用',
+  failed: '不可用',
+  deleted: '已删除',
+}
+
 function SourceCard({ source }: { source: SourceInfo }) {
   const queryClient = useQueryClient()
   const [isExpanded, setIsExpanded] = useState(false)
@@ -293,6 +301,7 @@ function SourceCard({ source }: { source: SourceInfo }) {
     queryKey: ['source', source.id],
     queryFn: ({ signal }) => fetchSourceDetail(source.id, signal),
     enabled: isExpanded,
+    refetchInterval: isExpanded && activeTaskId ? 3_000 : false,
   })
 
   const uploadMut = useMutation({
@@ -408,7 +417,7 @@ function SourceCard({ source }: { source: SourceInfo }) {
                     {doc.display_name}
                   </span>
                   <span className={`doc-status ${doc.status}`}>
-                    {doc.status === 'active' ? '可用' : '已删除'}
+                    {documentStatusLabels[doc.status] ?? doc.status}
                   </span>
                 </div>
               ))}

@@ -339,7 +339,8 @@ Embedding/Reranker 仅通过固定镜像、revision 和显式 Compose profile �
 绕过 ADR-004 的数据策略发送到外部 Provider。`fast_chat` 仍不提供 SSE/流式协议。
 
 ModelGateway 的能力可以独立路由：`fast_chat` 可使用外部 OpenAI-compatible Provider，
-Embedding/Reranker 可分别使用已固定的本地或 fake 能力。`EMBEDDING_PROVIDER=fake` 固定
+Embedding/Reranker 可分别使用已固定的本地或 fake 能力。外部 Chat 与本地 TEI 组合使用
+`EMBEDDING_PROVIDER=text-embeddings-inference`；`EMBEDDING_PROVIDER=fake` 固定
 `fake-sha256-v1`，确保已有索引身份与在线检索一致；未显式配置时保持 `inherit`，不改变既有
 Stage 3 模型组合。
 

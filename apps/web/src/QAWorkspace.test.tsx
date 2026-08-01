@@ -24,6 +24,7 @@ function renderWorkspace() {
 const activeSkills = [
   { name: 'knowledge_agent', active_version: '0.1.0', versions: ['0.1.0'] },
   { name: 'knowledge_qa', active_version: '0.1.0', versions: ['0.1.0'] },
+  { name: 'create_review_cards', active_version: '0.1.0', versions: ['0.1.0'] },
 ]
 
 afterEach(() => {
@@ -146,6 +147,133 @@ describe('QAWorkspace', () => {
         expect.stringMatching(/\/conversations\/conversation-1\/questions$/),
         expect.objectContaining({ method: 'POST' }),
       ),
+    )
+  })
+
+  it('resumes a recoverable run through the existing QA endpoint', async () => {
+    const queued = {
+      run_id: 'run-resume',
+      attempt_id: 'attempt-resume',
+      status: 'queued',
+      conversation_id: 'conversation-1',
+      question_message_id: 'message-resume',
+      cancellation_requested: false,
+      error_code: null,
+      skill: { name: 'knowledge_agent', version: '0.1.0', content_sha256: 'a'.repeat(64) },
+      fixed_scope: { source_ids: [], document_ids: [], version_ids: [] },
+      citations: [],
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/skills')) return Promise.resolve(response(activeSkills))
+      if (url.endsWith('/conversations')) {
+        return Promise.resolve(
+          response({ conversation_id: 'conversation-1', space_id: 'space-1', owner_id: 'local' }),
+        )
+      }
+      return Promise.resolve(response(queued, url.includes('/runs') ? 202 : 200))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'idempotency-resume' })
+
+    renderWorkspace()
+    fireEvent.change(screen.getByLabelText('问题'), { target: { value: 'Resume this run.' } })
+    fireEvent.click(screen.getByRole('button', { name: '提问' }))
+    fireEvent.click(await screen.findByRole('button', { name: '恢复执行' }))
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/qa/runs/run-resume/resume'),
+        expect.objectContaining({ method: 'POST', body: '{}' }),
+      ),
+    )
+  })
+
+  it('runs review cards against a fixed version and records an approval decision', async () => {
+    const completed = {
+      run_id: 'run-review',
+      attempt_id: 'attempt-review',
+      status: 'completed',
+      conversation_id: 'conversation-1',
+      question_message_id: 'message-review',
+      cancellation_requested: false,
+      error_code: null,
+      skill: { name: 'create_review_cards', version: '0.1.0', content_sha256: 'c'.repeat(64) },
+      fixed_scope: {
+        source_ids: ['source-1'],
+        document_ids: ['document-1'],
+        version_ids: ['version-1'],
+      },
+      result: { type: 'answer', text: 'Review card preview.', limitations: [] },
+      citations: [{
+        evidence_id: 'evidence-1', source_id: 'source-1', document_id: 'document-1',
+        version_id: 'version-1', chunk_id: 'chunk-1',
+        locator: { kind: 'lines', start: 1, end: 2 },
+      }],
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/skills')) return Promise.resolve(response(activeSkills))
+      if (url.endsWith('/sources')) {
+        return Promise.resolve(response({ sources: [{
+          id: 'source-1', space_id: 'space-1', source_type: 'upload',
+          uri: 'fixture://review', created_at: '2026-01-01T00:00:00Z',
+        }] }))
+      }
+      if (url.endsWith('/sources/source-1/detail')) {
+        return Promise.resolve(response({
+          source: { id: 'source-1', uri: 'fixture://review' },
+          documents: [{
+            id: 'document-1', display_name: 'review.md', status: 'available',
+            current_version_id: 'version-1',
+          }],
+        }))
+      }
+      if (url.endsWith('/conversations')) {
+        return Promise.resolve(
+          response({ conversation_id: 'conversation-1', space_id: 'space-1', owner_id: 'local' }),
+        )
+      }
+      if (url.endsWith('/approvals') && init?.method === 'POST') {
+        return Promise.resolve(response({
+          approval_id: 'approval-1', run_id: 'run-review', status: 'pending',
+          side_effects: 0, derived_knowledge_id: null,
+        }, 201))
+      }
+      if (url.endsWith('/approvals/approval-1/decision') && init?.method === 'POST') {
+        return Promise.resolve(response({
+          approval_id: 'approval-1', run_id: 'run-review', status: 'approved',
+          side_effects: 1, derived_knowledge_id: 'derived-1',
+        }))
+      }
+      return Promise.resolve(response(completed, url.includes('/skills/create_review_cards/runs') ? 202 : 200))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'idempotency-review' })
+
+    renderWorkspace()
+    fireEvent.click(screen.getByRole('button', { name: '复习卡' }))
+    await screen.findByRole('option', { name: 'fixture://review' })
+    fireEvent.change(await screen.findByLabelText('来源'), { target: { value: 'source-1' } })
+    await screen.findByRole('option', { name: 'review.md' })
+    fireEvent.change(await screen.findByLabelText('固定文档版本'), {
+      target: { value: 'document-1' },
+    })
+    fireEvent.change(screen.getByLabelText('问题'), { target: { value: 'Create cards.' } })
+    fireEvent.click(screen.getByRole('button', { name: '提问' }))
+    fireEvent.click(await screen.findByRole('button', { name: '申请写入审批' }))
+    fireEvent.click(await screen.findByRole('button', { name: '批准写入' }))
+
+    expect(await screen.findByText('审批已批准，已写入派生知识')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/skills/create_review_cards/runs'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          document_id: 'document-1', version_id: 'version-1', focus: undefined,
+          idempotency_key: 'idempotency-review',
+        }),
+      }),
     )
   })
 

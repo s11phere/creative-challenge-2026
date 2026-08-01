@@ -1,7 +1,7 @@
 import { apiBaseUrl } from './health'
 
 export const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
-export type QASkillName = 'knowledge_agent' | 'knowledge_qa'
+export type QASkillName = 'knowledge_agent' | 'knowledge_qa' | 'create_review_cards'
 
 export type Conversation = {
   conversation_id: string
@@ -79,6 +79,14 @@ export type SkillActivation = {
   revision: number
 }
 
+export type Approval = {
+  approval_id: string
+  run_id: string
+  status: 'pending' | 'approved' | 'rejected'
+  side_effects: 0 | 1
+  derived_knowledge_id: string | null
+}
+
 export type CitationExcerpt = NonNullable<QARun['citations']>[number] & {
   status: string
   excerpt: string | null
@@ -133,10 +141,41 @@ export function fetchRun(runId: string, signal?: AbortSignal): Promise<QARun> {
   return request(`/api/v1/qa/runs/${runId}`, { signal })
 }
 
+export function createReviewCards(
+  conversationId: string,
+  documentId: string,
+  versionId: string,
+  focus: string | undefined,
+  idempotencyKey: string,
+): Promise<QARun> {
+  return request(`/api/v1/conversations/${conversationId}/skills/create_review_cards/runs`, {
+    method: 'POST',
+    body: JSON.stringify({ document_id: documentId, version_id: versionId, focus, idempotency_key: idempotencyKey }),
+  })
+}
+
 export function cancelRun(runId: string): Promise<QARun> {
   return request(`/api/v1/qa/runs/${runId}/cancel`, {
     method: 'POST',
     body: JSON.stringify({}),
+  })
+}
+
+export function resumeRun(runId: string): Promise<QARun> {
+  return request(`/api/v1/qa/runs/${runId}/resume`, { method: 'POST', body: JSON.stringify({}) })
+}
+
+export function requestApproval(runId: string, idempotencyKey: string): Promise<Approval> {
+  return request(`/api/v1/qa/runs/${runId}/approvals`, {
+    method: 'POST',
+    body: JSON.stringify({ tool_name: 'write_review_cards', tool_version: '1.0.0', idempotency_key: idempotencyKey }),
+  })
+}
+
+export function decideApproval(runId: string, approvalId: string, approved: boolean): Promise<Approval> {
+  return request(`/api/v1/qa/runs/${runId}/approvals/${approvalId}/decision`, {
+    method: 'POST',
+    body: JSON.stringify({ approved, decided_by: 'local' }),
   })
 }
 
@@ -167,6 +206,17 @@ export function rollbackSkill(
   return request(`/api/v1/skills/${skillName}/rollback`, {
     method: 'POST',
     body: JSON.stringify({ version, expected_revision: expectedRevision }),
+  })
+}
+
+export function cleanupSkillVersion(
+  skillName: string,
+  version: string,
+  contentSha256: string,
+): Promise<{ name: string; version: string; removed: boolean; references: number }> {
+  return request(`/api/v1/skills/${skillName}/versions/${version}/cleanup`, {
+    method: 'POST',
+    body: JSON.stringify({ content_sha256: contentSha256 }),
   })
 }
 

@@ -1409,9 +1409,21 @@
   text-transform: capitalize;
 }
 
-.doc-status.active {
+.doc-status.active,
+.doc-status.available {
   background: color-mix(in srgb, var(--success) 15%, transparent);
   color: var(--success);
+}
+
+.doc-status.processing,
+.doc-status.unavailable {
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: #836512;
+}
+
+.doc-status.failed {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
 }
 
 .doc-status.deleted {
@@ -1589,6 +1601,60 @@
   margin-top: 10px;
   color: var(--danger);
   font-size: 12px;
+}
+
+.danger-action {
+  color: var(--danger);
+}
+
+.qa-skill-config {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 10px;
+  margin: 0 0 18px;
+  padding: 12px;
+  background: #f4f7f5;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.qa-skill-config select,
+.qa-skill-config input {
+  min-height: 30px;
+  min-width: 0;
+  padding: 4px 7px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+.qa-resume-button,
+.qa-approval-button {
+  margin: 0 0 12px;
+}
+
+.qa-approval-actions,
+.qa-approval-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  color: var(--ink-soft);
+  background: #fff9e8;
+  border: 1px solid #ead9a8;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.qa-approval-status {
+  color: var(--success);
+  background: #f1f8f4;
+  border-color: #c3dfd0;
 }
 
 @media (max-width: 680px) {

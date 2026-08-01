@@ -75,3 +75,47 @@ it('loads trusted versions and activates one with the current revision', async (
     }),
   )
 })
+
+it('cleans a non-active version only after explicit confirmation', async () => {
+  const sha = 'a'.repeat(64)
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    if (url.endsWith('/skills/demo/versions/0.1.0/cleanup') && init?.method === 'POST') {
+      return Promise.resolve(response({ name: 'demo', version: '0.1.0', removed: true, references: 0 }))
+    }
+    if (url.endsWith('/skills/demo/versions')) {
+      return Promise.resolve(response([{
+        name: 'demo', version: '0.1.0', content_sha256: sha,
+        description: 'Old workflow.', active: false, permissions: [],
+        required_capabilities: [],
+        budget: { max_steps: 1, max_tool_calls: 0, max_input_tokens: 10, max_output_tokens: 10, timeout_seconds: 5 },
+      }, {
+        name: 'demo', version: '0.2.0', content_sha256: 'b'.repeat(64),
+        description: 'Active workflow.', active: true, permissions: [],
+        required_capabilities: [],
+        budget: { max_steps: 1, max_tool_calls: 0, max_input_tokens: 10, max_output_tokens: 10, timeout_seconds: 5 },
+      }]))
+    }
+    if (url.endsWith('/skills')) {
+      return Promise.resolve(response([{
+        name: 'demo', active_version: '0.2.0', active_revision: 2,
+        versions: ['0.1.0', '0.2.0'],
+      }]))
+    }
+    return Promise.resolve(response({}, 404))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+
+  renderPanel()
+  fireEvent.click(await screen.findByRole('button', { name: /demo/ }))
+  const cleanupButtons = await screen.findAllByRole('button', { name: '清理' })
+  fireEvent.click(cleanupButtons[0])
+  fireEvent.click(screen.getByRole('button', { name: '确认清理' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/skills/demo/versions/0.1.0/cleanup'),
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ content_sha256: sha }) }),
+    ),
+  )
+})

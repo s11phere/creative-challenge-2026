@@ -268,6 +268,19 @@ async def get_source_detail(
         document_items: list[DocumentItem] = []
         for document in docs:
             latest_version = await version_repo.get_latest(document.id)
+            current_version = (
+                await version_repo.get(document.current_version_id)
+                if document.current_version_id is not None
+                else None
+            )
+            if document.deleted_at is not None:
+                document_status = "deleted"
+            elif current_version is not None and current_version.status is DocumentStatus.PUBLISHED:
+                document_status = "available"
+            elif latest_version is not None and latest_version.status is DocumentStatus.FAILED:
+                document_status = "failed"
+            else:
+                document_status = "unavailable"
             document_items.append(
                 DocumentItem(
                     id=str(document.id),
@@ -279,7 +292,7 @@ async def get_source_detail(
                     current_version_id=(
                         str(document.current_version_id) if document.current_version_id else None
                     ),
-                    status="deleted" if document.deleted_at else "active",
+                    status=document_status,
                     created_at=document.created_at.isoformat(),
                 )
             )

@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bot, CheckCircle2, CircleAlert, LoaderCircle, RefreshCw, RotateCcw } from 'lucide-react'
+import { Bot, CheckCircle2, CircleAlert, LoaderCircle, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import {
   activateSkill,
+  cleanupSkillVersion,
   fetchSkills,
   fetchSkillVersions,
   QAApiError,
@@ -13,6 +14,7 @@ import {
 function SkillRow({ skill }: { skill: SkillSummary }) {
   const queryClient = useQueryClient()
   const [expanded, setExpanded] = useState(false)
+  const [cleanupVersion, setCleanupVersion] = useState<string | null>(null)
   const versionsQuery = useQuery({
     queryKey: ['skill-versions', skill.name],
     queryFn: ({ signal }) => fetchSkillVersions(skill.name, signal),
@@ -34,6 +36,15 @@ function SkillRow({ skill }: { skill: SkillSummary }) {
   })
 
   const error = changeMutation.error
+  const cleanupMutation = useMutation({
+    mutationFn: (version: { version: string; content_sha256: string }) =>
+      cleanupSkillVersion(skill.name, version.version, version.content_sha256),
+    onSuccess: async () => {
+      setCleanupVersion(null)
+      await queryClient.invalidateQueries({ queryKey: ['skills'] })
+      await queryClient.invalidateQueries({ queryKey: ['skill-versions', skill.name] })
+    },
+  })
 
   return (
     <div className={`skill-row ${expanded ? 'expanded' : ''}`}>
@@ -86,6 +97,31 @@ function SkillRow({ skill }: { skill: SkillSummary }) {
                     >
                       <RotateCcw size={15} />回滚至此
                     </button>
+                    {cleanupVersion === version.version ? (
+                      <>
+                        <button
+                          type="button"
+                          className="panel-action-button danger-action"
+                          disabled={cleanupMutation.isPending}
+                          onClick={() => cleanupMutation.mutate(version)}
+                        >
+                          <Trash2 size={15} />确认清理
+                        </button>
+                        <button type="button" className="panel-action-button" onClick={() => setCleanupVersion(null)}>
+                          取消
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="panel-action-button"
+                        disabled={cleanupMutation.isPending}
+                        onClick={() => setCleanupVersion(version.version)}
+                        title="仅能清理非活动且无持久引用的版本"
+                      >
+                        <Trash2 size={15} />清理
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -101,6 +137,11 @@ function SkillRow({ skill }: { skill: SkillSummary }) {
           {error && (
             <div className="skill-error" role="alert">
               操作失败：{error instanceof QAApiError ? error.message : String(error)}
+            </div>
+          )}
+          {cleanupMutation.error && (
+            <div className="skill-error" role="alert">
+              清理失败：{cleanupMutation.error instanceof QAApiError ? cleanupMutation.error.message : String(cleanupMutation.error)}
             </div>
           )}
         </div>

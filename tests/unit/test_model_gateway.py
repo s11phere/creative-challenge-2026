@@ -353,6 +353,44 @@ async def test_real_chat_can_route_auxiliary_capabilities_to_fake() -> None:
     await client.aclose()
 
 
+async def test_real_chat_can_route_embedding_to_local_tei() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url == "https://models.example.test/v1/chat/completions":
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": "real-chat"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+                },
+            )
+        assert request.url == "http://tei/embed"
+        assert request.content == b'{"inputs":["synthetic"],"dimensions":768}'
+        return httpx.Response(200, json=[[0.0] * 768])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = create_model_gateway(
+        GatewayConfig(
+            provider=ModelProvider.OPENAI_COMPATIBLE,
+            fast_chat_endpoint="https://models.example.test/v1",
+            fast_chat_model="chat-model",
+            embedding_provider=ModelProvider.TEXT_EMBEDDINGS_INFERENCE,
+            embedding_endpoint="http://tei:80",
+            embedding_model="Qwen/Qwen3-Embedding-0.6B",
+            allow_external=True,
+            fake_reranker=True,
+        ),
+        client=client,
+    )
+
+    assert gateway.status.code == "MODEL_CAPABILITIES_ROUTED"
+    assert gateway.status.capabilities == tuple(CapabilityAlias)
+    assert (await gateway.chat(chat_request())).text == "real-chat"
+    embedding = await gateway.embed(EmbeddingRequest(texts=("synthetic",), dimensions=768))
+    assert len(embedding.vectors[0]) == 768
+    await gateway.aclose()
+    await client.aclose()
+
+
 async def test_local_endpoint_is_allowed_without_external_opt_in() -> None:
     gateway = create_model_gateway(
         GatewayConfig(

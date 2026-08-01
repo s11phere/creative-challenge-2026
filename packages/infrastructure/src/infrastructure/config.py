@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     reranker_api_key: SecretStr | None = None
     reranker_model: str | None = None
     embedding_protocol: Literal["openai-compatible", "tei"] = "openai-compatible"
-    embedding_provider: Literal["inherit", "fake"] = "inherit"
+    embedding_provider: Literal["inherit", "fake", "text-embeddings-inference"] = "inherit"
     reranker_provider: Literal["inherit", "fake"] = "inherit"
     embedding_query_instruction_version: str = "none-v1"
     embedding_document_instruction_version: str = "none-v1"
