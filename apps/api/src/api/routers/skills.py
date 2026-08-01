@@ -51,6 +51,17 @@ class SkillActivationResponse(BaseModel):
     revision: int
 
 
+class SkillCleanupRequest(BaseModel):
+    content_sha256: str = Field(min_length=64, max_length=64)
+
+
+class SkillCleanupResponse(BaseModel):
+    name: str
+    version: str
+    removed: bool
+    references: int
+
+
 async def _synchronize(request: Request, name: str) -> None:
     try:
         activation = await request.app.state.skill_lifecycle.current(name)
@@ -117,6 +128,44 @@ async def rollback_skill(
     skill_name: str, body: SkillActivationRequest, request: Request
 ) -> SkillActivationResponse:
     return await _change_activation(skill_name, body, request, rollback=True)
+
+
+@router.post(
+    "/{skill_name}/versions/{version}/cleanup",
+    response_model=SkillCleanupResponse,
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+async def cleanup_skill_version(
+    skill_name: str,
+    version: str,
+    body: SkillCleanupRequest,
+    request: Request,
+) -> SkillCleanupResponse:
+    try:
+        active = await request.app.state.skill_lifecycle.current(skill_name)
+        if active.version == version:
+            raise AppError(
+                "SKILL_CLEANUP_BLOCKED", "The active Skill version cannot be removed.", 409
+            )
+        report = await request.app.state.skill_reference_checker.references(
+            skill_name=skill_name,
+            skill_version=version,
+            content_sha256=body.content_sha256,
+        )
+        if report.total:
+            raise AppError(
+                "SKILL_CLEANUP_BLOCKED",
+                f"Skill version has {report.total} durable references.",
+                409,
+            )
+        request.app.state.skill_registry.remove(
+            skill_name, version, content_sha256=body.content_sha256
+        )
+    except AppError:
+        raise
+    except Exception as exc:
+        _raise_lifecycle_error(SkillLifecycleError(SkillLifecycleErrorCode.NOT_FOUND, str(exc)))
+    return SkillCleanupResponse(name=skill_name, version=version, removed=True, references=0)
 
 
 async def _change_activation(

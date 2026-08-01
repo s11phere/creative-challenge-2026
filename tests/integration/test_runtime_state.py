@@ -30,6 +30,7 @@ from infrastructure.qa_persistence import PostgresGroundedQARepository
 from infrastructure.repositories import SpaceRepository
 from infrastructure.runtime_approval import PostgresApprovalPort, PostgresDerivedKnowledgeStore
 from infrastructure.runtime_state import PostgresRuntimeStateStore
+from infrastructure.skill_references import PostgresSkillReferenceChecker
 from sqlalchemy import delete
 
 pytestmark = [
@@ -114,6 +115,14 @@ async def test_runtime_checkpoint_is_persistent_and_idempotent() -> None:
         assert await PostgresRuntimeStateStore(database).get_latest(run_id) == checkpoint
         replayed, _ = await store.commit(run, checkpoint)
         assert replayed.checkpoint_sequence == 1
+        report = await PostgresSkillReferenceChecker(database).references(
+            skill_name="knowledge_agent",
+            skill_version="0.1.0",
+            content_sha256="a" * 64,
+        )
+        assert report.qa_runs == 1
+        assert report.runtime_runs == 1
+        assert report.checkpoints == 1
     finally:
         async with database.transaction() as session:
             await session.execute(delete(SpaceModel).where(SpaceModel.id == space_id))

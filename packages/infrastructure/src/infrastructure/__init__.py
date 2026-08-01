@@ -31,6 +31,7 @@ from .runtime_approval import (
     PostgresDerivedKnowledgeStore,
 )
 from .runtime_state import PostgresRuntimeStateStore
+from .skill_references import PostgresSkillReferenceChecker, SkillReferenceReport
 
 __all__ = [
     "Base",
@@ -49,6 +50,8 @@ __all__ = [
     "PdfParser",
     "PostgresRetrievalStore",
     "PostgresRuntimeStateStore",
+    "PostgresSkillReferenceChecker",
+    "SkillReferenceReport",
     "DerivedKnowledgeRecord",
     "PostgresApprovalPort",
     "PostgresDerivedKnowledgeStore",

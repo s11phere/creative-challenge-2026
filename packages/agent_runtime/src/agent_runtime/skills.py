@@ -144,6 +144,7 @@ class SkillRegistryErrorCode(StrEnum):
     DIGEST_MISMATCH = "SKILL_DIGEST_MISMATCH"
     CHECKPOINT_INCOMPATIBLE = "SKILL_CHECKPOINT_INCOMPATIBLE"
     TOOL_INCOMPATIBLE = "SKILL_TOOL_INCOMPATIBLE"
+    CLEANUP_BLOCKED = "SKILL_CLEANUP_BLOCKED"
 
 
 class SkillRegistryError(Exception):
@@ -434,6 +435,27 @@ class FileSystemSkillRegistry:
     def names(self) -> tuple[str, ...]:
         with self._lock:
             return tuple(sorted({name for name, _version in self._packages}))
+
+    def remove(self, name: str, version: str, *, content_sha256: str) -> SkillPackage:
+        """Remove an unreferenced non-active package from the live registry."""
+        with self._lock:
+            if self._active_versions.get(name) == version:
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.CLEANUP_BLOCKED,
+                    "The active Skill version cannot be removed.",
+                )
+            package = self._packages.get((name, version))
+            if package is None:
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.NOT_FOUND,
+                    "Requested Skill version is not installed.",
+                )
+            if package.content_sha256 != content_sha256:
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.DIGEST_MISMATCH,
+                    "Skill digest does not match the requested cleanup identity.",
+                )
+            return self._packages.pop((name, version))
 
     def active_version(self, name: str) -> str:
         with self._lock:

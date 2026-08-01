@@ -40,7 +40,7 @@ API、PostgreSQL Runtime Checkpoint 恢复或正式质量验收。
 | Step 6 | active provisional | 声明式包固定名称/版本/摘要，由 Worker 对同一 QA Run 调用唯一 QA Port；正式质量仍待阶段 3/4 门禁 |
 | Step 7 | provisional 可用子集 | 现有 QA API/Web/Worker 已执行固定 Skill，并提供真实检索、持久 Run、引用原文和重启恢复；通用 Runtime/Skill 管理入口未实现 |
 | Step 8 | provisional 只读完成 | 三个 Skill 固定来源并复用既有 QA Run/Worker/SSE；派生知识写入 Application Port 与持久确认仍阻塞 |
-| Step 9 持久化部分 | 阻塞 | Step 5 提供运行引用查询、保留和清理事实源 |
+| Step 9 持久化部分 | provisional 已完成 | PostgreSQL 引用查询与受控 Registry 清理已落地；受信磁盘包删除仍是部署运维操作 |
 | Step 10 | 阻塞 | Step 0～9 全部交付，阶段 0 数据门禁关闭 |
 
 上述阻塞项不得用平行 ORM、临时回答 schema、fake API 或私有语料绕过。项目当前主推进顺序

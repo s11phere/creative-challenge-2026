@@ -1608,6 +1608,49 @@
         "title": "SkillBudgetResponse",
         "type": "object"
       },
+      "SkillCleanupRequest": {
+        "properties": {
+          "content_sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Content Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content_sha256"
+        ],
+        "title": "SkillCleanupRequest",
+        "type": "object"
+      },
+      "SkillCleanupResponse": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "references": {
+            "title": "References",
+            "type": "integer"
+          },
+          "removed": {
+            "title": "Removed",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "removed",
+          "references"
+        ],
+        "title": "SkillCleanupResponse",
+        "type": "object"
+      },
       "SkillSummaryResponse": {
         "properties": {
           "active_revision": {
@@ -2873,6 +2916,87 @@
           }
         },
         "summary": "List Skill Versions",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/api/v1/skills/{skill_name}/versions/{version}/cleanup": {
+      "post": {
+        "operationId": "cleanup_skill_version_api_v1_skills__skill_name__versions__version__cleanup_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillCleanupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillCleanupResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cleanup Skill Version",
         "tags": [
           "skills"
         ]

@@ -30,6 +30,7 @@ from infrastructure.skill_catalog import FileSystemSkillCatalog
 from infrastructure.skill_lifecycle import (
     PostgresSkillActivationStore,
 )
+from infrastructure.skill_references import PostgresSkillReferenceChecker
 from infrastructure.telemetry import configure_observability
 from model_gateway import (
     GatewayConfig,
@@ -158,6 +159,8 @@ def create_app(
     app.state.qa_citation_service = qa_citation_service
     app.state.qa_execution_enabled = enable_qa_execution
     app.state.skill_catalog = skill_catalog
+    app.state.skill_registry = skill_registry
+    app.state.skill_reference_checker = PostgresSkillReferenceChecker(database)
     app.state.skill_lifecycle = skill_lifecycle
     app.state.organization_scope = PostgresKnowledgeOrganizationScope(database)
     app.state.approval_port = PostgresApprovalPort(database)

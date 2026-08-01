@@ -221,6 +221,23 @@ def test_pin_revalidation_detects_package_tampering(tmp_path: Path) -> None:
     assert package.content_sha256 == pin.content_sha256
 
 
+def test_cleanup_removes_only_matching_non_active_version(tmp_path: Path) -> None:
+    write_package(tmp_path, "installed-v1")
+    write_package(tmp_path, "installed-v2", data=manifest(version="2.0.0"))
+    registry = FileSystemSkillRegistry(tmp_path)
+    package = registry.register(registry.load("installed-v1"))
+    registry.register(registry.load("installed-v2"))
+    registry.activate("test_skill", "2.0.0")
+    with pytest.raises(SkillRegistryError) as captured:
+        registry.remove(
+            "test_skill", "2.0.0", content_sha256=registry.get("test_skill", "2.0.0").content_sha256
+        )
+    assert captured.value.code == SkillRegistryErrorCode.CLEANUP_BLOCKED
+    removed = registry.remove("test_skill", "1.0.0", content_sha256=package.content_sha256)
+    assert removed.content_sha256 == package.content_sha256
+    assert registry.versions("test_skill") == ("2.0.0",)
+
+
 def test_symbolic_link_package_is_rejected_when_supported(tmp_path: Path) -> None:
     write_package(tmp_path, "real")
     linked = tmp_path / "linked"

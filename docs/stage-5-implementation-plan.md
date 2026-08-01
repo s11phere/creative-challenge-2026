@@ -629,6 +629,12 @@ Registry 不提供旧版本删除 API；AgentRun/Checkpoint/审计引用查询�
 `158 passed, 22 skipped`，其中 21 个为未启用真实依赖的集成测试，1 个为 Windows 符号链接
 权限限制。
 
+**受控版本清理补充（2026-08-01）**：新增 PostgreSQL Skill 引用查询，覆盖 `qa_runs`、
+`runtime_runs` 和 `runtime_checkpoints` 的固定 name/version/digest。管理 API 只允许在目标版本非
+active、客户端摘要匹配且持久引用总数为零时，从当前进程 Registry 移除版本；有历史 Run 或
+checkpoint 引用时返回 `SKILL_CLEANUP_BLOCKED`。受信磁盘包不会由 HTTP 请求删除，部署文件清理
+仍属于受控运维操作。
+
 **持久 pointer 补充（2026-07-31）**：active pointer 已从纯进程状态提升为 PostgreSQL 事实源，
 revision CAS 保证并发激活/回滚不会静默覆盖。Registry reload 仍负责安装与摘要校验，数据库不会引入
 任意包位置。该改动关闭 active pointer 的进程重启恢复缺口，但不等同于通用 AgentRun/Checkpoint
@@ -653,8 +659,9 @@ revision CAS 保证并发激活/回滚不会静默覆盖。Registry reload 仍�
 **Provisional 验收（2026-07-31）**：Step 5～8 的可用子集已交付，见
 `docs/stage-5-acceptance.md`。后端、前端、迁移、QA persistence、Compose Worker 和三个知识整理
 入口均完成本地/隔离验证；安全矩阵覆盖受信包、权限、Space/版本、prompt injection 和日志边界。
-由于通用 Runtime Checkpoint、持久审批/派生写入、Skill 管理 Web、旧版本引用清理以及 Stage 3/4
-正式质量门禁仍未关闭，本步骤只记为 provisional 验收，不宣称阶段 5 退出。
+通用 Runtime Checkpoint、持久审批/派生写入、Skill 管理 Web 和旧版本引用清理的临时框架已闭环；
+由于 Stage 3/4 正式质量门禁和跨进程故障注入正式验收仍未关闭，本步骤只记为 provisional 验收，
+不宣称阶段 5 正式退出。
 
 ## 6. 执行依赖与状态
 

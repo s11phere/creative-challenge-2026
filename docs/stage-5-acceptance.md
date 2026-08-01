@@ -81,7 +81,7 @@ Citation 完成预览且写入副作用为 0。伪造版本和跨 Space 文档�
 | 三个知识整理 Skill | provisional 只读完成 | HTTP/Worker/契约可用；尚无专用 Web 工作流 |
 | 通用 AgentRun/Checkpoint PostgreSQL 持久化 | provisional 已完成 | 复用 `qa_runs.id` 的 Runtime 快照与 append-only checkpoint 已持久化；QA Worker 支持 checkpoint resume 与 lease-loss 取消，持久审批与跨进程故障注入验收仍未完成 |
 | 持久审批与派生知识幂等写入 | provisional 已完成 | PostgreSQL 审批/派生条目 Adapter 与幂等约束已验证；QA API 已提供申请/批准/拒绝和同一 Run resume 入口，正式权限认证与跨进程验收仍未完成 |
-| Skill 管理 Web 与旧版本受控清理 | 未完成 | 只有 Catalog 和 CAS API；无完整引用事实源时禁止删除旧包 |
+| Skill 管理 Web 与旧版本受控清理 | provisional 已完成 | Web/CAS 已存在；清理 API 校验 active、摘要及 QA/Runtime/Checkpoint 引用，只移除进程 Registry，不删除受信磁盘包 |
 | Stage 3/4 正式质量门禁 | 未完成 | 默认检索/回答配置、真实模型门禁和正式 holdout 未关闭 |
 | Stage 5 正式 Eval 与阶段退出 | 未执行 | 不使用 provisional/fake 结果替代正式质量结论 |
 
