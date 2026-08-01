@@ -108,6 +108,15 @@ class PostgresApprovalPort(ApprovalPort):
             approval.expires_at = expires_at if approved else None
         return True
 
+    async def status(self, approval_id: str) -> str | None:
+        try:
+            approval_uuid = UUID(approval_id)
+        except ValueError:
+            return None
+        async with self._database.session() as session:
+            approval = await session.get(RuntimeApprovalModel, approval_uuid)
+            return approval.status if approval is not None else None
+
 
 class PostgresDerivedKnowledgeStore:
     """Write citation-backed derived knowledge exactly once per Runtime action."""

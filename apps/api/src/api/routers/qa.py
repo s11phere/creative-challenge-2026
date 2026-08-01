@@ -9,6 +9,7 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from application.skills import OrganizationScopeError
+from domain.agent_runtime import AgentRunContext, ToolCallRecord, ToolPermission
 from domain.grounded_qa import CitationStatus, QAAttempt, QAEvent, QAStatus, normalize_question
 from domain.qa_persistence import (
     ConversationRecord,
@@ -96,9 +97,9 @@ class RunScopeResponse(BaseModel):
 
 
 class RunWriteResponse(BaseModel):
-    status: Literal["blocked"]
-    code: Literal["SKILL_WRITE_PORT_UNAVAILABLE"]
-    side_effects: Literal[0]
+    status: Literal["blocked", "persisted"]
+    code: str | None = None
+    side_effects: Literal[0, 1]
 
 
 class RunResponse(BaseModel):
@@ -127,6 +128,25 @@ class FeedbackResponse(BaseModel):
     run_id: UUID
     message_id: UUID
     review_status: str
+
+
+class ApprovalRequest(BaseModel):
+    tool_name: str = Field(min_length=1, max_length=255)
+    tool_version: str = Field(min_length=1, max_length=100)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class ApprovalDecisionRequest(BaseModel):
+    approved: bool
+    decided_by: str = Field(min_length=1, max_length=255)
+
+
+class ApprovalResponse(BaseModel):
+    approval_id: UUID
+    run_id: UUID
+    status: Literal["pending", "approved", "rejected"]
+    side_effects: Literal[0, 1] = 0
+    derived_knowledge_id: UUID | None = None
 
 
 class DocumentSkillRequest(BaseModel):
@@ -493,6 +513,116 @@ async def cancel_run(run_id: UUID, request: Request) -> RunResponse:
         raise HTTPException(status_code=404, detail="Run not found") from exc
     await events.append(run_id, QAEventType.CANCEL_REQUESTED, {"status": run.status.value})
     return _run_response(run)
+
+
+@router.post("/qa/runs/{run_id}/approvals", response_model=ApprovalResponse, status_code=201)
+async def request_approval(
+    run_id: UUID, body: ApprovalRequest, request: Request
+) -> ApprovalResponse:
+    repo, _events = _state(request)
+    run = await repo.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.versions.skill_name != "create_review_cards":
+        raise HTTPException(status_code=409, detail="This Run has no writable Skill action")
+    context = AgentRunContext(
+        run_id=run.run_id,
+        space_id=run.space_id,
+        skill_name=run.versions.skill_name,
+        skill_version=run.versions.skill_version,
+        skill_content_sha256=run.versions.skill_content_sha256 or "",
+        trace_id="api-approval",
+        caller_id=run.caller_id,
+        granted_permissions=frozenset({ToolPermission.WRITE_KNOWLEDGE}),
+    )
+    approval_id = await request.app.state.approval_port.request(
+        context,
+        ToolCallRecord(
+            tool_name=body.tool_name,
+            tool_version=body.tool_version,
+            permissions=frozenset({ToolPermission.WRITE_KNOWLEDGE}),
+            idempotency_key=body.idempotency_key,
+        ),
+    )
+    return ApprovalResponse(approval_id=UUID(approval_id), run_id=run_id, status="pending")
+
+
+@router.post(
+    "/qa/runs/{run_id}/approvals/{approval_id}/decision",
+    response_model=ApprovalResponse,
+)
+async def decide_approval(
+    run_id: UUID,
+    approval_id: UUID,
+    body: ApprovalDecisionRequest,
+    request: Request,
+) -> ApprovalResponse:
+    repo, _events = _state(request)
+    run = await repo.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    decided = await request.app.state.approval_port.decide(
+        str(approval_id), approved=body.approved, decided_by=body.decided_by
+    )
+    if not decided:
+        raise HTTPException(status_code=409, detail="Approval is missing or already decided")
+    derived_id = None
+    side_effects: Literal[0, 1] = 0
+    if (
+        body.approved
+        and run.versions.skill_name == "create_review_cards"
+        and run.result is not None
+    ):
+        content = {"text": run.result.answer.text} if run.result.answer is not None else {}
+        citations = (
+            tuple(str(citation.evidence_id) for citation in run.result.answer.citations)
+            if run.result.answer is not None
+            else ()
+        )
+        if citations:
+            derived = await request.app.state.derived_knowledge_store.write_review_cards(
+                run_id=run.run_id,
+                space_id=run.space_id,
+                created_by=body.decided_by,
+                idempotency_key=f"{approval_id}:derived",
+                content=content,
+                citation_ids=citations,
+            )
+            derived_id = derived.id
+            side_effects = 1
+    return ApprovalResponse(
+        approval_id=approval_id,
+        run_id=run_id,
+        status="approved" if body.approved else "rejected",
+        side_effects=side_effects,
+        derived_knowledge_id=derived_id,
+    )
+
+
+@router.post("/qa/runs/{run_id}/resume", response_model=RunResponse, status_code=202)
+async def resume_run(run_id: UUID, request: Request) -> RunResponse:
+    """Requeue one non-terminal QA Run through the existing Worker/SSE path."""
+    repo, events = _state(request)
+    run = await repo.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status in {
+        QAStatus.COMPLETED,
+        QAStatus.REFUSED,
+        QAStatus.FAILED,
+        QAStatus.CANCELLED,
+        QAStatus.TIMED_OUT,
+    }:
+        raise HTTPException(status_code=409, detail="Terminal Run cannot be resumed")
+    recovered = await request.app.state.qa_runtime.recover_one(run_id)
+    if not recovered:
+        raise HTTPException(
+            status_code=409, detail="Run is leased by another Worker or not recoverable"
+        )
+    await events.append(
+        run_id, QAEventType.ACCEPTED, {"status": QAStatus.QUEUED.value, "recovered": True}
+    )
+    return _run_response((await repo.get_run(run_id)) or run)
 
 
 @router.post("/qa/runs/{run_id}/feedback", response_model=FeedbackResponse, status_code=201)

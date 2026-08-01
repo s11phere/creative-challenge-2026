@@ -57,6 +57,16 @@ class QAWorkerDispatcher:
             self.start(run_id)
         return run_ids
 
+    async def recover_one(self, run_id: UUID) -> bool:
+        """Requeue a single recoverable Run without creating another identity."""
+        prepare = getattr(self._repository, "prepare_recovery", None)
+        if prepare is None:
+            return False
+        run_ids: tuple[UUID, ...] = await prepare()
+        if run_id not in run_ids:
+            return False
+        return self.start(run_id)
+
     def _enqueue(self, run_id: UUID) -> object:
         enqueuer = self._enqueuer
         if enqueuer is None:

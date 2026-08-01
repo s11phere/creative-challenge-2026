@@ -27,6 +27,106 @@
         "title": "AnswerResultResponse",
         "type": "object"
       },
+      "ApprovalDecisionRequest": {
+        "properties": {
+          "approved": {
+            "title": "Approved",
+            "type": "boolean"
+          },
+          "decided_by": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Decided By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approved",
+          "decided_by"
+        ],
+        "title": "ApprovalDecisionRequest",
+        "type": "object"
+      },
+      "ApprovalRequest": {
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "tool_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "tool_version": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Tool Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_name",
+          "tool_version",
+          "idempotency_key"
+        ],
+        "title": "ApprovalRequest",
+        "type": "object"
+      },
+      "ApprovalResponse": {
+        "properties": {
+          "approval_id": {
+            "format": "uuid",
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "derived_knowledge_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derived Knowledge Id"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "side_effects": {
+            "default": 0,
+            "enum": [
+              0,
+              1
+            ],
+            "title": "Side Effects",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "approved",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "run_id",
+          "status"
+        ],
+        "title": "ApprovalResponse",
+        "type": "object"
+      },
       "Body_upload_file_api_v1_spaces__space_id__sources__source_id__upload_post": {
         "properties": {
           "file": {
@@ -898,24 +998,35 @@
       "RunWriteResponse": {
         "properties": {
           "code": {
-            "const": "SKILL_WRITE_PORT_UNAVAILABLE",
-            "title": "Code",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
           },
           "side_effects": {
-            "const": 0,
+            "enum": [
+              0,
+              1
+            ],
             "title": "Side Effects",
             "type": "integer"
           },
           "status": {
-            "const": "blocked",
+            "enum": [
+              "blocked",
+              "persisted"
+            ],
             "title": "Status",
             "type": "string"
           }
         },
         "required": [
           "status",
-          "code",
           "side_effects"
         ],
         "title": "RunWriteResponse",
@@ -2207,6 +2318,116 @@
         "summary": "Get Run"
       }
     },
+    "/api/v1/qa/runs/{run_id}/approvals": {
+      "post": {
+        "operationId": "request_approval_api_v1_qa_runs__run_id__approvals_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Approval"
+      }
+    },
+    "/api/v1/qa/runs/{run_id}/approvals/{approval_id}/decision": {
+      "post": {
+        "operationId": "decide_approval_api_v1_qa_runs__run_id__approvals__approval_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Approval"
+      }
+    },
     "/api/v1/qa/runs/{run_id}/cancel": {
       "post": {
         "operationId": "cancel_run_api_v1_qa_runs__run_id__cancel_post",
@@ -2399,6 +2620,47 @@
           }
         },
         "summary": "Submit Feedback"
+      }
+    },
+    "/api/v1/qa/runs/{run_id}/resume": {
+      "post": {
+        "description": "Requeue one non-terminal QA Run through the existing Worker/SSE path.",
+        "operationId": "resume_run_api_v1_qa_runs__run_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Run"
       }
     },
     "/api/v1/skills": {

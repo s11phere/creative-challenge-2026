@@ -594,6 +594,12 @@ Runtime handler 和唯一 Grounded QA Application Port 执行，不新增平行 
 `create_review_cards` 已支持注入审批 Port 与 DerivedKnowledgeWriter；默认 QA Worker 仍保持预览模式，
 后续 API/SSE 步骤负责提供审批申请/决定入口。隔离 PostgreSQL 验证迁移、审批幂等和派生写入幂等。
 
+**QA API/SSE 控制入口（2026-08-01）**：现有 `/qa/runs/{run_id}/approvals` 与
+`/approvals/{approval_id}/decision` 提供持久审批申请和批准/拒绝；批准的复习卡结果通过
+`PostgresDerivedKnowledgeStore` 幂等写入。新增 `/qa/runs/{run_id}/resume` 只重新排队同一
+QA Run，并复用原有 Worker lease、checkpoint resume 和 `qa-sse-v1` 事件流；终态 Run、被其他
+Worker 持有的 Run 或不可恢复 Run 会被拒绝。
+
 ### 步骤 9：热加载、版本回滚与恢复兼容
 
 - 热加载只扫描 ADR-006 指定的受信目录，并在完整校验通过后注册新不可变版本。

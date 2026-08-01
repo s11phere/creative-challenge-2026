@@ -25,6 +25,7 @@ from infrastructure.parsers import MarkdownParser, PdfParser
 from infrastructure.qa import PostgresCitationTargetPort
 from infrastructure.qa_execution import knowledge_qa_registry
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
+from infrastructure.runtime_approval import PostgresApprovalPort, PostgresDerivedKnowledgeStore
 from infrastructure.skill_catalog import FileSystemSkillCatalog
 from infrastructure.skill_lifecycle import (
     PostgresSkillActivationStore,
@@ -159,6 +160,8 @@ def create_app(
     app.state.skill_catalog = skill_catalog
     app.state.skill_lifecycle = skill_lifecycle
     app.state.organization_scope = PostgresKnowledgeOrganizationScope(database)
+    app.state.approval_port = PostgresApprovalPort(database)
+    app.state.derived_knowledge_store = PostgresDerivedKnowledgeStore(database)
 
     app.add_middleware(TraceMiddleware)
     register_error_handlers(app)
