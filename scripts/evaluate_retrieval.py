@@ -38,6 +38,7 @@ from application.retrieval import (
 )
 from application.retrieval.evaluation import (
     EvidenceUnit,
+    GoldClaim,
     Locator,
     RetrievedChunk,
 )
@@ -353,8 +354,19 @@ def _load_cases(config: Mapping[str, Any], split: str) -> tuple[RetrievalEvaluat
                 source_key=item["source_key"],
                 source_version=item["source_version"],
                 locator=Locator.from_mapping(item["locator"]),
+                evidence_id=item.get("id"),
             )
             for item in raw["evidence"]
+        )
+        claims = tuple(
+            GoldClaim(
+                claim_id=claim["id"],
+                acceptable_evidence_sets=tuple(
+                    frozenset(evidence_set)
+                    for evidence_set in claim.get("acceptable_evidence_sets", ())
+                ),
+            )
+            for claim in raw.get("answer_claims", ())
         )
         expectations = raw.get("retrieval_expectations") or {}
         must_exclude = tuple(expectations.get("must_exclude", ()))
@@ -366,6 +378,7 @@ def _load_cases(config: Mapping[str, Any], split: str) -> tuple[RetrievalEvaluat
                 query=raw["question"],
                 gold_evidence=evidence,
                 must_exclude=must_exclude,
+                gold_claims=claims,
             )
         )
     return tuple(cases)
@@ -859,6 +872,7 @@ def _write_report(path: Path, bundle: Mapping[str, Any]) -> None:
                 f"- Split: `{report['selected_split']}`",
                 f"- Formal eligible: `{report['formal_run_eligible']}`",
                 f"- Evidence Recall@5: `{report['metrics']['evidence_recall_at_k']}`",
+                f"- Claim Recall@5: `{report['metrics']['claim_recall_at_k']}`",
                 f"- MRR: `{report['metrics']['mrr']}`",
                 f"- P95 latency (ms): `{report['metrics']['latency_p95_ms']}`",
                 f"- Failure rate: `{report['metrics']['failure_rate']}`",

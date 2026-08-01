@@ -60,6 +60,20 @@ class EvidenceUnit:
     source_key: str
     source_version: str
     locator: Locator
+    evidence_id: str | None = None
+
+
+@dataclass(frozen=True)
+class GoldClaim:
+    """One answerable claim with its acceptable OR/AND evidence sets.
+
+    ``acceptable_evidence_sets`` is a disjunction of conjunctions: a claim is
+    satisfied when *any one* evidence set is fully retrieved (every evidence ID
+    in a set appears in the matched set).
+    """
+
+    claim_id: str
+    acceptable_evidence_sets: tuple[frozenset[str], ...]
 
 
 @dataclass(frozen=True)
@@ -99,6 +113,10 @@ class CaseRetrievalMetrics:
     matched_evidence_count: int
     gold_evidence_count: int
     must_exclude_violations: tuple[str, ...]
+    claim_recall_at_k: float | None = None
+    matched_claim_count: int = 0
+    total_claim_count: int = 0
+    full_claim_coverage_at_k: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +131,7 @@ class AggregateRetrievalMetrics:
     latency_p50_ms: float | None
     latency_p95_ms: float | None
     failure_rate: float
+    claim_recall_at_k: float | None = None
 
 
 class EvaluationFailureCategory(StrEnum):
@@ -139,6 +158,7 @@ class RetrievalEvaluationCase:
     query: str
     gold_evidence: tuple[EvidenceUnit, ...]
     must_exclude: tuple[str, ...] = ()
+    gold_claims: tuple[GoldClaim, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -207,12 +227,17 @@ def evaluate_retrieval_case(
     *,
     k: int = 5,
     must_exclude: Sequence[str] = (),
+    gold_claims: Sequence[GoldClaim] = (),
 ) -> CaseRetrievalMetrics:
     """Score one ranked result list against independent evidence units.
 
     Evidence nDCG is the mean discounted first-hit rank of each evidence unit.
     This avoids counting overlapping Chunks repeatedly while allowing one Chunk
     to satisfy more than one independently annotated evidence unit.
+
+    When ``gold_claims`` is supplied, a claim-level recall is also computed:
+    a claim is satisfied when any one of its acceptable evidence sets is fully
+    covered by the matched evidence units.
     """
     if k < 1:
         raise ValueError("k must be at least 1")
@@ -260,6 +285,19 @@ def evaluate_retrieval_case(
     reciprocal_rank = 0.0 if first_relevant_rank is None else 1.0 / first_relevant_rank
     evidence_ndcg = sum(1.0 / math.log2(rank + 1) for rank in matched_ranks) / len(gold_evidence)
 
+    matched_evidence_ids = {
+        evidence.evidence_id
+        for evidence, rank in zip(gold_evidence, first_hit_ranks, strict=True)
+        if rank is not None and evidence.evidence_id is not None
+    }
+    matched_claims = sum(
+        1
+        for claim in gold_claims
+        if any(
+            evidence_set <= matched_evidence_ids for evidence_set in claim.acceptable_evidence_sets
+        )
+    )
+
     return CaseRetrievalMetrics(
         evidence_recall_at_k=recall,
         reciprocal_rank=reciprocal_rank,
@@ -268,6 +306,10 @@ def evaluate_retrieval_case(
         matched_evidence_count=matched_count,
         gold_evidence_count=len(gold_evidence),
         must_exclude_violations=violations,
+        claim_recall_at_k=(matched_claims / len(gold_claims) if gold_claims else None),
+        matched_claim_count=matched_claims,
+        total_claim_count=len(gold_claims),
+        full_claim_coverage_at_k=(matched_claims == len(gold_claims) if gold_claims else None),
     )
 
 
@@ -289,6 +331,8 @@ def aggregate_retrieval_metrics(
     if query_count < len(cases) or failure_count > query_count:
         raise ValueError("total_query_count is inconsistent with cases and failures")
 
+    claimed = [case for case in cases if case.total_claim_count > 0]
+
     return AggregateRetrievalMetrics(
         evidence_recall_at_k=(
             None
@@ -307,6 +351,12 @@ def aggregate_retrieval_metrics(
         latency_p50_ms=_percentile(latency_ms, 0.50),
         latency_p95_ms=_percentile(latency_ms, 0.95),
         failure_rate=0.0 if query_count == 0 else failure_count / query_count,
+        claim_recall_at_k=(
+            None
+            if not claimed
+            else sum(case.matched_claim_count for case in claimed)
+            / sum(case.total_claim_count for case in claimed)
+        ),
     )
 
 
@@ -326,6 +376,7 @@ async def run_retrieval_evaluation(
             observation.hits,
             k=k,
             must_exclude=case.must_exclude,
+            gold_claims=case.gold_claims,
         )
         failures = classify_retrieval_failure(
             case,
