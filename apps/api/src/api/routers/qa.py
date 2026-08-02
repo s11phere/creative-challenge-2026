@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -22,7 +23,7 @@ from domain.qa_persistence import (
     QARunRecord,
 )
 from domain.qa_sse import QAEventStore, QAEventType
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -115,6 +116,30 @@ class RunResponse(BaseModel):
     write: RunWriteResponse | None = None
     result: AnswerResultResponse | RefusalResultResponse | ConflictResultResponse | None = None
     citations: list[CitationResponse] = Field(default_factory=list)
+
+
+class ConversationMessageResponse(BaseModel):
+    message_id: UUID
+    role: MessageRole
+    content: str
+    run_id: UUID | None
+    created_at: datetime
+
+
+class ConversationHistoryItem(ConversationResponse):
+    created_at: datetime
+    updated_at: datetime
+    messages: list[ConversationMessageResponse]
+    runs: list[RunResponse]
+
+
+class ConversationHistoryResponse(BaseModel):
+    conversations: list[ConversationHistoryItem]
+
+
+class ConversationDeleteResponse(BaseModel):
+    conversation_id: UUID
+    status: Literal["deleted", "already_deleted"]
 
 
 class FeedbackRequest(BaseModel):
@@ -265,6 +290,78 @@ async def create_conversation(
     )
 
 
+@router.get(
+    "/spaces/{space_id}/conversations",
+    response_model=ConversationHistoryResponse,
+)
+async def list_conversations(
+    space_id: UUID,
+    request: Request,
+    owner_id: str = Query(default="local", min_length=1, max_length=128),
+) -> ConversationHistoryResponse:
+    repo, _ = _state(request)
+    conversations = await repo.list_conversations(space_id, owner_id)
+    history: list[ConversationHistoryItem] = []
+    for conversation in conversations:
+        messages = await repo.list_messages(conversation.conversation_id)
+        runs = await repo.list_runs(conversation.conversation_id)
+        last_activity = max(
+            [
+                conversation.updated_at,
+                *(message.created_at for message in messages),
+                *(run.updated_at for run in runs),
+            ]
+        )
+        history.append(
+            ConversationHistoryItem(
+                conversation_id=conversation.conversation_id,
+                space_id=conversation.space_id,
+                owner_id=conversation.owner_id,
+                created_at=conversation.created_at,
+                updated_at=last_activity,
+                messages=[
+                    ConversationMessageResponse(
+                        message_id=message.message_id,
+                        role=message.role,
+                        content=message.content,
+                        run_id=message.run_id,
+                        created_at=message.created_at,
+                    )
+                    for message in messages
+                ],
+                runs=[_run_response(run) for run in runs],
+            )
+        )
+    history.sort(key=lambda item: (item.updated_at, str(item.conversation_id)), reverse=True)
+    return ConversationHistoryResponse(conversations=history)
+
+
+@router.delete(
+    "/spaces/{space_id}/conversations/{conversation_id}",
+    response_model=ConversationDeleteResponse,
+)
+async def delete_conversation(
+    space_id: UUID,
+    conversation_id: UUID,
+    request: Request,
+    owner_id: str = Query(default="local", min_length=1, max_length=128),
+) -> ConversationDeleteResponse:
+    repo, _ = _state(request)
+    conversation = await repo.get_conversation(conversation_id)
+    if (
+        conversation is None
+        or conversation.space_id != space_id
+        or conversation.owner_id != owner_id
+    ):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    already_deleted = conversation.archived_at is not None
+    await repo.archive_conversation(conversation_id)
+    return ConversationDeleteResponse(
+        conversation_id=conversation_id,
+        status="already_deleted" if already_deleted else "deleted",
+    )
+
+
 @router.post(
     "/conversations/{conversation_id}/questions", response_model=RunResponse, status_code=202
 )
@@ -273,7 +370,7 @@ async def submit_question(
 ) -> RunResponse:
     repo, events = _state(request)
     conversation = await repo.get_conversation(conversation_id)
-    if conversation is None:
+    if conversation is None or conversation.archived_at is not None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     try:
         question = normalize_question(body.question)
@@ -416,7 +513,7 @@ async def create_review_cards(
 async def _conversation(request: Request, conversation_id: UUID) -> ConversationRecord:
     repo, _events = _state(request)
     conversation = await repo.get_conversation(conversation_id)
-    if conversation is None:
+    if conversation is None or conversation.archived_at is not None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conversation
 

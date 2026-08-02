@@ -125,6 +125,17 @@ export function fetchSourceDetail(sourceId: string, signal?: AbortSignal): Promi
   })
 }
 
+/** Tombstone a document and enqueue cleanup of its derived artifacts. */
+export function deleteDocument(
+  sourceId: string,
+  documentId: string,
+): Promise<{ document_id: string; status: 'deleted' | 'already_deleted'; task_id: string | null }> {
+  return apiFetch(
+    `/api/v1/spaces/${SPACE_ID}/sources/${sourceId}/documents/${documentId}`,
+    { method: 'DELETE' },
+  )
+}
+
 /** Create a browser-managed upload source. */
 export function createUploadSource(uri: string): Promise<CreateSourceResult> {
   return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources`, {

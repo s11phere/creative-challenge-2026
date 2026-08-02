@@ -8,6 +8,7 @@ import {
   LoaderCircle,
   RotateCcw,
   RefreshCw,
+  Trash2,
   XCircle,
   CheckCircle2,
   CircleAlert,
@@ -17,6 +18,7 @@ import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'rea
 import {
   cancelTask,
   createUploadSource,
+  deleteDocument,
   fetchSourceDetail,
   fetchSources,
   fetchTaskStatus,
@@ -322,6 +324,14 @@ function SourceCard({ source }: { source: SourceInfo }) {
     },
   })
 
+  const deleteDocumentMut = useMutation({
+    mutationFn: (documentId: string) => deleteDocument(source.id, documentId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['source', source.id] })
+      void queryClient.invalidateQueries({ queryKey: ['sources'] })
+    },
+  })
+
   const handleUpload = (e: FormEvent) => {
     e.preventDefault()
     if (selectedFile) uploadMut.mutate(selectedFile)
@@ -411,6 +421,13 @@ function SourceCard({ source }: { source: SourceInfo }) {
           {detailQuery.data && (
             <div className="doc-list">
               <h4>文档（{detailQuery.data.documents.length}）</h4>
+              {deleteDocumentMut.isError && (
+                <div className="upload-error" role="alert">
+                  删除文档失败：{deleteDocumentMut.error instanceof SourcesApiError
+                    ? deleteDocumentMut.error.message
+                    : String(deleteDocumentMut.error)}
+                </div>
+              )}
               {detailQuery.data.documents.map((doc) => (
                 <div className="doc-item" key={doc.id}>
                   <span className="doc-key" title={`稳定键：${doc.stable_key}`}>
@@ -419,6 +436,24 @@ function SourceCard({ source }: { source: SourceInfo }) {
                   <span className={`doc-status ${doc.status}`}>
                     {documentStatusLabels[doc.status] ?? doc.status}
                   </span>
+                  {doc.status !== 'deleted' && (
+                    <button
+                      type="button"
+                      className="doc-delete-button"
+                      aria-label={`删除文档：${doc.display_name}`}
+                      title="删除文档"
+                      disabled={deleteDocumentMut.isPending && deleteDocumentMut.variables === doc.id}
+                      onClick={() => {
+                        if (window.confirm(`删除文档“${doc.display_name}”？`)) {
+                          deleteDocumentMut.mutate(doc.id)
+                        }
+                      }}
+                    >
+                      {deleteDocumentMut.isPending && deleteDocumentMut.variables === doc.id
+                        ? <LoaderCircle className="spin" size={15} aria-hidden="true" />
+                        : <Trash2 size={15} aria-hidden="true" />}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

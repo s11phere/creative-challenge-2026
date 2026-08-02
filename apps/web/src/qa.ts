@@ -9,6 +9,14 @@ export type Conversation = {
   owner_id: string
 }
 
+export type ConversationMessage = {
+  message_id: string
+  role: 'user' | 'assistant'
+  content: string
+  run_id: string | null
+  created_at: string
+}
+
 export type QARun = {
   run_id: string
   attempt_id: string
@@ -46,6 +54,17 @@ export type QARun = {
     chunk_id: string
     locator: { kind: string; start: number; end: number }
   }>
+}
+
+export type ConversationHistoryItem = Conversation & {
+  created_at: string
+  updated_at: string
+  messages: ConversationMessage[]
+  runs: QARun[]
+}
+
+export type ConversationHistory = {
+  conversations: ConversationHistoryItem[]
 }
 
 export type SkillSummary = {
@@ -139,6 +158,22 @@ export function submitQuestion(
 
 export function fetchRun(runId: string, signal?: AbortSignal): Promise<QARun> {
   return request(`/api/v1/qa/runs/${runId}`, { signal })
+}
+
+export function fetchConversationHistory(signal?: AbortSignal): Promise<ConversationHistory> {
+  return request(
+    `/api/v1/spaces/${DEFAULT_SPACE_ID}/conversations?owner_id=${encodeURIComponent('local')}`,
+    { signal },
+  )
+}
+
+export function deleteConversation(
+  conversationId: string,
+): Promise<{ conversation_id: string; status: 'deleted' | 'already_deleted' }> {
+  return request(
+    `/api/v1/spaces/${DEFAULT_SPACE_ID}/conversations/${conversationId}?owner_id=${encodeURIComponent('local')}`,
+    { method: 'DELETE' },
+  )
 }
 
 export function createReviewCards(

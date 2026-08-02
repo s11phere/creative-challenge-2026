@@ -22,6 +22,7 @@ function renderPanel() {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -326,5 +327,55 @@ describe('SourcesPanel task controls', () => {
 
     expect(await screen.findByText(`文件已登记，哈希 ${hash}`)).toBeInTheDocument()
     expect(screen.queryByText(/86386fb5317e…/)).not.toBeInTheDocument()
+  })
+
+  it('deletes a document through the source detail action', async () => {
+    let deleted = false
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/sources')) {
+        return Promise.resolve(jsonResponse({
+          sources: [{
+            id: 'source-1',
+            space_id: 'space-1',
+            source_type: 'upload',
+            uri: 'fixture://test',
+            created_at: '2026-01-01T00:00:00Z',
+          }],
+        }))
+      }
+      if (url.endsWith('/documents/doc-1') && init?.method === 'DELETE') {
+        deleted = true
+        return Promise.resolve(jsonResponse({
+          document_id: 'doc-1', status: 'deleted', task_id: 'delete-task',
+        }))
+      }
+      if (url.endsWith('/detail')) {
+        return Promise.resolve(jsonResponse({
+          source: {
+            id: 'source-1', space_id: 'space-1', source_type: 'upload',
+            uri: 'fixture://test', created_at: '2026-01-01T00:00:00Z',
+          },
+          documents: [{
+            id: 'doc-1', stable_key: 'notes.md', display_name: 'notes.md',
+            current_version_id: deleted ? null : 'version-1',
+            status: deleted ? 'deleted' : 'available',
+            created_at: '2026-01-01T00:00:00Z',
+          }],
+        }))
+      }
+      return Promise.resolve(jsonResponse({ sources: [] }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderPanel()
+    fireEvent.click(await screen.findByText('fixture://test'))
+    const deleteButton = await screen.findByRole('button', { name: '删除文档：notes.md' })
+    fireEvent.click(deleteButton)
+
+    await waitFor(() => expect(deleted).toBe(true))
+    expect(await screen.findByText('已删除')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '删除文档：notes.md' })).not.toBeInTheDocument()
   })
 })

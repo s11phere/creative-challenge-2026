@@ -4,6 +4,7 @@ Modules in this package wire together domain entities, repository ports, and
 infrastructure adapters to deliver complete ingestion workflows.
 """
 
+from .deletion import DocumentDeletionService
 from .embedding import EmbeddingConfig, EmbeddingPipelineResult, EmbeddingService
 from .orchestrator import (
     CancelledError,
@@ -20,6 +21,7 @@ from .source_registration import RegisteredSource, RegistrationResult, SourceReg
 
 __all__ = [
     "CancelledError",
+    "DocumentDeletionService",
     "EmbeddingConfig",
     "EmbeddingPipelineResult",
     "EmbeddingService",

@@ -76,6 +76,17 @@ async def test_provisional_qa_api_creates_run_cancels_and_replays_events() -> No
         assert submitted.json()["skill"]["version"] == "0.1.0"
         assert len(submitted.json()["skill"]["content_sha256"]) == 64
 
+        history = await client.get(
+            "/api/v1/spaces/00000000-0000-0000-0000-000000000001/conversations",
+            params={"owner_id": "local-user"},
+        )
+        assert history.status_code == 200
+        assert len(history.json()["conversations"]) == 1
+        assert history.json()["conversations"][0]["messages"][0]["content"] == (
+            "What is supported?"
+        )
+        assert history.json()["conversations"][0]["runs"][0]["run_id"] == str(run_id)
+
         replayed_submission = await client.post(
             f"/api/v1/conversations/{conversation_id}/questions",
             json={"question": "What is supported?", "idempotency_key": "question-1"},
@@ -298,3 +309,39 @@ async def test_knowledge_agent_uses_the_shared_qa_run_and_fixed_skill_identity()
         "document_ids": [],
         "version_ids": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_conversation_history_can_be_archived_by_owner() -> None:
+    app = create_app(
+        model_gateway=FakeModelGateway(),
+        enable_qa_execution=False,
+        qa_repository=InMemoryGroundedQARepository(),
+        qa_event_store=QAEventLog(),
+        skill_activation_store=InMemorySkillActivationStore(),
+    )
+    space_id = UUID(int=40)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            f"/api/v1/spaces/{space_id}/conversations",
+            json={"owner_id": "local-user"},
+        )
+        conversation_id = created.json()["conversation_id"]
+        deleted = await client.delete(
+            f"/api/v1/spaces/{space_id}/conversations/{conversation_id}",
+            params={"owner_id": "local-user"},
+        )
+        repeated = await client.delete(
+            f"/api/v1/spaces/{space_id}/conversations/{conversation_id}",
+            params={"owner_id": "local-user"},
+        )
+        history = await client.get(
+            f"/api/v1/spaces/{space_id}/conversations",
+            params={"owner_id": "local-user"},
+        )
+
+    assert deleted.status_code == 200
+    assert deleted.json() == {"conversation_id": conversation_id, "status": "deleted"}
+    assert repeated.status_code == 200
+    assert repeated.json()["status"] == "already_deleted"
+    assert history.json() == {"conversations": []}

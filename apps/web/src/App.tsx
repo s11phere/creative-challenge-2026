@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   Bot,
@@ -14,10 +14,12 @@ import {
   RefreshCw,
   Server,
   ShieldCheck,
+  Trash2,
   WifiOff,
+  Plus,
   type LucideIcon,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   fetchHealthSnapshot,
   healthApiLabel,
@@ -28,6 +30,7 @@ import {
 import { SourcesPanel } from './SourcesPanel'
 import { SkillsPanel } from './SkillsPanel'
 import { QAWorkspace } from './QAWorkspace'
+import { deleteConversation, fetchConversationHistory, type ConversationHistoryItem } from './qa'
 import './App.css'
 
 type ServiceState = 'available' | 'unavailable' | 'checking'
@@ -128,6 +131,27 @@ function formatCheckTime(timestamp: number | undefined): string {
   }).format(timestamp)
 }
 
+function formatConversationTime(timestamp: string): string {
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return '时间未知'
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
+}
+
+function latestQuestion(conversation: ConversationHistoryItem): string {
+  const questions = conversation.messages.filter((message) => message.role === 'user')
+  return questions.at(-1)?.content.trim() || '新会话'
+}
+
+function questionCount(conversation: ConversationHistoryItem): number {
+  return conversation.messages.filter((message) => message.role === 'user').length
+}
+
 function App() {
   const [activeView, setActiveView] = useState<WorkspaceView>(() => {
     if (window.location.hash === '#sources') return 'sources'
@@ -135,6 +159,21 @@ function App() {
     if (window.location.hash === '#qa') return 'qa'
     return 'status'
   })
+  const [qaConversationId, setQaConversationId] = useState<string | null>(null)
+  const [sidebarWidth, setSidebarWidth] = useState(232)
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false)
+  const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const queryClient = useQueryClient()
+
+  useEffect(() => {
+    if (activeView !== 'qa') return
+    document.documentElement.classList.add('qa-scroll-locked')
+    document.body.classList.add('qa-scroll-locked')
+    return () => {
+      document.documentElement.classList.remove('qa-scroll-locked')
+      document.body.classList.remove('qa-scroll-locked')
+    }
+  }, [activeView])
   const healthQuery = useQuery<HealthSnapshot, HealthApiError>({
     queryKey: ['system-health'],
     queryFn: ({ signal }) => fetchHealthSnapshot(signal),
@@ -143,6 +182,19 @@ function App() {
     staleTime: 10_000,
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
+  })
+  const qaHistoryQuery = useQuery({
+    queryKey: ['qa-history'],
+    queryFn: ({ signal }) => fetchConversationHistory(signal),
+    enabled: activeView === 'qa',
+    retry: false,
+  })
+  const deleteConversationMutation = useMutation({
+    mutationFn: deleteConversation,
+    onSuccess: (_result, conversationId) => {
+      if (qaConversationId === conversationId) setQaConversationId(null)
+      void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
+    },
   })
 
   const rows = serviceRows(healthQuery.data)
@@ -157,8 +209,32 @@ function App() {
     window.history.replaceState(null, '', hash)
   }
 
+  const beginSidebarResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    sidebarResizeRef.current = { startX: event.clientX, startWidth: sidebarWidth }
+    setIsResizingSidebar(true)
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const resizeSidebar = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = sidebarResizeRef.current
+    if (!start) return
+    const nextWidth = Math.min(380, Math.max(210, start.startWidth + event.clientX - start.startX))
+    setSidebarWidth(nextWidth)
+  }
+
+  const endSidebarResize = () => {
+    sidebarResizeRef.current = null
+    setIsResizingSidebar(false)
+  }
+
+  const history = Array.isArray(qaHistoryQuery.data?.conversations)
+    ? qaHistoryQuery.data.conversations
+    : []
+  const shellStyle = { '--sidebar-width': `${sidebarWidth}px` } as CSSProperties
+
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-resizing={isResizingSidebar} data-view={activeView} style={shellStyle}>
       <aside className="sidebar" aria-label="主导航">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
@@ -170,7 +246,7 @@ function App() {
           </div>
         </div>
 
-        <nav className="sidebar-nav">
+        <nav className="sidebar-nav sidebar-primary-nav">
           <a
             href="#qa"
             aria-current={activeView === 'qa' ? 'page' : undefined}
@@ -182,6 +258,67 @@ function App() {
             <MessageSquareText size={18} />
             知识问答
           </a>
+        </nav>
+
+        <section className="sidebar-history" aria-labelledby="sidebar-history-title">
+          <div className="sidebar-history-heading">
+            <h2 id="sidebar-history-title">对话历史</h2>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="新建会话"
+              title="新建会话"
+              onClick={() => {
+                setQaConversationId(null)
+                showView('qa')
+              }}
+            >
+              <Plus size={17} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="sidebar-history-list">
+            {history.length > 0 ? history.map((conversation) => (
+              <div
+                className="sidebar-history-item"
+                data-selected={qaConversationId === conversation.conversation_id}
+                key={conversation.conversation_id}
+              >
+                <button
+                  className="sidebar-history-select"
+                  type="button"
+                  onClick={() => {
+                    setQaConversationId(conversation.conversation_id)
+                    showView('qa')
+                  }}
+                >
+                  <span className="sidebar-history-time">{formatConversationTime(conversation.updated_at)}</span>
+                  <strong>{latestQuestion(conversation)}</strong>
+                  <span>{questionCount(conversation)} 个问题</span>
+                </button>
+                <button
+                  className="sidebar-history-delete"
+                  type="button"
+                  aria-label={`删除会话：${latestQuestion(conversation)}`}
+                  title="删除会话"
+                  disabled={deleteConversationMutation.isPending && deleteConversationMutation.variables === conversation.conversation_id}
+                  onClick={() => {
+                    if (window.confirm('删除这条会话历史？会话内容将从历史列表中移除。')) {
+                      deleteConversationMutation.mutate(conversation.conversation_id)
+                    }
+                  }}
+                >
+                  {deleteConversationMutation.isPending && deleteConversationMutation.variables === conversation.conversation_id
+                    ? <LoaderCircle className="spin" size={14} aria-hidden="true" />
+                    : <Trash2 size={14} aria-hidden="true" />}
+                </button>
+              </div>
+            )) : (
+              <div className="sidebar-history-empty">暂无对话</div>
+            )}
+          </div>
+        </section>
+
+        <nav className="sidebar-nav sidebar-secondary-nav">
           <a
             href="#system-status"
             aria-current={activeView === 'status' ? 'page' : undefined}
@@ -225,6 +362,21 @@ function App() {
           </div>
         </div>
       </aside>
+
+      <div
+        className="sidebar-resizer"
+        role="separator"
+        aria-label="调整侧栏宽度"
+        aria-orientation="vertical"
+        aria-valuemin={210}
+        aria-valuemax={380}
+        aria-valuenow={sidebarWidth}
+        tabIndex={0}
+        onPointerDown={beginSidebarResize}
+        onPointerMove={resizeSidebar}
+        onPointerUp={endSidebarResize}
+        onPointerCancel={endSidebarResize}
+      />
 
       <main
         className={`workspace ${activeView === 'qa' ? 'workspace-qa' : ''}`}
@@ -387,7 +539,10 @@ function App() {
         ) : activeView === 'skills' ? (
           <SkillsPanel />
         ) : (
-          <QAWorkspace />
+          <QAWorkspace
+            selectedConversationId={qaConversationId}
+            onConversationSelected={setQaConversationId}
+          />
         )}
       </main>
     </div>

@@ -38,6 +38,11 @@ body {
   margin: 0;
 }
 
+html.qa-scroll-locked,
+body.qa-scroll-locked {
+  overflow: hidden;
+}
+
 button,
 input,
 textarea,

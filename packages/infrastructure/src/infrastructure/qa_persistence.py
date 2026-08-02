@@ -105,6 +105,33 @@ class PostgresGroundedQARepository:
             model = await session.get(ConversationModel, conversation_id)
             return _conversation(model) if model is not None else None
 
+    async def list_conversations(
+        self, space_id: UUID, owner_id: str
+    ) -> tuple[ConversationRecord, ...]:
+        async with self._database.session() as session:
+            models = (
+                await session.execute(
+                    select(ConversationModel)
+                    .where(
+                        ConversationModel.space_id == space_id,
+                        ConversationModel.owner_id == owner_id,
+                        ConversationModel.archived_at.is_(None),
+                    )
+                    .order_by(ConversationModel.updated_at.desc(), ConversationModel.id.desc())
+                )
+            ).scalars()
+            return tuple(_conversation(model) for model in models)
+
+    async def archive_conversation(self, conversation_id: UUID) -> ConversationRecord | None:
+        async with self._database.transaction() as session:
+            model = await session.get(ConversationModel, conversation_id)
+            if model is None:
+                return None
+            if model.archived_at is None:
+                model.archived_at = datetime.now(UTC)
+                await session.flush()
+            return _conversation(model)
+
     async def append_message(self, message: MessageRecord) -> MessageRecord:
         if message.role is not MessageRole.USER:
             raise QAContractError("Assistant messages require atomic terminal publication")
@@ -127,6 +154,8 @@ class PostgresGroundedQARepository:
                         return record
                     raise QAContractError("Message idempotency key has conflicting content")
             session.add(_message_model(message))
+            if message.created_at > conversation.updated_at:
+                conversation.updated_at = message.created_at
         return message
 
     async def get_message(self, message_id: UUID) -> MessageRecord | None:
@@ -227,6 +256,24 @@ class PostgresGroundedQARepository:
                 return None
             attempt = await self._latest_attempt(session, run_id)
             return _run(base, attempt) if attempt is not None else None
+
+    async def list_runs(self, conversation_id: UUID) -> tuple[QARunRecord, ...]:
+        async with self._database.session() as session:
+            if await session.get(ConversationModel, conversation_id) is None:
+                raise QAContractError("Conversation does not exist")
+            models = (
+                await session.execute(
+                    select(QARunModel)
+                    .where(QARunModel.conversation_id == conversation_id)
+                    .order_by(QARunModel.created_at, QARunModel.id)
+                )
+            ).scalars()
+            runs: list[QARunRecord] = []
+            for model in models:
+                attempt = await self._latest_attempt(session, model.id)
+                if attempt is not None:
+                    runs.append(_run(model, attempt))
+            return tuple(runs)
 
     async def transition_run(
         self, run_id: UUID, event: QAEvent, *, error_code: str | None = None
