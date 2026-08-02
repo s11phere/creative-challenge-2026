@@ -9,16 +9,24 @@ TEI（Text Embeddings Inference）服务需要加载 embedding 模型。
 | 服务 | 模型 | HuggingFace ID | 大小 |
 |------|------|----------------|------|
 | Embedding | Qwen3-Embedding-0.6B | `Qwen/Qwen3-Embedding-0.6B` | ~400 MB |
+| Reranker | bge-reranker-v2-m3 | `BAAI/bge-reranker-v2-m3` | ~2.2 GB |
 
 ## 方式一：自动下载（默认，推荐）
 
 TEI 容器首次启动时自动从 HuggingFace Hub 下载模型，后续启动使用 Docker 层面缓存。
-无需手动操作。
+无需手动操作。embedding 与 reranker 是两个独立 TEI 服务，分别由 `embedding` / `reranker` profile 控制：
 
 ```bash
+# 只起 embedding
 docker compose -f deploy/compose.yaml --env-file .env \
   --profile embedding up --build --detach --wait
+
+# 两个都起（embedding + reranker）
+docker compose -f deploy/compose.yaml --env-file .env \
+  --profile embedding --profile reranker up --build --detach --wait
 ```
+
+CPU 主机用 `compose.cpu.yaml` 覆盖（同样加两个 profile）。
 
 ## 方式二：镜像源加速（中国用户）
 
@@ -116,4 +124,21 @@ curl http://localhost:8080/embed \
   -X POST \
   -H "Content-Type: application/json" \
   -d '{"inputs": "测试文本", "normalize": true}'
+```
+
+### 验证 reranker
+
+reranker 服务默认端口 `8081`：
+
+```bash
+curl http://localhost:8081/health
+```
+
+预期返回 `OK`。测试 rerank：
+
+```bash
+curl http://localhost:8081/rerank \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"query": "决策树", "texts": ["剪枝", "线性回归"]}'
 ```
