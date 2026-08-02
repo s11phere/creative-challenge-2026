@@ -516,15 +516,18 @@ async def test_knowledge_agent_calls_grounded_qa_for_the_existing_run() -> None:
 
     assert result.run.status is RunStatus.COMPLETED
     assert result.run.usage.tool_calls == 1
-    assert result.run.usage.input_tokens == 6
-    assert result.run.usage.output_tokens == 4
-    assert result.output == {"action": "complete", "reason": "Grounded QA completed."}
+    assert result.run.usage.input_tokens == 3
+    assert result.run.usage.output_tokens == 2
+    assert result.output == {
+        "action": "complete",
+        "reason": "Terminal Tool grounded_qa completed.",
+    }
     assert qa.questions == []
     assert qa.conversations == []
     assert qa.executed_run_ids == [RUN_ID]
     assert qa.run.versions.skill_name == "knowledge_agent"
     assert qa.run.versions.skill_version == "0.1.0"
-    assert len(gateway.responses) == 0
+    assert len(gateway.responses) == 1
 
 
 def test_provisional_package_is_bulk_installed_but_activation_is_explicit() -> None:

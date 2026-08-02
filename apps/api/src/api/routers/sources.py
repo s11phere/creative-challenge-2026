@@ -306,15 +306,15 @@ async def get_source_detail(
             )
 
     return SourceDetailResponse(
-            source=SourceItem(
-                id=str(source.id),
-                space_id=str(source.space_id),
-                source_type=source.source_type.value,
-                uri=source.uri,
-                created_at=source.created_at.isoformat(),
-            ),
-            documents=document_items,
-        )
+        source=SourceItem(
+            id=str(source.id),
+            space_id=str(source.space_id),
+            source_type=source.source_type.value,
+            uri=source.uri,
+            created_at=source.created_at.isoformat(),
+        ),
+        documents=document_items,
+    )
 
 
 @router.delete(

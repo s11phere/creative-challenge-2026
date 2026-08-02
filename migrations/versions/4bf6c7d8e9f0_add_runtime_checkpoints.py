@@ -31,8 +31,18 @@ def upgrade() -> None:
         sa.Column("current_step", sa.String(32), nullable=True),
         sa.Column("checkpoint_sequence", sa.Integer, nullable=False, server_default="0"),
         sa.Column("last_error", postgresql.JSONB, nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+        ),
         sa.ForeignKeyConstraint(["run_id"], ["qa_runs.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["space_id"], ["spaces.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("run_id"),
@@ -53,12 +63,19 @@ def upgrade() -> None:
         sa.Column("next_step", sa.String(32), nullable=False),
         sa.Column("next_node", sa.String(255), nullable=False),
         sa.Column("verified", sa.Boolean, nullable=False, server_default=sa.true()),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+        ),
         sa.ForeignKeyConstraint(["run_id"], ["runtime_runs.run_id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("run_id", "sequence"),
         sa.CheckConstraint("sequence >= 1", name="ck_runtime_checkpoints_sequence_positive"),
         sa.CheckConstraint("schema_version >= 1", name="ck_runtime_checkpoints_schema_positive"),
-        sa.CheckConstraint("char_length(state_sha256) = 64", name="ck_runtime_checkpoints_state_sha256"),
+        sa.CheckConstraint(
+            "char_length(state_sha256) = 64", name="ck_runtime_checkpoints_state_sha256"
+        ),
     )
 
 

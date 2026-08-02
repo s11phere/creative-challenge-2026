@@ -19,7 +19,7 @@ dataset:
       content_sha256: ec56aa778587f0b66b78a2aa2d55dad04e187930f1b75423bb42b5d31a077b28
 profile:
   path: cases/evals/configs/qa-profile-v1.yaml
-  sha256: 3dc3f39ccda55ffa094f133d203c0a1343bd2bb196efc942aa277c2073dc67bc
+  sha256: f5fa98807d3b69b4b873c9fcdad40dfcf70cbd5c976f69de83847d36f73805a0
 prompt:
   path: cases/evals/prompts/grounded-qa-v1-provisional.txt
   sha256: a05344c70c2b56fddd3d575f5a452260a4d981c18c9e0975652d3494611d74a8
