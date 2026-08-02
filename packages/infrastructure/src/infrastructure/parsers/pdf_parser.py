@@ -38,7 +38,11 @@ _GAP_PARAGRAPH = 8.0  # vertical gap above this starts a new paragraph
 _INDENT_LIST_MATCH = 6.0  # list continuation lines share indentation
 
 _BULLET_PREFIX = ("•", "-", "–", "—", "·", "▪", "◦")
-_LIST_DIGIT_RE = __import__("re").compile(r"^\s*\d+(?:\.\d+)?[.)]\s+")
+# Numbered list items (1. / 1) ) AND pseudocode statements (1: / 2: ).  The
+# colon form is common in algorithm blocks; matching it lets each pseudo
+# statement become its own LIST_ITEM instead of fusing into one giant
+# paragraph that overwhelms embeddings.
+_LIST_DIGIT_RE = __import__("re").compile(r"^\s*\d+(?:\.\d+)*[:.)]\s+")
 
 
 @dataclass(frozen=True)
@@ -59,21 +63,29 @@ class _VisualLine:
 _Span = dict[str, Any]
 
 
-def _iter_spans(page: fitz.Page) -> list[_Span]:
-    """Collect every text span on *page* via ``get_text("dict")``."""
-    spans: list[_Span] = []
+def _iter_blocks(page: fitz.Page) -> list[list[_Span]]:
+    """Collect text spans grouped by PyMuPDF text block.
+
+    Preserving block boundaries keeps two-column layouts intact: each column
+    is its own block, so spans from different columns are never interleaved
+    into the same visual line (which would scramble reading order).
+    """
+    blocks: list[list[_Span]] = []
     try:
         data = page.get_text("dict")
     except Exception:
-        return spans
+        return blocks
     for block in data.get("blocks", []):
         if block.get("type") != 0:  # 0 = text block
             continue
+        spans: list[_Span] = []
         for line in block.get("lines", []):
             for span in line.get("spans", []):
                 if span.get("text"):
                     spans.append(span)
-    return spans
+        if spans:
+            blocks.append(spans)
+    return blocks
 
 
 def _line_y(span: _Span) -> float:
@@ -134,27 +146,31 @@ def _assemble_line(spans: list[_Span], y0: float, y1: float, page_no: int) -> _V
 
 
 def _page_visual_lines(page: fitz.Page, page_no: int) -> list[_VisualLine]:
-    """Reconstruct all visual lines on *page* in reading order."""
-    spans = _iter_spans(page)
-    if not spans:
+    """Reconstruct all visual lines on *page* in reading order.
+
+    Each PyMuPDF text block is processed independently (block boundaries
+    preserve two-column layouts), then blocks are ordered by top-left corner.
+    """
+    blocks = _iter_blocks(page)
+    if not blocks:
         return []
 
-    # Group spans into y-bands, then assemble each band as a visual line.
-    spans.sort(key=_line_y)
-    bands: list[list[_Span]] = [[spans[0]]]
-    for span in spans[1:]:
-        if abs(_line_y(span) - _line_y(bands[-1][0])) <= _Y_EPS:
-            bands[-1].append(span)
-        else:
-            bands.append([span])
-
     lines: list[_VisualLine] = []
-    for band in bands:
-        y0 = min(s["bbox"][1] for s in band)
-        y1 = max(s["bbox"][3] for s in band)
-        line = _assemble_line(band, y0, y1, page_no)
-        if line.text:
-            lines.append(line)
+    for block in blocks:
+        # Group the block's spans into y-bands (baseline groups).
+        block = sorted(block, key=_line_y)
+        bands: list[list[_Span]] = [[block[0]]]
+        for span in block[1:]:
+            if abs(_line_y(span) - _line_y(bands[-1][0])) <= _Y_EPS:
+                bands[-1].append(span)
+            else:
+                bands.append([span])
+        for band in bands:
+            y0 = min(s["bbox"][1] for s in band)
+            y1 = max(s["bbox"][3] for s in band)
+            line = _assemble_line(band, y0, y1, page_no)
+            if line.text:
+                lines.append(line)
     return lines
 
 
@@ -253,7 +269,8 @@ def _page_nodes(
             i = j
             continue
 
-        # paragraph: gather consecutive lines with small inter-line gaps
+        # paragraph: gather consecutive lines with small inter-line gaps.
+        # Break when the gap is too LARGE (real paragraph break).
         texts = [line.text]
         j = i + 1
         while j < len(lines):
@@ -315,10 +332,10 @@ class PdfParser:
             for page in reader:
                 page_no = page.number + 1
                 try:
-                    spans = _iter_spans(page)
+                    blocks = _iter_blocks(page)
                     lines = _page_visual_lines(page, page_no)
                 except Exception:
-                    spans, lines = [], []
+                    blocks, lines = [], []
                     page_text = page.get_text("text") or ""
                     if page_text.strip():
                         text_lines.append(page_text)
@@ -332,7 +349,7 @@ class PdfParser:
                 # Running body estimate across the whole document: heading-only
                 # pages (TOC, cover) still classify correctly because earlier
                 # body pages anchor the body size.
-                _accumulate_sizes(size_counts, spans)
+                _accumulate_sizes(size_counts, [s for block in blocks for s in block])
                 body = _body_size_from_counts(size_counts)
                 nodes = _page_nodes(
                     lines,

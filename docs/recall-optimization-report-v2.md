@@ -1,7 +1,7 @@
 # Recall 优化实验报告 v2
 
 > 分支：`dev/recall-optimization` ｜ 基线：`tmp/retrieval-eval-baseline.json`（commit `cde331c`）
-> 门禁：Recall@5 ≥ 85% ｜ **基线 58.6% → v0 实测最优 61.9% → v1 实测 60.2%/61.9% → v1+k10 72.5% → 修 PDF 提取 73.8%（cs512）**
+> 门禁：Recall@5 ≥ 85% ｜ **基线 58.6% → v0 实测最优 61.9% → v1 实测 60.2%/61.9% → v1+k10 72.5% → 修 PDF 提取 73.8%（段落chunk）→ 多栏修复 75.8%**
 
 **TL;DR**：v1 报告宣称丢弃 TOC 段达 90.48%，已被判定为虚假（破坏 PDF 结构，`3b97c5f` 回退）。v2 独立重查，根因是**正确 chunk 被 dense 排名压到池内 6–30 位**（不是 TOC）。候选方向全部实测收口，v0 最优 61.9%。接入同学修订的 **v1 数据集 + claim 级评分**后，**Oracle 天花板 94.3%，85% 目标舒适可达**。**§七 门禁放宽到 Recall@10**：recall@k 曲线 k=5 61.9% → k=10 **72.5%**（正式 gate 验证）→ k=15 74.1%（饱和），k=5 截断白白丢失 ~12pp。
 
@@ -232,7 +232,27 @@ cs1536 在 dev 上 +0.9pp claim / +2.5pp evid，但 holdout 上 −0.9pp / −1.
 - **`chunking.py` / `orchestrator.py` / `structure_chunker.py`**：新增 `max_segment_size=4096`；`_group_segments` 只用它切病态超长 segment，段落绝不为凑 `chunk_size` 硬切；config hash 纳入新字段。
 - **`evaluate_retrieval.py`**：恢复 `--chunk-size` 实验参数（`IngestionConfig.chunk_size` 透传）。
 - **测试**：+9 PDF 结构测试（heading/段落/list/公式 span 顺序/跨页 body 锚定）、+2 chunker 段落原子性测试、config-hash 新字段测试。525 passed，ruff/mypy 全过。
-- **保留**：`version_or_conflict`（0.765→0.882）与 `bilingual`（0.594→0.656）是段落到单元的直接收益；`code_and_nl`（0.909→0.758）与 `cross_document`（0.746→0.718）小幅回落，待查是否 chunk 变少后的配额效应。
+- **保留**：`version_or_conflict`（0.765→0.882）与 `bilingual`（0.594→0.656）是段落到单元的直接收益。`code_and_nl` 曾回落（0.909→0.758），已由 §八④ 多栏修复解决。
+
+### ④ 多栏 PDF 布局修复（2026-08-02，追加）
+
+**问题**：§八 提交后 `code_and_nl` 从 90.9% 回落到 75.8%（qa-224/qa-222 掉到 0）。逐 case 定位：gold 页（pi06 p6 等）在检索池里**完全消失**，不是 rerank 挤掉而是 dense 捞不到。
+
+**根因**：`_iter_spans` 把所有 block 的 span 打平成列表、按 baseline 全局排序拼行，**丢掉了 PyMuPDF dict 的 block 边界**。对两栏 PDF（physics 5 源几乎全双栏、math/rudin 103 页、23/30 个 PDF 源有双栏页），左右栏 span 在同一 baseline 高度被交错误排成一行 → 语义混乱的巨型段落（pi06 p6 出现 5871 字符的交错块）→ embedding 稀释 → dense 捞不到。
+
+**修复**：`_iter_blocks` 按 PyMuPDF block 分组返回 span；`_page_visual_lines` 逐 block 独立重建 visual line，再按 block 顺序拼接。两栏各自保持独立流，不再交错。
+
+**验证（dev，cs512）**：
+
+| 配置 | claim@10 | evid@10 | MRR | code_and_nl | single_doc |
+|---|:---:|:---:|:---:|:---:|:---:|
+| §八 提交（segchunk） | 73.8% | 65.7% | 0.642 | 75.8% | 75.8% |
+| **+ 多栏修复** | **75.8%** | **67.0%** | **0.676** | **90.9%** | **79.1%** |
+
+- **code_and_nl 完全恢复**（75.8→90.9%），证明诊断正确：是两栏交错把伪代码/正文混在一起，不是段落结构本身。
+- claim@10 75.8%（vs 基线 73.0%，**+2.7pp**）；MRR 0.676。
+- **过拟合复查（按格式切分）**：dev PDF 案例 69.1→72.4（+3.3pp），holdout PDF 案例 76.1→76.1（持平，**非下降**）；整体 holdout 的 −0.3pp 是 nonpdf 的 87.5→87.3 噪声。**多栏修复是干净的 PDF 改善，非边界对齐巧合**（对比 §四/§八③ cs1536 的 dev+/holdout− 过拟合模式）。
+- **测试**：+1 两栏不交错测试。526 passed，ruff/mypy 全过。
 
 ---
 

@@ -307,6 +307,31 @@ class TestPdfStructureParser:
         # reading order is left→middle→right
         assert text.index("left") < text.index("middle") < text.index("right")
 
+    async def test_two_column_layout_not_interleaved(self, parser) -> None:
+        # Two columns at the same baselines must stay separate (each column is
+        # its own PyMuPDF block), not interleaved into scrambled lines.
+        raw = _make_pdf(
+            [
+                [
+                    # left column
+                    (72, 100, 11, "Left column first line."),
+                    (72, 115, 11, "Left column second line."),
+                    # right column, same baselines
+                    (360, 100, 11, "Right column first line."),
+                    (360, 115, 11, "Right column second line."),
+                ]
+            ]
+        )
+        doc = await self._parse_bytes(parser, raw)
+        paras = [n for n in doc.structure if n.node_type == StructNodeType.PARAGRAPH]
+        combined = " ".join(p.text for p in paras)
+        # left column content must read continuously, not interspersed with right
+        assert combined.index("Left column first") < combined.index("Left column second")
+        assert combined.index("Right column first") < combined.index("Right column second")
+        # interleaving would put "Right column first" between the two left lines
+        left_span = combined.index("Left column first"), combined.index("Left column second")
+        assert not (left_span[0] < combined.index("Right column first") < left_span[1])
+
     async def test_node_carries_page_number(self, parser) -> None:
         # Page 1 carries body text (anchors body size); page 2 has only a
         # heading, which must still be detected via the running body estimate.
