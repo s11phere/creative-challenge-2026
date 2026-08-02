@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from uuid import UUID
 
 import httpx
@@ -118,5 +119,45 @@ async def test_tei_reranker_uses_local_compose_endpoint_and_protocol() -> None:
             GatewayRerankRequest(query="query", documents=("first", "second"))
         )
         assert [(score.index, score.score) for score in response.scores] == [(1, 0.2), (0, 0.9)]
+    finally:
+        await client.aclose()
+
+
+async def test_http_reranker_splits_batches_and_restores_global_indices() -> None:
+    requests: list[list[str]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        texts = payload["texts"]
+        requests.append(texts)
+        return httpx.Response(
+            200,
+            json=[
+                {"index": index, "score": float(len(texts) - index)} for index in range(len(texts))
+            ],
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = OpenAICompatibleGateway(
+        reranker_endpoint="http://127.0.0.1:8081",
+        reranker_model="BAAI/bge-reranker-base@fixed-revision",
+        reranker_batch_size=2,
+        client=client,
+    )
+    try:
+        response = await gateway.rerank(
+            GatewayRerankRequest(
+                query="query",
+                documents=("first", "second", "third", "fourth", "fifth"),
+            )
+        )
+        assert requests == [["first", "second"], ["third", "fourth"], ["fifth"]]
+        assert [(score.index, score.score) for score in response.scores] == [
+            (0, 2.0),
+            (1, 1.0),
+            (2, 2.0),
+            (3, 1.0),
+            (4, 1.0),
+        ]
     finally:
         await client.aclose()

@@ -73,9 +73,15 @@ class OpenAICompatibleGateway:
         timeout_seconds: float = 15.0,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.1,
+        reranker_batch_size: int = 32,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        if timeout_seconds <= 0 or max_retries < 0 or retry_backoff_seconds < 0:
+        if (
+            timeout_seconds <= 0
+            or max_retries < 0
+            or retry_backoff_seconds < 0
+            or reranker_batch_size < 1
+        ):
             raise ValueError("Model timeout must be positive and retry settings non-negative")
         resolved_chat_endpoint = fast_chat_endpoint or endpoint
         resolved_embedding_endpoint = embedding_endpoint or endpoint
@@ -112,6 +118,7 @@ class OpenAICompatibleGateway:
         self.max_retries = max_retries
         self.retry_backoff_seconds = retry_backoff_seconds
         self.timeout_seconds = timeout_seconds
+        self.reranker_batch_size = reranker_batch_size
         self._owns_client = client is None
         self.client = client
 
@@ -298,27 +305,44 @@ class OpenAICompatibleGateway:
                 "model.capability": capability.value,
             },
         ) as span:
-            data, retries = await self._request_json(
-                "rerank",
-                {
-                    "query": request.query,
-                    "texts": list(request.documents),
-                    "raw_scores": False,
-                    **(
-                        {}
-                        if self._provider is ModelProvider.TEXT_EMBEDDINGS_INFERENCE
-                        else {"model": config.model}
-                    ),
-                },
-                capability=capability,
-            )
-            scores = self._parse_rerank(data, len(request.documents), capability)
-            usage = self._parse_usage(data if isinstance(data, dict) else {}, embedding=False)
+            scores: list[RerankScore] = []
+            total_usage = ModelUsage()
+            retries = 0
+            for offset in range(0, len(request.documents), self.reranker_batch_size):
+                batch = request.documents[offset : offset + self.reranker_batch_size]
+                data, batch_retries = await self._request_json(
+                    "rerank",
+                    {
+                        "query": request.query,
+                        "texts": list(batch),
+                        "raw_scores": False,
+                        **(
+                            {}
+                            if self._provider is ModelProvider.TEXT_EMBEDDINGS_INFERENCE
+                            else {"model": config.model}
+                        ),
+                    },
+                    capability=capability,
+                )
+                batch_scores = self._parse_rerank(data, len(batch), capability)
+                scores.extend(
+                    RerankScore(index=offset + score.index, score=score.score)
+                    for score in batch_scores
+                )
+                batch_usage = self._parse_usage(
+                    data if isinstance(data, dict) else {}, embedding=False
+                )
+                total_usage = ModelUsage(
+                    input_tokens=total_usage.input_tokens + batch_usage.input_tokens,
+                    output_tokens=total_usage.output_tokens + batch_usage.output_tokens,
+                )
+                retries += batch_retries
+            usage = total_usage
             latency_ms = (perf_counter() - started_at) * 1000
             span.set_attribute("gen_ai.usage.input_tokens", usage.input_tokens)
             self._log_success(capability, latency_ms, usage, retries)
             return RerankResponse(
-                scores=scores,
+                scores=tuple(scores),
                 model_version=config.model or "unknown",
                 usage=usage,
                 capability=capability,

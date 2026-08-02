@@ -42,9 +42,17 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["id", "text"],
-        "properties": {
-          "id": {"type": "string", "pattern": "^c[1-9][0-9]*$"},
-          "text": {"type": "string", "minLength": 1}
+          "properties": {
+            "id": {"type": "string", "pattern": "^c[1-9][0-9]*$"},
+            "text": {"type": "string", "minLength": 1},
+            "acceptable_evidence_sets": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {"type": "string", "minLength": 1}
+              }
+            }
         }
       }
     },
@@ -117,15 +125,9 @@
     "evidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "source_key",
-        "source_version",
-        "locator",
-        "quote",
-        "excerpt_sha256",
-        "supports_claims"
-      ],
+      "required": ["source_key", "source_version", "locator", "quote", "excerpt_sha256"],
       "properties": {
+        "id": {"type": "string", "minLength": 1},
         "source_key": {"type": "string", "minLength": 1},
         "source_version": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "locator": {"$ref": "#/$defs/locator"},
@@ -137,7 +139,11 @@
           "uniqueItems": true,
           "items": {"type": "string", "pattern": "^c[1-9][0-9]*$"}
         }
-      }
+      },
+      "anyOf": [
+        {"required": ["id"]},
+        {"required": ["supports_claims"]}
+      ]
     }
   }
 }

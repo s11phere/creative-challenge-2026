@@ -69,6 +69,15 @@ class EmbeddingConfig:
 
     embedding_identity: EmbeddingIdentity = field(default_factory=EmbeddingIdentity)
 
+    document_prefix: str = ""
+    """Instruction prefix prepended to each chunk text before embedding.
+
+    For instruction-tuned embedding models (e.g. Qwen3-Embedding) this
+    should be the asymmetric ``Document:`` prefix that matches the
+    ``Query:`` prefix applied at retrieval time.  An empty string means
+    no prefix (``none-v1`` behaviour).
+    """
+
 
 # ---------------------------------------------------------------------------
 # Result type
@@ -162,11 +171,17 @@ class EmbeddingService:
             If the ModelGateway call fails non-recoverably.
         """
         cfg = config or EmbeddingConfig()
+        prefix = cfg.document_prefix
 
         # ------------------------------------------------------------------
         # EMBED: call ModelGateway in batches
         # ------------------------------------------------------------------
-        chunk_texts = [c.text for c in chunk_outputs]
+        chunk_texts = []
+        for c in chunk_outputs:
+            enriched = c.text
+            if c.heading_path:
+                enriched = f"[{c.heading_path}]\n{enriched}"
+            chunk_texts.append(f"{prefix}{enriched}" if prefix else enriched)
         vectors: list[tuple[float, ...]] = []
 
         # Model gateway contracts reject every empty request item. Empty

@@ -88,6 +88,7 @@ def _create_gateway() -> ModelGateway:
             timeout_seconds=settings.model_timeout_seconds,
             max_retries=settings.model_max_retries,
             retry_backoff_seconds=settings.model_retry_backoff_seconds,
+            reranker_batch_size=settings.reranker_batch_size,
         )
     )
 

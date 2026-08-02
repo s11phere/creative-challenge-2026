@@ -6,6 +6,7 @@ import pytest
 from application.retrieval.evaluation import (
     EvaluationFailureCategory,
     EvidenceUnit,
+    GoldClaim,
     Locator,
     RetrievalEvaluationCase,
     RetrievalEvaluationObservation,
@@ -20,8 +21,12 @@ from application.retrieval.evaluation import (
 VERSION = "a" * 64
 
 
-def _evidence(source: str, locator: Locator, *, version: str = VERSION) -> EvidenceUnit:
-    return EvidenceUnit(source_key=source, source_version=version, locator=locator)
+def _evidence(
+    source: str, locator: Locator, *, version: str = VERSION, evidence_id: str | None = None
+) -> EvidenceUnit:
+    return EvidenceUnit(
+        source_key=source, source_version=version, locator=locator, evidence_id=evidence_id
+    )
 
 
 def _chunk(
@@ -189,6 +194,63 @@ def test_context_only_chunk_does_not_satisfy_gold_evidence() -> None:
 
     assert metrics.evidence_recall_at_k == 0.0
     assert metrics.full_evidence_coverage_at_k is False
+
+
+def test_claim_satisfied_by_any_evidence_set_or_semantics() -> None:
+    gold = (
+        _evidence("space/a", Locator("lines", 1, 2), evidence_id="e1"),
+        _evidence("space/b", Locator("lines", 10, 12), evidence_id="e2"),
+        _evidence("space/c", Locator("lines", 20, 22), evidence_id="e3"),
+    )
+    # claim can be satisfied by e1 OR e3
+    claims = (
+        GoldClaim(claim_id="c1", acceptable_evidence_sets=(frozenset({"e1"}), frozenset({"e3"}))),
+    )
+    hits = (_chunk("hit", "space/c", 1, Locator("lines", 20, 23)),)
+
+    metrics = evaluate_retrieval_case(gold, hits, k=5, gold_claims=claims)
+
+    assert metrics.claim_recall_at_k == 1.0
+    assert metrics.matched_claim_count == 1
+    assert metrics.total_claim_count == 1
+    assert metrics.full_claim_coverage_at_k is True
+
+
+def test_claim_requires_all_evidence_in_a_set_and_semantics() -> None:
+    gold = (
+        _evidence("space/a", Locator("lines", 1, 2), evidence_id="e1"),
+        _evidence("space/b", Locator("lines", 10, 12), evidence_id="e2"),
+    )
+    # claim requires BOTH e1 and e2
+    claims = (GoldClaim(claim_id="c1", acceptable_evidence_sets=(frozenset({"e1", "e2"}),)),)
+    # only e1 retrieved -> claim NOT satisfied
+    hits = (_chunk("hit", "space/a", 1, Locator("lines", 1, 2)),)
+
+    metrics = evaluate_retrieval_case(gold, hits, k=5, gold_claims=claims)
+
+    assert metrics.claim_recall_at_k == 0.0
+    assert metrics.matched_claim_count == 0
+    assert metrics.full_claim_coverage_at_k is False
+
+
+def test_aggregate_claim_recall_is_micro_averaged_over_claims() -> None:
+    gold = (
+        _evidence("space/a", Locator("lines", 1, 2), evidence_id="e1"),
+        _evidence("space/b", Locator("lines", 10, 12), evidence_id="e2"),
+    )
+    claims_two = (GoldClaim("c1", (frozenset({"e1"}),)), GoldClaim("c2", (frozenset({"e2"}),)))
+    claims_one = (GoldClaim("c3", (frozenset({"e1"}),)),)
+
+    satisfied = evaluate_retrieval_case(
+        gold, (_chunk("a", "space/a", 1, Locator("lines", 1, 2)),), gold_claims=claims_two
+    )
+    partial = evaluate_retrieval_case(
+        gold, (_chunk("a", "space/a", 1, Locator("lines", 1, 2)),), gold_claims=claims_one
+    )
+
+    aggregate = aggregate_retrieval_metrics((satisfied, partial))
+
+    assert aggregate.claim_recall_at_k == pytest.approx(2 / 3)
 
 
 def test_failure_attribution_prefers_parser_for_failed_gold_source() -> None:

@@ -7,6 +7,7 @@ from application.retrieval.dense import (
     QueryEmbeddingConfig,
     QueryEmbeddingService,
     QueryTextEmbedder,
+    document_embedding_config,
     query_embedding_config,
 )
 from application.retrieval.evaluation import (
@@ -36,6 +37,7 @@ __all__ = [
     "EvaluationFailureCategory",
     "EvidenceUnit",
     "FusedCandidate",
+    "document_embedding_config",
     "GatewayQueryTextEmbedder",
     "Locator",
     "RetrievedChunk",

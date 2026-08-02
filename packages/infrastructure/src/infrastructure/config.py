@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     ingestion_task_heartbeat_interval_s: int = Field(default=30, ge=5)
     ingestion_task_lease_seconds: int = Field(default=120, ge=30)
     embedding_batch_size: int = Field(default=32, ge=1)
+    reranker_batch_size: int = Field(default=32, ge=1)
 
     # --- Model Gateway ---
     model_provider: Literal[
@@ -132,6 +133,10 @@ class Settings(BaseSettings):
             "qwen3-web-search-v1": (
                 "Instruct: Given a web search query, retrieve relevant passages that answer "
                 "the query\nQuery: "
+            ),
+            "qwen3-knowledge-qa-v1": (
+                "Instruct: Given a question, retrieve the most relevant passage from the "
+                "knowledge base that answers it\nQuery: "
             ),
         }
         try:

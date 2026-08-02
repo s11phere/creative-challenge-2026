@@ -26,7 +26,12 @@ class ChunkerConfig:
     """
 
     chunk_size: int = 512
-    """Target chunk size in characters (approximate proxy for tokens)."""
+    """Target chunk size in characters (approximate proxy for tokens).
+
+    This is a *merge* target, not a hard ceiling: semantic segments
+    (paragraphs) are never split to reach it.  Consecutive segments are
+    grouped until adding the next would exceed ``chunk_size``.
+    """
 
     chunk_overlap: int = 64
     """Number of characters of overlap between adjacent chunks."""
@@ -36,6 +41,15 @@ class ChunkerConfig:
 
     Chunks below this threshold are merged into the preceding chunk
     rather than standing alone.
+    """
+
+    max_segment_size: int = 4096
+    """Hard ceiling for a single semantic segment (e.g. one paragraph).
+
+    Segments below this are atomic — the chunker never cuts inside a
+    paragraph to hit ``chunk_size``.  Only a pathological segment larger
+    than this (a page-scale blob) is split, at line boundaries, and even
+    that only at word boundaries.
     """
 
 
@@ -128,7 +142,10 @@ def compute_chunker_config_hash(config: ChunkerConfig) -> str:
     Two chunker runs with the same config hash are guaranteed to produce
     the same output for the same input text.
     """
-    raw = f"{config.chunk_size}:{config.chunk_overlap}:{config.min_chunk_size}"
+    raw = (
+        f"{config.chunk_size}:{config.chunk_overlap}:{config.min_chunk_size}:"
+        f"{config.max_segment_size}"
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，冻结语料 development 已复核但未达到 Recall/Reranker/P95 门禁，因此默认配置未冻结且正式 holdout 未执行。阶段 4 仍未正式启动，但 provisional Step 0-10 的领域/Application、内存持久化、API/SSE、Web、反馈和回答评测门禁已跑通；阶段 5 通用 Agent Runtime/Skill 基础已并行通过审查。**
+**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，PR #3 增加了 provisional Recall 优化与结构化 PDF/chunk 能力，但评测配置、数据协议和正式门禁尚未统一，因此默认配置未冻结且正式 holdout 未执行。阶段 4 仍未正式启动，但 provisional Step 0-10 的领域/Application、内存持久化、API/SSE、Web、反馈和回答评测门禁已跑通；阶段 5 通用 Agent Runtime/Skill 基础已并行通过审查。**
 
 已交付的核心能力：
 
@@ -24,12 +24,23 @@ Evidence 保存、结构化生成、原子发布、失败与取消语义；当�
 运行/检查点持久化或 Web Skill 入口，不能据此宣称 `knowledge_qa` 可用或阶段 5 整体完成。
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
 [Stage 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
-[Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；必须先完成真实模型
-development 改进并关闭 Recall/Reranker/P95 门禁、冻结默认配置，再按阶段 3 Runbook 执行一次性 holdout。
+[Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；历史 `90.48%` Recall@5 结果已判定为虚假，当前真实 development 结果未达到 85% 门禁。
+仍需关闭 P95 门禁、冻结默认配置后，再按阶段 3 Runbook 执行一次性 holdout。
 
 ## 快速启动
 
 前置条件：Docker Engine 29+ 和 Docker Compose 5+。本机不需要单独安装 PostgreSQL 或 Redis。
+
+> **GPU 加速（默认）**：Embedding 服务默认使用 GPU 加速，需要：
+> - NVIDIA 驱动（支持 CUDA 12.2+）
+> - [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+> - 安装后验证：`docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi`
+>
+> **无 GPU？使用 CPU 回退**：添加 `-f deploy/compose.cpu.yaml` 即可切换到 CPU 版本：
+> ```bash
+> docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml --env-file .env \
+>   --profile embedding up --build --detach --wait
+> ```
 
 1. 创建本地环境文件，必须设置 `APP_SECRET_KEY` 和 `POSTGRES_PASSWORD`：
 
@@ -56,6 +67,10 @@ docker compose -f deploy/compose.yaml --env-file .env up --build --detach --wait
 
 首次构建需要下载锁定 digest 的基础镜像和依赖。Compose 会依次等待 PostgreSQL、迁移、Redis、
 API、Worker 和 Web 达到各自完成或健康条件。
+
+> 首次启动 Embedding 模型服务（`--profile embedding`）时，TEI 会从 HuggingFace Hub
+> 自动下载 Qwen3-Embedding-0.6B（约 400 MB）。模型文件会缓存在 Docker 层面，后续启动
+> 无需重下载。中国用户可参考 [模型下载文档](docs/model-setup.md) 使用镜像源加速。
 
 ## Smoke Test
 
@@ -126,8 +141,27 @@ git diff --exit-code -- docs/openapi.json
 | PostgreSQL | `127.0.0.1:5432` | PostgreSQL 16 + pgvector |
 | Redis | `127.0.0.1:6379` | Dramatiq broker，启用 AOF |
 | OTel Collector | `4317`、`4318` | 仅 `--profile otel` 启动 |
+| Embedding | `127.0.0.1:8080` | Qwen3-Embedding-0.6B（TEI），需 `--profile embedding` |
 
-端口可通过 `.env` 中的 `WEB_PORT`、`API_PORT`、`POSTGRES_PORT` 和 `REDIS_PORT` 覆盖。
+端口可通过 `.env` 中的 `WEB_PORT`、`API_PORT`、`POSTGRES_PORT`、`REDIS_PORT` 和 `EMBEDDING_PORT` 覆盖。
+
+Embedding（Qwen3-Embedding-0.6B）服务需通过 `--profile embedding` 显式启动。首次启动时，TEI 会自动从 HuggingFace Hub 下载模型（缓存至 Docker 层面，后续启动无需重下载）。
+
+**GPU 模式（默认）：**
+```bash
+docker compose -f deploy/compose.yaml --env-file .env \
+  --profile embedding up --build --detach --wait
+```
+
+**CPU 模式（无 GPU 时）：**
+```bash
+docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml --env-file .env \
+  --profile embedding up --build --detach --wait
+```
+
+模型启动后，健康检查输出应显示 `embedding` 处于 `healthy` 状态。可以通过 `docker compose ps` 确认。
+
+可通过 `.env` 中的 `EMBEDDING_QUERY_INSTRUCTION_VERSION` 和 `EMBEDDING_DOCUMENT_INSTRUCTION_VERSION` 切换 embedding 指令前缀版本（详见 `.env.example` 注释）。
 
 ## 文档
 

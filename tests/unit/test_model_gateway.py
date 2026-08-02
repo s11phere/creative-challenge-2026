@@ -22,6 +22,7 @@ from model_gateway import (
     create_model_gateway,
 )
 from model_gateway import openai_compatible as provider_module
+from model_gateway.factory import _endpoint_allowed
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -329,6 +330,10 @@ async def test_local_endpoint_is_allowed_without_external_opt_in() -> None:
     assert isinstance(gateway, OpenAICompatibleGateway)
     assert gateway.client is None
     await gateway.aclose()
+
+
+def test_compose_reranker_endpoint_is_allowed_without_external_opt_in() -> None:
+    assert _endpoint_allowed("http://tei-reranker:80", allow_external=False)
 
 
 async def test_compose_tei_endpoint_is_allowed_without_external_opt_in() -> None:

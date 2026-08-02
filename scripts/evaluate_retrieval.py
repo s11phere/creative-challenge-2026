@@ -38,6 +38,7 @@ from application.retrieval import (
 )
 from application.retrieval.evaluation import (
     EvidenceUnit,
+    GoldClaim,
     Locator,
     RetrievedChunk,
 )
@@ -332,6 +333,21 @@ def _manifest_sources(config: Mapping[str, Any]) -> list[dict[str, Any]]:
     return sources
 
 
+def _acceptable_evidence_sets(
+    claim: Mapping[str, Any],
+    raw_evidence: Sequence[Mapping[str, Any]],
+    evidence: Sequence[EvidenceUnit],
+) -> tuple[frozenset[str], ...]:
+    if "acceptable_evidence_sets" in claim:
+        return tuple(frozenset(evidence_set) for evidence_set in claim["acceptable_evidence_sets"])
+    claim_id = claim["id"]
+    return tuple(
+        frozenset({evidence_unit.evidence_id})
+        for item, evidence_unit in zip(raw_evidence, evidence, strict=True)
+        if evidence_unit.evidence_id is not None and claim_id in item.get("supports_claims", ())
+    )
+
+
 def _load_cases(config: Mapping[str, Any], split: str) -> tuple[RetrievalEvaluationCase, ...]:
     path = _resolve_repository_path(config["dataset"]["cases_path"])
     included_source_formats = frozenset(config["protocol"]["included_source_formats"])
@@ -353,8 +369,19 @@ def _load_cases(config: Mapping[str, Any], split: str) -> tuple[RetrievalEvaluat
                 source_key=item["source_key"],
                 source_version=item["source_version"],
                 locator=Locator.from_mapping(item["locator"]),
+                evidence_id=item.get("id") or f"e{index + 1}",
             )
-            for item in raw["evidence"]
+            for index, item in enumerate(raw["evidence"])
+        )
+
+        claims = tuple(
+            GoldClaim(
+                claim_id=claim["id"],
+                acceptable_evidence_sets=_acceptable_evidence_sets(
+                    claim, raw["evidence"], evidence
+                ),
+            )
+            for claim in raw.get("answer_claims", ())
         )
         expectations = raw.get("retrieval_expectations") or {}
         must_exclude = tuple(expectations.get("must_exclude", ()))
@@ -366,6 +393,7 @@ def _load_cases(config: Mapping[str, Any], split: str) -> tuple[RetrievalEvaluat
                 query=raw["question"],
                 gold_evidence=evidence,
                 must_exclude=must_exclude,
+                gold_claims=claims,
             )
         )
     return tuple(cases)
@@ -402,6 +430,7 @@ def _create_gateway() -> ModelGateway:
             timeout_seconds=settings.model_timeout_seconds,
             max_retries=settings.model_max_retries,
             retry_backoff_seconds=settings.model_retry_backoff_seconds,
+            reranker_batch_size=settings.reranker_batch_size,
         )
     )
 
@@ -422,6 +451,7 @@ async def _prepare_corpus(
     identity: EmbeddingIdentity,
     blob_root: Path,
     source_keys: frozenset[str] | None = None,
+    chunk_size: int | None = None,
 ) -> dict[str, Any]:
     if source_keys is not None:
         sources = tuple(item for item in sources if str(item["source_key"]) in source_keys)
@@ -503,6 +533,7 @@ async def _prepare_corpus(
                 await orchestrator.run_pipeline(
                     task,
                     config=IngestionConfig(
+                        chunk_size=chunk_size if chunk_size is not None else 512,
                         embedding_batch_size=settings.embedding_batch_size,
                         embedding_identity=identity,
                     ),
@@ -734,6 +765,7 @@ def _build_report(
     *,
     preparation: Mapping[str, Any],
     identity: EmbeddingIdentity,
+    chunk_size: int,
 ) -> dict[str, Any]:
     return {
         "schema_version": "retrieval-report-v1",
@@ -747,6 +779,10 @@ def _build_report(
         "config_hash": validation["config_hash"],
         "formal_run_eligible": validation["formal_run_eligible"],
         "formal_run_blockers": validation["formal_run_blockers"],
+        "evaluation_protocol": {
+            "recall_k": config["protocol"]["recall_k"],
+            "ndcg_k": config["protocol"]["ndcg_k"],
+        },
         "embedding_identity": {
             "version": identity.version,
             "model_revision": identity.model_revision,
@@ -775,7 +811,7 @@ def _build_report(
                 for name in ("application", "domain", "infrastructure", "model-gateway", "pgvector")
             },
         },
-        "preparation": preparation,
+        "preparation": {**preparation, "chunk_size": chunk_size},
         "metrics": _metric_dict(result.metrics),
         "slices": {category: _metric_dict(metrics) for category, metrics in result.slices},
         "cases": [
@@ -851,6 +887,7 @@ def _write_report(path: Path, bundle: Mapping[str, Any]) -> None:
         "",
     ]
     for report in reports:
+        recall_k = report.get("evaluation_protocol", {}).get("recall_k", "?")
         summary.extend(
             [
                 f"## {report['retrieval_experiment']['id']}",
@@ -858,7 +895,8 @@ def _write_report(path: Path, bundle: Mapping[str, Any]) -> None:
                 f"- Run kind: `{report['run_kind']}`",
                 f"- Split: `{report['selected_split']}`",
                 f"- Formal eligible: `{report['formal_run_eligible']}`",
-                f"- Evidence Recall@5: `{report['metrics']['evidence_recall_at_k']}`",
+                f"- Evidence Recall@{recall_k}: `{report['metrics']['evidence_recall_at_k']}`",
+                f"- Claim Recall@{recall_k}: `{report['metrics']['claim_recall_at_k']}`",
                 f"- MRR: `{report['metrics']['mrr']}`",
                 f"- P95 latency (ms): `{report['metrics']['latency_p95_ms']}`",
                 f"- Failure rate: `{report['metrics']['failure_rate']}`",
@@ -877,10 +915,12 @@ async def _run_experiment(
     prepare: bool,
     blob_root: Path,
     prepare_source_keys: frozenset[str] | None = None,
+    chunk_size: int | None = None,
 ) -> dict[str, Any]:
     identity = settings.active_embedding_identity()
     database = Database(settings.database_url)
     gateway = _create_gateway()
+    effective_chunk_size = 512 if chunk_size is None else chunk_size
     try:
         sources = _manifest_sources(config)
         preparation: dict[str, Any] = {
@@ -896,6 +936,7 @@ async def _run_experiment(
                 identity=identity,
                 blob_root=blob_root,
                 source_keys=prepare_source_keys,
+                chunk_size=effective_chunk_size,
             )
         cases = list(_load_cases(config, split))
         for case in cases[: int(config["runtime"]["warmup_queries"])]:
@@ -923,6 +964,7 @@ async def _run_experiment(
             result,
             preparation=preparation,
             identity=identity,
+            chunk_size=effective_chunk_size,
         )
     finally:
         await gateway.aclose()
@@ -950,6 +992,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--prepare-source",
         action="append",
         help="Limit --prepare-corpus to one manifest source_key; repeatable",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=None,
+        help="Override the ingestion chunk_size (default: 512 from IngestionConfig)",
     )
     parser.add_argument(
         "--experiment", action="append", help="Run only the named experiment; repeatable"
@@ -1009,6 +1057,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         prepare_source_keys=(
                             frozenset(args.prepare_source) if args.prepare_source else None
                         ),
+                        chunk_size=args.chunk_size,
                     )
                 )
             )

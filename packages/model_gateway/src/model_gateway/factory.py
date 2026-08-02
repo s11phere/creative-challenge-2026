@@ -32,6 +32,7 @@ class GatewayConfig:
     timeout_seconds: float = 15.0
     max_retries: int = 2
     retry_backoff_seconds: float = 0.1
+    reranker_batch_size: int = 32
     fake_scenario: FakeScenario = FakeScenario.NORMAL
     embedding_protocol: str = "openai-compatible"
 
@@ -77,6 +78,7 @@ def create_model_gateway(
             timeout_seconds=config.timeout_seconds,
             max_retries=config.max_retries,
             retry_backoff_seconds=config.retry_backoff_seconds,
+            reranker_batch_size=config.reranker_batch_size,
             client=client,
             provider=ModelProvider.TEXT_EMBEDDINGS_INFERENCE,
             embedding_protocol="tei",
@@ -122,6 +124,7 @@ def create_model_gateway(
         timeout_seconds=config.timeout_seconds,
         max_retries=config.max_retries,
         retry_backoff_seconds=config.retry_backoff_seconds,
+        reranker_batch_size=config.reranker_batch_size,
         client=client,
     )
 
@@ -152,7 +155,7 @@ def _endpoint_allowed(endpoint: str, *, allow_external: bool) -> bool:
         ):
             return False
         host = parsed.hostname.lower()
-        if host in {"localhost", "host.docker.internal", "tei", "reranker"}:
+        if host in {"localhost", "host.docker.internal", "tei", "reranker", "tei-reranker"}:
             return True
         try:
             address = ipaddress.ip_address(host)

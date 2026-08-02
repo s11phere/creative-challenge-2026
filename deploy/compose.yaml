@@ -78,14 +78,16 @@ services:
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
       EMBEDDING_MODEL_REVISION: ${EMBEDDING_MODEL_REVISION:-}
-      RERANKER_ENDPOINT: ${RERANKER_ENDPOINT:-}
-      RERANKER_API_KEY: ${RERANKER_API_KEY:-}
-      RERANKER_MODEL: ${RERANKER_MODEL:-}
       EMBEDDING_PROTOCOL: ${EMBEDDING_PROTOCOL:-openai-compatible}
       EMBEDDING_QUERY_INSTRUCTION_VERSION: ${EMBEDDING_QUERY_INSTRUCTION_VERSION:-none-v1}
       EMBEDDING_DOCUMENT_INSTRUCTION_VERSION: ${EMBEDDING_DOCUMENT_INSTRUCTION_VERSION:-none-v1}
       EMBEDDING_NORMALIZATION: ${EMBEDDING_NORMALIZATION:-none}
       EMBEDDING_PRECISION: ${EMBEDDING_PRECISION:-float32}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-4}
+      RERANKER_ENDPOINT: ${RERANKER_ENDPOINT:-}
+      RERANKER_API_KEY: ${RERANKER_API_KEY:-}
+      RERANKER_MODEL: ${RERANKER_MODEL:-}
+      RERANKER_BATCH_SIZE: ${RERANKER_BATCH_SIZE:-4}
       MODEL_ALLOW_EXTERNAL: ${MODEL_ALLOW_EXTERNAL:-false}
       MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-15}
       MODEL_MAX_RETRIES: ${MODEL_MAX_RETRIES:-2}
@@ -149,14 +151,16 @@ services:
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
       EMBEDDING_MODEL_REVISION: ${EMBEDDING_MODEL_REVISION:-}
-      RERANKER_ENDPOINT: ${RERANKER_ENDPOINT:-}
-      RERANKER_API_KEY: ${RERANKER_API_KEY:-}
-      RERANKER_MODEL: ${RERANKER_MODEL:-}
       EMBEDDING_PROTOCOL: ${EMBEDDING_PROTOCOL:-openai-compatible}
       EMBEDDING_QUERY_INSTRUCTION_VERSION: ${EMBEDDING_QUERY_INSTRUCTION_VERSION:-none-v1}
       EMBEDDING_DOCUMENT_INSTRUCTION_VERSION: ${EMBEDDING_DOCUMENT_INSTRUCTION_VERSION:-none-v1}
       EMBEDDING_NORMALIZATION: ${EMBEDDING_NORMALIZATION:-none}
       EMBEDDING_PRECISION: ${EMBEDDING_PRECISION:-float32}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-4}
+      RERANKER_ENDPOINT: ${RERANKER_ENDPOINT:-}
+      RERANKER_API_KEY: ${RERANKER_API_KEY:-}
+      RERANKER_MODEL: ${RERANKER_MODEL:-}
+      RERANKER_BATCH_SIZE: ${RERANKER_BATCH_SIZE:-4}
       MODEL_ALLOW_EXTERNAL: ${MODEL_ALLOW_EXTERNAL:-false}
       MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-15}
       MODEL_MAX_RETRIES: ${MODEL_MAX_RETRIES:-2}
@@ -219,7 +223,8 @@ services:
   tei:
     profiles:
       - embedding
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:c26a226262ad4ff3330fb30b76653c1bb65da2fcf413b92284545a010e0a8a48
+    # GPU version: requires nvidia-container-toolkit on host + CUDA 12.2+ drivers
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9@sha256:249a0bc87522bfe2f1012b4d194f0225878f47079115ada3aeb0b1ef257b402a
     command:
       - --model-id
       - Qwen/Qwen3-Embedding-0.6B
@@ -237,6 +242,13 @@ services:
       - "${EMBEDDING_PORT:-8080}:80"
     volumes:
       - teidata:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:80/health"]
       interval: 10s
@@ -244,19 +256,25 @@ services:
       retries: 30
       start_period: 30s
 
-  reranker:
+  tei-reranker:
     profiles:
       - reranker
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:c26a226262ad4ff3330fb30b76653c1bb65da2fcf413b92284545a010e0a8a48
+    # GPU version: requires nvidia-container-toolkit on host + CUDA 12.2+ drivers
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9@sha256:249a0bc87522bfe2f1012b4d194f0225878f47079115ada3aeb0b1ef257b402a
     command:
       - --model-id
-      - BAAI/bge-reranker-base
-      - --revision
-      - 2cfc18c9415c912f9d8155881c133215df768a70
+      - BAAI/bge-reranker-v2-m3
     ports:
       - "${RERANKER_PORT:-8081}:80"
     volumes:
       - rerankerdata:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:80/health"]
       interval: 10s

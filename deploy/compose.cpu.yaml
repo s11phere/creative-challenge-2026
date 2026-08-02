@@ -1,0 +1,39 @@
+# CPU override for compose.yaml
+#
+# Override file that switches the TEI services from GPU to CPU.
+# Use this when your host lacks an NVIDIA GPU or nvidia-container-toolkit.
+#
+# Usage:
+#   docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml \
+#     --profile embedding --profile reranker up --build --detach --wait
+#
+# Notes:
+#   - Compose's `!reset` tag removes the inherited GPU device reservation.
+#   - The --model-id / --revision are inherited from compose.yaml, so TEI
+#     will auto-download Qwen3-Embedding-0.6B and bge-reranker-v2-m3 on startup.
+
+services:
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:c26a226262ad4ff3330fb30b76653c1bb65da2fcf413b92284545a010e0a8a48
+    deploy:
+      resources:
+        reservations:
+          devices: !reset []
+
+  tei-reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:c26a226262ad4ff3330fb30b76653c1bb65da2fcf413b92284545a010e0a8a48
+    command:
+      - --model-id
+      - BAAI/bge-reranker-v2-m3
+      - --max-batch-tokens
+      - "512"
+      - --max-client-batch-size
+      - "4"
+      - --max-batch-requests
+      - "1"
+      - --max-concurrent-requests
+      - "4"
+    deploy:
+      resources:
+        reservations:
+          devices: !reset []

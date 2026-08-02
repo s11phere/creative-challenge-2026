@@ -112,8 +112,8 @@ Text Embeddings Inference CPU image and `Qwen/Qwen3-Embedding-0.6B` revision. Co
 `MODEL_PROVIDER=text-embeddings-inference`, `EMBEDDING_ENDPOINT=http://tei:80`,
 `EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B`,
 `EMBEDDING_MODEL_REVISION=97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`,
-`EMBEDDING_QUERY_INSTRUCTION_VERSION=qwen3-web-search-v1`,
-`EMBEDDING_DOCUMENT_INSTRUCTION_VERSION=qwen3-document-no-prefix-v1`, and
+`EMBEDDING_QUERY_INSTRUCTION_VERSION=qwen3-knowledge-qa-v1`,
+`EMBEDDING_DOCUMENT_INSTRUCTION_VERSION=qwen3-knowledge-qa-v1`, and
 `EMBEDDING_NORMALIZATION=l2` when using that profile. The exact `tei` service name is in the
 local endpoint allowlist; other DNS names still require `MODEL_ALLOW_EXTERNAL=true`. A host-run
 API/Worker can use the published service at `http://localhost:8080` instead.
@@ -127,12 +127,11 @@ call a real or paid model.
 阶段 3 的检索默认使用 PostgreSQL FTS 与 pgvector exact 路径；IVFFlat 只作为对比实验，未通过
 正式质量门槛前不会替换 exact 默认值。`MODEL_PROVIDER=fake` 可运行确定性工程测试；需要本地
 Embedding 时启用 Compose 的 `embedding` profile，需要本地精排时额外启用 `reranker` profile。
-两个模型服务均使用固定镜像 digest 和固定模型 revision，不能改为 `latest` 或通过公网外发。
-provisional 默认链路还要求启用 `reranker` profile，并设置
-`RERANKER_ENDPOINT=http://reranker:80` 和
-`RERANKER_MODEL=BAAI/bge-reranker-base@2cfc18c9415c912f9d8155881c133215df768a70`。
-模型切换会产生新的 `embedding_version`，必须通过受控重建发布新 DocumentVersion；不能让新查询
-identity 检索旧向量。
+Embedding 使用 `qwen3-knowledge-qa-v1` 的 query/document 指令版本；模型服务使用固定镜像
+digest 和固定 embedding model revision，不能改为 `latest` 或通过公网外发。
+启用 reranker 时设置 `RERANKER_ENDPOINT=http://tei-reranker:80` 和
+`RERANKER_MODEL=BAAI/bge-reranker-v2-m3`。模型切换会产生新的 `embedding_version`，必须通过
+受控重建发布新 DocumentVersion；不能让新查询 identity 检索旧向量。
 
 检索 API 和离线评测的完整验收命令、环境、报告摘要和当前门禁见
 [`docs/stage-3-acceptance.md`](stage-3-acceptance.md)。评测报告只写入被忽略的 `tmp/`，不得

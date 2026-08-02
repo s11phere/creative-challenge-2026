@@ -307,6 +307,12 @@ async def test_context_expansion_stays_in_seed_version_document_and_space(
             label="context-document",
             text_value="parent context",
         )
+        parent_chunk = await session.get(ChunkModel, parent.chunk_id)
+        assert parent_chunk is not None
+        parent_chunk.meta = {
+            **parent_chunk.meta,
+            "node_type": "table_of_contents",
+        }
         seed_chunk = ChunkModel(
             version_id=parent.version_id,
             ordinal=1,
@@ -366,6 +372,62 @@ async def test_context_expansion_stays_in_seed_version_document_and_space(
         }
         assert {candidate.version_id for candidate in contexts} == {parent.version_id}
         assert {candidate.document_id for candidate in contexts} == {document.id}
+
+
+async def test_direct_retrieval_excludes_toc_before_candidate_limit(
+    retrieval_database: RetrievalDatabase,
+) -> None:
+    async with retrieval_database.sessions() as session:
+        space = await _add_space(session, "toc-filter")
+        _, content = await _add_document(
+            session,
+            space_id=space.id,
+            label="toc-filter-document",
+            text_value="sharedterm answer content",
+            embedding=_vector(0.1),
+        )
+        toc = ChunkModel(
+            version_id=content.version_id,
+            ordinal=1,
+            chunk_hash="toc-centroid",
+            text="sharedterm sharedterm sharedterm section index",
+            meta={
+                "start_line": "1",
+                "end_line": "3",
+                "node_type": "table_of_contents",
+            },
+            embedding=_vector(),
+        )
+        session.add(toc)
+        await session.commit()
+
+        keyword_query = KeywordCandidateQuery(
+            query="sharedterm",
+            space_id=space.id,
+            filters=_EMPTY_FILTERS,
+            limit=1,
+        )
+        dense_query = DenseCandidateQuery(
+            query_vector=tuple(_vector()),
+            space_id=space.id,
+            filters=_EMPTY_FILTERS,
+            limit=1,
+            embedding_version="embedding-v1",
+        )
+        exact_store = PostgresRetrievalStore(session)
+        keyword = await exact_store.keyword_candidates(keyword_query)
+        dense = await exact_store.dense_candidates(dense_query)
+
+        assert [candidate.chunk_id for candidate in keyword.candidates] == [content.chunk_id]
+        assert [candidate.chunk_id for candidate in dense.candidates] == [content.chunk_id]
+
+        ivfflat_store = PostgresRetrievalStore(
+            session,
+            dense_mode=DenseSearchMode.IVFFLAT,
+            ivfflat_probes=10,
+        )
+        approximate = await ivfflat_store.dense_candidates(dense_query)
+        assert [candidate.chunk_id for candidate in approximate.candidates] == [content.chunk_id]
 
 
 async def test_keyword_baseline_covers_language_code_and_stable_ranking(

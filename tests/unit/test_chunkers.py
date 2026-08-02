@@ -97,7 +97,7 @@ class TestStructureChunker:
         doc = _make_doc("Hello, world.")
         result = await chunker.chunk(doc)
         assert result.total_ordinals == 1
-        assert result.chunker_version == "1.1"
+        assert result.chunker_version == "1.3"
         assert result.config_hash
 
     # -- Basic text chunking ----------------------------------------------
@@ -117,6 +117,30 @@ class TestStructureChunker:
         assert result.total_ordinals == 1
         assert "Paragraph one" in result.chunks[0].text
         assert "Paragraph three" in result.chunks[0].text
+
+    async def test_paragraph_exceeding_chunk_size_is_not_split(self, chunker) -> None:
+        """A paragraph over chunk_size but under max_segment_size stays atomic.
+
+        The chunker must never cut inside a paragraph to hit chunk_size; the
+        paragraph becomes its own chunk instead.
+        """
+        para = "word " * 600  # ~2400 chars, > chunk_size=512, < max_segment_size
+        doc = _make_doc(para)
+        result = await chunker.chunk(doc, config=ChunkerConfig(chunk_size=512, chunk_overlap=0))
+        assert result.total_ordinals == 1
+        assert len(result.chunks[0].text) == len(para.strip())  # not truncated, not split
+
+    async def test_paragraph_split_only_above_max_segment_size(self, chunker) -> None:
+        """Only a segment larger than max_segment_size is split at all."""
+        para = "word " * 2000  # ~10,000 chars, exceeds max_segment_size
+        doc = _make_doc(para)
+        result = await chunker.chunk(
+            doc, config=ChunkerConfig(chunk_size=512, chunk_overlap=0, max_segment_size=1500)
+        )
+        assert result.total_ordinals > 1
+        # The split must not lose content.
+        joined = " ".join(c.text.strip() for c in result.chunks)
+        assert set(joined.split()) == set(para.split())
 
     async def test_text_split_across_chunks(self, chunker) -> None:
         # Create enough text to exceed chunk_size
@@ -241,6 +265,161 @@ class TestStructureChunker:
         assert result.total_ordinals >= 1
         # heading_path may be empty for the very first content before any heading
 
+    async def test_heading_text_is_retained_in_chunk_text(self, chunker) -> None:
+        heading = StructNode(
+            node_type=StructNodeType.HEADING,
+            text="Installation",
+            level=1,
+            start_line=1,
+            end_line=1,
+            children=(
+                StructNode(
+                    node_type=StructNodeType.PARAGRAPH,
+                    text="Run the installer.",
+                    start_line=2,
+                    end_line=2,
+                ),
+            ),
+        )
+        result = await chunker.chunk(_make_doc("Installation\nRun the installer.", (heading,)))
+        assert "Installation" in result.chunks[0].text
+        assert "Run the installer." in result.chunks[0].text
+
+    async def test_pdf_like_raw_pages_are_not_treated_as_toc(self, chunker) -> None:
+        pages = tuple(
+            StructNode(
+                node_type=StructNodeType.RAW_TEXT,
+                text=f"Page {page}: " + chr(64 + page) * 300,
+                start_line=page,
+                end_line=page,
+                start_page=page,
+                end_page=page,
+            )
+            for page in range(1, 4)
+        )
+        result = await chunker.chunk(
+            _make_doc("\n".join(node.text for node in pages), pages),
+            config=ChunkerConfig(
+                chunk_size=100, chunk_overlap=0, min_chunk_size=1, max_segment_size=100
+            ),
+        )
+        assert result.total_ordinals >= 9
+        assert max(len(chunk.text) for chunk in result.chunks) <= 100
+        assert all(chunk.node_type != "table_of_contents" for chunk in result.chunks)
+
+    async def test_leading_list_is_retained_when_it_does_not_mirror_headings(self, chunker) -> None:
+        structure = (
+            *(
+                StructNode(
+                    node_type=StructNodeType.LIST_ITEM,
+                    text=text,
+                    start_line=index,
+                    end_line=index,
+                )
+                for index, text in enumerate(("Install Python", "Create a venv", "Run tests"), 1)
+            ),
+            *(
+                StructNode(
+                    node_type=StructNodeType.HEADING,
+                    text=text,
+                    level=1,
+                    start_line=index,
+                    end_line=index,
+                )
+                for index, text in enumerate(("Overview", "Architecture", "Reference"), 4)
+            ),
+        )
+        result = await chunker.chunk(
+            _make_doc("content", structure),
+            config=ChunkerConfig(chunk_size=40, chunk_overlap=0, min_chunk_size=1),
+        )
+        assert "Install Python" in "\n".join(chunk.text for chunk in result.chunks)
+        assert result.chunks[0].node_type != "table_of_contents"
+
+    async def test_real_toc_is_retained_and_marked(self, chunker) -> None:
+        labels = ("1 Overview ........ 2", "2 Architecture .... 4", "3 Reference ....... 8")
+        headings = ("Overview", "Architecture", "Reference")
+        structure = (
+            *(
+                StructNode(
+                    node_type=StructNodeType.LIST_ITEM,
+                    text=text,
+                    start_line=index,
+                    end_line=index,
+                )
+                for index, text in enumerate(labels, 1)
+            ),
+            *(
+                StructNode(
+                    node_type=StructNodeType.HEADING,
+                    text=text,
+                    level=1,
+                    start_line=index,
+                    end_line=index,
+                )
+                for index, text in enumerate(headings, 4)
+            ),
+        )
+        result = await chunker.chunk(
+            _make_doc("content", structure),
+            config=ChunkerConfig(chunk_size=100, chunk_overlap=0, min_chunk_size=1),
+        )
+        assert result.chunks[0].node_type == "table_of_contents"
+        assert all(label in result.chunks[0].text for label in labels)
+
+    async def test_toc_matches_compact_numbering_and_summary_suffixes(self, chunker) -> None:
+        labels = ("Data definition: create", "Data query: select", "Data update: insert")
+        headings = ("1.Data definition", "2.Data query", "3.Data update")
+        structure = (
+            *(
+                StructNode(
+                    node_type=StructNodeType.LIST_ITEM,
+                    text=text,
+                    start_line=index,
+                    end_line=index,
+                )
+                for index, text in enumerate(labels, 1)
+            ),
+            *(
+                StructNode(
+                    node_type=StructNodeType.HEADING,
+                    text=text,
+                    level=1,
+                    start_line=index,
+                    end_line=index,
+                )
+                for index, text in enumerate(headings, 4)
+            ),
+        )
+
+        result = await chunker.chunk(_make_doc("content", structure))
+
+        assert result.chunks[0].node_type == "table_of_contents"
+
+    async def test_nested_markdown_toc_is_separated_before_minimum_size_merge(
+        self, chunker
+    ) -> None:
+        document = await MarkdownParser().parse(
+            (
+                b"- [Overview](#overview)\n"
+                b"  - [Install](#install)\n"
+                b"  - [Configure](#configure)\n"
+                b"\n# Overview\n\n## Install\n\nRun installer.\n"
+                b"\n## Configure\n\nSet option.\n"
+            ),
+            ParseMetadata(file_name="toc.md", mime_type="text/markdown"),
+        )
+        assert isinstance(document, ParseSuccess)
+
+        result = await chunker.chunk(document.document)
+
+        toc_chunks = [chunk for chunk in result.chunks if chunk.node_type == "table_of_contents"]
+        assert len(toc_chunks) == 1
+        assert toc_chunks[0].end_line <= 4
+        assert "Run installer." in "\n".join(
+            chunk.text for chunk in result.chunks if chunk.node_type != "table_of_contents"
+        )
+
     async def test_markdown_adjacency_links(self, chunker) -> None:
         doc = await _parse_md("sample.md")
         cfg = ChunkerConfig(chunk_size=150, chunk_overlap=10)
@@ -296,30 +475,90 @@ class TestStructureChunker:
 
     async def test_large_paragraph_split(self, chunker) -> None:
         """A single large paragraph should be split across chunks."""
-        text = "word " * 2000  # ~10,000 chars, exceeding chunk_size
+        text = "word " * 2000  # ~10,000 chars, exceeding max_segment_size
         doc = _make_doc(text)
-        cfg = ChunkerConfig(chunk_size=500, chunk_overlap=0)
+        cfg = ChunkerConfig(chunk_size=500, chunk_overlap=0, max_segment_size=1500)
         result = await chunker.chunk(doc, config=cfg)
         assert result.total_ordinals > 1
         # All chunks should have text
         assert all(c.text for c in result.chunks)
 
-    async def test_split_normalized_multiline_node_preserves_source_span(self, chunker) -> None:
+    async def test_oversize_single_line_splits_on_word_boundaries(self, chunker) -> None:
+        """A single unwrapped line longer than chunk_size must not be cut mid-word."""
+        words = [f"word{i:04d}" for i in range(200)]  # each word is a distinct token
+        text = " ".join(words)  # ~1900 chars, exceeds chunk_size
+        node = StructNode(
+            node_type=StructNodeType.RAW_TEXT,
+            text=text,
+            start_line=1,
+            end_line=1,
+            start_page=1,
+            end_page=1,
+        )
+        doc = ParsedDocument(
+            metadata=ParseMetadata(file_name="test.pdf", mime_type="application/pdf"),
+            text=text,
+            structure=(node,),
+            total_lines=1,
+        )
+        cfg = ChunkerConfig(chunk_size=500, chunk_overlap=0, max_segment_size=1500)
+        result = await chunker.chunk(doc, config=cfg)
+        assert result.total_ordinals > 1
+        token_set = set(words)
+        for chunk in result.chunks:
+            first_token = chunk.text.split()[0]
+            assert first_token in token_set, f"chunk starts mid-word: {chunk.text[:30]!r}"
+
+    async def test_oversize_line_preserves_all_content(self, chunker) -> None:
+        """Splitting an oversized line must not drop or reorder any text."""
+        words = [f"word{i:04d}" for i in range(200)]
+        text = " ".join(words)
+        node = StructNode(
+            node_type=StructNodeType.RAW_TEXT,
+            text=text,
+            start_line=1,
+            end_line=1,
+            start_page=1,
+            end_page=1,
+        )
+        doc = ParsedDocument(
+            metadata=ParseMetadata(file_name="test.pdf", mime_type="application/pdf"),
+            text=text,
+            structure=(node,),
+            total_lines=1,
+        )
+        cfg = ChunkerConfig(chunk_size=500, chunk_overlap=0, max_segment_size=1500)
+        result = await chunker.chunk(doc, config=cfg)
+        # Reconstruct the joined text and confirm it still contains every token in order
+        joined = " ".join(chunk.text.strip() for chunk in result.chunks)
+        assert set(joined.split()) == set(words)
+
+    async def test_multiline_oversize_segment_preserves_piece_source_ranges(self, chunker) -> None:
+        lines = [f"source line {index} " + "x" * 40 for index in range(10, 20)]
+        text = "\n".join(lines)
         node = StructNode(
             node_type=StructNodeType.PARAGRAPH,
-            text="normalized content " * 30,
+            text=text,
             start_line=10,
-            end_line=20,
+            end_line=19,
         )
-        doc = _make_doc(node.text, structure=(node,))
-
         result = await chunker.chunk(
-            doc,
-            config=ChunkerConfig(chunk_size=80, chunk_overlap=0, min_chunk_size=0),
+            _make_doc(text, structure=(node,)),
+            config=ChunkerConfig(
+                chunk_size=120,
+                chunk_overlap=0,
+                min_chunk_size=0,
+                max_segment_size=200,
+            ),
         )
 
         assert result.total_ordinals > 1
-        assert {(chunk.start_line, chunk.end_line) for chunk in result.chunks} == {(10, 20)}
+        assert result.chunks[0].start_line == 10
+        assert result.chunks[-1].end_line == 19
+        assert all(
+            left.end_line < right.start_line
+            for left, right in zip(result.chunks, result.chunks[1:], strict=False)
+        )
 
     # -- Min chunk size ---------------------------------------------------
 

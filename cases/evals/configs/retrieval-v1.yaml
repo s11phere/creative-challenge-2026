@@ -10,7 +10,7 @@ dataset:
   cases_path: cases/evals/datasets/knowledge-qa-v0/cases.jsonl
   cases_sha256: 19b58c1471ff69b748233c61470cb19ce38c74d0bf6b83c4555cde18d7456fda
   schema_path: cases/evals/datasets/knowledge-qa-v0/schema.json
-  schema_sha256: 4949f3f4a9212f5fa02c915850f06a64bde501df0568e57fab582057a3b45e16
+  schema_sha256: deefac883f895bb04d709c37cab2c0f61ed22cf6a6c53838a4ad0cc144b53282
   splits:
     development:
       count: 127
@@ -26,14 +26,15 @@ protocol:
     - pdf
   metrics:
     - evidence_recall
+    - claim_recall
     - mrr
     - evidence_ndcg
     - full_evidence_coverage
     - must_exclude_violations
     - latency_p50_p95
     - failure_rate
-  recall_k: 5
-  ndcg_k: 5
+  recall_k: 10
+  ndcg_k: 10
   no_evidence_policy: exclude_from_recall_and_ranking_denominators
   safety_slices:
     - no_answer
@@ -55,12 +56,12 @@ experiments:
       dense_candidate_k: 30
       fusion_candidate_k: 30
       rrf_k: 60
-      fusion_alpha: 0.35
+      fusion_alpha: 0.5
       reranker_enabled: false
-      rerank_k: 10
-      final_k: 5
+      rerank_k: 30
+      final_k: 10
       adjacent_window: 1
-      max_chunks_per_document: 3
+      max_chunks_per_document: 5
       hybrid_embedding_failure_policy: error
       reranker_failure_policy: error
   - id: dense-exact
@@ -82,6 +83,14 @@ experiments:
     profile:
       <<: *baseline_profile
       reranker_enabled: true
+
+  # ── candidate pool expansion (dense only) ────────────────────
+  - id: dense-exact-k100
+    mode: dense
+    dense_mode: exact
+    profile:
+      <<: *baseline_profile
+      dense_candidate_k: 100
 gates:
   formal_manifest_status: frozen
   stage_2_step_9_acceptance_path: docs/stage-2-acceptance.md

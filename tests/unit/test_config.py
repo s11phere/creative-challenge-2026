@@ -59,12 +59,28 @@ def test_embedding_batch_size_is_bounded_and_configurable() -> None:
         Settings(embedding_batch_size=0)
 
 
+def test_reranker_batch_size_is_bounded_and_configurable() -> None:
+    assert Settings().reranker_batch_size == 32
+    assert Settings(reranker_batch_size=4).reranker_batch_size == 4
+    with pytest.raises(ValueError, match="greater than or equal to 1"):
+        Settings(reranker_batch_size=0)
+
+
 def test_qwen3_query_instruction_resolves_to_reviewed_prefix() -> None:
     s = Settings(embedding_query_instruction_version="qwen3-web-search-v1")
 
     assert s.query_embedding_prefix() == (
         "Instruct: Given a web search query, retrieve relevant passages that answer the query\n"
         "Query: "
+    )
+
+
+def test_qwen3_knowledge_qa_query_instruction_is_accepted() -> None:
+    s = Settings(embedding_query_instruction_version="qwen3-knowledge-qa-v1")
+
+    assert s.query_embedding_prefix() == (
+        "Instruct: Given a question, retrieve the most relevant passage from the knowledge base "
+        "that answers it\nQuery: "
     )
 
 

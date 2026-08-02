@@ -18,7 +18,7 @@ external provider.
 | --- | --- |
 | Corpus manifest | `v0` / `53d6f863060dd7d5e6affb0abda64348f0b498995b3d1cda5ef80f0e576ca738` |
 | Evaluation cases | `knowledge-qa-v0` / `19b58c1471ff69b748233c61470cb19ce38c74d0bf6b83c4555cde18d7456fda` |
-| Dataset schema | `4949f3f4a9212f5fa02c915850f06a64bde501df0568e57fab582057a3b45e16` |
+| Dataset schema | `deefac883f895bb04d709c37cab2c0f61ed22cf6a6c53838a4ad0cc144b53282` |
 | Development split | 127 cases / `6e870ee94cb64367d111557a2d1fdfc0d3f8b231e2d60cde7e7118e3881e239c` |
 | Holdout split | 149 cases / `ec56aa778587f0b66b78a2aa2d55dad04e187930f1b75423bb42b5d31a077b28` |
 | PDF visual review | 13 entries / `41b0b00404465d4d5b4e4f7b98b96cf78ec2840455fe5c1f9ec0438944f17b57` |

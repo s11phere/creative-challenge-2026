@@ -215,7 +215,7 @@ docs/
   `e0947b3c028c562ad99ad00c44b78642c2a9dd53542784da7a3dcf7f0bd086c2`；development
   20 例摘要 `4628f7192042a4eea03861026b003d776fda535d633d20e3d0146f22e199874b`；
   holdout 10 例摘要 `67b34a4d071a8bc8512281701a2239467efb736e98dc639d93926d3f9d5fb2ff`；
-  dataset schema 摘要 `4949f3f4a9212f5fa02c915850f06a64bde501df0568e57fab582057a3b45e16`。
+  dataset schema 摘要 `deefac883f895bb04d709c37cab2c0f61ed22cf6a6c53838a4ad0cc144b53282`。
 - 当前切片为单文档事实 8、跨文档综合 8、版本/冲突 2、无答案 5、恶意文档 1、双语 3、
   代码与自然语言 3。规模低于计划建议的 60～100 例；冻结前必须发布新 dataset version，
   或正式接受 v0 的统计限制，不得原地修改已查看的 holdout。
