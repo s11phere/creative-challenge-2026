@@ -131,6 +131,7 @@ class IngestionConfig:
     chunk_size: int = 512
     chunk_overlap: int = 64
     min_chunk_size: int = 100
+    max_segment_size: int = 4096
     embedding_batch_size: int = 32
     embedding_identity: EmbeddingIdentity = field(default_factory=EmbeddingIdentity)
 
@@ -314,12 +315,14 @@ class IngestionOrchestrator:
                 chunk_size=cfg.chunk_size,
                 chunk_overlap=cfg.chunk_overlap,
                 min_chunk_size=cfg.min_chunk_size,
+                max_segment_size=cfg.max_segment_size,
             )
             chunking_result = await self._chunker.chunk(parsed_doc, config=chunker_config)
             processing_config = {
                 "chunk_overlap": str(cfg.chunk_overlap),
                 "chunk_size": str(cfg.chunk_size),
                 "min_chunk_size": str(cfg.min_chunk_size),
+                "max_segment_size": str(cfg.max_segment_size),
                 **cfg.embedding_identity.processing_config(),
             }
             # Write chunker identity back to the version record so the

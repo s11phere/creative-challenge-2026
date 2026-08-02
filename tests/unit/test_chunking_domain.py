@@ -45,6 +45,11 @@ class TestComputeChunkerConfigHash:
         cfg2 = ChunkerConfig(chunk_overlap=64)
         assert compute_chunker_config_hash(cfg1) != compute_chunker_config_hash(cfg2)
 
+    def test_different_max_segment_different_hash(self) -> None:
+        cfg1 = ChunkerConfig(max_segment_size=2048)
+        cfg2 = ChunkerConfig(max_segment_size=4096)
+        assert compute_chunker_config_hash(cfg1) != compute_chunker_config_hash(cfg2)
+
 
 class TestChunkerConfig:
     def test_defaults(self) -> None:
@@ -52,12 +57,14 @@ class TestChunkerConfig:
         assert cfg.chunk_size == 512
         assert cfg.chunk_overlap == 64
         assert cfg.min_chunk_size == 100
+        assert cfg.max_segment_size == 4096
 
     def test_custom_values(self) -> None:
         cfg = ChunkerConfig(chunk_size=1024, chunk_overlap=128, min_chunk_size=200)
         assert cfg.chunk_size == 1024
         assert cfg.chunk_overlap == 128
         assert cfg.min_chunk_size == 200
+        assert cfg.max_segment_size == 4096
 
     def test_frozen(self) -> None:
         cfg = ChunkerConfig()

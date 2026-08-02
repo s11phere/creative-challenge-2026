@@ -1,7 +1,7 @@
 # Recall 优化实验报告 v2
 
 > 分支：`dev/recall-optimization` ｜ 基线：`tmp/retrieval-eval-baseline.json`（commit `cde331c`）
-> 门禁：Recall@5 ≥ 85% ｜ **基线 58.6% → v0 实测最优 61.9% → v1 实测 60.2%/61.9% → v1+k10 72.5%**
+> 门禁：Recall@5 ≥ 85% ｜ **基线 58.6% → v0 实测最优 61.9% → v1 实测 60.2%/61.9% → v1+k10 72.5% → 修 PDF 提取 73.8%（cs512）**
 
 **TL;DR**：v1 报告宣称丢弃 TOC 段达 90.48%，已被判定为虚假（破坏 PDF 结构，`3b97c5f` 回退）。v2 独立重查，根因是**正确 chunk 被 dense 排名压到池内 6–30 位**（不是 TOC）。候选方向全部实测收口，v0 最优 61.9%。接入同学修订的 **v1 数据集 + claim 级评分**后，**Oracle 天花板 94.3%，85% 目标舒适可达**。**§七 门禁放宽到 Recall@10**：recall@k 曲线 k=5 61.9% → k=10 **72.5%**（正式 gate 验证）→ k=15 74.1%（饱和），k=5 截断白白丢失 ~12pp。
 
@@ -177,6 +177,65 @@ holdout 比 dev 高 ~17pp 的根因是**语料格式构成不同**，不是难�
 
 ---
 
+## 八、修 PDF 提取：段落结构 + 段落边界 chunk（2026-08-02）
+
+**结论**：`pdf_parser` 从「每页一个 RAW_TEXT blob」重写为「dict-mode span 重建 + 几何启发式产出 heading/paragraph/list 节点」；chunker 从「按 `chunk_size` 硬切任何超长 segment」改为「段落是原子单元，只有超过 `max_segment_size` 的病态 blob 才按行切」。两者**必须成对**：新 chunker 依赖段落结构，旧 parser 喂给新 chunker 会崩。组合结果 dev **73.0% → 73.8%**（+0.8pp，cs512，非过拟合），chunk 数 6337→4995（−21%），消除半词碎片。
+
+### 动机与假设
+
+memory 的「跳出路径 2（修 C：PDF 公式保真）」具体化为两个可分离改动：
+
+1. **结构**：`page.get_text("text")` → `get_text("dict")`，span 按 baseline(y1) 分组、组内按 x 排序拼行——修复公式 glyph 阅读顺序；再按字号/行距/缩进分组为 heading/paragraph/list 节点（等价 Markdown 的段落结构）。
+2. **chunk 边界**：把 `chunk_size` 从「硬切上限」降级为「合并目标」。新引入 `max_segment_size=4096`，段落小于它时绝不被切；只有病态超长 segment（旧 parser 的整页 blob）才被 `_split_oversize_segment` 按行切，且行切仍走词边界（`_split_oversize_line`）。
+
+核心假设（用户提出）：**chunk 太碎不利于 embedding，也稀释下游 LLM 可获取的上下文；512 是任意上界，硬编码字符上限本身就是过拟合来源**。
+
+### 逐次实测（dev，v1 + v2-m3 rerank，k10，全部重摄入）
+
+| 配置 | chunk 数 | claim@10 | evid@10 | MRR |
+|---|:---:|:---:|:---:|:---:|
+| 基线（旧 parser + 旧 chunker, cs512） | 6337 | **73.0%** | 65.3% | 0.653 |
+| 新 parser + 旧 chunker, cs512 | 6999 | 71.9% | 65.3% | 0.647 |
+| 新 parser + 旧 chunker, cs1536 | 2729 | 75.2% | 67.4% | 0.727 |
+| **新 parser + 新 chunker, cs512** | 4995 | **73.8%** | 65.7% | 0.642 |
+| 新 parser + 新 chunker, cs1536 | 2478 | 74.7% | 68.2% | 0.720 |
+
+- 新 parser + 旧 chunker 在 cs512 反而 **降**（71.9%）：段落结构造出更多更小的 segment，旧 chunker 按 512 硬切 → 半词碎片（`zed`/`aining`/`ce`）+ 小块洪水，gold 的整页内容被稀释到 top-10 之外（qa-204 从 1.0 → 0.0，gold 在 starvla p2，新 chunk 的 p2 碎片排不进前 10）。
+- 放大 cs1536 能救回（75.2%），但那是**硬切段落的副作用**被「更大块」掩盖。
+
+### 受控 2×2（cs512，隔离 parser 与 chunker 的独立贡献）
+
+| 组合 | dev claim@10 | holdout claim@10 |
+|---|:---:|:---:|
+| 旧 parser + 旧 chunker（基线） | 73.0% | — |
+| 旧 parser + 新 chunker | **61.9%** | 86.4% |
+| 新 parser + 新 chunker | **73.8%** | 87.0% |
+
+**两个关键事实**：
+
+1. **新 chunker 依赖段落结构**。旧 parser 每页只产 1 个 RAW_TEXT blob，新 chunker 不硬切它（< 4096）→ 整页大 chunk → dev 崩到 61.9%（密集段落信号被稀释）；holdout 反而没崩（86.4%）——印证 §六① holdout 是 markdown 便宜。**结论：段落结构 + 段落边界 chunk 是一个整体，缺一不可。**
+
+2. **cs512 组合是干净的、dev/holdout 一致的增益**（73.8% / 87.0%，均高于对应旧组合）。chunk 数 −21%，半词碎片消失。
+
+### 过拟合复查：cs512 → cs1536 仍是过拟合
+
+| 新 parser + 新 chunker | dev claim@10 | holdout claim@10 | dev evid@10 | holdout evid@10 |
+|---|:---:|:---:|:---:|:---:|
+| cs512 | 73.8% | **87.0%** | 65.7% | **85.9%** |
+| cs1536 | 74.7% | 86.1% | 68.2% | 84.8% |
+
+cs1536 在 dev 上 +0.9pp claim / +2.5pp evid，但 holdout 上 −0.9pp / −1.1pp——与 §四 完全同构的过拟合模式。**cs512 是干净点，cs1536 的增量不作修复**。用户「chunk 给下游 LLM 更多上下文有好处」的原理仍成立，但 k=10 的检索指标测不到该收益（截断在 rerank 阶段），那是下游 LLM 的增益，不在本指标内。
+
+### 决策与改动（提交内容）
+
+- **`pdf_parser.py`**：dict-mode span 重建 + 几何启发式（heading/paragraph/list 节点，局部行号锚定防整页行号洪水）。scanned/corrupt/empty 错误路径保持不变。
+- **`chunking.py` / `orchestrator.py` / `structure_chunker.py`**：新增 `max_segment_size=4096`；`_group_segments` 只用它切病态超长 segment，段落绝不为凑 `chunk_size` 硬切；config hash 纳入新字段。
+- **`evaluate_retrieval.py`**：恢复 `--chunk-size` 实验参数（`IngestionConfig.chunk_size` 透传）。
+- **测试**：+9 PDF 结构测试（heading/段落/list/公式 span 顺序/跨页 body 锚定）、+2 chunker 段落原子性测试、config-hash 新字段测试。525 passed，ruff/mypy 全过。
+- **保留**：`version_or_conflict`（0.765→0.882）与 `bilingual`（0.594→0.656）是段落到单元的直接收益；`code_and_nl`（0.909→0.758）与 `cross_document`（0.746→0.718）小幅回落，待查是否 chunk 变少后的配额效应。
+
+---
+
 ## 附录
 
 ### 关键复现命令
@@ -206,11 +265,12 @@ uv run python scripts/evaluate_retrieval.py --config <cfg> --split development -
 | `cases/evals/datasets/knowledge-qa-v1/` | 同学修订的 v1 数据集 |
 | `tmp/retrieval-v1-*.yaml` | v1 评测配置 |
 
-### 交接：当前运行状态（2026-08-01）
+### 交接：当前运行状态（2026-08-02）
 
-- **分支**：`dev/recall-optimization`（git clean，除本报告改动）。
-- **运行容器**：`eval-tei`（embedding，:8080）、`eval-tei-rerank`（bge-reranker-base，:8081）、`eval-pg`（:5433，隔离评测库）。
-- **评测库语料**：cs512（6337 chunks，v0 manifest，与基线一致）。切换 chunk_size 需 TRUNCATE + `--prepare-corpus` 重摄入。
-- **模型**：Qwen3-Embedding-0.6B（TEI）；bge-reranker-base（仅实验，未接入生产）。无 LLM（fast_chat 未配置）。
-- **已提交**：`fab040f`（claim 评分器 + 报告 §八）、`c9c47b7`（词边界分块修复）。`--chunk-size` 实验参数已回退。
-- **下一步候选**（详见 §五/§六）：① 已定位（格式混杂）；② 分块修复已证伪；**优先跑 v2-m3 reranker**（exact 池内 58 单元可回收，天花板 +10pp 级）。备选：重排后再施文档配额（`search.py` 前置 `_limit_document_quota` 对金页的影响未测）、1.8B embedding。
+- **分支**：`dev/recall-optimization`（工作区含 §八 提交前的改动）。
+- **运行容器**：`eval-tei`（embedding，:8080）、`eval-tei-rerank`（bge-reranker-v2-m3，:8081）、`eval-pg`（:5433，隔离评测库）。
+- **评测库语料**：cs512（新 parser + 段落边界 chunk，4995 chunks，v0 manifest）。切换 chunk_size 需 TRUNCATE + `--prepare-corpus --chunk-size <N>` 重摄入。
+- **模型**：Qwen3-Embedding-0.6B（TEI）；bge-reranker-v2-m3（TEI 原生）。无 LLM（fast_chat 未配置）。
+- **已提交**：`fab040f`（claim 评分器）、`c9c47b7`（词边界分块修复）。`--chunk-size` 实验参数已恢复（本次新增）。
+- **§八 实测文件**：`tmp/retrieval-v1-newpdf-k10.json`（新 parser+旧 chunker cs512）、`...-cs1536.json`（cs1536）、`...-segchunk.json`（新 chunker cs512）、`...-segchunk-cs1536.json`（cs1536）、`...-oldparser-segchunk-cs512{,-holdout}.json`（受控对照）、holdout 同名前缀。
+- **下一步候选**（详见 §五/§六/§八）：① 已定位（格式混杂）；② 分块修复已证伪但 §八 证明「段落为单元」成立（前提是有段落结构）；**优先换 1.8B embedding**（修 B：dense 漏 24 单元，与 §八 正交可叠加）。备选：`code_and_nl`/`cross_document` 在 §八 下的小幅回落（配额效应？）排查。

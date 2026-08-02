@@ -435,6 +435,7 @@ async def _prepare_corpus(
     identity: EmbeddingIdentity,
     blob_root: Path,
     source_keys: frozenset[str] | None = None,
+    chunk_size: int | None = None,
 ) -> dict[str, Any]:
     if source_keys is not None:
         sources = tuple(item for item in sources if str(item["source_key"]) in source_keys)
@@ -516,6 +517,7 @@ async def _prepare_corpus(
                 await orchestrator.run_pipeline(
                     task,
                     config=IngestionConfig(
+                        chunk_size=chunk_size if chunk_size is not None else 512,
                         embedding_batch_size=settings.embedding_batch_size,
                         embedding_identity=identity,
                     ),
@@ -891,6 +893,7 @@ async def _run_experiment(
     prepare: bool,
     blob_root: Path,
     prepare_source_keys: frozenset[str] | None = None,
+    chunk_size: int | None = None,
 ) -> dict[str, Any]:
     identity = settings.active_embedding_identity()
     database = Database(settings.database_url)
@@ -910,6 +913,7 @@ async def _run_experiment(
                 identity=identity,
                 blob_root=blob_root,
                 source_keys=prepare_source_keys,
+                chunk_size=chunk_size,
             )
         cases = list(_load_cases(config, split))
         for case in cases[: int(config["runtime"]["warmup_queries"])]:
@@ -964,6 +968,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--prepare-source",
         action="append",
         help="Limit --prepare-corpus to one manifest source_key; repeatable",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=None,
+        help="Override the ingestion chunk_size (default: 512 from IngestionConfig)",
     )
     parser.add_argument(
         "--experiment", action="append", help="Run only the named experiment; repeatable"
@@ -1023,6 +1033,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         prepare_source_keys=(
                             frozenset(args.prepare_source) if args.prepare_source else None
                         ),
+                        chunk_size=args.chunk_size,
                     )
                 )
             )

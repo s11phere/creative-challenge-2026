@@ -118,6 +118,30 @@ class TestStructureChunker:
         assert "Paragraph one" in result.chunks[0].text
         assert "Paragraph three" in result.chunks[0].text
 
+    async def test_paragraph_exceeding_chunk_size_is_not_split(self, chunker) -> None:
+        """A paragraph over chunk_size but under max_segment_size stays atomic.
+
+        The chunker must never cut inside a paragraph to hit chunk_size; the
+        paragraph becomes its own chunk instead.
+        """
+        para = "word " * 600  # ~2400 chars, > chunk_size=512, < max_segment_size
+        doc = _make_doc(para)
+        result = await chunker.chunk(doc, config=ChunkerConfig(chunk_size=512, chunk_overlap=0))
+        assert result.total_ordinals == 1
+        assert len(result.chunks[0].text) == len(para.strip())  # not truncated, not split
+
+    async def test_paragraph_split_only_above_max_segment_size(self, chunker) -> None:
+        """Only a segment larger than max_segment_size is split at all."""
+        para = "word " * 2000  # ~10,000 chars, exceeds max_segment_size
+        doc = _make_doc(para)
+        result = await chunker.chunk(
+            doc, config=ChunkerConfig(chunk_size=512, chunk_overlap=0, max_segment_size=1500)
+        )
+        assert result.total_ordinals > 1
+        # The split must not lose content.
+        joined = " ".join(c.text.strip() for c in result.chunks)
+        assert set(joined.split()) == set(para.split())
+
     async def test_text_split_across_chunks(self, chunker) -> None:
         # Create enough text to exceed chunk_size
         lines = [f"Line {i}: " + "x" * 80 for i in range(100)]
@@ -275,7 +299,9 @@ class TestStructureChunker:
         )
         result = await chunker.chunk(
             _make_doc("\n".join(node.text for node in pages), pages),
-            config=ChunkerConfig(chunk_size=100, chunk_overlap=0, min_chunk_size=1),
+            config=ChunkerConfig(
+                chunk_size=100, chunk_overlap=0, min_chunk_size=1, max_segment_size=100
+            ),
         )
         assert result.total_ordinals >= 9
         assert max(len(chunk.text) for chunk in result.chunks) <= 100
@@ -449,9 +475,9 @@ class TestStructureChunker:
 
     async def test_large_paragraph_split(self, chunker) -> None:
         """A single large paragraph should be split across chunks."""
-        text = "word " * 2000  # ~10,000 chars, exceeding chunk_size
+        text = "word " * 2000  # ~10,000 chars, exceeding max_segment_size
         doc = _make_doc(text)
-        cfg = ChunkerConfig(chunk_size=500, chunk_overlap=0)
+        cfg = ChunkerConfig(chunk_size=500, chunk_overlap=0, max_segment_size=1500)
         result = await chunker.chunk(doc, config=cfg)
         assert result.total_ordinals > 1
         # All chunks should have text
@@ -475,7 +501,7 @@ class TestStructureChunker:
             structure=(node,),
             total_lines=1,
         )
-        cfg = ChunkerConfig(chunk_size=500, chunk_overlap=0)
+        cfg = ChunkerConfig(chunk_size=500, chunk_overlap=0, max_segment_size=1500)
         result = await chunker.chunk(doc, config=cfg)
         assert result.total_ordinals > 1
         token_set = set(words)
@@ -501,7 +527,7 @@ class TestStructureChunker:
             structure=(node,),
             total_lines=1,
         )
-        cfg = ChunkerConfig(chunk_size=500, chunk_overlap=0)
+        cfg = ChunkerConfig(chunk_size=500, chunk_overlap=0, max_segment_size=1500)
         result = await chunker.chunk(doc, config=cfg)
         # Reconstruct the joined text and confirm it still contains every token in order
         joined = " ".join(chunk.text.strip() for chunk in result.chunks)

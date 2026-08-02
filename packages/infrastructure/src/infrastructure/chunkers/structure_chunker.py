@@ -317,11 +317,13 @@ class StructureChunker:
         if not segments:
             return []
 
-        # Pre-process: split any segment that alone exceeds chunk_size
+        # Pre-process: split only pathological segments that exceed
+        # max_segment_size.  Normal paragraphs are atomic — never cut to hit
+        # chunk_size (which would fragment content and dilute embeddings).
         expanded: list[_Segment] = []
         for seg in segments:
-            if len(seg.text) > config.chunk_size:
-                expanded.extend(self._split_oversize_segment(seg, config.chunk_size))
+            if len(seg.text) > config.max_segment_size:
+                expanded.extend(self._split_oversize_segment(seg, config.max_segment_size))
             else:
                 expanded.append(seg)
 
