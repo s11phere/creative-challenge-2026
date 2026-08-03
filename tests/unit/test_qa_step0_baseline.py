@@ -10,6 +10,8 @@ import pytest
 import yaml
 from jsonschema import Draft202012Validator, ValidationError
 
+from scripts import evaluate_answers
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = REPOSITORY_ROOT / "cases" / "evals" / "configs"
 
@@ -87,8 +89,25 @@ def test_provisional_qa_evaluation_config_pins_inputs_and_matches_schema() -> No
                 expected_sha256=config[section][hash_key],
                 provisional=controlled_inputs_may_be_absent,
             )
-    assert _sha256(REPOSITORY_ROOT / config["profile"]["path"]) == config["profile"]["sha256"]
-    assert _sha256(REPOSITORY_ROOT / config["prompt"]["path"]) == config["prompt"]["sha256"]
+    assert (
+        evaluate_answers._sha256(REPOSITORY_ROOT / config["profile"]["path"], normalize_text=True)
+        == config["profile"]["sha256"]
+    )
+    assert (
+        evaluate_answers._sha256(REPOSITORY_ROOT / config["prompt"]["path"], normalize_text=True)
+        == config["prompt"]["sha256"]
+    )
+
+
+def test_qa_text_hash_is_stable_across_line_endings(tmp_path: Path) -> None:
+    lf_path = tmp_path / "lf.txt"
+    crlf_path = tmp_path / "crlf.txt"
+    lf_path.write_bytes(b"first\nsecond\n")
+    crlf_path.write_bytes(b"first\r\nsecond\r\n")
+
+    assert evaluate_answers._sha256(lf_path, normalize_text=True) == evaluate_answers._sha256(
+        crlf_path, normalize_text=True
+    )
 
 
 def test_formal_runs_are_rejected_by_the_provisional_schema() -> None:

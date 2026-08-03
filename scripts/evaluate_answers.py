@@ -24,8 +24,18 @@ class AnswerEvaluationConfigError(ValueError):
     """Raised for an invalid or unsafe answer-evaluation configuration."""
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def _sha256(path: Path, *, normalize_text: bool = False) -> str:
+    content = path.read_bytes()
+    if normalize_text:
+        try:
+            content = (
+                content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+            )
+        except UnicodeDecodeError as exc:
+            raise AnswerEvaluationConfigError(
+                f"pinned text input is not valid UTF-8: {path}"
+            ) from exc
+    return hashlib.sha256(content).hexdigest()
 
 
 def _resolve_path(raw_path: str) -> Path:
@@ -79,7 +89,8 @@ def validate_answer_evaluation_config(
     ):
         value = config[section]
         path = _resolve_path(value[path_key])
-        if _sha256(path) != value[hash_key]:
+        normalize_text = section in {"profile", "prompt"}
+        if _sha256(path, normalize_text=normalize_text) != value[hash_key]:
             raise AnswerEvaluationConfigError(f"{section} {path_key} SHA-256 mismatch")
         checked[f"{section}.{path_key}"] = path
 
