@@ -1,10 +1,11 @@
 # 阶段 3 验收记录
 
-> 验收日期：2026-07-23
+> 验收日期：2026-08-03
 >
 > 结论：阶段 3 Step 10 的工程集成验收与文档移交完成；阶段 0 和阶段 2 已分别按
-> `docs/stage-0-acceptance.md`、`docs/stage-2-acceptance.md` 正式交接，但阶段 3 的真实模型定版和
-> holdout 质量门槛仍未关闭，因此本记录不宣称阶段 3 正式退出。
+> `docs/stage-0-acceptance.md`、`docs/stage-2-acceptance.md` 正式交接。阶段 3 正式质量门禁未通过，
+> 因当前评测集代表性局限已按 [ADR-010](adr/010-stage-3-termination-and-evaluation-boundary.md)
+> 终止。本记录不把阶段 3 终止解释为质量验收通过，也不把 provisional 配置升级为 frozen。
 
 ## 验收范围
 
@@ -19,7 +20,45 @@
 - PostgreSQL 16 + pgvector、Redis 7 + AOF；每次集成测试使用独立数据库/Redis 实例。
 - 默认 `MODEL_PROVIDER=fake`。本地模型服务使用 Compose `embedding`/`reranker` profile，镜像
   digest 和模型 revision 固定；`MODEL_ALLOW_EXTERNAL=false`。
+- PR #3 的 GPU 评测配置为 Qwen3-Embedding-0.6B、revision
+  `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`、768 维、float32、L2 normalization，query 和
+  document 均使用 `qwen3-knowledge-qa-v1`；TEI `max-batch-tokens=512`、client batch=8、
+  batch requests=1，应用 embedding batch=8。Reranker 为 `BAAI/bge-reranker-v2-m3`，应用
+  batch=4。
 - 评测配置为 `provisional`，报告只写入被忽略的 `tmp/retrieval-eval-*.json`。
+
+## 阶段 3 终止决策
+
+- 工程实现已完成，正式质量门禁未通过；终止原因是当前 development 评测集的代表性不足，
+  不是 Recall 指标达标或正式质量豁免。
+- 当前 PR #3 GPU 复现结果保持原样：Claim Recall@10 `69.7548%`、Evidence Recall@10
+  `62.3431%`、MRR `0.6839`、P95 `383.5 ms`、failure rate `0%`。
+- `cases/evals/configs/retrieval-v1.yaml` 继续保持 `status: provisional` 和
+  `formal_runs_enabled: false`；正式 holdout 未执行。禁止通过修改 flag、改写报告或拼接历史结果
+  将当前配置标记为正式基线。
+- 阶段 3 若重新开启，必须使用新的 dataset/config version，先完成代表性与标注边界审查，再重新
+  执行 development、配置冻结和正式门禁；不能原地修改或直接复用当前 holdout。
+
+## 2026-08-03 PR #3 GPU 复现（provisional）
+
+使用固定 revision 的 GPU TEI embedding/reranker、隔离 PostgreSQL 和 127 条 development
+用例复跑 `hybrid-rerank`。评测协议为 Claim/Evidence Recall@10，检索 profile 为
+`dense@30`（exact）+ `keyword@1`、RRF `alpha=0.5`、rerank `k=30`、final `k=10`、每文档最多
+5 个 chunk。数据库中 74 个 published 版本、5454 个 chunks 的 processing identity 与上述配置
+完全一致。
+
+| 指标 | 结果 |
+| --- | ---: |
+| Claim Recall@10 | 69.7548% |
+| Evidence Recall@10 | 62.3431% |
+| MRR | 0.6839 |
+| P95 | 383.5 ms |
+| Failure rate | 0% |
+
+该结果稳定复现了此前的 69.7548%，低于 PR 文档宣称的 75.8%，因此 75.8% 不能作为当前代码、
+数据和配置下的可复现结果。该报告是工程复现证据，不是质量验收通过证据，也不是正式 holdout；
+`status: provisional` 与 `formal_runs_enabled: false` 继续保留。
+原始机器可读报告保存在被忽略的 `tmp/pr3-gpu-recall-repro-development-final.json`。
 
 ## 2026-07-29 冻结语料 development 复核（未通过）
 
@@ -50,7 +89,8 @@ Chunk，向量完整率为 6085/6085；三个此前 pending 的 Markdown 来源�
 相对最佳单路 Dense 没有净收益，且 P95 超过 1000 ms 预算。深度诊断显示 P0 Dense 候选
 Recall@100 为 90.48%，说明下一轮需要版本化改进候选到最终 top 5 的排序/查询策略，而不是继续
 无边界调整 RRF 权重。`retrieval-v1.yaml` 必须保持 `status: provisional` 和
-`formal_runs_enabled: false`，本轮未执行、读取或选择性重跑 holdout，阶段 3 仍未正式退出。
+`formal_runs_enabled: false`，本轮未执行、读取或选择性重跑 holdout；随后阶段 3 已按 ADR-010
+终止，不能将该终止解释为正式质量通过。
 
 ## 实际命令与结果
 
@@ -169,19 +209,20 @@ API 的缺省模式改为 `hybrid_rerank`，Compose `embedding` profile 改为�
 真实在线环境还必须配置对应 instruction identity 与 L2 normalization，并以新的
 `embedding_version` 全量重建候选 DocumentVersion；在重建并发布前，旧向量不会与新查询向量混用。
 
-## 退出条件与未关闭项
+## 退出条件与未通过项
 
 已完成：检索四种模式、固定 profile/Embedding/索引版本、Search Application Port、稳定错误
 协议、OpenAPI、隐私日志边界和阶段 4 移交文档。
 
-未完成：冻结 holdout 上的 Recall@5、Reranker 净收益和 P95 预算证明；在全新阶段 3 模型卷上完成真实模型首次下载并验证
-Compose profile（既有固定缓存卷的禁网启动已通过，但不能替代全新卷的首次下载证据）。
+未通过：冻结 holdout 上的 Recall@5、Reranker 净收益和 P95 预算证明；全新阶段 3 模型卷的首次
+下载证据也未完成。上述项目因阶段 3 已终止而不再作为当前阶段的待办，不能被改写为已通过；
+既有固定缓存卷的禁网启动仍不能替代全新卷的首次下载证据。
 
-## 阶段 0 关闭后的正式完成清单
+## 阶段 0 关闭后的正式完成清单（历史 Runbook）
 
-阶段 0 的 `frozen` 状态只是解除真实语料门禁。下面的清单是从当前工程验收状态到阶段 3
-正式退出的唯一建议顺序；每一项都应保存命令、摘要、哈希和责任人，不能用 fake 或合成 fixture
-替代。
+阶段 0 的 `frozen` 状态只是解除真实语料门禁。下面的清单保留为阶段 3 若重新开启时的历史
+Runbook，不是当前阶段待办，也不能绕过 ADR-010 直接执行；重新开启时必须新建 dataset/config
+version，并保存命令、摘要、哈希和责任人，不能用 fake 或合成 fixture 替代。
 
 | 顺序 | 必须完成的工作 | 通过证据 | 阻塞时的处理 |
 | --- | --- | --- | --- |
@@ -230,8 +271,9 @@ identity、索引版本、错误码和降级语义均由 `packages/domain` 与 `
 
 ## 外部确认与已知限制
 
-- 阶段 0 和阶段 2 Step 9 的正式门禁已关闭；仍需完成真实模型 development 消融和默认配置
-  冻结，才能按上方清单把 `retrieval-v1.yaml` 从 provisional 切换到正式运行并执行一次 holdout。
+- 阶段 0 和阶段 2 Step 9 的正式门禁已关闭；阶段 3 已因评测集代表性局限终止，当前不得把
+  `retrieval-v1.yaml` 从 provisional 切换到正式运行，也不得执行当前 holdout。重新开启必须遵循
+  ADR-010 的新 dataset/config version 边界。
 - Docker Engine、私有模型缓存和真实批准语料不在本次仓库变更中；没有实际输出的命令不得标记
   为通过。
 - Web 目前仍是数据源管理界面；搜索 API 已交付，问答和引用 UI 留给阶段 4。

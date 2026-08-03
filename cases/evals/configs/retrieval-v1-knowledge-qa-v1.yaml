@@ -32,8 +32,8 @@ protocol:
     - must_exclude_violations
     - latency_p50_p95
     - failure_rate
-  recall_k: 5
-  ndcg_k: 5
+  recall_k: 10
+  ndcg_k: 10
   no_evidence_policy: exclude_from_recall_and_ranking_denominators
   safety_slices:
     - no_answer
@@ -51,16 +51,16 @@ experiments:
     mode: keyword
     dense_mode: exact
     profile: &baseline_profile
-      keyword_candidate_k: 30
+      keyword_candidate_k: 1
       dense_candidate_k: 30
       fusion_candidate_k: 30
       rrf_k: 60
-      fusion_alpha: 0.35
+      fusion_alpha: 0.5
       reranker_enabled: false
-      rerank_k: 10
-      final_k: 5
+      rerank_k: 30
+      final_k: 10
       adjacent_window: 1
-      max_chunks_per_document: 3
+      max_chunks_per_document: 5
       hybrid_embedding_failure_policy: error
       reranker_failure_policy: error
   - id: dense-exact

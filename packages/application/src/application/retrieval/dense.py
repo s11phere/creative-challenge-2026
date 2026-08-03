@@ -70,6 +70,8 @@ class GatewayQueryTextEmbedder:
 
     def __init__(self, gateway: ModelGateway) -> None:
         self._gateway = gateway
+        self.last_input_tokens = 0
+        self.last_latency_ms = 0.0
 
     async def embed(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
         try:
@@ -93,6 +95,8 @@ class GatewayQueryTextEmbedder:
                 RetrievalErrorCode.EMBEDDING_UNAVAILABLE,
                 "The query embedding provider returned an incompatible capability.",
             )
+        self.last_input_tokens = response.usage.input_tokens
+        self.last_latency_ms = response.latency_ms
         return response.vectors
 
 

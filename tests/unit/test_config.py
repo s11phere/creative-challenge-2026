@@ -53,14 +53,14 @@ def test_embedding_dimensions_are_not_runtime_configurable() -> None:
 
 
 def test_embedding_batch_size_is_bounded_and_configurable() -> None:
-    assert Settings().embedding_batch_size == 32
+    assert Settings(_env_file=None).embedding_batch_size == 32
     assert Settings(embedding_batch_size=4).embedding_batch_size == 4
     with pytest.raises(ValueError, match="greater than or equal to 1"):
         Settings(embedding_batch_size=0)
 
 
 def test_reranker_batch_size_is_bounded_and_configurable() -> None:
-    assert Settings().reranker_batch_size == 32
+    assert Settings(_env_file=None).reranker_batch_size == 32
     assert Settings(reranker_batch_size=4).reranker_batch_size == 4
     with pytest.raises(ValueError, match="greater than or equal to 1"):
         Settings(reranker_batch_size=0)

@@ -37,7 +37,7 @@ Checked on 2026-07-18:
 | Docker daemon | Available during Step 7/8 Compose verification | Verify `docker version` before startup |
 | PostgreSQL / pgvector | Compose service verified | No host installation needed |
 | Redis | Compose service with AOF verified | No host installation needed |
-| Model endpoint | Pinned TEI CPU profile verified on 2026-07-21 | Fake remains the default; real model is opt-in |
+| Model endpoint | Pinned TEI GPU profile verified on 2026-08-03 | Fake remains the default; real model is opt-in |
 
 ## Windows Setup
 
@@ -108,13 +108,15 @@ Stage 1 defaults to `MODEL_PROVIDER=fake`. To use a local OpenAI-compatible endp
 `MODEL_PROVIDER=openai-compatible`, `MODEL_ENDPOINT`, `FAST_CHAT_MODEL`, and `EMBEDDING_MODEL`.
 Embedding-only operation is supported with `EMBEDDING_ENDPOINT` and `EMBEDDING_MODEL`; the
 chat model may be omitted. The optional Compose `embedding` profile provides a pinned
-Text Embeddings Inference CPU image and `Qwen/Qwen3-Embedding-0.6B` revision. Configure
+Text Embeddings Inference GPU image and `Qwen/Qwen3-Embedding-0.6B` revision. Configure
 `MODEL_PROVIDER=text-embeddings-inference`, `EMBEDDING_ENDPOINT=http://tei:80`,
 `EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B`,
 `EMBEDDING_MODEL_REVISION=97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`,
 `EMBEDDING_QUERY_INSTRUCTION_VERSION=qwen3-knowledge-qa-v1`,
 `EMBEDDING_DOCUMENT_INSTRUCTION_VERSION=qwen3-knowledge-qa-v1`, and
-`EMBEDDING_NORMALIZATION=l2` when using that profile. The exact `tei` service name is in the
+`EMBEDDING_NORMALIZATION=l2`, `EMBEDDING_PRECISION=float32`, and
+`EMBEDDING_BATCH_SIZE=8` when using that profile. TEI uses `max-batch-tokens=512`,
+`max-client-batch-size=8`, and `max-batch-requests=1`. The exact `tei` service name is in the
 local endpoint allowlist; other DNS names still require `MODEL_ALLOW_EXTERNAL=true`. A host-run
 API/Worker can use the published service at `http://localhost:8080` instead.
 `MODEL_API_KEY` is optional for local endpoints and is loaded as a secret value. Public endpoints are

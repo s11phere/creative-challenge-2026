@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，PR #3 增加了 provisional Recall 优化与结构化 PDF/chunk 能力，但评测配置、数据协议和正式门禁尚未统一，因此默认配置未冻结且正式 holdout 未执行。阶段 4 仍未正式启动，但 provisional Step 0-10 的领域/Application、内存持久化、API/SSE、Web、反馈和回答评测门禁已跑通；阶段 5 通用 Agent Runtime/Skill 基础已并行通过审查。**
+**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，但正式质量门禁未通过。PR #3 的 GPU 配置复现出 provisional Claim Recall@10=69.7548%，因当前评测集代表性局限，阶段 3 已按 [ADR-010](docs/adr/010-stage-3-termination-and-evaluation-boundary.md) 终止；正式 holdout 未执行，配置仍未冻结。阶段 4 仍未正式启动，但 provisional Step 0-10 的领域/Application、内存持久化、API/SSE、Web、反馈和回答评测门禁已跑通；阶段 5 通用 Agent Runtime/Skill 基础已并行通过审查。**
 
 已交付的核心能力：
 
@@ -13,7 +13,7 @@
 |------|------|
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
-| 阶段 3 🟡 工程 Step 0-10 | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；真实模型 development 最佳 Dense Recall@5 为 51.90%，未达到 85%，默认配置未冻结且正式 holdout 未执行 |
+| 阶段 3 ⏹️ 已终止（工程完成，质量门禁未通过） | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；PR3 GPU development Claim Recall@10 为 69.7548%，当前评测集代表性不足，正式 holdout 未执行，配置保持 provisional |
 | 阶段 4 🟡 provisional Step 0-10 | ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、查询/上下文、结构化生成、拒答/冲突/故障、内存 Repository、SSE/问答 API、Web 对话工作区、反馈候选和回答评测 validate-only 已完成；PostgreSQL/Alembic、Worker 完成链、真实引用 UI/E2E、默认配置与 holdout 未完成 |
 | 阶段 5 🟡 通用基础 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、版本固定、预算/权限/审计、事务式 reload/回滚和 Skill 模板已通过审查 |
 
@@ -24,8 +24,7 @@ Evidence 保存、结构化生成、原子发布、失败与取消语义；当�
 运行/检查点持久化或 Web Skill 入口，不能据此宣称 `knowledge_qa` 可用或阶段 5 整体完成。
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
 [Stage 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
-[Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；历史 `90.48%` Recall@5 结果已判定为虚假，当前真实 development 结果未达到 85% 门禁。
-仍需关闭 P95 门禁、冻结默认配置后，再按阶段 3 Runbook 执行一次性 holdout。
+[Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；历史 `90.48%` Recall@5 结果已判定为虚假，当前 PR3 GPU development Claim Recall@10=69.7548%，仍未达到正式门禁。阶段 3 已终止；若未来重新开启，必须发布新的 dataset/config version 并重新走评测流程。
 
 ## 快速启动
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -49,6 +50,42 @@ class EmbeddingIdentity:
             "embedding_query_instruction_version": self.query_instruction_version,
         }
 
+    @classmethod
+    def from_processing_config(
+        cls,
+        config: Mapping[str, object],
+    ) -> EmbeddingIdentity | None:
+        """Restore an identity persisted on a document version.
+
+        Older pending versions may not have embedding fields yet.  A partial
+        identity is rejected because silently falling back to the live
+        environment would make a queued rebuild non-deterministic.
+        """
+        keys = (
+            "embedding_dimensions",
+            "embedding_document_instruction_version",
+            "embedding_model_revision",
+            "embedding_normalization",
+            "embedding_precision",
+            "embedding_query_instruction_version",
+        )
+        present = [key in config for key in keys]
+        if not any(present):
+            return None
+        if not all(present):
+            raise ValueError("Persisted embedding identity is incomplete")
+        try:
+            return cls(
+                dimensions=int(str(config["embedding_dimensions"])),
+                document_instruction_version=str(config["embedding_document_instruction_version"]),
+                model_revision=str(config["embedding_model_revision"]),
+                normalization=str(config["embedding_normalization"]),
+                precision=str(config["embedding_precision"]),
+                query_instruction_version=str(config["embedding_query_instruction_version"]),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Persisted embedding identity is invalid") from exc
+
     @property
     def version(self) -> str:
         """Return a stable, bounded identifier for the full embedding identity."""
@@ -67,9 +104,13 @@ class EmbeddingIdentity:
     ) -> tuple[tuple[float, ...], ...]:
         """Apply the configured deterministic normalization to model output."""
         if self.normalization == "none":
+            if any(not math.isfinite(value) for vector in vectors for value in vector):
+                raise ValueError("Embedding vectors must contain finite values")
             return vectors
         normalized: list[tuple[float, ...]] = []
         for vector in vectors:
+            if any(not math.isfinite(value) for value in vector):
+                raise ValueError("Embedding vectors must contain finite values")
             norm = math.sqrt(sum(value * value for value in vector))
             if norm == 0:
                 raise ValueError("Cannot l2-normalize a zero embedding vector")

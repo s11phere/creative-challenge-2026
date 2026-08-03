@@ -7,6 +7,8 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from domain.embedding import EmbeddingIdentity
+from domain.models import DocumentVersion
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -170,3 +172,28 @@ def test_ingestion_gateway_lifetime_is_scoped_to_actor_loop(
     assert used == created
     assert len(created) == 2
     assert all(gateway.closed for gateway in created)
+
+
+def test_ingestion_config_is_pinned_to_candidate_version() -> None:
+    identity = EmbeddingIdentity(
+        model_revision="model@candidate",
+        query_instruction_version="qwen3-knowledge-qa-v1",
+        document_instruction_version="qwen3-knowledge-qa-v1",
+        normalization="l2",
+    )
+    version = DocumentVersion(
+        processing_config={
+            "chunk_size": "1024",
+            "chunk_overlap": "32",
+            "min_chunk_size": "80",
+            "max_segment_size": "4096",
+            **identity.processing_config(),
+        }
+    )
+
+    config = ingestion_tasks._ingestion_config_for_version(version)
+
+    assert config.embedding_identity == identity
+    assert config.chunk_size == 1024
+    assert config.chunk_overlap == 32
+    assert config.min_chunk_size == 80

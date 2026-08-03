@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from uuid import UUID, uuid4
 
 import pytest
 from application.ingestion.source_registration import (
     SourceRegistrationService,
 )
+from domain.embedding import EmbeddingIdentity, compute_processing_config_hash
 from domain.fingerprinting import compute_storage_key
 from domain.models import (
     Document,
+    DocumentStatus,
     DocumentVersion,
     Source,
     SourceType,
@@ -334,6 +336,57 @@ class TestRegisterFile:
         assert result.existing_version.blob_hash == blob_hash
         assert result.existing_version.document_id == first.document.id
         assert result.version_id == first.version_id
+
+    async def test_changed_processing_identity_creates_candidate_version(
+        self,
+        service: SourceRegistrationService,
+        source_repo: _FakeSourceRepo,
+        doc_repo: _FakeDocumentRepo,
+        version_repo: _FakeVersionRepo,
+        blob_store: _FakeBlobStore,
+        space_id: UUID,
+    ) -> None:
+        source = await source_repo.create(Source(space_id=space_id, source_type=SourceType.UPLOAD))
+        first = await service.register_file(
+            source,
+            b"same content",
+            blob_store,
+            file_stable_key="test.md",
+        )
+        old = await version_repo.get(first.version_id)
+        assert old is not None
+        await version_repo.update(replace(old, status=DocumentStatus.PUBLISHED))
+        document = await doc_repo.get(first.document.id)
+        assert document is not None
+        await doc_repo.update(replace(document, current_version_id=old.id))
+
+        identity = EmbeddingIdentity(model_revision="model@next", normalization="l2")
+        processing_config = {
+            "chunk_overlap": "64",
+            "chunk_size": "512",
+            "min_chunk_size": "100",
+            "max_segment_size": "4096",
+            **identity.processing_config(),
+        }
+        result = await service.register_file(
+            source,
+            b"same content",
+            blob_store,
+            file_stable_key="test.md",
+            embedding_version=identity.version,
+            processing_config=processing_config,
+        )
+
+        assert result.version_id != old.id
+        unchanged_old = await version_repo.get(old.id)
+        candidate = await version_repo.get(result.version_id)
+        assert unchanged_old is not None
+        assert unchanged_old.status is DocumentStatus.PUBLISHED
+        assert unchanged_old.embedding_version == "1.0"
+        assert candidate is not None
+        assert candidate.status is DocumentStatus.PENDING
+        assert candidate.embedding_version == identity.version
+        assert candidate.processing_config_hash == compute_processing_config_hash(processing_config)
 
     async def test_uses_file_path_when_no_stable_key(
         self,

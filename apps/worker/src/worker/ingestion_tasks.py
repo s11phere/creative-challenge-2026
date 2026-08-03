@@ -18,6 +18,7 @@ from application.ingestion.orchestrator import (
     IngestionOrchestrator,
 )
 from domain.blob_store import BlobStore
+from domain.embedding import EmbeddingIdentity
 from domain.models import IngestionTask, TaskOperation, TaskStatus
 from domain.parsing import ParseMetadata, ParseResult
 from domain.retrieval import RETRIEVAL_EMBEDDING_DIMENSIONS
@@ -55,6 +56,24 @@ from sqlalchemy.pool import NullPool
 from worker.broker import broker
 
 logger = logging.getLogger(__name__)
+
+
+def _ingestion_config_for_version(version: Any) -> IngestionConfig:
+    """Pin a queued task to the identity persisted on its candidate version."""
+    identity = EmbeddingIdentity.from_processing_config(version.processing_config)
+
+    def integer(name: str, default: int) -> int:
+        value = version.processing_config.get(name)
+        return default if value is None else int(value)
+
+    return IngestionConfig(
+        chunk_size=integer("chunk_size", 512),
+        chunk_overlap=integer("chunk_overlap", 64),
+        min_chunk_size=integer("min_chunk_size", 100),
+        max_segment_size=integer("max_segment_size", 4096),
+        embedding_batch_size=settings.embedding_batch_size,
+        embedding_identity=identity or settings.active_embedding_identity(),
+    )
 
 
 def _create_gateway() -> ModelGateway:
@@ -326,10 +345,6 @@ async def _run_ingestion_async(
 ) -> None:
     """Core async ingestion logic with session management."""
     tid = UUID(task_id)
-    cfg = IngestionConfig(
-        embedding_batch_size=settings.embedding_batch_size,
-        embedding_identity=settings.active_embedding_identity(),
-    )
 
     # ------------------------------------------------------------------
     # Phase 1: Run the pipeline in its own session
@@ -353,6 +368,8 @@ async def _run_ingestion_async(
             if task.operation == TaskOperation.DELETE:
                 result = await orch.run_cleanup(task)
             else:
+                target_version = await orch._determine_version(task)
+                cfg = _ingestion_config_for_version(target_version)
                 result = await orch.run_pipeline(task, config=cfg)
             await session.commit()
 

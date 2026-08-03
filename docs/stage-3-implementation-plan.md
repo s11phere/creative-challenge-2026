@@ -8,9 +8,11 @@
 
 ## 1. 结论摘要
 
-当前状态（2026-07-28）：Stage 0 已按 `docs/stage-0-acceptance.md` 以
-`internal_team_only` 范围冻结。阶段 3 的正式模型、配置、development 消融和 holdout
-门禁仍未关闭；本计划中的历史 provisional 结果不得视为正式质量结论。
+当前状态（2026-08-03）：Stage 0 已按 `docs/stage-0-acceptance.md` 以
+`internal_team_only` 范围冻结。阶段 3 的工程实现已完成，但正式质量门禁未通过；因当前
+评测集代表性局限，阶段 3 已按 `docs/adr/010-stage-3-termination-and-evaluation-boundary.md`
+终止。`retrieval-v1.yaml` 仍为 provisional，正式 holdout 未执行；本计划中的 provisional
+结果不得视为正式质量结论。
 
 阶段 3 的目标是用可复现数据证明检索链路有效，而不是实现回答生成、引用绑定或
 `knowledge_qa` Skill。阶段 2 已经提供已发布 `DocumentVersion`、带定位信息的 `Chunk`、
@@ -613,8 +615,9 @@ docs/
 8. 提交报告前执行隐私扫描；报告只包含最小证据标识和指标，不提交私有正文、查询全文或
    Embedding 产物。
 
-**完成标准**：同一冻结配置可重复得到相同通过/失败结论；默认模型和 profile 的选择有
-development 消融与 holdout 证据；每个失败 case 可定位到具体阶段。
+**原定完成标准**：同一冻结配置可重复得到相同通过/失败结论；默认模型和 profile 的选择有
+development 消融与 holdout 证据；每个失败 case 可定位到具体阶段。该标准未通过，当前阶段已按
+ADR-010 终止；若重新开启，必须使用新的 dataset/config version。
 
 **历史实现与实际验证快照（2026-07-22，阶段 0 冻结前）：**
 
@@ -639,8 +642,9 @@ development 消融与 holdout 证据；每个失败 case 可定位到具体阶�
 7. 向阶段 4 移交固定的 Search Application Port、SearchResult、默认 profile、模型/索引版本、
    错误协议和评测基线；阶段 4 不直接读取检索表或复制融合逻辑。
 
-**完成标准**：所有阶段退出条件均由保存的命令和报告支持，阶段 4 可以仅通过 Application
-Port 获取有版本、分数、Space、来源和 locator 的证据候选。
+**工程完成标准**：工程集成验收和文档移交由保存的命令与报告支持，阶段 4 可以仅通过
+Application Port 获取有版本、分数、Space、来源和 locator 的证据候选。正式质量门禁未通过，
+因此这些接口不能被描述为正式检索质量基线。
 
 **历史实现与实际验证快照（2026-07-23，阶段 0 冻结前的移交记录）：**
 
@@ -655,8 +659,9 @@ Port 获取有版本、分数、Space、来源和 locator 的证据候选。
   阻塞，但用既有固定 revision 缓存禁网启动 Embedding/Reranker 均报告 Ready；详细输出见
   `docs/stage-3-acceptance.md`。
 - 阶段 0 语料门禁已按 `docs/stage-0-acceptance.md` 关闭并限定为 `internal_team_only`；阶段 2
-  Step 9 已按 `docs/stage-2-acceptance.md` 关闭，阶段 3 真实模型定版和 holdout 仍未关闭。本步完成工程集成与文档移交，不把 fixture 或 fake
-  模型结果宣称为正式 Recall、Reranker 净收益或 P95 质量结论。
+  Step 9 已按 `docs/stage-2-acceptance.md` 关闭，阶段 3 正式质量门禁未通过，随后按 ADR-010
+  终止。本步完成工程集成与文档移交，不把 fixture、fake 或 provisional 真实模型结果宣称为
+  正式 Recall、Reranker 净收益或 P95 质量结论。
 
 ## 6. 配置与版本策略
 
@@ -803,10 +808,11 @@ Compose 或模型服务变更还必须验证空缓存首次启动、已有缓存
 阶段 4 在此基础上实现查询改写、上下文预算、带引用回答、引用校验和拒答；不得在问答用例
 内部复制阶段 3 的 SQL、融合、精排或过滤逻辑。
 
-## 11. 阶段 0 关闭后的正式完成顺序
+## 11. 阶段 0 关闭后的正式完成顺序（历史 Runbook）
 
-阶段 0 关闭只解除真实语料门禁，不等于阶段 3 自动达标。必须严格按以下顺序推进；任何一项
-失败都保持阶段 3 为“工程完成、正式质量未通过”，不得直接运行或选择性重跑 holdout。
+阶段 0 关闭只解除真实语料门禁，不等于阶段 3 自动达标。以下内容是阶段 3 若重新开启时的
+历史 Runbook；当前阶段已按 ADR-010 终止，不得直接运行或选择性重跑现有 holdout。重新开启时
+必须先发布新的 dataset/config version，再按以下顺序推进。
 
 ### 11.1 接收并验证阶段 0 交付物
 
@@ -865,9 +871,8 @@ Compose 或模型服务变更还必须验证空缓存首次启动、已有缓存
 
 ### 11.5 完成记录和移交
 
-将正式 report v1、人工摘要、Stage 0/Stage 2/Stage 3 退出记录、模型/profile/index 摘要和
-复现实命令归档到 `cases/evals/reports/`（只保留安全元数据），更新
-`docs/stage-3-acceptance.md`、README、architecture、development-environment 和
-troubleshooting；最后才把阶段状态从“工程验收完成”改为“阶段 3 正式完成”，并向阶段 4
-移交稳定 Search Application Port。详细核对表见 `docs/stage-3-acceptance.md` 的“阶段 0
-关闭后的正式完成清单”。
+若重新开启并完成正式质量门禁，才将正式 report v1、人工摘要、Stage 0/Stage 2/Stage 3
+记录、模型/profile/index 摘要和复现实命令归档到 `cases/evals/reports/`（只保留安全元数据），
+并更新 `docs/stage-3-acceptance.md`、README、architecture、development-environment 和
+troubleshooting。当前终止记录与历史清单见 `docs/stage-3-acceptance.md`，不能将当前工程完成
+状态改写为“正式质量通过”。

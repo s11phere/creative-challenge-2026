@@ -7,7 +7,9 @@ single document version.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -201,7 +203,10 @@ class EmbeddingService:
 
         for i in range(0, len(chunk_texts), cfg.batch_size):
             batch = tuple(chunk_texts[i : i + cfg.batch_size])
+            batch_started = perf_counter()
             batch_vectors = await self._embedder.embed(batch)
+            total_latency += (perf_counter() - batch_started) * 1000
+            total_tokens += int(getattr(self._embedder, "last_input_tokens", 0))
 
             if len(batch_vectors) != len(batch):
                 raise RuntimeError(
@@ -362,6 +367,8 @@ class EmbeddingService:
                     f"expected {config.embedding_identity.dimensions} "
                     f"(fixed by ADR-005)"
                 )
+            if any(not math.isfinite(value) for value in vec):
+                raise ValueError(f"Chunk {i} embedding contains non-finite values")
 
         # --- Empty text ratio ---
         if outputs:

@@ -64,6 +64,5 @@ holdout 149，`formal_run_eligible=false`，未产生模型调用或回答执行
 
 Grounded QA schema、SSE v1、安全边界和唯一 provisional QA Application Port 已可供后续设计及
 fake 契约复用，但当前 API/SSE 为进程内 provisional 实现，没有持久执行、终态 Citation 或唯一生产
-QA Application Port。阶段 5 不得据此实现、接入或
-宣称 `knowledge_qa` Skill；必须先完成阶段 3 正式退出，再按 ADR-007 完成阶段 4 的持久化、Worker、
-真实 Citation 和评测门禁。
+QA Application Port。阶段 5 不得据此实现、接入或宣称 `knowledge_qa` Skill；阶段 3 已按 ADR-010
+终止且质量门禁未通过，这一记录不能替代阶段 4 的持久化、Worker、真实 Citation 和评测门禁。

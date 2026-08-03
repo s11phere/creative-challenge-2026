@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from uuid import UUID
 
+from application.ingestion import IngestionConfig
 from application.ingestion.source_registration import SourceRegistrationService
 from domain.models import DocumentStatus, IngestionTask, SourceType, TaskOperation, TaskStatus
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
@@ -328,6 +329,11 @@ async def upload_file(
             raise HTTPException(status_code=404, detail="Source not found")
 
         original_filename = _display_filename(file.filename)
+        # Pin the candidate to the same processing identity used by online
+        # retrieval.  A missing model configuration still permits upload; the
+        # worker will report the model failure through the task state.
+        identity = settings.active_embedding_identity(allow_unconfigured=True)
+        processing_config = IngestionConfig(embedding_identity=identity).processing_config()
         registration = SourceRegistrationService(
             source_repo=source_repo,
             document_repo=DocumentRepository(session),
@@ -339,6 +345,8 @@ async def upload_file(
             blob_store=blob_store,
             file_stable_key=original_filename,
             file_path=original_filename,
+            embedding_version=identity.version,
+            processing_config=processing_config,
         )
 
         # A published version that is still current already represents these

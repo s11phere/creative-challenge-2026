@@ -117,9 +117,11 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
   必须等待阶段 4 正式门禁、持久化和 Worker 实现。
 - `GroundedQAApplicationPort` 已在纯 Application 层用内存 Repository 和合成 fake 跑通完整终态，
   但 API/Worker 当前未装配该执行服务；因此通过服务单测不代表 Web/API Run 会离开 queued。
-- 阶段 3 评测配置仍为 provisional：阶段 0 和阶段 2 已正式关闭，但 2026-07-29 冻结语料
+- 阶段 3 评测配置仍为 provisional：阶段 0 和阶段 2 已正式关闭，但 development 质量门禁
+  未通过，且当前评测集代表性不足，因此阶段 3 已按 ADR-010 终止。2026-07-29 冻结语料
   development 的最佳 Dense Recall@5 只有 51.90%，BGE Reranker 没有净收益且 P95 为
-  3523.9 ms，因此 holdout 仍被配置门禁拒绝。不要手工打开 `formal_runs_enabled`。
+  3523.9 ms。不要手工打开 `formal_runs_enabled` 或运行当前 holdout；重新开启必须使用新的
+  dataset/config version。
 - P0 检索评测只纳入 Markdown/TXT/PDF 证据来源；Code/Notebook 属于 P1。validation 会同时记录
   原始与纳入 case 数，无证据安全 case 不得因格式过滤而跳过。
 - Qwen3 Embedding 与 BGE Reranker 同时运行时，
@@ -136,4 +138,4 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
   Citation 或原文内容。
 - 阶段 0 语料已按 `docs/stage-0-acceptance.md` 冻结为 `internal_team_only`；真实语料只可在
   manifest 允许列表内用于本地/组内评测，禁止 Git 分发、公开演示和未经策略允许的外部 Provider
-  外发。阶段 2 Step 9 已关闭，但阶段 3 正式质量门禁仍未关闭；阶段 4 因此仍未正式启动。
+  外发。阶段 2 Step 9 已关闭，但阶段 3 正式质量门禁未通过且已终止；阶段 4 仍未正式启动。

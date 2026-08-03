@@ -539,6 +539,11 @@ LLM-as-judge 只能作为一个信号；关键用例必须结合规则、证据�
 
 **目标**：用数据证明检索链路有效。
 
+**当前状态（2026-08-03）**：工程实现已完成，但正式质量门禁未通过。由于当前评测集代表性
+不足，阶段 3 已按 `docs/adr/010-stage-3-termination-and-evaluation-boundary.md` 终止；正式
+holdout 未执行，`retrieval-v1.yaml` 继续保持 provisional。该终止不是质量验收通过；若未来
+重新开启，必须发布新的 dataset/config version 并重新评测。
+
 详细启动门禁、技术决策、分步执行和验收矩阵见
 [《阶段 3 实施计划：混合检索与评测基线》](stage-3-implementation-plan.md)。
 阶段 0/2 关闭后的正式收尾顺序和一次性 holdout Runbook 见

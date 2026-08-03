@@ -16,12 +16,13 @@ source file for ingestion.  Responsibilities:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from domain.blob_store import BlobStore
+from domain.embedding import compute_processing_config_hash
 from domain.fingerprinting import (
     compute_storage_key,
     normalize_stable_key,
@@ -29,6 +30,7 @@ from domain.fingerprinting import (
 )
 from domain.models import (
     Document,
+    DocumentStatus,
     DocumentVersion,
     Source,
     SourceType,
@@ -166,6 +168,8 @@ class SourceRegistrationService:
         *,
         file_stable_key: str | None = None,
         file_path: str | None = None,
+        embedding_version: str | None = None,
+        processing_config: Mapping[str, str] | None = None,
     ) -> RegistrationResult:
         """Register raw file bytes for ingestion (FINGERPRINT stage).
 
@@ -178,7 +182,17 @@ class SourceRegistrationService:
         5. If none exists, create a new ``Document``.
         6. Look up an existing version of that document with the same
            ``blob_hash`` — if found, downstream stages can short-circuit.
+
+        When an embedding identity is supplied, the fingerprint is additionally
+        resolved to a candidate with that processing identity.  A published
+        version is never mutated to satisfy a new identity.
         """
+        if (embedding_version is None) != (processing_config is None):
+            raise ValueError("embedding_version and processing_config must be supplied together")
+        expected_config = dict(processing_config) if processing_config is not None else None
+        expected_config_hash = (
+            compute_processing_config_hash(expected_config) if expected_config is not None else ""
+        )
         # --- Step 1: hash raw bytes ---
         blob_hash = compute_blob_hash(raw_bytes)
 
@@ -235,6 +249,9 @@ class SourceRegistrationService:
                 document_id=document.id,
                 blob_hash=blob_hash,
                 file_path=file_path,
+                embedding_version=embedding_version or "1.0",
+                processing_config_hash=expected_config_hash,
+                processing_config=expected_config or {},
             )
             version = await self._version_repo.create(version)
             resolved_version_id = version.id
@@ -246,6 +263,30 @@ class SourceRegistrationService:
                 existing_version = await self._version_repo.update(
                     replace(existing_version, file_path=file_path)
                 )
+            if expected_config is not None and (
+                existing_version.embedding_version != embedding_version
+                or existing_version.processing_config_hash != expected_config_hash
+            ):
+                assert embedding_version is not None
+                candidate = await self._find_version_by_processing_identity(
+                    document.id,
+                    blob_hash,
+                    embedding_version=embedding_version,
+                    processing_config_hash=expected_config_hash,
+                )
+                if candidate is None:
+                    candidate = await self._version_repo.create(
+                        replace(
+                            existing_version,
+                            id=uuid4(),
+                            embedding_version=embedding_version,
+                            processing_config_hash=expected_config_hash,
+                            processing_config=expected_config,
+                            status=DocumentStatus.PENDING,
+                            created_at=datetime.now(UTC),
+                        )
+                    )
+                existing_version = candidate
             resolved_version_id = existing_version.id
 
         return RegistrationResult(
@@ -293,5 +334,24 @@ class SourceRegistrationService:
         versions = await self._version_repo.get_by_document(document_id)
         for version in versions:
             if version.blob_hash == blob_hash:
+                return version
+        return None
+
+    async def _find_version_by_processing_identity(
+        self,
+        document_id: UUID,
+        blob_hash: str,
+        *,
+        embedding_version: str,
+        processing_config_hash: str,
+    ) -> DocumentVersion | None:
+        """Find a retry-safe candidate for one exact processing identity."""
+        versions = await self._version_repo.get_by_document(document_id)
+        for version in versions:
+            if (
+                version.blob_hash == blob_hash
+                and version.embedding_version == embedding_version
+                and version.processing_config_hash == processing_config_hash
+            ):
                 return version
         return None

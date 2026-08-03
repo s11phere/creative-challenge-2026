@@ -11,3 +11,5 @@ task, and deletion semantics. ADR-006 records the stage 5 Skill manifest, versio
 permission, recovery, and event semantics. ADR-007 records grounded QA persistence, citation,
 execution, and SSE semantics. ADR-008 remains reserved for the service-split or multi-Agent decision
 listed in `docs/project-implementation-plan.md`; the stage 1 queue decision therefore uses ADR-009.
+ADR-010 records the explicit Stage 3 termination and preserves the boundary between engineering
+completion and formal retrieval quality acceptance.

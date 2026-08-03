@@ -19,6 +19,7 @@ async def test_live_returns_alive() -> None:
 
 async def test_ready_returns_degraded_without_dependencies(monkeypatch: MonkeyPatch) -> None:
     """Without PostgreSQL/Redis, ready must return 503 with stable machine codes."""
+    test_app = create_app(create_model_gateway(GatewayConfig(provider=ModelProvider.FAKE)))
 
     async def unavailable_postgres(*, timeout_seconds: float) -> bool:
         assert timeout_seconds == 3
@@ -27,10 +28,10 @@ async def test_ready_returns_degraded_without_dependencies(monkeypatch: MonkeyPa
     def unavailable_redis(*_args: Any, **_kwargs: Any) -> None:
         raise ConnectionError("synthetic Redis failure")
 
-    monkeypatch.setattr(app.state.database, "is_available", unavailable_postgres)
+    monkeypatch.setattr(test_app.state.database, "is_available", unavailable_postgres)
     monkeypatch.setattr(aioredis, "from_url", unavailable_redis)
 
-    transport = ASGITransport(app=app)
+    transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/api/v1/health/ready")
 
@@ -61,6 +62,8 @@ async def test_ready_returns_degraded_without_dependencies(monkeypatch: MonkeyPa
 async def test_ready_returns_success_when_dependencies_are_available(
     monkeypatch: MonkeyPatch,
 ) -> None:
+    test_app = create_app(create_model_gateway(GatewayConfig(provider=ModelProvider.FAKE)))
+
     class FakeRedisConnection:
         async def ping(self) -> bool:
             return True
@@ -74,10 +77,10 @@ async def test_ready_returns_success_when_dependencies_are_available(
     def fake_redis_from_url(*_args: Any, **_kwargs: Any) -> FakeRedisConnection:
         return FakeRedisConnection()
 
-    monkeypatch.setattr(app.state.database, "is_available", fake_postgres_available)
+    monkeypatch.setattr(test_app.state.database, "is_available", fake_postgres_available)
     monkeypatch.setattr(aioredis, "from_url", fake_redis_from_url)
 
-    transport = ASGITransport(app=app)
+    transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/api/v1/health/ready")
 

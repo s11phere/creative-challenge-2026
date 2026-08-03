@@ -37,9 +37,11 @@ class _FakeEmbedder:
     def __init__(self, dims: int = 768) -> None:
         self._dims = dims
         self.call_count = 0
+        self.last_input_tokens = 0
 
     async def embed(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
         self.call_count += 1
+        self.last_input_tokens = sum(max(1, len(text.split())) for text in texts)
         vectors: list[tuple[float, ...]] = []
         for text in texts:
             seed = hashlib.sha256(text.encode()).digest()
@@ -222,6 +224,8 @@ class TestEmbeddingService:
 
         assert isinstance(result, EmbeddingPipelineResult)
         assert result.chunk_count == 3
+        assert result.total_embedding_tokens > 0
+        assert result.total_latency_ms >= 0
         assert result.version.status == DocumentStatus.PUBLISHED
 
         # Chunks were written

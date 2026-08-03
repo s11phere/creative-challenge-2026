@@ -135,6 +135,16 @@ class IngestionConfig:
     embedding_batch_size: int = 32
     embedding_identity: EmbeddingIdentity = field(default_factory=EmbeddingIdentity)
 
+    def processing_config(self) -> dict[str, str]:
+        """Return the complete parser/chunker/embedding processing identity."""
+        return {
+            "chunk_overlap": str(self.chunk_overlap),
+            "chunk_size": str(self.chunk_size),
+            "min_chunk_size": str(self.min_chunk_size),
+            "max_segment_size": str(self.max_segment_size),
+            **self.embedding_identity.processing_config(),
+        }
+
 
 # ---------------------------------------------------------------------------
 # Service
@@ -318,13 +328,7 @@ class IngestionOrchestrator:
                 max_segment_size=cfg.max_segment_size,
             )
             chunking_result = await self._chunker.chunk(parsed_doc, config=chunker_config)
-            processing_config = {
-                "chunk_overlap": str(cfg.chunk_overlap),
-                "chunk_size": str(cfg.chunk_size),
-                "min_chunk_size": str(cfg.min_chunk_size),
-                "max_segment_size": str(cfg.max_segment_size),
-                **cfg.embedding_identity.processing_config(),
-            }
+            processing_config = cfg.processing_config()
             # Write chunker identity back to the version record so the
             # version carries the actual processing config used.
             version = await self._version_repo.update(

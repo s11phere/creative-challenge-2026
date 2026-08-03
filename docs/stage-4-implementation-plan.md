@@ -42,8 +42,8 @@ Question + Conversation context
   评测和最终 holdout。
 - 阶段结束时只激活一个默认 QA profile、一个 prompt 版本和一个 Chat 模型 identity。
 
-当前阶段 0 已按 `docs/stage-0-acceptance.md` 以内部范围冻结；阶段 2 Step 9 和阶段 3 正式退出
-仍未完成，因此阶段 4 不能正式启动。门禁关闭前
+当前阶段 0 已按 `docs/stage-0-acceptance.md` 以内部范围冻结；阶段 2 Step 9 已完成，阶段 3
+已按 ADR-010 终止但正式质量门禁未通过，因此阶段 4 仍不能正式启动。门禁关闭前
 只允许执行本计划中的文档、领域契约、确定性算法、fake Adapter、公开 fixture 和安全边界验证；
 不得读取未批准私有语料、运行正式 holdout、落地受门禁限制的业务表迁移，或宣称引用问答质量
 已经达标。
@@ -58,8 +58,9 @@ Question + Conversation context
    corpus manifest 不再是 `draft_pending_license_review`。
 2. 阶段 2 Step 9 已在批准的 P0 语料上完成正式验收，解析成功率、定位保留、幂等摄入、原子
    发布、删除撤下和失败恢复达到记录的门槛。
-3. 阶段 3 已按 `docs/stage-3-acceptance.md` 的正式完成清单冻结 Embedding、索引和
-   `RetrievalProfileV1`，完成 development 消融、一次性 holdout 和正式退出。
+3. 阶段 3 的状态和检索质量边界已按 `docs/stage-3-acceptance.md` 与 ADR-010 核对；当前阶段 3
+   终止记录不等于质量通过。若阶段 4 需要正式检索质量基线，必须先重新开启阶段 3并完成新的
+   dataset/config version、development 消融、配置冻结和正式门禁。
 4. 阶段 4 的 development/holdout、claim/evidence 标注、拒答口径、冲突口径和指标计算已在
    查看回答 holdout 结果前冻结。
 5. 每次读取评测来源前校验原始字节 SHA-256，且只处理 manifest 允许列表；私有来源不得发送
@@ -256,7 +257,8 @@ Space、Document、DocumentVersion 和 locator 归属，再返回最小必要片
 
 ### Step 0：冻结启动基线、ADR 和评测协议
 
-1. 核对阶段 0、阶段 2 Step 9 和阶段 3 正式退出记录；当前缺失时只登记 provisional 状态。
+1. 核对阶段 0、阶段 2 Step 9、阶段 3 验收记录和 ADR-010；阶段 3 终止但质量门禁未通过时只登记
+   provisional 状态。
 2. 新增并接受 ADR-007，固定问答状态、核心实体、持久化、引用生命周期、执行边界和 SSE 语义。
 3. 复核 dataset 中 answer/refuse、单文档、跨文档、冲突、版本、恶意文档和双语切片。
 4. 决定保留 30 例 v0 的统计限制，或发布扩充后的新 dataset version；不得修改已查看的
@@ -276,7 +278,8 @@ Space、Document、DocumentVersion 和 locator 归属，再返回最小必要片
 #### 2026-07-23 provisional 实现与验证总结
 
 - 已核对：阶段 0 manifest 仍为 `draft_pending_license_review`；`docs/stage-2-acceptance.md`
-  不存在；`docs/stage-3-acceptance.md` 明确阶段 3 未正式退出。因此阶段 4 保持“未正式开始”，
+  不存在；当时的 `docs/stage-3-acceptance.md` 明确阶段 3 未正式退出。当前阶段 3 已按 ADR-010
+  终止但质量门禁未通过，因此阶段 4 保持“未正式开始”，
   不读取语料正文、不运行正式回答 holdout，新增业务表和 API/SSE 实现继续受阻。
 - 已完成：接受 ADR-007，固定唯一 QA Application Port、Conversation/Message/AgentRun/Evidence/
   Citation/Feedback 的归属边界、不可变 citation 生命周期、Worker/取消/重试、SSE v1 及隐私
@@ -404,7 +407,7 @@ Space、Document、DocumentVersion 和 locator 归属，再返回最小必要片
   整块裁剪和文档 prompt injection 隔离均有 deterministic fake 测试；Step 0～3 相关测试 36 passed，
   Ruff format/check 通过，规范 `mypy apps packages` 70 个源文件通过。pytest 仅有已记录的
   Windows `.pytest_cache` 权限警告。
-- 未执行：阶段 0、阶段 2 Step 9 和阶段 3 正式退出未关闭，不能使用 development 问题和真实模型
+- 未执行：阶段 0、阶段 2 Step 9 和阶段 3 正式质量基线未关闭，不能使用 development 问题和真实模型
   比较原问题/改写收益。R4-04 因此保持未关闭，`rewrite_enabled: false` 不变；本步没有读取 corpus
   正文、调用 Provider、运行 holdout、增加表或公开 API，阶段 4 仍为“未正式开始”。
 
@@ -680,7 +683,7 @@ holdout 达到阶段 0 冻结阈值，且没有 Space/撤下/版本安全违规�
   `formal_run_eligible=false`，未调用模型或执行回答。
 - 未执行：隔离 PostgreSQL/Redis QA 集成、Alembic upgrade/downgrade、QA Worker/Dramatiq、Compose QA
   E2E、真实回答/Citation 旅程、Playwright 截图、真实模型 development/holdout。这些工作受阶段 3
-  未退出与阶段 4 正式门禁限制，不能以本次回归替代。
+  质量边界与阶段 4 正式门禁限制，不能以本次回归替代。
 - 补充（2026-07-31）：新增唯一 provisional `GroundedQAApplicationPort`，串联幂等提交、阶段 3
   `SearchService`、Evidence 保存、上下文、结构化生成、原子终态、取消和稳定失败映射；合成
   Search/Citation/Chat fake 与内存 Repository 的成功、检索失败和取消契约测试通过。
@@ -819,7 +822,8 @@ upgrade/downgrade 和隔离数据库。Playwright 截图不得包含私有语料
 
 阶段 4 只有同时满足以下条件才可标记完成：
 
-1. 阶段 0、阶段 2 Step 9 和阶段 3 正式退出均有可核验记录。
+1. 阶段 0、阶段 2 Step 9 以及阶段 3 的验收/终止记录和质量边界均有可核验记录；阶段 3 的终止
+   不被误记为质量通过。
 2. 核心旅程 A/B 自动化通过：批准语料导入后可提问、查看引用并回到正确原文位置。
 3. Citation target resolution 为 100%，跨 Space、撤下来源和错误版本违规为 0。
 4. 冻结 holdout 达到阶段 0 最终确认的 Supported-claim、引用准确/完整和 Refusal 门槛。
@@ -872,7 +876,8 @@ upgrade/downgrade 和隔离数据库。Playwright 截图不得包含私有语料
 
 1. 接收阶段 0 退出记录，校验 manifest、来源 SHA-256、授权、人工标注和 dataset 版本。
 2. 完成阶段 2 Step 9 正式验收，保存解析质量、定位、幂等、发布、删除和恢复证据。
-3. 按阶段 3 验收清单完成真实模型 development 消融、默认检索配置冻结和一次性 holdout。
+3. 若需要正式检索质量基线，按 ADR-010 重新开启阶段 3并完成新的 development、默认检索配置
+   冻结和一次性 holdout；当前终止记录不能替代这些证据。
 4. 回到 Step 0 冻结阶段 4 dataset、指标、ADR-007、QA profile schema 和运行条件。
 5. 依次完成 Step 1～9，并仅在 development 上选择查询、上下文、prompt 和 Chat 模型配置。
 6. 冻结 QA config hash，先执行 `--validate-only`，再运行一次正式回答 holdout。

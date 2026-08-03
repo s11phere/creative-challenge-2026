@@ -33,3 +33,21 @@ def test_l2_normalization_is_deterministic_and_rejects_zero_vectors() -> None:
 
     with pytest.raises(ValueError, match="zero embedding"):
         identity.normalize_vectors(((0.0, 0.0),))
+
+
+def test_identity_round_trips_from_persisted_processing_config() -> None:
+    identity = EmbeddingIdentity(
+        model_revision="model@abc",
+        query_instruction_version="qwen3-knowledge-qa-v1",
+        document_instruction_version="qwen3-knowledge-qa-v1",
+        normalization="l2",
+    )
+
+    restored = EmbeddingIdentity.from_processing_config(identity.processing_config())
+
+    assert restored == identity
+
+
+def test_identity_rejects_non_finite_vectors_even_without_normalization() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        EmbeddingIdentity().normalize_vectors(((float("nan"),),))

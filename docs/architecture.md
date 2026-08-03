@@ -1,8 +1,8 @@
 # 项目架构概览
 
 > 本文档描述 "Agent 驱动的个人知识仓库" 项目的整体架构、各组件职责与协作关系。
-> 更新于阶段 3 Step 10 工程验收、阶段 4 provisional Step 0～10 和阶段 5 通用 Runtime/Registry
-> 审查完成时（2026-07-31）。
+> 更新于阶段 3 终止决策、阶段 4 provisional Step 0～10 和阶段 5 通用 Runtime/Registry
+> 审查完成时（2026-08-03）。
 
 ---
 
@@ -499,8 +499,8 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | **worker** | 本地构建 | 依赖 migrate 成功、Redis 健康 | 进程检查 |
 | **web** | 本地构建 (nginx) | 依赖 API 健康，同源代理 `/api` | `/healthz` |
 | **otel-collector** (可选) | `otel/opentelemetry-collector-contrib` | 需 `--profile otel` 启动 | — |
-| **tei** (可选) | 固定 digest 的 TEI CPU 镜像 | `--profile embedding`；固定 `Qwen3-Embedding-0.6B` revision、实测 CPU batch 限制和命名缓存卷 | `/health` |
-| **reranker** (可选) | 固定 digest 的 TEI CPU 镜像 | `--profile reranker`；固定 `bge-reranker-base` revision 和命名缓存卷 | `/health` |
+| **tei** (可选) | 固定 digest 的 TEI CUDA/GPU 镜像 | `--profile embedding`；固定 `Qwen3-Embedding-0.6B` revision、`max-batch-tokens=512`、client batch=8 和命名缓存卷 | `/health` |
+| **reranker** (可选) | 固定 digest 的 TEI CUDA/GPU 镜像 | `--profile reranker`；固定 `bge-reranker-v2-m3` 和命名缓存卷 | `/health` |
 
 基础 API/Worker/Web 在模型 profile 未启用或模型故障时仍应保持管理面可用；Dense/Reranker
 请求按 profile 返回明确错误或受控降级。全新模型卷首次下载仍需在可复现网络环境补证，不能
@@ -562,10 +562,12 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | 006 | Skill Manifest Versioning And Trust Model | 固定 Skill manifest、摘要、受信目录、权限、恢复和回滚语义 |
 | 007 | Grounded QA Persistence, Citation, Execution, And SSE Semantics | 固定唯一 QA Port、引用生命周期、运行/取消、Worker 和 SSE 语义；仅协议已接受 |
 | 009 | Redis / Dramatiq Task Delivery | 队列选型 Redis + Dramatiq，状态存 DB |
+| 010 | Stage 3 Termination And Evaluation Boundary | 阶段 3 工程完成但质量门禁未通过；因评测集代表性局限终止，保持 provisional 配置且不运行 holdout |
 
 ADR-007 已接受并已有 provisional 纯契约、内存 Repository、SSE/API/Web 验证，但未授权用这些
 内存能力替代 PostgreSQL/Worker 生产协议。ADR-008 仍为保留编号；正式迁移和后台执行仍须等待
-阶段 3 正式退出门禁及对应实现评审；阶段 2 Step 9 已按 `docs/stage-2-acceptance.md` 关闭。
+阶段 4 的正式门禁及对应实现评审。阶段 3 已按 ADR-010 终止，阶段 2 Step 9 已按
+`docs/stage-2-acceptance.md` 关闭；阶段 3 的 provisional 检索配置不是正式质量基线。
 
 ### 其他文档
 
@@ -730,7 +732,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | 阶段 0 | ✅ 内部冻结完成 | `manifest.status=frozen`、`distribution_scope=internal_team_only`；退出记录见 `docs/stage-0-acceptance.md`，不代表公开再分发授权 |
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
 | **阶段 2** | **✅ 正式完成** | **Step 0～9 完成；冻结 manifest 的 74 个 P0 来源成功率 100%，退出记录见 `docs/stage-2-acceptance.md`** |
-| **阶段 3** | **🟡 工程 Step 0～10 验收完成** | **检索 API、离线评测和安全边界已落地；真实模型定版及正式 holdout 未关闭，阶段未正式退出** |
+| **阶段 3** | **⏹️ 已终止** | **工程 Step 0～10 已完成；正式质量门禁未通过，因当前评测集代表性局限终止，未运行正式 holdout，配置保持 provisional（ADR-010）** |
 | 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、查询/上下文、生成/故障、内存持久化、SSE/API/Web、反馈候选和回答评测门禁已落地；ORM/Alembic/PostgreSQL、Worker 完成链、真实 Citation E2E、默认配置和 holdout 未落地 |
 | **阶段 5** | **🟡 通用基础已审查** | **Step 0～4 和 Step 9 通用部分通过；业务 Skill/API/持久化/验收仍阻塞** |
 
@@ -757,14 +759,15 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 - **Step 9**：版本化离线评测 CLI、报告 schema、失败归因和 provisional 门禁；正式 holdout 被明确阻断。
 - **Step 10**：隔离依赖、检索模式、安全边界和文档移交的验收记录见 `docs/stage-3-acceptance.md`。
 
-2026-07-29 冻结语料 development 已在 P0 Markdown/TXT/PDF 范围复核：74 个 published 版本和
-6085 个向量完整，Keyword/IVFFlat 基础设施缺陷已关闭，但最佳 Dense Recall@5 仅 51.90%，
-Reranker 无净收益且超出 P95 预算。因此阶段 3 保持工程完成、正式质量未通过，配置未冻结且
-holdout 未执行。
+2026-08-03 使用 PR #3 的固定 GPU 配置复跑 development：74 个 published 版本、5454 个
+chunks、Claim Recall@10=69.7548%、Evidence Recall@10=62.3431%、MRR=0.6839、P95=383.5 ms，
+无失败和 must-exclude 违规。该结果低于 PR 文档宣称的 75.8%，因此阶段 3 工程完成但正式
+质量未通过；因评测集代表性局限已终止，配置仍为 provisional 且 holdout 未执行；完整复现记录见
+`docs/stage-3-acceptance.md`。
 
 阶段 5 通用基础审查见 `docs/stage-5-implementation-review.md`。该并行实现不改变主推进顺序：
 仍应先完成阶段 4 引用问答，再接入阶段 5 业务 Skill。
 
-阶段 0 和阶段 2 已分别按 `docs/stage-0-acceptance.md`、`docs/stage-2-acceptance.md` 交接，不能因此直接运行 holdout；仍须按
-`docs/stage-3-acceptance.md` 完成真实模型 development 消融、默认配置冻结和一次性正式
-holdout。GitHub Actions 已由用户确认运行正常；阶段 0 当前仅允许组员内部使用。
+阶段 0 和阶段 2 已分别按 `docs/stage-0-acceptance.md`、`docs/stage-2-acceptance.md` 交接；
+阶段 3 终止后不得直接运行当前 holdout。若未来重新开启，必须按 ADR-010 使用新的 dataset/config
+version 重新完成 development 和正式门禁。GitHub Actions 已由用户确认运行正常；阶段 0 当前仅允许组员内部使用。

@@ -42,7 +42,7 @@ from application.retrieval.evaluation import (
     Locator,
     RetrievedChunk,
 )
-from domain.embedding import EmbeddingIdentity
+from domain.embedding import EmbeddingIdentity, compute_processing_config_hash
 from domain.models import (
     DocumentStatus,
     IngestionTask,
@@ -459,6 +459,13 @@ async def _prepare_corpus(
     succeeded = 0
     skipped = 0
     blob_store = LocalFileBlobStore(blob_root)
+    ingestion_config = IngestionConfig(
+        chunk_size=512 if chunk_size is None else chunk_size,
+        embedding_batch_size=settings.embedding_batch_size,
+        embedding_identity=identity,
+    )
+    processing_config = ingestion_config.processing_config()
+    processing_config_hash = compute_processing_config_hash(processing_config)
     async with database.session() as session:
         spaces = SpaceRepository(session)
         source_repo = SourceRepository(session)
@@ -496,6 +503,8 @@ async def _prepare_corpus(
                 blob_store,
                 file_stable_key=str(item["path"]),
                 file_path=str(item["path"]),
+                embedding_version=identity.version,
+                processing_config=processing_config,
             )
             document = await document_repo.get(registration.document.id)
             existing = (
@@ -506,6 +515,8 @@ async def _prepare_corpus(
                 and document is not None
                 and existing.status is DocumentStatus.PUBLISHED
                 and document.current_version_id == existing.id
+                and existing.embedding_version == identity.version
+                and existing.processing_config_hash == processing_config_hash
             ):
                 skipped += 1
                 continue

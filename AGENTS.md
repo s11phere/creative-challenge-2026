@@ -23,14 +23,14 @@
 
 ## 2. 当前阶段与优先级
 
-截至 2026-07-28，仓库状态如下：
+截至 2026-08-03，仓库状态如下：
 
 | 阶段 | 状态 | 已完成 | 未关闭 |
 | --- | --- | --- | --- |
 | 阶段 0 | 内部冻结完成 | MVP 范围、persona、术语、隐私政策、corpus/dataset、ADR-001～004 和退出记录已存在 | 仅允许组员内部开发/评测；不代表公开再分发授权 |
 | 阶段 1 | 完成 | Step 0～8 工程实现与验收完成；GitHub Actions 已由用户确认正常 | 仅保留已记录的运行限制 |
 | 阶段 2 | 正式完成 | Step 0～8 工程闭环和 Step 9 冻结语料验收完成；74 个 P0 来源解析/定位/分块成功率 100%，隔离依赖和 Compose E2E 通过 | 仅保留 `internal_team_only` 分发边界和已记录运行限制 |
-| 阶段 3 | 工程 Step 0～10 验收完成 | Keyword/Dense/Hybrid/Hybrid+Reranker、上下文扩展、Space/版本边界、检索 API、离线评测和移交已落地 | 真实模型 development 消融、默认配置冻结和正式 holdout 未完成，阶段 3 未正式退出 |
+| 阶段 3 | 已终止（工程完成，质量门禁未通过） | Keyword/Dense/Hybrid/Hybrid+Reranker、上下文扩展、Space/版本边界、检索 API、离线评测和移交已落地；PR #3 GPU 复现结果已归档 | 当前评测集代表性不足，未运行正式 holdout；配置保持 provisional。见 ADR-010 |
 | 阶段 4 | 未正式开始 | 已有 `docs/stage-4-implementation-plan.md` | GroundedAnswer/Citation、Conversation/AgentRun/Evidence 持久化、问答 API/SSE/Web 和回答评测均未落地 |
 | 阶段 5 | 通用基础已审查 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、预算/权限/审计、受信包版本固定和事务式 reload/回滚已落地 | 无 AgentRun/Checkpoint 持久化、`knowledge_qa`、Runtime API/Web 或业务 Skill；阶段整体未退出 |
 
@@ -43,11 +43,11 @@
   `ingestion_tasks` 六张业务表；`chunks` 含 768 维 pgvector、IVFFlat 和阶段 3 FTS 列/索引。
 - `ModelGateway` 的 `fast_chat` 能力当前只提供非流式完整响应；阶段 4 的 SSE、断线重连、取消和最终
   结构校验仍是待设计协议，不能假设 Provider 原生流式语义已经存在。
-- 摄入已按 `docs/stage-2-acceptance.md` 完成内部冻结语料正式验收；检索仍未关闭真实模型与
-  holdout 门禁，不得宣称正式检索基线、引用问答或产品闭环达标。
+- 摄入已按 `docs/stage-2-acceptance.md` 完成内部冻结语料正式验收；阶段 3 已终止但正式质量
+  门禁未通过，不得宣称正式检索基线、引用问答或产品闭环达标。
 - 阶段 5 只有离线通用 Runtime/Registry 和合成 fake 契约，不能宣称 `knowledge_qa` 或其他
   业务 Skill 可用。
-- ADR-001～006 和 ADR-009 已接受；除非触发其重新评估条件，不重复讨论已固定基线。ADR-007
+- ADR-001～006、ADR-009 和 ADR-010 已接受；除非触发其重新评估条件，不重复讨论已固定基线。ADR-007
   保留给阶段 4 的 Grounded QA、持久化和 SSE/后台执行协议。
 
 当前事实的权威文档：
@@ -68,8 +68,8 @@
 
 1. 阶段 0 已按 `docs/stage-0-acceptance.md` 交接并冻结内部语料边界。
 2. 阶段 2 已按 `docs/stage-2-acceptance.md` 完成解析、定位、幂等、原子发布、删除和恢复验收。
-3. 按 `docs/stage-3-acceptance.md` 完成真实模型 development 消融、默认配置冻结、一次正式
-   holdout 和阶段 3 正式退出；阶段 0 `frozen` 不会自动关闭这些工作。
+3. 阶段 3 已按 ADR-010 终止；不得对当前 dataset/config 运行正式 holdout。若重新开启，必须
+   使用新的 dataset/config version，重新完成 development、默认配置冻结和正式门禁。
 4. 正式执行阶段 4，交付引用问答、会话/运行/证据持久化、SSE、Web 和回答评测。
 5. 将阶段 4 唯一 QA Application Port 封装为 `knowledge_qa`，再继续阶段 5 业务 Skill。
 
