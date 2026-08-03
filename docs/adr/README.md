@@ -13,3 +13,5 @@ execution, and SSE semantics. ADR-008 remains reserved for the service-split or 
 listed in `docs/project-implementation-plan.md`; the stage 1 queue decision therefore uses ADR-009.
 ADR-010 records the explicit Stage 3 termination and preserves the boundary between engineering
 completion and formal retrieval quality acceptance.
+ADR-011 records the explicit provisional continuation gate that permits Stage 4/5 engineering to
+ continue without treating the non-passing retrieval result as formal quality acceptance.

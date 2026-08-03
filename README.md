@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，但正式质量门禁未通过。PR #3 的 GPU 配置复现出 provisional Claim Recall@10=69.7548%，因当前评测集代表性局限，阶段 3 已按 [ADR-010](docs/adr/010-stage-3-termination-and-evaluation-boundary.md) 终止；正式 holdout 未执行，配置仍未冻结。阶段 4 provisional 的领域/Application、PostgreSQL 持久化、API/SSE、Worker、Web、反馈和回答评测门禁已跑通，但正式质量门禁仍未关闭；阶段 5 provisional Skill/Runtime 基础已并行落地。**
+**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，但正式质量门禁未通过。PR #3/v1 GPU development 复现出 provisional Claim Recall@10=69.7548%，因当前评测集代表性局限，阶段 3 已按 [ADR-010](docs/adr/010-stage-3-termination-and-evaluation-boundary.md) 保持正式未通过；正式 holdout 未执行，配置仍未冻结。根据 [ADR-011](docs/adr/011-provisional-stage-4-5-continuation-gate.md)，当前结果只允许阶段 4/5 继续 provisional 工程，不构成正式质量接受；阶段 4/5 正式质量门禁仍未关闭。**
 
 已交付的核心能力：
 
@@ -14,7 +14,7 @@
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
 | 阶段 3 ⏹️ 已终止（工程完成，质量门禁未通过） | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；PR3 GPU development Claim Recall@10 为 69.7548%，当前评测集代表性不足，正式 holdout 未执行，配置保持 provisional |
-| 阶段 4 🟡 provisional Step 0-10 | ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测 validate-only 已完成；默认配置与 holdout 未完成 |
+| 阶段 4 🟡 provisional Step 0-10 | 在 ADR-011 continuation gate 下继续；ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测 validate-only 已完成；默认配置与正式 holdout 未完成 |
 | 阶段 5 🟡 provisional Skills | ADR-006、Runtime/Registry 通用基础已通过审查；`knowledge_agent`、`knowledge_qa` 与三个知识整理 Skill `0.1.0` 复用现有持久 QA Run/Worker/SSE；Step 10 provisional 验收已记录 |
 
 当前 Web 展示系统健康、数据来源和 provisional 知识问答工作区；HTTP API 可创建持久会话、提交
@@ -214,6 +214,7 @@ docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml --env-file .env
 - [阶段 5 实现审查记录](docs/stage-5-implementation-review.md)
 - [阶段 5 provisional 验收记录](docs/stage-5-acceptance.md)
 - [阶段 4/5 收尾看板](docs/stage-4-5-completion-tracker.md)
+- [阶段 3 v1 development 复核记录](docs/stage-3-reopen-development-v1.md)
 - [阶段 3 终止后的阶段 4/5 收尾计划](docs/post-stage-3-stage-4-5-completion-plan.md)
 - [OpenAPI](docs/openapi.json)
 - [架构决策记录](docs/adr/README.md)

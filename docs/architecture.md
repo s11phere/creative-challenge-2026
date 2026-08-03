@@ -607,6 +607,7 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | 007 | Grounded QA Persistence, Citation, Execution, And SSE Semantics | 固定唯一 QA Port、引用生命周期、运行/取消、Worker 和 SSE 语义；仅协议已接受 |
 | 009 | Redis / Dramatiq Task Delivery | 队列选型 Redis + Dramatiq，状态存 DB |
 | 010 | Stage 3 Termination And Evaluation Boundary | 阶段 3 工程完成但质量门禁未通过；因评测集代表性局限终止，保持 provisional 配置且不运行 holdout |
+| 011 | Provisional Stage 4/5 Continuation Gate | 保持正式质量门不变；当前 retrieval development 仅满足显式 continuation floor 时允许阶段 4/5 provisional 工程继续 |
 
 ADR-007 已接受并已有 provisional 纯契约、内存 Repository、SSE/API/Web 验证，但未授权用这些
 内存能力替代 PostgreSQL/Worker 生产协议。ADR-008 仍为保留编号；正式迁移和后台执行仍须等待
@@ -816,5 +817,7 @@ chunks、Claim Recall@10=69.7548%、Evidence Recall@10=62.3431%、MRR=0.6839、P
 正式质量门禁。
 
 阶段 0 和阶段 2 已分别按 `docs/stage-0-acceptance.md`、`docs/stage-2-acceptance.md` 交接；
-阶段 3 终止后不得直接运行当前 holdout。若未来重新开启，必须按 ADR-010 使用新的 dataset/config
-version 重新完成 development 和正式门禁。GitHub Actions 已由用户确认运行正常；阶段 0 当前仅允许组员内部使用。
+阶段 3 终止后不得直接运行当前 holdout。根据 ADR-011，当前 retrieval development 只要满足
+显式 continuation floor 即可支持阶段 4/5 provisional 工程，但不能形成正式质量结论。若未来重新
+开启正式质量线，必须按 ADR-010/011 使用新的 dataset/config version 重新完成 development 和正式
+门禁。GitHub Actions 已由用户确认运行正常；阶段 0 当前仅允许组员内部使用。

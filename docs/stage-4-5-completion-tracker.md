@@ -14,12 +14,27 @@
 
 | 阶段 | 工程状态 | 正式质量状态 | 当前决策依据 |
 | --- | --- | --- | --- |
-| 阶段 3 | 工程 Step 0-10 已完成 | 已终止，质量门禁未通过 | [ADR-010](adr/010-stage-3-termination-and-evaluation-boundary.md)：旧评测集代表性不足，正式 holdout 未运行 |
-| 阶段 4 | QA Domain/Application、PostgreSQL、Worker、SSE、API、Web 和 Citation provisional 链路已具备 | 未退出 | [stage-4-acceptance.md](stage-4-acceptance.md)：Playwright、真实回答质量、默认配置冻结、answer holdout 和完整反馈旅程未完成 |
+| 阶段 3 | 工程 Step 0-10 已完成；v1 development 复核已执行 | 仍未通过，未冻结，未运行 holdout | [ADR-010](adr/010-stage-3-termination-and-evaluation-boundary.md)；[v1 development 记录](stage-3-reopen-development-v1.md)：v1 修复标注但未 materially improve coverage/representativeness |
+| 阶段 4 | QA Domain/Application、PostgreSQL、Worker、SSE、API、Web、Citation 和 `qa-continuation-v1` provisional 配置已具备 | 未退出 | [stage-4-acceptance.md](stage-4-acceptance.md)：Playwright、真实回答质量、正式默认配置冻结、answer holdout 和完整反馈旅程未完成 |
 | 阶段 5 | Runtime/Registry、active pointer、`knowledge_qa` 及知识整理 Skill provisional 子集已具备 | 未退出 | [stage-5-acceptance.md](stage-5-acceptance.md)：正式 Eval、跨进程故障注入、认证/审批正式验收和最终移交未完成 |
 
 本看板不批准任何正式 holdout，不改变 `retrieval-v1.yaml`、`qa-v1.yaml` 或现有 Skill 的状态，
 也不改变阶段 0 的 `internal_team_only` 分发边界。
+
+### 1.1 Step 1 结果与继续策略
+
+Step 1 的正式质量前置门未通过，但当前 GPU development 结果满足 [ADR-011](adr/011-provisional-stage-4-5-continuation-gate.md)
+定义的 provisional continuation gate。因此可以进入 Step 2 的 provisional QA 工程工作；正式
+retrieval/answer holdout、正式质量结论和阶段退出仍被阻断。
+
+### 1.2 Step 3 provisional E2E 结果
+
+第 3 步的隔离 HTTP 旅程已执行并记录在 [`stage-3-4-5-step3-e2e.md`](stage-3-4-5-step3-e2e.md)：
+健康检查、会话创建、异步 QA Run、回答、SSE 事件和反馈幂等均有证据。真实 fake 旅程的
+Citation 解析为 `invalid`（无正文返回），所以 Citation 质量门禁仍未通过。期间发现并修复
+SSE `id` 与 `Last-Event-ID` 类型不一致（改为严格递增 sequence）；12 个 API/SSE 单测通过。
+隔离 API 镜像受 Docker buildx 权限限制尚未重建，网络层的 sequence 重验待后续正常构建完成。
+该结果仅允许继续 provisional Step 4，不改变正式质量门禁、holdout 禁止或 internal-only 边界。
 
 ## 2. 版本矩阵
 
@@ -27,8 +42,8 @@
 
 | 工作线 | 当前候选/事实 | 当前状态 | 下一步正式版本要求 | 数据与外发边界 | 负责人 |
 | --- | --- | --- | --- | --- | --- |
-| 阶段 3 检索 | `retrieval-v1.yaml` + dataset `knowledge-qa-v0`；另有 `retrieval-v1-knowledge-qa-v1.yaml` + dataset `knowledge-qa-v1` | 两者均 `provisional`；当前 Stage 3 formal runs disabled | 新 dataset version、新 retrieval config/profile/model identity；完成覆盖/标注/split 审查、development 消融、配置 hash 冻结后才可一次性运行 retrieval holdout | 仅使用 manifest 允许来源；默认本地；私有语料不得外发 | 待认领 |
-| 阶段 4 QA 评测 | `qa-v1.yaml`、`qa-profile-v1.yaml`、`grounded-qa-v1-provisional.txt`；dataset `knowledge-qa-v0` | `provisional`；deterministic fake/validate-only 可用 | 新 QA dataset/config/profile/prompt/model identity；必须绑定通过的检索版本，并在 development 选择后冻结 answer config hash | 题目、回答、引用原文和 Provider 响应不得写日志/报告；外部 Chat 需显式策略和同意 | 待认领 |
+| 阶段 3 检索 | `retrieval-v1.yaml` + dataset `knowledge-qa-v0`；另有 `retrieval-v1-knowledge-qa-v1.yaml` + dataset `knowledge-qa-v1` | v1 schema/locator/hash 校验和 GPU development 消融已通过；两者仍 `provisional`，formal runs disabled；正式门未通过但满足 ADR-011 continuation gate | 可在 v1 上继续阶段 4/5 provisional 工程；正式线仍需新 dataset/config、代表性覆盖、claim-aware evaluator、development 达标、配置 hash 冻结后才可一次性运行 retrieval holdout | 仅使用 manifest 允许来源；默认本地；私有语料不得外发 | 待认领 |
+| 阶段 4 QA 评测 | `qa-continuation-v1.yaml` + `qa-profile-continuation-v1.yaml`；dataset `knowledge-qa-v0`；prompt `grounded-qa-v1-provisional` | provisional continuation 配置已 pin `retrieval-v1-knowledge-qa-v1`，validate-only 和受影响单测通过；正式配置未冻结 | 在 continuation gate 下继续 QA/E2E 工程；正式线仍需代表性 QA dataset、真实模型 development、answer config hash 和一次性 holdout | 题目、回答、引用原文和 Provider 响应不得写日志/报告；外部 Chat 需显式策略和同意 | 待认领 |
 | 阶段 5 Skill 评测 | active `knowledge_qa 0.1.0`；`knowledge_agent 0.2.0`（保留 `0.1.0` 旧包）；`summarize_document 0.1.0`、`compare_sources 0.1.0`、`create_review_cards 0.1.0` | active/provisional；整理 Skill 目前只读预览，写入和正式 Eval 未关闭 | 为每个 Skill 固定 workflow/manifest/prompt/schema/eval 版本和摘要；完成 Runtime 恢复、审批、派生写入、回滚/清理引用检查后再做正式 Skill Eval | 受信根加载；运行固定 Skill identity；派生写入前必须持久审批，所有输入继承来源敏感度 | 待认领 |
 
 ### 2.1 版本冻结顺序
@@ -78,8 +93,8 @@
 
 | 编号 | 类型 | 项目 | 解除条件 | 责任步骤 |
 | --- | --- | --- | --- | --- |
-| B-01 | 阻塞 | 当前 Stage 3 评测集代表性不足，旧 development/holdout 不能支持正式结论 | 新 dataset version 完成覆盖、标注、locator、split 和隐私审查 | Step 1 |
-| B-02 | 阻塞 | Stage 4 默认 retrieval/QA profile、prompt、Chat model 尚未冻结 | Stage 3 新质量输入通过后完成 development 消融和 config hash 冻结 | Step 1/2 |
+| B-01 | 正式阻塞 | 当前 Stage 3 评测集代表性不足，旧 development/holdout 不能支持正式结论；不再阻塞 provisional Stage 4/5 工程 | 新 dataset version 完成覆盖、标注、locator、split 和隐私审查 | 正式质量线 |
+| B-02 | 正式缺口 | Stage 4 provisional QA continuation config 已完成；正式 retrieval/QA profile、prompt、Chat model 仍未冻结 | 正式冻结仍需 Stage 3 正式输入和 answer development | 正式质量线 |
 | B-03 | 阻塞 | 正式 retrieval/answer holdout 尚未运行 | 冻结配置后各运行一次；失败时创建新版本，不回写 holdout | Step 1/2 |
 | B-04 | 缺口 | 完整导入到反馈的真实旅程和 Playwright 尚未执行 | 隔离 Compose E2E、桌面/移动截图、键盘和失败状态回归通过 | Step 3/4/5 |
 | B-05 | 缺口 | Runtime Checkpoint、lease-loss、审批跨进程事实源仍未完成正式验收 | 故障注入、租约竞态、审批生命周期和幂等副作用测试通过 | Step 6 |
@@ -102,7 +117,6 @@
 
 ## 6. 下一步进入条件
 
-只有在确认本看板后，才进入 Step 1。Step 1 的第一项动作必须是审查新 dataset version 的覆盖、
-标注、证据定位和 Stage 0 数据边界；不得直接运行 `cases/evals/configs/retrieval-v1.yaml` 的
-当前 holdout，也不得仅通过修改 `formal_runs_enabled` 开启正式评测。
-
+Step 1 已完成 development 复核。确认本看板后可进入 Step 2 的 provisional QA 工程路径；不得
+直接运行 `cases/evals/configs/retrieval-v1.yaml` 的当前 holdout，也不得仅通过修改
+`formal_runs_enabled` 开启正式评测。正式质量线仍需按 ADR-010/011 的后续触发条件重新建立。

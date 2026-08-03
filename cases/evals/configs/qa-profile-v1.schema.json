@@ -24,7 +24,7 @@
       "additionalProperties": false,
       "required": ["profile_reference", "final_k"],
       "properties": {
-        "profile_reference": {"const": "stage3-default-pending-formal-freeze"},
+        "profile_reference": {"enum": ["stage3-default-pending-formal-freeze", "retrieval-v1-knowledge-qa-v1"]},
         "final_k": {"type": "integer", "minimum": 1, "maximum": 20}
       }
     },

@@ -772,7 +772,9 @@ async def stream_events(
         replayed = await events.replay(run_id, cursor)
         for event in replayed:
             data = json.dumps(event.as_dict(), separators=(",", ":"))
-            yield (f"id: {event.event_id}\nevent: {event.event_type.value}\ndata: {data}\n\n")
+            # SSE Last-Event-ID is the replay cursor, so expose the monotonic
+            # sequence rather than the opaque UUID event identity.
+            yield (f"id: {event.sequence}\nevent: {event.event_type.value}\ndata: {data}\n\n")
         if not replayed:
             await asyncio.sleep(0)
             yield ": heartbeat\n\n"

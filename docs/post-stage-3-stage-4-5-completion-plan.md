@@ -34,6 +34,8 @@ pointer 和三个知识整理 Skill 作为本计划的实现起点。
    不建立平行 Runtime Run、检索 SQL、Citation 解析或事件协议。
 4. 每一步都必须留下机器可读输出、命令、版本摘要和失败分类；未实际执行的命令不得标记为通过。
 5. 任一安全、隐私、Space/版本隔离或引用定位回归，立即阻断后续正式门禁。
+6. 若正式检索门未通过但满足 ADR-011 的 continuation gate，可继续阶段 4/5 provisional 工程；
+   不得因此宣称正式质量通过或运行当前 holdout。
 
 ## 3. 分步计划
 
@@ -64,8 +66,12 @@ pointer 和三个知识整理 Skill 作为本计划的实现起点。
 - 仅在 development 达标、配置 hash 冻结且所有 Space/tombstone/version 安全测试通过后运行一次
   正式 retrieval holdout。
 
-**退出门**：生成可复现的 retrieval report；达到阶段 0 的 Recall/延迟/违规阈值并接受新的
-  ADR/验收记录。未达标时保持阶段 3 未关闭，不能进入阶段 4 正式回答门禁。
+**正式退出门**：生成可复现的 retrieval report；达到阶段 0 的 Recall/延迟/违规阈值并接受新的
+  ADR/验收记录。未达标时保持阶段 3 未关闭。
+
+**继续门（ADR-011）**：若 development 报告满足 Claim Recall@10 >=65%、Evidence Recall@10
+  >=60%、MRR >=0.60、P95 <=500ms、基础设施失败率 0、must-exclude 违规 0 及所有安全隔离
+  违规 0，可在当前版本上继续阶段 4/5 provisional 工程；正式 QA 质量和阶段退出仍不可进行。
 
 ### Step 2：冻结阶段 4 QA 契约和真实配置
 
@@ -85,6 +91,14 @@ pointer 和三个知识整理 Skill 作为本计划的实现起点。
 **退出门**：Supported-claim、引用准确/完整、Refusal、P95、token 和失败率达到冻结阈值，且
    Citation resolution 100%、跨 Space/撤下/错误版本违规为 0。否则发布新版本回到 development。
 
+#### Provisional continuation implementation record (2026-08-03)
+
+- 已新增 `qa-continuation-v1.yaml` 和 `qa-profile-continuation-v1.yaml`，保持 fake Chat、
+  `formal_runs_enabled=false`，并将 retrieval identity 固定为
+  `retrieval-v1-knowledge-qa-v1`。
+- `scripts/evaluate_answers.py --validate-only` 通过；QA baseline、query planning、service 和
+  Skill contract 定向测试通过。该配置只允许继续工程/E2E，不构成 answer 质量冻结或 holdout 资格。
+
 ### Step 3：补齐后端真实端到端旅程
 
 **目的**：证明阶段 4 的持久化链路在真实隔离依赖中可用。
@@ -100,6 +114,11 @@ pointer 和三个知识整理 Skill 作为本计划的实现起点。
 
 **交付与验收**：隔离 Compose E2E 报告、迁移 upgrade/downgrade/单一 head 证据、失败矩阵和
    数据清理记录。不得把共享业务卷或私有正文带入测试产物。
+
+**当前记录**：第 3 步 provisional HTTP 旅程已执行，详见
+[`stage-3-4-5-step3-e2e.md`](stage-3-4-5-step3-e2e.md)。健康、会话、异步 Run、回答、SSE
+事件和反馈幂等均有隔离实例证据；Citation 解析返回 `invalid`，且实时容器尚未重建以验证
+SSE sequence 修复，因此本步骤不构成阶段 4 正式验收通过。
 
 ### Step 4：完成 Web 用户旅程和 Playwright 门禁
 
@@ -219,7 +238,8 @@ Step 0
   -> Step 9（最终质量/安全） -> Step 10（正式验收）
 ```
 
-Step 3/4 可在 Step 2 的配置冻结后并行开发，但正式验收必须等待 Step 1/2 的质量门关闭。Step 7
+Step 2～8 可在 ADR-011 continuation gate 下开展 provisional 工程，但正式验收必须等待 Step 1/2
+的正式质量门关闭。Step 7
 必须等待 Step 6 的审批和恢复事实源；Step 8 的清理必须等待 Step 6 的引用查询。任何步骤均不得
 读取未批准语料、启用当前 Stage 3 formal holdout，或把 fake/provisional 结果写入正式报告。
 
@@ -230,4 +250,3 @@ Step 3/4 可在 Step 2 的配置冻结后并行开发，但正式验收必须等
 - 运行：Compose 空卷启动、保留卷重启、Worker 停止/恢复、重复投递和取消竞态。
 - 安全：Space/版本/tombstone、路径逃逸、prompt injection、危险 Tool、密钥和正文泄漏扫描。
 - 证据：命令、版本摘要、指标、失败分类、截图/报告位置和未完成项均写入对应验收记录。
-

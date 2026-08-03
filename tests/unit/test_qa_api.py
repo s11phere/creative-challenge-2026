@@ -98,6 +98,7 @@ async def test_provisional_qa_api_creates_run_cancels_and_replays_events() -> No
         assert replay.status_code == 200
         assert "event: accepted" in replay.text
         assert "What is supported?" not in replay.text
+        assert "id: 1" in replay.text
 
         cancelled = await client.post(f"/api/v1/qa/runs/{run_id}/cancel")
         assert cancelled.status_code == 200
