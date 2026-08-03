@@ -36,6 +36,14 @@ SSE `id` 与 `Last-Event-ID` 类型不一致（改为严格递增 sequence）；
 隔离 API 镜像受 Docker buildx 权限限制尚未重建，网络层的 sequence 重验待后续正常构建完成。
 该结果仅允许继续 provisional Step 4，不改变正式质量门禁、holdout 禁止或 internal-only 边界。
 
+### 1.3 Step 4 provisional Web 结果
+
+第 4 步已完成现有 Web 工程验证，记录见 [`stage-4-5-step4-web-e2e.md`](stage-4-5-step4-web-e2e.md)：
+lint、typecheck、Vitest 27 项、production build，以及隔离 Web 首页、静态资源和同源 health 代理
+均通过。组件测试覆盖导航、健康/错误状态、摄入取消/重试、QA 取消/恢复、拒答、Citation 失效重试、
+键盘提交和审批预览。仓库没有 Playwright 配置，环境没有浏览器可执行文件，因此桌面/移动截图、真实
+键盘遍历和浏览器级 SSE 重连仍未验收；该结果不构成阶段 4 正式退出。
+
 ## 2. 版本矩阵
 
 所有“目标版本”均为待创建或待冻结的版本；完成前不得将候选版本标记为正式。
