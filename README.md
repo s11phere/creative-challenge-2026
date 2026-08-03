@@ -213,6 +213,8 @@ docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml --env-file .env
 - [阶段 5 实施计划](docs/stage-5-implementation-plan.md)
 - [阶段 5 实现审查记录](docs/stage-5-implementation-review.md)
 - [阶段 5 provisional 验收记录](docs/stage-5-acceptance.md)
+- [阶段 4/5 收尾看板](docs/stage-4-5-completion-tracker.md)
+- [阶段 3 终止后的阶段 4/5 收尾计划](docs/post-stage-3-stage-4-5-completion-plan.md)
 - [OpenAPI](docs/openapi.json)
 - [架构决策记录](docs/adr/README.md)
 
