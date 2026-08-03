@@ -53,14 +53,52 @@ class InMemoryGroundedQARepository:
 
     async def create_conversation(self, conversation: ConversationRecord) -> ConversationRecord:
         async with self._lock:
-            if conversation.conversation_id in self._conversations:
-                raise QAContractError("Conversation identity already exists")
+            existing = self._conversations.get(conversation.conversation_id)
+            if existing is not None:
+                if (
+                    existing.space_id == conversation.space_id
+                    and existing.owner_id == conversation.owner_id
+                ):
+                    return existing
+                raise QAContractError("Conversation identity already exists with another owner")
             self._conversations[conversation.conversation_id] = conversation
             return conversation
 
     async def get_conversation(self, conversation_id: UUID) -> ConversationRecord | None:
         async with self._lock:
             return self._conversations.get(conversation_id)
+
+    async def list_conversations(
+        self, space_id: UUID, owner_id: str
+    ) -> tuple[ConversationRecord, ...]:
+        async with self._lock:
+            return tuple(
+                sorted(
+                    (
+                        conversation
+                        for conversation in self._conversations.values()
+                        if conversation.space_id == space_id
+                        and conversation.owner_id == owner_id
+                        and conversation.archived_at is None
+                    ),
+                    key=lambda conversation: (
+                        conversation.updated_at,
+                        str(conversation.conversation_id),
+                    ),
+                    reverse=True,
+                )
+            )
+
+    async def archive_conversation(self, conversation_id: UUID) -> ConversationRecord | None:
+        async with self._lock:
+            conversation = self._conversations.get(conversation_id)
+            if conversation is None:
+                return None
+            if conversation.archived_at is not None:
+                return conversation
+            archived = replace(conversation, archived_at=datetime.now(UTC))
+            self._conversations[conversation_id] = archived
+            return archived
 
     async def append_message(self, message: MessageRecord) -> MessageRecord:
         async with self._lock:
@@ -81,6 +119,11 @@ class InMemoryGroundedQARepository:
             if message.idempotency_key is not None:
                 self._message_keys[(message.conversation_id, message.idempotency_key)] = (
                     message.message_id
+                )
+            conversation = self._conversations[message.conversation_id]
+            if message.created_at > conversation.updated_at:
+                self._conversations[message.conversation_id] = replace(
+                    conversation, updated_at=message.created_at
                 )
             return message
 
@@ -135,6 +178,16 @@ class InMemoryGroundedQARepository:
         async with self._lock:
             attempt_id = self._latest_attempts.get(run_id)
             return self._attempts.get(attempt_id) if attempt_id is not None else None
+
+    async def list_runs(self, conversation_id: UUID) -> tuple[QARunRecord, ...]:
+        async with self._lock:
+            self._require_conversation(conversation_id)
+            runs = (
+                self._attempts[attempt_id]
+                for attempt_id in self._latest_attempts.values()
+                if self._attempts[attempt_id].conversation_id == conversation_id
+            )
+            return tuple(sorted(runs, key=lambda run: (run.created_at, str(run.run_id))))
 
     async def transition_run(
         self,
@@ -455,12 +508,14 @@ def _same_run_command(existing: QARunRecord, requested: QARunRecord) -> bool:
         existing.space_id,
         existing.caller_id,
         existing.versions,
+        existing.retrieval_scope,
     ) == (
         requested.conversation_id,
         requested.question_message_id,
         requested.space_id,
         requested.caller_id,
         requested.versions,
+        requested.retrieval_scope,
     )
 
 

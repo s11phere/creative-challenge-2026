@@ -66,6 +66,31 @@ def test_reranker_batch_size_is_bounded_and_configurable() -> None:
         Settings(reranker_batch_size=0)
 
 
+def test_fake_embedding_provider_is_independent_from_real_chat_provider() -> None:
+    configured = Settings(
+        model_provider="openai-compatible",
+        fast_chat_endpoint="https://models.example.test/v1",
+        fast_chat_model="chat-model",
+        embedding_provider="fake",
+    )
+
+    assert configured.active_embedding_identity().model_revision == "fake-sha256-v1"
+
+
+def test_local_tei_embedding_provider_is_independent_from_real_chat_provider() -> None:
+    configured = Settings(
+        model_provider="openai-compatible",
+        fast_chat_endpoint="https://models.example.test/v1",
+        fast_chat_model="chat-model",
+        embedding_provider="text-embeddings-inference",
+        embedding_endpoint="http://tei:80",
+        embedding_model="Qwen/Qwen3-Embedding-0.6B",
+        embedding_model_revision="fixed-revision",
+    )
+
+    assert configured.active_embedding_identity().model_revision == "fixed-revision"
+
+
 def test_qwen3_query_instruction_resolves_to_reviewed_prefix() -> None:
     s = Settings(embedding_query_instruction_version="qwen3-web-search-v1")
 

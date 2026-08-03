@@ -102,6 +102,7 @@ class QAErrorCode(StrEnum):
     TIMED_OUT = "QA_TIMED_OUT"
     CANCELLED = "QA_CANCELLED"
     POLICY_DENIED = "QA_POLICY_DENIED"
+    SKILL_INVALID = "QA_SKILL_INVALID"
 
 
 class QAContractError(ValueError):
@@ -144,6 +145,9 @@ class QuestionInput:
     caller_id: str
     conversation_id: UUID | None = None
     idempotency_key: str | None = None
+    source_ids: frozenset[UUID] = frozenset()
+    document_ids: frozenset[UUID] = frozenset()
+    version_ids: frozenset[UUID] = frozenset()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "question", normalize_question(self.question))
@@ -151,6 +155,8 @@ class QuestionInput:
             raise QAContractError("Question caller_id must not be blank")
         if self.idempotency_key is not None and not self.idempotency_key:
             raise QAContractError("Question idempotency_key must not be blank when provided")
+        if self.version_ids and not self.document_ids:
+            raise QAContractError("Version-scoped questions must also fix their documents")
 
 
 @dataclass(frozen=True)
@@ -257,6 +263,7 @@ class CitationTargetSnapshot:
     storage_key: str
     content_kind: CitationContentKind
     metadata: ParseMetadata
+    chunk_text: str | None = None
     source_withdrawn: bool = False
     document_deleted: bool = False
     retention_expired: bool = False
@@ -269,6 +276,8 @@ class CitationTargetSnapshot:
             raise QAContractError("Citation target blob_hash must be lowercase SHA-256")
         if not self.storage_key:
             raise QAContractError("Citation target storage_key must not be blank")
+        if self.chunk_text is not None and not self.chunk_text.strip():
+            raise QAContractError("Citation target chunk_text must not be blank when provided")
 
 
 class CitationTargetPort(Protocol):

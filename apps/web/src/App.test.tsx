@@ -188,4 +188,71 @@ describe('system status workspace', () => {
       'page',
     )
   })
+
+  it('shows duplicate questions as separate conversation history entries', async () => {
+    const history = {
+      conversations: [
+        {
+          conversation_id: 'conversation-new',
+          space_id: 'space-1',
+          owner_id: 'local',
+          created_at: '2026-08-02T10:00:00Z',
+          updated_at: '2026-08-02T12:00:00Z',
+          messages: [{
+            message_id: 'message-new',
+            role: 'user',
+            content: '相同问题',
+            run_id: 'run-new',
+            created_at: '2026-08-02T12:00:00Z',
+          }],
+          runs: [],
+        },
+        {
+          conversation_id: 'conversation-old',
+          space_id: 'space-1',
+          owner_id: 'local',
+          created_at: '2026-08-01T10:00:00Z',
+          updated_at: '2026-08-01T12:00:00Z',
+          messages: [{
+            message_id: 'message-old',
+            role: 'user',
+            content: '相同问题',
+            run_id: 'run-old',
+            created_at: '2026-08-01T12:00:00Z',
+          }],
+          runs: [],
+        },
+      ],
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/health/live')) return Promise.resolve(jsonResponse({ status: 'alive' }))
+      if (url.includes('/conversations')) return Promise.resolve(jsonResponse(history))
+      if (url.endsWith('/skills')) return Promise.resolve(jsonResponse([]))
+      return Promise.resolve(jsonResponse({
+        status: 'ready',
+        checks: {
+          postgresql: { healthy: true, code: 'POSTGRESQL_OK' },
+          redis: { healthy: true, code: 'REDIS_OK' },
+          model: { healthy: true, code: 'MODEL_FAKE_READY' },
+        },
+      }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp()
+    fireEvent.click(screen.getByRole('link', { name: '知识问答' }))
+
+    const entries = await waitFor(() => {
+      const items = Array.from(document.querySelectorAll<HTMLButtonElement>('.sidebar-history-select'))
+      expect(items).toHaveLength(2)
+      return items
+    })
+    expect(entries[0]).toHaveTextContent('8/2')
+    expect(entries[1]).toHaveTextContent('1 个问题')
+
+    fireEvent.click(entries[1])
+    expect(screen.getByRole('textbox', { name: '问题' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '引用证据' })).toBeInTheDocument()
+  })
 })

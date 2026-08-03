@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class CapabilityAlias(StrEnum):
@@ -181,11 +181,13 @@ class ModelGatewayError(Exception):
         *,
         retryable: bool,
         capability: CapabilityAlias,
+        debug_details: Any = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
         self.capability = capability
+        self.debug_details = debug_details
 
 
 class ModelGateway(Protocol):

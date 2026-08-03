@@ -113,7 +113,11 @@ Agent Runtime → Domain + ModelGateway
 │   └── evals/
 │
 ├── skills/
-│   └── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
+│   ├── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
+│   ├── knowledge_qa/               # active provisional Grounded QA Skill
+│   ├── summarize_document/         # 固定单文档版本的引用摘要
+│   ├── compare_sources/            # 固定多来源的引用比较
+│   └── create_review_cards/        # 带引用预览；派生知识写入明确阻塞
 │
 ├── scripts/                        # OpenAPI 导出、Embedding 重建和检索评测 CLI
 │
@@ -216,7 +220,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/retrieval.py` | SearchRequest/SearchResult、`RetrievalProfileV1`、候选/诊断/locator、`RetrievalStore`、QueryEmbedder 和 Reranker Port |
 | `src/domain/grounded_qa.py` | provisional GroundedAnswer/Claim/Evidence/Citation/Refusal/Conflict 契约、稳定拒答/错误、取消 Port、不可重开 attempt/retry、引用校验和 QA 状态投影 |
 | `src/domain/qa_persistence.py` | provisional Conversation/Message/Run/Attempt/Evidence/Citation/Feedback、版本/用量与 Repository Port；不依赖数据库实现 |
-| `src/domain/qa_sse.py` | provisional `qa-sse-v1` 事件、单调 sequence、唯一终态、安全 payload 和内存重放日志 |
+| `src/domain/qa_sse.py` | provisional `qa-sse-v1` 事件、异步 Event Store Port、单调 sequence、唯一终态和安全 payload |
 
 **约束**：
 - 零外部依赖（不依赖 FastAPI、SQLAlchemy、任何 SDK）
@@ -250,10 +254,13 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/qa/generation.py` | `fast_chat` 非流式结构化生成、JSON schema 解析、一次修复、空证据拒答、显式取消、细分模型故障、冲突/发布竞态校验和安全版本/用量结果 |
 | `src/application/qa/persistence.py` | provisional 内存 Grounded QA Repository；验证 Space/owner、幂等、attempt、取消、usage、Evidence/Feedback 和原子终态发布 |
 | `src/application/qa/service.py` | 唯一 provisional `GroundedQAApplicationPort`；编排幂等提交、阶段 3 SearchService、Evidence/上下文、结构化生成、原子发布、取消和稳定失败终态 |
+| `src/application/skills/knowledge_qa.py` | provisional Skill Adapter；Worker 模式执行同一既有 QA Run，仅将 Runtime 服务端上下文映射到唯一 QA Port 并投影其结构化结果 |
+| `src/application/skills/organization.py` | 校验知识整理 Skill 的 Space 归属和当前 published Source/Document/DocumentVersion，并生成固定检索范围 |
 | `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
 | `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
 
-**依赖**：`domain`、`model-gateway`、`jsonschema`
+**依赖**：`agent-runtime`、`domain`、`model-gateway`、`jsonschema`。其中 `agent-runtime` 仅供
+Application 层的 Skill Adapter 编排使用；通用 Runtime 不反向依赖业务 Application。
 
 **模式**：每个用例是一个独立函数或类，接收 Port 作为参数，不直接依赖具体实现。
 
@@ -280,6 +287,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/infrastructure/parsers/` | 文档解析器包：MarkdownParser（`markdown-it-py`）、TxtParser（编码回退）、PdfParser（固定 `PyMuPDF==1.28.0`，可复制文本/扫描件分类）、ParserFactory（扩展名+MIME校验+大小限制） |
 | `src/infrastructure/chunkers/structure_chunker.py` | 结构感知分块、标题路径传播、父/邻接 metadata 和 locator 保留 |
 | `src/infrastructure/retrieval/postgres_store.py` | 当前发布集合上的 PostgreSQL FTS、pgvector exact/IVFFlat、上下文候选和诊断 |
+| `src/infrastructure/qa_persistence.py` | PostgreSQL Grounded QA Repository 与 SSE Event Store；事务式终态发布、append-only attempt 和 API 重启恢复 |
 
 **`config.py` 详解**：
 
@@ -330,6 +338,12 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 Embedding/Reranker 仅通过固定镜像、revision 和显式 Compose profile 启动，私有内容不得
 绕过 ADR-004 的数据策略发送到外部 Provider。`fast_chat` 仍不提供 SSE/流式协议。
 
+ModelGateway 的能力可以独立路由：`fast_chat` 可使用外部 OpenAI-compatible Provider，
+Embedding/Reranker 可分别使用已固定的本地或 fake 能力。外部 Chat 与本地 TEI 组合使用
+`EMBEDDING_PROVIDER=text-embeddings-inference`；`EMBEDDING_PROVIDER=fake` 固定
+`fake-sha256-v1`，确保已有索引身份与在线检索一致；未显式配置时保持 `inherit`，不改变既有
+Stage 3 模型组合。
+
 ---
 
 ### `packages/agent_runtime/` — Agent Runtime 通用基础
@@ -340,15 +354,32 @@ Embedding/Reranker 仅通过固定镜像、revision 和显式 Compose profile �
 | --- | --- |
 | `tools.py` | Tool 定义、JSON Schema、显式 handler、权限/Space/预算/审批校验和脱敏调用记录 |
 | `skills.py` | 受信目录 Skill manifest、包摘要、版本固定、事务式 reload、原子激活/回滚和恢复兼容检查 |
-| `executor.py` | 声明式 workflow、状态迁移、预算预留、有限重试、取消/超时和审计事件 v1 |
+| `checkpoints.py` | 规范化状态摘要、下一安全节点和内存原子 Run/Checkpoint 事务替身 |
+| `llm_decision.py` | 通过 `ModelGateway.fast_chat` 解析严格 `LLMDecision`，并在有限循环中只调用服务端白名单内、明确允许模型查看输出的只读 Tool |
+| `executor.py` | 声明式 workflow、状态迁移、预算预留、有限重试、取消/超时、检查点恢复和审计事件 v1 |
 | `__init__.py` | 稳定公开导出 |
 
 **信任边界**：只读取配置的受信根目录；拒绝远程 schema、路径逃逸、symlink/junction 和
 可执行 entrypoint；manifest 只能引用应用启动时注册的 handler。完整包、workflow、schema 和
 prompt 摘要在运行开始时固定。
 
-**当前边界**：该包只完成离线通用工程基础和 fake 契约。没有 AgentRun/Checkpoint ORM、
-Runtime API、Web 入口或 `knowledge_qa` 等业务 Skill；活动版本和生命周期事件当前只在进程内。
+**当前边界**：通用部分提供离线 Runtime、Registry、fake 契约和内存检查点恢复；没有独立
+AgentRun/Checkpoint ORM、Runtime API 或 Skill 管理 Web。五个 `0.1.0` Skill 的 active pointer
+由 PostgreSQL `skill_activations` 保存，Catalog 暴露安装版本、manifest 预算和 pointer revision，
+受控 activate/rollback API 只允许选择受信根中的已安装版本并使用 revision CAS。新 QA Run 在提交时
+同步 pointer 并固定名称、版本和内容摘要，Worker 按 Run 固定包执行唯一 QA Application Port。
+QA PostgreSQL Run/Attempt/Event 是业务恢复事实源；通用 Runtime 生命周期事件和 Checkpoint 仍只在
+进程内。知识整理 Run 还持久化固定 Source/Document/DocumentVersion 范围；检索要求这些版本仍为
+所选文档的 current published version，避免排队期间跟随新版本或扩大范围。比较结果若没有至少两个
+来源的 Citation 则拒答；复习卡仅预览并返回零副作用写入阻塞标记。
+
+`knowledge_agent` 是当前 LLM Agent 业务入口。它通过现有 `fast_chat` 能力产生严格的
+`call_tool/complete/refuse` 决策。`knowledge_agent 0.2.0` 最多三次调用
+`inspect_retrieval 1.0.0` 调整多查询和上下文预算，最后调用一次 `grounded_qa 1.0.0`；Tool
+Registry 在服务端重验
+版本、权限、Space、预算和输入/输出 schema。`grounded_qa` 仍是回答、引用、终态发布和恢复的唯一
+权威，不向外层模型回传回答正文或引用原文。通用 Runtime 决策历史尚未单独持久化，写 Tool 在持久
+审批和幂等事实源落地前禁止进入 LLM 循环。
 
 **依赖**：`domain`、`model-gateway`、`jsonschema`、`packaging`、`pyyaml`
 
@@ -378,10 +409,16 @@ Runtime API、Web 入口或 `knowledge_qa` 等业务 Skill；活动版本和生�
    - `/api/v1/tasks/{task_id}*` — 摄入任务状态、取消和重试
    - `POST /api/v1/spaces/{space_id}/search` — Space-scoped Keyword/Dense/Hybrid 检索
    - `POST /api/v1/spaces/{space_id}/conversations`、`POST /api/v1/conversations/{conversation_id}/questions`
-     — provisional 内存会话与 queued Run 创建
+     — provisional PostgreSQL 会话与 Run 创建；API 只投递 Run ID，由独立 Worker 执行唯一 Grounded QA 用例
+   - `POST /api/v1/conversations/{conversation_id}/skills/knowledge_agent/runs` — 在同一 QA Run/Worker/SSE
+     协议中启动固定版本的只读 LLM Agent，不接受客户端指定 Tool、prompt、权限或版本
    - `GET /api/v1/qa/runs/{run_id}`、`POST /api/v1/qa/runs/{run_id}/cancel`、
      `GET /api/v1/qa/runs/{run_id}/events`、`POST /api/v1/qa/runs/{run_id}/feedback` — provisional
-     Run 查询/取消、SSE 重放和反馈契约；无 Worker 完成链，不能产出真实回答或 Citation
+     Run 查询/取消、SSE 重放和反馈契约；终态响应包含结构化回答/拒答及已校验 Citation 身份
+   - `GET /api/v1/qa/runs/{run_id}/citations/{evidence_id}` — 只解析该 Run 已原子发布的 Citation，
+     重新校验 Space、固定 DocumentVersion、Chunk、locator 和 Blob hash 后返回最小必要片段
+   - `GET /api/v1/skills`、`GET /api/v1/skills/{skill_name}/versions` — 只读查询受信 Registry
+     已安装/active 版本、摘要、权限、能力和预算；不提供激活/回滚写操作
 4. **请求可观测性**：`observability.py` 校验或生成 trace/request ID，返回
    `X-Trace-ID`、`X-Request-ID`，并创建 HTTP server span 与开始/完成 JSON 日志。
 
@@ -405,7 +442,8 @@ Runtime API、Web 入口或 `knowledge_qa` 等业务 Skill；活动版本和生�
 ```
 
 **OpenAPI**：端点声明 `response_model`；`docs/openapi.json` 由运行时应用确定性导出，当前覆盖
-健康、来源/摄入任务、检索和 provisional QA schema。QA 状态只存在进程内，服务重启即丢失；
+健康、来源/摄入任务、检索、provisional QA 和 Skill Catalog/lifecycle schema。QA 执行复用真实 PostgreSQL SearchService；
+状态、结果、引用和事件由 PostgreSQL 保存，服务启动时恢复安全的非终态 attempt；
 新增或修改公开端点后必须重新导出并运行一致性检查。
 
 **依赖**：`fastapi`、`uvicorn[standard]`、`python-multipart`、`alembic`、`infrastructure`、
@@ -426,14 +464,19 @@ Runtime API、Web 入口或 `knowledge_qa` 等业务 Skill；活动版本和生�
 | `src/worker/broker.py` | Worker 进程的 Redis/Dramatiq broker 初始化 |
 | `src/worker/tasks.py` | 无正文诊断任务、有限重试和永久失败回调 |
 | `src/worker/ingestion_tasks.py` | 持久摄入任务 actor、Orchestrator 组装、租约/心跳、取消、错误分类、有限重试和死信记录 |
+| `src/worker/qa_tasks.py` | 无正文 QA actor、attempt lease/心跳、重复投递保护和启动恢复 |
+| `packages/infrastructure/src/infrastructure/qa_execution.py` | API/Worker 共享的 QA/Skill 版本固定、受信 Registry、Gateway 包装、声明式 Runtime 和唯一 Grounded QA Application Port 装配 |
 
-**当前状态**：Redis/Dramatiq 同时承载无正文诊断任务和阶段 2 摄入任务。摄入 actor 执行解析、
+**当前状态**：Redis/Dramatiq 同时承载无正文诊断、阶段 2 摄入和 provisional QA 任务。摄入 actor 执行解析、
 分块、Embedding、索引验证和原子发布；PostgreSQL `IngestionTask` 是状态、幂等、取消、租约和
 死信事实源，Redis 只投递 `task_id`/`trace_id` 等控制元数据。重复投递、Worker 丢失和取消均按
 持久状态恢复，不以日志是否出现作为完成事实。
 
-诊断 actor 的 started/completed 日志在容器中仍有已记录差异；排查应同时检查任务表、Redis
-队列和 trace。问答/Agent 长任务尚未接入 Worker，等待阶段 4 ADR-007 和持久化协议。
+QA actor 只接收 `run_id`、`trace_id` 和事件版本；PostgreSQL attempt lease/heartbeat 阻止并发执行，
+Worker 启动扫描未租用 queued/cancel_requested 与租约过期运行。它从 QA Run 读取固定 Skill
+名称、版本和摘要并重新校验受信包，摘要不一致时以 `QA_SKILL_INVALID` 失败且不执行问答。
+诊断 actor 的 started/completed 日志
+在容器中仍有已记录差异；排查应同时检查任务表、Redis 队列和 trace。
 
 **依赖**：`dramatiq`、`infrastructure`、`application`、`model-gateway`
 
@@ -467,9 +510,10 @@ Trace/Request ID；数据来源读取真实 Source、Document 和 IngestionTask 
 触发、取消、重试与轮询。两个视图均包含错误/空白/加载状态、键盘焦点和移动端布局，
 不展示虚构的文档、会话或证据。
 
-Web 已包含系统健康、数据来源和 provisional 知识问答工作区。问答工作区可创建内存会话、提交
-问题、轮询/取消 Run，并保留不伪造 Citation 的证据空状态；真实回答、重试、反馈、证据原文和
-引用高亮仍等待 Worker 完成链、终态结果 API 和正式持久化。
+Web 已包含系统健康、数据来源和 provisional 知识问答工作区。问答工作区可创建持久会话、提交
+问题、轮询/取消 Run，并展示真实 PostgreSQL 检索后生成的回答/拒答、限制以及已校验的文档、
+版本、Chunk 和 locator 身份。点击 Citation 会按需加载固定版本的最小原文片段并高亮 locator；
+伪造 Evidence 返回 404，失效历史引用返回状态而不重定向到新版本。用户重试仍待实现。
 
 **规范命令**：
 ```bash
@@ -585,6 +629,7 @@ ADR-007 已接受并已有 provisional 纯契约、内存 Repository、SSE/API/W
 | `stage-4-acceptance.md` | 阶段 4 provisional 工程回归、未执行矩阵、正式阻塞项和阶段 5 移交边界 |
 | `stage-5-implementation-plan.md` | 阶段 5 依赖门禁、分步计划、完成与暂缓状态 |
 | `stage-5-implementation-review.md` | 阶段 5 通用基础审查证据、未完成范围和审查决定 |
+| `stage-5-acceptance.md` | 阶段 5 provisional 工程验收、E2E、安全矩阵和正式退出阻塞项 |
 | `troubleshooting.md` | 本地运行故障恢复和已知限制 |
 | `openapi.json` | 由应用确定性导出的公开 HTTP schema |
 | `architecture.md` | **本文档** |
@@ -605,6 +650,7 @@ tests/
 │   ├── test_gateway_*              # Query Embedding 与 Reranker Adapter
 │   ├── test_source_api_helpers.py  # 来源 API 映射和安全边界
 │   ├── test_agent_runtime_domain.py
+│   ├── test_runtime_checkpoints.py
 │   ├── test_runtime_executor.py
 │   ├── test_skill_registry.py
 │   ├── test_skill_lifecycle.py
@@ -638,7 +684,7 @@ tests/
 - ModelGateway：共享 Chat/Embedding/Reranker 契约、能力别名、确定性 fake、有限重试、结构解析、
   endpoint 策略、显式不可用状态及输入/输出不进入日志或 span
 - Agent Runtime：状态/步骤分离、终态、预算、Tool/Skill schema、受信路径、版本固定、
-  声明式执行、权限、有限重试、取消/超时、审计脱敏和原子 reload/回滚
+  声明式执行、权限、有限重试、取消/超时、内存原子检查点/恢复、审计脱敏和原子 reload/回滚
 
 前端 Vitest 覆盖系统健康、数据来源、上传/触发、任务轮询/取消/重试、API 不可达、非法响应、
 有界超时、键盘焦点，以及 provisional 问答导航、提问、queued、显式取消和不伪造 Citation。
@@ -733,8 +779,8 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 1** | **✅ 完成** | **Step 0-8 验收完成；GitHub Actions 正常** |
 | **阶段 2** | **✅ 正式完成** | **Step 0～9 完成；冻结 manifest 的 74 个 P0 来源成功率 100%，退出记录见 `docs/stage-2-acceptance.md`** |
 | **阶段 3** | **⏹️ 已终止** | **工程 Step 0～10 已完成；正式质量门禁未通过，因当前评测集代表性局限终止，未运行正式 holdout，配置保持 provisional（ADR-010）** |
-| 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、查询/上下文、生成/故障、内存持久化、SSE/API/Web、反馈候选和回答评测门禁已落地；ORM/Alembic/PostgreSQL、Worker 完成链、真实 Citation E2E、默认配置和 holdout 未落地 |
-| **阶段 5** | **🟡 通用基础已审查** | **Step 0～4 和 Step 9 通用部分通过；业务 Skill/API/持久化/验收仍阻塞** |
+| 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、PostgreSQL QA 持久化、SSE/API/Web、Worker lease/重启恢复、原文解析和回答评测门禁已落地；默认配置和 holdout 未落地 |
+| **阶段 5** | **🟡 provisional Skills** | **Step 0～4、Step 8 只读子集和 Step 9 通用部分通过；四个 `0.1.0` Skill 复用现有 QA Run/Worker/SSE，通用 Runtime Checkpoint、派生知识写入、Skill 管理 Web 和正式验收仍阻塞** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 
@@ -765,8 +811,9 @@ chunks、Claim Recall@10=69.7548%、Evidence Recall@10=62.3431%、MRR=0.6839、P
 质量未通过；因评测集代表性局限已终止，配置仍为 provisional 且 holdout 未执行；完整复现记录见
 `docs/stage-3-acceptance.md`。
 
-阶段 5 通用基础审查见 `docs/stage-5-implementation-review.md`。该并行实现不改变主推进顺序：
-仍应先完成阶段 4 引用问答，再接入阶段 5 业务 Skill。
+阶段 5 通用基础和 provisional 业务 Skill 审查见 `docs/stage-5-implementation-review.md`。这些
+可用子集不改变 Stage 3/4/5 的正式状态，也不替代通用 Runtime Checkpoint、派生知识持久写入或
+正式质量门禁。
 
 阶段 0 和阶段 2 已分别按 `docs/stage-0-acceptance.md`、`docs/stage-2-acceptance.md` 交接；
 阶段 3 终止后不得直接运行当前 holdout。若未来重新开启，必须按 ADR-010 使用新的 dataset/config

@@ -21,6 +21,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -38,6 +39,32 @@ def _utcnow() -> datetime:
 
 class Base(DeclarativeBase):
     """Shared declarative base for all ORM models."""
+
+
+# ---------------------------------------------------------------------------
+# Skill lifecycle (ADR-006)
+# ---------------------------------------------------------------------------
+
+
+class SkillActivationModel(Base):
+    __tablename__ = "skill_activations"
+
+    skill_name: Mapped[str] = mapped_column(String(255), primary_key=True)
+    active_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+    __table_args__ = (
+        CheckConstraint("revision >= 1", name="ck_skill_activations_revision_positive"),
+        CheckConstraint(
+            "char_length(content_sha256) = 64",
+            name="ck_skill_activations_content_sha256_length",
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -302,8 +329,15 @@ class ConversationModel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (Index("idx_conversations_space_owner", "space_id", "owner_id"),)
+
+
+_QA_STATUS_CHECK = (
+    "status IN ('created', 'queued', 'running', 'verifying', 'completed', 'refused', "
+    "'failed', 'cancel_requested', 'cancelled', 'timed_out')"
+)
 
 
 class QARunModel(Base):
@@ -318,10 +352,17 @@ class QARunModel(Base):
     )
     caller_id: Mapped[str] = mapped_column(String(255), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    question_message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="RESTRICT"), nullable=False
+    )
+    answer_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="RESTRICT"), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="created")
     cancellation_requested: Mapped[bool] = mapped_column(default=False)
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     versions: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    retrieval_scope: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     usage: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -331,6 +372,7 @@ class QARunModel(Base):
 
     __table_args__ = (
         UniqueConstraint("space_id", "caller_id", "idempotency_key", name="uq_qa_runs_idempotency"),
+        CheckConstraint(_QA_STATUS_CHECK, name="ck_qa_runs_status"),
         Index("idx_qa_runs_conversation", "conversation_id", "created_at"),
         Index("idx_qa_runs_status", "status"),
     )
@@ -352,6 +394,51 @@ class QAMessageModel(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    __table_args__ = (
+        Index(
+            "uq_qa_messages_conversation_idempotency",
+            "conversation_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
+
+
+class QARunAttemptModel(Base):
+    __tablename__ = "qa_run_attempts"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    previous_attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_run_attempts.id", ondelete="RESTRICT"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    cancellation_requested: Mapped[bool] = mapped_column(nullable=False, default=False)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    usage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    answer_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="RESTRICT"), nullable=True
+    )
+    lease_owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+    __table_args__ = (
+        UniqueConstraint("run_id", "number", name="uq_qa_run_attempts_number"),
+        CheckConstraint("number >= 1", name="ck_qa_run_attempts_number_positive"),
+        CheckConstraint(_QA_STATUS_CHECK, name="ck_qa_run_attempts_status"),
+        Index("idx_qa_run_attempts_run_number", "run_id", "number"),
+        Index("idx_qa_run_attempts_recovery", "status", "lease_expires_at"),
+    )
 
 
 class QAEvidenceModel(Base):
@@ -360,7 +447,9 @@ class QAEvidenceModel(Base):
     run_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
     )
-    attempt_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    attempt_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_run_attempts.id", ondelete="CASCADE"), nullable=False
+    )
     space_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
     )
@@ -376,7 +465,9 @@ class QACitationModel(Base):
     run_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
     )
-    attempt_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    attempt_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_run_attempts.id", ondelete="CASCADE"), nullable=False
+    )
     message_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="CASCADE"), nullable=False
     )
@@ -399,3 +490,155 @@ class QAEventModel(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_qa_events_run_sequence"),)
+
+
+class QAFeedbackModel(Base):
+    __tablename__ = "qa_feedback"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_run_attempts.id", ondelete="CASCADE"), nullable=False
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    caller_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "caller_id", "idempotency_key", name="uq_qa_feedback_idempotency"
+        ),
+        Index("idx_qa_feedback_review_status", "review_status", "created_at"),
+    )
+
+
+class RuntimeRunModel(Base):
+    """Durable Runtime snapshot sharing the QA run identity."""
+
+    __tablename__ = "runtime_runs"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    caller_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    trace_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    skill_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    skill_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    skill_content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    granted_permissions: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    budget: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    usage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    current_step: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    checkpoint_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+    __table_args__ = (
+        CheckConstraint("checkpoint_sequence >= 0", name="ck_runtime_runs_checkpoint_sequence"),
+        Index("idx_runtime_runs_status", "status", "updated_at"),
+    )
+
+
+class RuntimeCheckpointModel(Base):
+    """Append-only verified recovery points for a shared QA/Runtime run."""
+
+    __tablename__ = "runtime_checkpoints"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("runtime_runs.run_id", ondelete="CASCADE"), primary_key=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    skill_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    skill_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    skill_content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    state_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    usage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    next_step: Mapped[str] = mapped_column(String(32), nullable=False)
+    next_node: Mapped[str] = mapped_column(String(255), nullable=False)
+    verified: Mapped[bool] = mapped_column(nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    __table_args__ = (
+        CheckConstraint("sequence >= 1", name="ck_runtime_checkpoints_sequence_positive"),
+        CheckConstraint("schema_version >= 1", name="ck_runtime_checkpoints_schema_positive"),
+        CheckConstraint(
+            "char_length(state_sha256) = 64", name="ck_runtime_checkpoints_state_sha256"
+        ),
+    )
+
+
+class RuntimeApprovalModel(Base):
+    """Durable approval for a bounded Runtime write operation."""
+
+    __tablename__ = "runtime_approvals"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    caller_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    tool_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    details: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "action", "idempotency_key", name="uq_runtime_approvals_idempotency"
+        ),
+        CheckConstraint(
+            "status in ('pending', 'approved', 'rejected')", name="ck_runtime_approval_status"
+        ),
+        Index("idx_runtime_approvals_run_status", "run_id", "status"),
+    )
+
+
+class DerivedKnowledgeItemModel(Base):
+    """Idempotent, citation-backed derived knowledge produced by a Skill."""
+
+    __tablename__ = "derived_knowledge_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    citation_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    __table_args__ = (
+        UniqueConstraint("run_id", "idempotency_key", name="uq_derived_knowledge_idempotency"),
+        Index("idx_derived_knowledge_space_created", "space_id", "created_at"),
+    )

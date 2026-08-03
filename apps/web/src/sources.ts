@@ -51,6 +51,14 @@ export type UploadResult = {
   task_id: string | null
 }
 
+export type CreateSourceResult = {
+  source_id: string
+  space_id: string
+  source_type: string
+  uri: string
+  is_new: boolean
+}
+
 export type IngestResult = {
   task_id: string
 }
@@ -114,6 +122,25 @@ export function fetchSourceDetail(sourceId: string, signal?: AbortSignal): Promi
   return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources/${sourceId}/detail`, {
     method: 'GET',
     signal,
+  })
+}
+
+/** Tombstone a document and enqueue cleanup of its derived artifacts. */
+export function deleteDocument(
+  sourceId: string,
+  documentId: string,
+): Promise<{ document_id: string; status: 'deleted' | 'already_deleted'; task_id: string | null }> {
+  return apiFetch(
+    `/api/v1/spaces/${SPACE_ID}/sources/${sourceId}/documents/${documentId}`,
+    { method: 'DELETE' },
+  )
+}
+
+/** Create a browser-managed upload source. */
+export function createUploadSource(uri: string): Promise<CreateSourceResult> {
+  return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources`, {
+    method: 'POST',
+    body: { source_type: 'upload', uri },
   })
 }
 

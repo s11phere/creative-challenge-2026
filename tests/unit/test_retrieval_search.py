@@ -43,6 +43,7 @@ SOURCE_ID = UUID(int=10)
 OTHER_SOURCE_ID = UUID(int=11)
 DOCUMENT_ID = UUID(int=20)
 OTHER_DOCUMENT_ID = UUID(int=21)
+CURRENT_VERSION_ID = UUID(int=30)
 
 
 @dataclass
@@ -207,7 +208,11 @@ def repos() -> tuple[_SpaceRepo, _SourceRepo, _DocumentRepo]:
         ),
         _DocumentRepo(
             {
-                DOCUMENT_ID: Document(id=DOCUMENT_ID, source_id=SOURCE_ID),
+                DOCUMENT_ID: Document(
+                    id=DOCUMENT_ID,
+                    source_id=SOURCE_ID,
+                    current_version_id=CURRENT_VERSION_ID,
+                ),
                 OTHER_DOCUMENT_ID: Document(id=OTHER_DOCUMENT_ID, source_id=OTHER_SOURCE_ID),
             }
         ),
@@ -668,6 +673,17 @@ async def test_empty_candidate_sets_are_successful(repos) -> None:
     assert "fusion" in {timing.stage for timing in result.diagnostics.stage_timings}
 
 
+async def test_empty_candidate_sets_skip_reranker(repos) -> None:
+    reranker = _FakeReranker()
+    result = await _service(repos, _FakeStore(), _FakeEmbedder(), reranker).search(
+        SearchRequest("missing", SPACE_ID, mode=RetrievalMode.HYBRID_RERANK),
+        _profile(reranker_enabled=True),
+    )
+    assert result.hits == ()
+    assert reranker.requests == []
+    assert result.diagnostics.reranker_version == "empty-rerank-v1"
+
+
 @pytest.mark.parametrize(
     "filters",
     [
@@ -701,6 +717,33 @@ async def test_valid_filters_are_forwarded_without_space_override(repos) -> None
         SearchRequest("query", SPACE_ID, mode=RetrievalMode.KEYWORD, filters=filters), _profile()
     )
     assert result.diagnostics.filter_reasons == ("source_filter", "document_filter")
+
+
+async def test_version_filter_must_match_selected_current_documents(repos) -> None:
+    valid = SearchFilters(
+        document_ids=frozenset({DOCUMENT_ID}),
+        version_ids=frozenset({CURRENT_VERSION_ID}),
+    )
+    result = await _service(repos, _FakeStore(), _FakeEmbedder()).search(
+        SearchRequest("query", SPACE_ID, mode=RetrievalMode.KEYWORD, filters=valid), _profile()
+    )
+    assert result.diagnostics.filter_reasons == ("document_filter", "version_filter")
+
+    store = _FakeStore()
+    with pytest.raises(RetrievalError) as captured:
+        await _service(repos, store, _FakeEmbedder()).search(
+            SearchRequest(
+                "query",
+                SPACE_ID,
+                filters=SearchFilters(
+                    document_ids=frozenset({DOCUMENT_ID}),
+                    version_ids=frozenset({UUID(int=99)}),
+                ),
+            ),
+            _profile(),
+        )
+    assert captured.value.code is RetrievalErrorCode.INVALID_FILTER
+    assert not store.keyword_queries
 
 
 async def test_missing_space_has_stable_error(repos) -> None:

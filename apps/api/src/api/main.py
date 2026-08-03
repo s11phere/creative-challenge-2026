@@ -7,11 +7,30 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
-from application.qa.persistence import InMemoryGroundedQARepository
-from domain.qa_sse import QAEventLog
+from application.qa import (
+    CitationResolver,
+    PublishedCitationApplicationPort,
+    PublishedCitationService,
+)
+from application.skills import SkillActivationStore, SkillCatalogPort, SkillLifecycleService
+from domain.grounded_qa import CitationContentKind
+from domain.qa_persistence import GroundedQARepository
+from domain.qa_sse import QAEventStore
 from fastapi import FastAPI, Response
+from infrastructure.blob_store import LocalFileBlobStore
 from infrastructure.config import settings
 from infrastructure.database import Database
+from infrastructure.organization import PostgresKnowledgeOrganizationScope
+from infrastructure.parsers import MarkdownParser, PdfParser
+from infrastructure.qa import PostgresCitationTargetPort
+from infrastructure.qa_execution import knowledge_qa_registry
+from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
+from infrastructure.runtime_approval import PostgresApprovalPort, PostgresDerivedKnowledgeStore
+from infrastructure.skill_catalog import FileSystemSkillCatalog
+from infrastructure.skill_lifecycle import (
+    PostgresSkillActivationStore,
+)
+from infrastructure.skill_references import PostgresSkillReferenceChecker
 from infrastructure.telemetry import configure_observability
 from model_gateway import (
     GatewayConfig,
@@ -25,7 +44,8 @@ from pydantic import BaseModel
 
 from .errors import ErrorResponse, register_error_handlers
 from .observability import TraceMiddleware
-from .routers import qa, search, sources
+from .qa_runtime import QAWorkerDispatcher
+from .routers import qa, search, skills, sources
 
 
 class LiveResponse(BaseModel):
@@ -64,11 +84,49 @@ def create_app(
     model_gateway: ModelGateway | None = None,
     *,
     database: Database | None = None,
+    enable_qa_execution: bool = True,
+    qa_repository: GroundedQARepository | None = None,
+    qa_event_store: QAEventStore | None = None,
+    qa_citation_service: PublishedCitationApplicationPort | None = None,
+    skill_catalog: SkillCatalogPort | None = None,
+    skill_activation_store: SkillActivationStore | None = None,
 ) -> FastAPI:
     """Application factory. Call once at process start."""
 
     database = database or Database(settings.database_url)
     gateway = model_gateway or _create_configured_model_gateway()
+    qa_repository = qa_repository or PostgresGroundedQARepository(database)
+    qa_event_log = qa_event_store or PostgresQAEventStore(database)
+    skill_registry = knowledge_qa_registry()
+    activation_store = skill_activation_store or PostgresSkillActivationStore(database)
+    skill_lifecycle = SkillLifecycleService(
+        registry=skill_registry,
+        store=activation_store,
+        defaults={
+            "knowledge_qa": settings.knowledge_qa_skill_version,
+            "summarize_document": "0.1.0",
+            "compare_sources": "0.1.0",
+            "create_review_cards": "0.1.0",
+            "knowledge_agent": settings.knowledge_agent_skill_version,
+        },
+    )
+    qa_runtime = QAWorkerDispatcher(
+        repository=qa_repository,
+        skill_registry=skill_registry,
+        skill_lifecycle=skill_lifecycle,
+    )
+    skill_catalog = skill_catalog or FileSystemSkillCatalog(skill_registry)
+    qa_citation_service = qa_citation_service or PublishedCitationService(
+        runs=qa_repository,
+        resolver=CitationResolver(
+            targets=PostgresCitationTargetPort(database),
+            blob_store=LocalFileBlobStore(),
+            parsers={
+                CitationContentKind.TEXT: MarkdownParser(),
+                CitationContentKind.PDF: PdfParser(),
+            },
+        ),
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -76,6 +134,9 @@ def create_app(
         observability = configure_observability(settings, service_name="api")
         database.instrument()
         try:
+            if enable_qa_execution:
+                await skill_lifecycle.current("knowledge_qa")
+                await qa_runtime.recover()
             yield
         finally:
             await database.dispose()
@@ -92,8 +153,18 @@ def create_app(
     )
     app.state.database = database
     app.state.model_gateway = gateway
-    app.state.qa_repository = InMemoryGroundedQARepository()
-    app.state.qa_event_log = QAEventLog()
+    app.state.qa_repository = qa_repository
+    app.state.qa_event_log = qa_event_log
+    app.state.qa_runtime = qa_runtime
+    app.state.qa_citation_service = qa_citation_service
+    app.state.qa_execution_enabled = enable_qa_execution
+    app.state.skill_catalog = skill_catalog
+    app.state.skill_registry = skill_registry
+    app.state.skill_reference_checker = PostgresSkillReferenceChecker(database)
+    app.state.skill_lifecycle = skill_lifecycle
+    app.state.organization_scope = PostgresKnowledgeOrganizationScope(database)
+    app.state.approval_port = PostgresApprovalPort(database)
+    app.state.derived_knowledge_store = PostgresDerivedKnowledgeStore(database)
 
     app.add_middleware(TraceMiddleware)
     register_error_handlers(app)
@@ -105,6 +176,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(sources.router)
     app.include_router(search.router)
     app.include_router(qa.router)
+    app.include_router(skills.router)
 
     @app.get(
         "/api/v1/health/live",
@@ -205,8 +277,17 @@ def _create_configured_model_gateway() -> ModelGateway:
             reranker_api_key=reranker_api_key,
             reranker_model=settings.reranker_model,
             embedding_protocol=settings.embedding_protocol,
+            embedding_provider=(
+                ModelProvider.TEXT_EMBEDDINGS_INFERENCE
+                if settings.embedding_provider == "text-embeddings-inference"
+                else None
+            ),
+            fake_embedding=settings.embedding_provider == "fake",
+            fake_reranker=settings.reranker_provider == "fake",
             allow_external=settings.model_allow_external,
             timeout_seconds=settings.model_timeout_seconds,
+            fast_chat_timeout_seconds=settings.fast_chat_timeout_seconds,
+            fast_chat_reasoning_enabled=settings.fast_chat_reasoning_enabled,
             max_retries=settings.model_max_retries,
             retry_backoff_seconds=settings.model_retry_backoff_seconds,
             reranker_batch_size=settings.reranker_batch_size,

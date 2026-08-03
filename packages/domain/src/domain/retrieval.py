@@ -96,6 +96,7 @@ class SearchFilters:
 
     source_ids: frozenset[UUID] = frozenset()
     document_ids: frozenset[UUID] = frozenset()
+    version_ids: frozenset[UUID] = frozenset()
 
 
 @dataclass(frozen=True)

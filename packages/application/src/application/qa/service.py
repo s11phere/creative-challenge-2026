@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Protocol
 from uuid import UUID, uuid4
@@ -13,9 +13,13 @@ from domain.grounded_qa import (
     QAError,
     QAErrorCode,
     QAEvent,
+    QAOutcome,
     QAResult,
     QAStatus,
     QuestionInput,
+    QuestionType,
+    Refusal,
+    RefusalReason,
 )
 from domain.qa_persistence import (
     CitationRecord,
@@ -26,17 +30,23 @@ from domain.qa_persistence import (
     MessageRole,
     QAPhase,
     QAPhaseTiming,
+    QARetrievalScope,
     QARunRecord,
     QARunUsage,
     QARunVersions,
 )
-from domain.retrieval import RetrievalError, RetrievalProfileV1, SearchRequest
+from domain.retrieval import RetrievalError, RetrievalProfileV1, SearchFilters, SearchRequest
 
 from .context_builder import ContextBuilder, ConversationRole, ConversationTurn
 from .evidence import EvidenceBindingService
 from .generation import GenerationResult, GroundedAnswerGenerator
 from .profile import QAPlanningProfileV1
-from .query_planning import QASearchCoordinator, QueryPlanner
+from .query_planning import (
+    MergedSearchResult,
+    QASearchCoordinator,
+    QueryPlanner,
+    QueryPlanningResult,
+)
 
 
 @dataclass(frozen=True)
@@ -47,6 +57,53 @@ class GroundedQAExecutionProfile:
     retrieval: RetrievalProfileV1
 
 
+@dataclass(frozen=True)
+class AgentRetrievalPlan:
+    """Model-selected retrieval preferences constrained by the trusted QA profile."""
+
+    additional_queries: tuple[str, ...] = ()
+    max_evidence_items: int | None = None
+    max_input_tokens: int | None = None
+    max_tokens_per_evidence: int | None = None
+    max_evidence_per_source: int | None = None
+    max_chunks_per_document: int | None = None
+
+    def apply(self, profile: QAPlanningProfileV1) -> QAPlanningProfileV1:
+        values = {
+            field: value
+            for field, value in (
+                ("max_evidence_items", self.max_evidence_items),
+                ("max_input_tokens", self.max_input_tokens),
+                ("max_tokens_per_evidence", self.max_tokens_per_evidence),
+                ("max_evidence_per_source", self.max_evidence_per_source),
+                ("max_chunks_per_document", self.max_chunks_per_document),
+            )
+            if value is not None
+        }
+        for field, value in values.items():
+            assert value is not None
+            if value < 1:
+                raise QAContractError(f"Agent retrieval {field} must be positive")
+        if len(self.additional_queries) > profile.max_subqueries - 1:
+            raise QAContractError("Agent submitted too many additional retrieval queries")
+        return replace(
+            profile,
+            max_evidence_items=_clamp(
+                values.get("max_evidence_items"), 1, profile.max_evidence_items
+            ),
+            max_input_tokens=_clamp(values.get("max_input_tokens"), 4096, profile.max_input_tokens),
+            max_tokens_per_evidence=_clamp(
+                values.get("max_tokens_per_evidence"), 256, profile.max_tokens_per_evidence
+            ),
+            max_evidence_per_source=_clamp(
+                values.get("max_evidence_per_source"), 1, profile.max_evidence_per_source
+            ),
+            max_chunks_per_document=_clamp(
+                values.get("max_chunks_per_document"), 1, profile.max_chunks_per_document
+            ),
+        )
+
+
 class GroundedQAApplicationPort(Protocol):
     """Entry point shared by future HTTP, Worker, evaluation, and Skill adapters."""
 
@@ -55,8 +112,16 @@ class GroundedQAApplicationPort(Protocol):
     async def submit(self, question: QuestionInput, *, versions: QARunVersions) -> QARunRecord: ...
 
     async def execute(
-        self, run_id: UUID, *, profile: GroundedQAExecutionProfile
+        self,
+        run_id: UUID,
+        *,
+        profile: GroundedQAExecutionProfile,
+        agent_plan: AgentRetrievalPlan | None = None,
     ) -> QARunRecord: ...
+
+    async def inspect_retrieval(
+        self, run_id: UUID, *, profile: GroundedQAExecutionProfile, agent_plan: AgentRetrievalPlan
+    ) -> MergedSearchResult: ...
 
     async def request_cancel(self, run_id: UUID) -> QARunRecord: ...
 
@@ -116,13 +181,24 @@ class GroundedQAService:
                 caller_id=question.caller_id,
                 idempotency_key=question.idempotency_key,
                 versions=versions,
+                retrieval_scope=QARetrievalScope(
+                    source_ids=question.source_ids,
+                    document_ids=question.document_ids,
+                    version_ids=question.version_ids,
+                ),
             )
         )
         if created.status is QAStatus.CREATED:
             return await self._repository.transition_run(created.run_id, QAEvent.QUEUE)
         return created
 
-    async def execute(self, run_id: UUID, *, profile: GroundedQAExecutionProfile) -> QARunRecord:
+    async def execute(
+        self,
+        run_id: UUID,
+        *,
+        profile: GroundedQAExecutionProfile,
+        agent_plan: AgentRetrievalPlan | None = None,
+    ) -> QARunRecord:
         run = await self._require_run(run_id)
         if run.status in _TERMINAL_STATUSES:
             return run
@@ -145,16 +221,11 @@ class GroundedQAService:
             question = await self._question_for_run(run)
 
             started = perf_counter()
-            planning = await self._planner.plan(question, profile.planning)
+            planning, effective_planning = await self._planning_for(question, profile, agent_plan)
             timings.append(QAPhaseTiming(QAPhase.PLANNING, _elapsed_ms(started)))
 
             started = perf_counter()
-            merged = await self._search.search(
-                base_request=SearchRequest(query=question.question, space_id=run.space_id),
-                plan=planning.plan,
-                profile=profile.retrieval,
-                limit=profile.planning.max_evidence_items,
-            )
+            merged = await self._search_for(run, question, planning, profile, effective_planning)
             timings.append(QAPhaseTiming(QAPhase.RETRIEVAL, _elapsed_ms(started)))
 
             bound = self._evidence_binding.bind(space_id=run.space_id, hits=merged.hits)
@@ -170,12 +241,13 @@ class GroundedQAService:
                 question=question,
                 history=await self._history_for_run(run),
                 evidence=bound,
-                profile=profile.planning,
+                profile=effective_planning,
             )
             run = await self._repository.transition_run(run_id, QAEvent.VERIFY)
 
             started = perf_counter()
             generated = await self._generator.generate(question=question, context=context)
+            generated = _enforce_question_type_grounding(generated, planning.plan.question_type)
             timings.append(QAPhaseTiming(QAPhase.GENERATION, _elapsed_ms(started)))
             await self._ensure_not_cancelled(run_id)
 
@@ -211,6 +283,64 @@ class GroundedQAService:
                 run_id,
                 QAError(QAErrorCode.INVALID_INPUT, "QA execution violated its active contract."),
             )
+
+    async def inspect_retrieval(
+        self,
+        run_id: UUID,
+        *,
+        profile: GroundedQAExecutionProfile,
+        agent_plan: AgentRetrievalPlan,
+    ) -> MergedSearchResult:
+        run = await self._require_run(run_id)
+        if run.status is not QAStatus.QUEUED:
+            raise QAContractError("Retrieval inspection requires a queued QA Run")
+        question = await self._question_for_run(run)
+        planning, effective_planning = await self._planning_for(question, profile, agent_plan)
+        return await self._search_for(run, question, planning, profile, effective_planning)
+
+    async def _planning_for(
+        self,
+        question: QuestionInput,
+        profile: GroundedQAExecutionProfile,
+        agent_plan: AgentRetrievalPlan | None,
+    ) -> tuple[QueryPlanningResult, QAPlanningProfileV1]:
+        effective = (
+            agent_plan.apply(profile.planning) if agent_plan is not None else profile.planning
+        )
+        planning = await self._planner.plan(question, effective)
+        if agent_plan is None or not agent_plan.additional_queries:
+            return planning, effective
+        queries = (question.question, *agent_plan.additional_queries)
+        plan = replace(
+            planning.plan,
+            queries=queries,
+            rewrite_applied=len(queries) > 1,
+            fallback_reason=None,
+        )
+        return replace(planning, plan=plan), effective
+
+    async def _search_for(
+        self,
+        run: QARunRecord,
+        question: QuestionInput,
+        planning: QueryPlanningResult,
+        profile: GroundedQAExecutionProfile,
+        effective_planning: QAPlanningProfileV1,
+    ) -> MergedSearchResult:
+        return await self._search.search(
+            base_request=SearchRequest(
+                query=question.question,
+                space_id=run.space_id,
+                filters=SearchFilters(
+                    source_ids=run.retrieval_scope.source_ids,
+                    document_ids=run.retrieval_scope.document_ids,
+                    version_ids=run.retrieval_scope.version_ids,
+                ),
+            ),
+            plan=planning.plan,
+            profile=profile.retrieval,
+            limit=effective_planning.max_evidence_items,
+        )
 
     async def request_cancel(self, run_id: UUID) -> QARunRecord:
         return await self._repository.request_cancel(run_id)
@@ -279,6 +409,29 @@ def _elapsed_ms(started: float) -> float:
     return max(0.0, (perf_counter() - started) * 1000)
 
 
+def _enforce_question_type_grounding(
+    generated: GenerationResult, question_type: QuestionType
+) -> GenerationResult:
+    result = generated.result
+    if (
+        question_type is QuestionType.COMPARISON
+        and result.outcome is QAOutcome.ANSWER
+        and result.answer is not None
+        and len({citation.source_id for citation in result.answer.citations}) < 2
+    ):
+        return replace(
+            generated,
+            result=QAResult(
+                QAOutcome.REFUSE,
+                refusal=Refusal(
+                    RefusalReason.INSUFFICIENT_EVIDENCE,
+                    "A comparison requires grounded evidence from at least two selected sources.",
+                ),
+            ),
+        )
+    return generated
+
+
 def _usage(generated: GenerationResult, timings: list[QAPhaseTiming]) -> QARunUsage:
     return QARunUsage(
         input_tokens=generated.usage.input_tokens,
@@ -298,6 +451,12 @@ def _result_content(result: QAResult) -> str:
     if result.conflict is not None:
         return result.conflict.message
     raise QAContractError("Infrastructure failures cannot create assistant messages")
+
+
+def _clamp(value: int | None, lower: int, upper: int) -> int:
+    if value is None:
+        return upper
+    return min(max(value, lower), upper)
 
 
 def _citation_records(

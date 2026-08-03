@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from domain.blob_store import BlobStore
 from domain.chunking import Chunker, ChunkerConfig, ChunkingResult
@@ -22,7 +22,6 @@ from domain.models import (
     DocumentStatus,
     DocumentVersion,
     IngestionTask,
-    TaskOperation,
     TaskStage,
     TaskStatus,
 )
@@ -44,6 +43,7 @@ from domain.repositories import (
 
 from application.retrieval.dense import document_embedding_config
 
+from .deletion import DocumentDeletionService
 from .embedding import EmbeddingConfig, EmbeddingService, TextEmbedder
 
 logger = logging.getLogger(__name__)
@@ -185,6 +185,11 @@ class IngestionOrchestrator:
             chunk_repo=chunk_repo,
             version_repo=version_repo,
             document_repo=document_repo,
+        )
+        self._deletion_service = DocumentDeletionService(
+            document_repo=document_repo,
+            version_repo=version_repo,
+            task_repo=task_repo,
         )
 
     # ------------------------------------------------------------------
@@ -740,49 +745,11 @@ class IngestionOrchestrator:
         *,
         idempotency_key: str | None = None,
     ) -> IngestionTask | None:
-        """Atomically unpublish *document* (tombstone) and create a DELETE task.
-
-        Returns the created ``IngestionTask``, or ``None`` if the document
-        was already deleted.
-        """
-        if document.deleted_at is not None:
-            logger.info("Document %s already deleted, skipping", document.id)
-            return None
-
-        cleanup_version_id = document.current_version_id
-        if cleanup_version_id is None:
-            latest_version = await self._version_repo.get_latest(document.id)
-            cleanup_version_id = latest_version.id if latest_version is not None else None
-
-        # --- Tombstone: unpublish the document ---
-        tombstone_doc = Document(
-            id=document.id,
-            source_id=document.source_id,
-            stable_key=document.stable_key,
-            current_version_id=None,
-            deleted_at=datetime.now(UTC),
-            created_at=document.created_at,
-            updated_at=datetime.now(UTC),
+        """Atomically unpublish *document* and create a cleanup task."""
+        return await self._deletion_service.delete_document(
+            document,
+            idempotency_key=idempotency_key,
         )
-        await self._document_repo.update(tombstone_doc)
-
-        # --- Create a DELETE task ---
-        delete_task = IngestionTask(
-            source_id=document.source_id,
-            operation=TaskOperation.DELETE,
-            status=TaskStatus.QUEUED,
-            stage=TaskStage.DISCOVER,
-            target_version_id=cleanup_version_id,
-            idempotency_key=idempotency_key or uuid4().hex,
-        )
-        created = await self._task_repo.create(delete_task)
-
-        logger.info(
-            "Document %s deleted (tombstone), cleanup task %s created",
-            document.id,
-            created.id,
-        )
-        return created
 
     async def update_document_path(
         self,

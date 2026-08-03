@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 import httpx
@@ -19,6 +20,7 @@ from model_gateway import (
     ModelGatewayError,
     ModelProvider,
     OpenAICompatibleGateway,
+    RerankRequest,
     create_model_gateway,
 )
 from model_gateway import openai_compatible as provider_module
@@ -70,6 +72,35 @@ async def test_fake_outputs_are_deterministic() -> None:
 
 def test_fake_default_embedding_matches_initial_vector_schema() -> None:
     assert FakeModelGateway().embedding_dimensions == 768
+
+
+@pytest.mark.parametrize(("enabled", "expected"), [(False, "disabled"), (True, "enabled")])
+async def test_provider_sends_explicit_chat_reasoning_mode(enabled: bool, expected: str) -> None:
+    payload: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = OpenAICompatibleGateway(
+        endpoint="http://localhost:11434/v1",
+        fast_chat_model="chat-model",
+        embedding_model="embedding-model",
+        fast_chat_reasoning_enabled=enabled,
+        client=client,
+    )
+
+    await gateway.chat(chat_request())
+
+    assert payload["thinking"] == {"type": expected}
+    await client.aclose()
 
 
 async def test_provider_retries_rate_limit_then_succeeds() -> None:
@@ -130,7 +161,7 @@ async def test_provider_does_not_retry_authentication_failure() -> None:
     await client.aclose()
 
 
-async def test_provider_retries_timeout_with_a_finite_limit() -> None:
+async def test_provider_does_not_retry_chat_read_timeout() -> None:
     calls = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -150,6 +181,33 @@ async def test_provider_retries_timeout_with_a_finite_limit() -> None:
 
     with pytest.raises(ModelGatewayError) as captured:
         await gateway.chat(chat_request())
+
+    assert captured.value.code is ModelErrorCode.TIMEOUT
+    assert captured.value.retryable is True
+    assert calls == 1
+    await client.aclose()
+
+
+async def test_provider_retries_embedding_read_timeout_with_a_finite_limit() -> None:
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("synthetic timeout", request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = OpenAICompatibleGateway(
+        endpoint="http://localhost:11434/v1",
+        fast_chat_model="chat-model",
+        embedding_model="embedding-model",
+        max_retries=1,
+        retry_backoff_seconds=0,
+        client=client,
+    )
+
+    with pytest.raises(ModelGatewayError) as captured:
+        await gateway.embed(EmbeddingRequest(texts=("synthetic",)))
 
     assert captured.value.code is ModelErrorCode.TIMEOUT
     assert captured.value.retryable is True
@@ -315,6 +373,80 @@ async def test_external_endpoint_requires_explicit_opt_in() -> None:
     assert isinstance(gateway, OpenAICompatibleGateway)
     assert gateway.status.available is True
     await gateway.aclose()
+
+
+async def test_real_chat_can_route_auxiliary_capabilities_to_fake() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "https://models.example.test/v1/chat/completions"
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "real-chat"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = create_model_gateway(
+        GatewayConfig(
+            provider=ModelProvider.OPENAI_COMPATIBLE,
+            fast_chat_endpoint="https://models.example.test/v1",
+            fast_chat_model="chat-model",
+            allow_external=True,
+            fake_embedding=True,
+            fake_reranker=True,
+        ),
+        client=client,
+    )
+
+    assert gateway.status.code == "MODEL_CAPABILITIES_ROUTED"
+    assert gateway.status.provider is ModelProvider.OPENAI_COMPATIBLE
+    assert gateway.status.capabilities == tuple(CapabilityAlias)
+    assert (await gateway.chat(chat_request())).text == "real-chat"
+    embedding = await gateway.embed(EmbeddingRequest(texts=("synthetic",)))
+    assert len(embedding.vectors[0]) == 768
+    reranked = await gateway.rerank(RerankRequest(query="synthetic", documents=("first", "second")))
+    assert len(reranked.scores) == 2
+    await gateway.aclose()
+    await client.aclose()
+
+
+async def test_real_chat_can_route_embedding_to_local_tei() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url == "https://models.example.test/v1/chat/completions":
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": "real-chat"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+                },
+            )
+        assert request.url == "http://tei/embed"
+        assert request.content == b'{"inputs":["synthetic"],"dimensions":768}'
+        return httpx.Response(200, json=[[0.0] * 768])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = create_model_gateway(
+        GatewayConfig(
+            provider=ModelProvider.OPENAI_COMPATIBLE,
+            fast_chat_endpoint="https://models.example.test/v1",
+            fast_chat_model="chat-model",
+            embedding_provider=ModelProvider.TEXT_EMBEDDINGS_INFERENCE,
+            embedding_endpoint="http://tei:80",
+            embedding_model="Qwen/Qwen3-Embedding-0.6B",
+            allow_external=True,
+            fake_reranker=True,
+        ),
+        client=client,
+    )
+
+    assert gateway.status.code == "MODEL_CAPABILITIES_ROUTED"
+    assert gateway.status.capabilities == tuple(CapabilityAlias)
+    assert (await gateway.chat(chat_request())).text == "real-chat"
+    embedding = await gateway.embed(EmbeddingRequest(texts=("synthetic",), dimensions=768))
+    assert len(embedding.vectors[0]) == 768
+    await gateway.aclose()
+    await client.aclose()
 
 
 async def test_local_endpoint_is_allowed_without_external_opt_in() -> None:

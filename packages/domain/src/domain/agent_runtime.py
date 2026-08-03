@@ -201,9 +201,11 @@ class RunCheckpoint:
     skill_name: str
     skill_version: str
     skill_content_sha256: str
-    state: Mapping[str, str] = field(default_factory=dict)
+    state: Mapping[str, object] = field(default_factory=dict)
+    state_sha256: str = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
     usage: BudgetUsage = field(default_factory=BudgetUsage)
     next_step: RunStep | None = None
+    next_node: str | None = None
     verified: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -212,6 +214,10 @@ class RunCheckpoint:
             raise ValueError("checkpoint sequence and schema version are invalid")
         if not self.skill_name or not self.skill_version or not self.skill_content_sha256:
             raise ValueError("checkpoint must identify its fixed Skill")
+        if not self.state_sha256:
+            raise ValueError("checkpoint must contain a state digest")
+        if (self.next_step is None) != (self.next_node is None):
+            raise ValueError("checkpoint next step and node must be specified together")
 
 
 @dataclass(frozen=True)
@@ -374,6 +380,18 @@ class CheckpointStore(Protocol):
     async def get_latest(self, run_id: UUID) -> RunCheckpoint | None: ...
 
 
+class RuntimeStateStore(Protocol):
+    """Atomically persist one run transition and its verified recovery point."""
+
+    async def commit(
+        self, run: AgentRun, checkpoint: RunCheckpoint
+    ) -> tuple[AgentRun, RunCheckpoint]: ...
+
+    async def get_run(self, run_id: UUID) -> AgentRun | None: ...
+
+    async def get_latest(self, run_id: UUID) -> RunCheckpoint | None: ...
+
+
 class ToolRegistry(Protocol):
     def is_available(self, name: str, version: str) -> bool: ...
 
@@ -405,6 +423,10 @@ def validate_recovery(
         raise RecoveryRejectedError("checkpoint is not verified")
     if checkpoint.run_id != run.context.run_id:
         raise RecoveryRejectedError("checkpoint belongs to another run")
+    if checkpoint.sequence != run.checkpoint_sequence:
+        raise RecoveryRejectedError("checkpoint sequence does not match the run")
+    if checkpoint.next_step is None or checkpoint.next_node is None:
+        raise RecoveryRejectedError("checkpoint has no safe continuation")
     if (checkpoint.skill_name, checkpoint.skill_version, checkpoint.skill_content_sha256) != (
         run.context.skill_name,
         run.context.skill_version,
@@ -449,6 +471,7 @@ __all__ = [
     "RunEvent",
     "RunStatus",
     "RunStep",
+    "RuntimeStateStore",
     "SkillRegistry",
     "ToolCallRecord",
     "ToolPermission",

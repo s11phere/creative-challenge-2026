@@ -6,6 +6,7 @@ import asyncio
 import math
 from dataclasses import dataclass
 from time import perf_counter
+from uuid import UUID
 
 from domain.repositories import DocumentRepository, SourceRepository, SpaceRepository
 from domain.retrieval import (
@@ -323,6 +324,7 @@ class SearchService:
                     "A source filter does not belong to the requested Space.",
                 )
 
+        current_version_ids: set[UUID] = set()
         for document_id in sorted(request.filters.document_ids, key=str):
             document = await self._document_repo.get(document_id)
             if document is None or document.deleted_at is not None:
@@ -336,6 +338,14 @@ class SearchService:
                     RetrievalErrorCode.INVALID_FILTER,
                     "A document filter does not belong to the requested Space.",
                 )
+            if document.current_version_id is not None:
+                current_version_ids.add(document.current_version_id)
+
+        if request.filters.version_ids and current_version_ids != set(request.filters.version_ids):
+            raise RetrievalError(
+                RetrievalErrorCode.INVALID_FILTER,
+                "Version filters must exactly match the selected current document versions.",
+            )
 
     async def _keyword(self, request: SearchRequest, profile: RetrievalProfileV1) -> CandidateBatch:
         try:
@@ -515,6 +525,11 @@ class SearchService:
                 retryable=True,
             )
         selected = fused[: profile.rerank_k]
+        # An empty Space is a valid retrieval result.  Do not call the reranker
+        # with an empty document list because the provider-neutral request
+        # contract intentionally rejects it.
+        if not selected:
+            return RerankResponse(scores=(), model_version="empty-rerank-v1", latency_ms=0.0)
         rerank_request = RerankRequest(
             query=request.query,
             documents=tuple(
@@ -646,6 +661,7 @@ class SearchService:
                 for reason, active in (
                     ("source_filter", bool(request.filters.source_ids)),
                     ("document_filter", bool(request.filters.document_ids)),
+                    ("version_filter", bool(request.filters.version_ids)),
                 )
                 if active
             ),

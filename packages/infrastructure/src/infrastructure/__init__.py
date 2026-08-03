@@ -25,6 +25,13 @@ from .repositories import (
     SpaceRepository,
 )
 from .retrieval import DensePathComparison, DenseSearchMode, PostgresRetrievalStore
+from .runtime_approval import (
+    DerivedKnowledgeRecord,
+    PostgresApprovalPort,
+    PostgresDerivedKnowledgeStore,
+)
+from .runtime_state import PostgresRuntimeStateStore
+from .skill_references import PostgresSkillReferenceChecker, SkillReferenceReport
 
 __all__ = [
     "Base",
@@ -42,6 +49,12 @@ __all__ = [
     "ParserFactory",
     "PdfParser",
     "PostgresRetrievalStore",
+    "PostgresRuntimeStateStore",
+    "PostgresSkillReferenceChecker",
+    "SkillReferenceReport",
+    "DerivedKnowledgeRecord",
+    "PostgresApprovalPort",
+    "PostgresDerivedKnowledgeStore",
     "SourceModel",
     "SourceRepository",
     "SpaceModel",

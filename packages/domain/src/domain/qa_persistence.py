@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -92,10 +93,39 @@ class QARunVersions:
     output_schema_version: str
     corpus_version: str
     dataset_version: str
+    skill_name: str = "knowledge_qa"
+    skill_content_sha256: str | None = None
 
     def __post_init__(self) -> None:
-        if any(not value for value in self.__dict__.values()):
+        required = (
+            self.skill_name,
+            self.skill_version,
+            self.profile_version,
+            self.retrieval_profile_version,
+            self.model_identity,
+            self.prompt_version,
+            self.output_schema_version,
+            self.corpus_version,
+            self.dataset_version,
+        )
+        if any(not value for value in required):
             raise ValueError("QA run version values must not be blank")
+        if (
+            self.skill_content_sha256 is not None
+            and re.fullmatch(r"[0-9a-f]{64}", self.skill_content_sha256) is None
+        ):
+            raise ValueError("QA Skill content digest must be a lowercase SHA-256")
+
+
+@dataclass(frozen=True)
+class QARetrievalScope:
+    source_ids: frozenset[UUID] = frozenset()
+    document_ids: frozenset[UUID] = frozenset()
+    version_ids: frozenset[UUID] = frozenset()
+
+    def __post_init__(self) -> None:
+        if self.version_ids and not self.document_ids:
+            raise ValueError("QA version scope must also fix its documents")
 
 
 @dataclass(frozen=True)
@@ -144,6 +174,7 @@ class QARunRecord:
     caller_id: str
     idempotency_key: str
     versions: QARunVersions
+    retrieval_scope: QARetrievalScope = QARetrievalScope()
     status: QAStatus = QAStatus.CREATED
     cancellation_requested: bool = False
     error_code: str | None = None
@@ -235,6 +266,12 @@ class GroundedQARepository(Protocol):
 
     async def get_conversation(self, conversation_id: UUID) -> ConversationRecord | None: ...
 
+    async def list_conversations(
+        self, space_id: UUID, owner_id: str
+    ) -> tuple[ConversationRecord, ...]: ...
+
+    async def archive_conversation(self, conversation_id: UUID) -> ConversationRecord | None: ...
+
     async def append_message(self, message: MessageRecord) -> MessageRecord: ...
 
     async def get_message(self, message_id: UUID) -> MessageRecord | None: ...
@@ -244,6 +281,8 @@ class GroundedQARepository(Protocol):
     async def create_run(self, run: QARunRecord) -> QARunRecord: ...
 
     async def get_run(self, run_id: UUID) -> QARunRecord | None: ...
+
+    async def list_runs(self, conversation_id: UUID) -> tuple[QARunRecord, ...]: ...
 
     async def transition_run(
         self, run_id: UUID, event: QAEvent, *, error_code: str | None = None
@@ -271,6 +310,22 @@ class GroundedQARepository(Protocol):
     async def submit_feedback(self, feedback: FeedbackRecord) -> FeedbackRecord: ...
 
 
+class GroundedQAExecutionRepository(GroundedQARepository, Protocol):
+    """Durable execution ownership used by at-least-once Worker delivery."""
+
+    async def claim_run(
+        self, run_id: UUID, *, lease_owner: str, lease_seconds: int
+    ) -> QARunRecord | None: ...
+
+    async def renew_run_lease(
+        self, run_id: UUID, *, lease_owner: str, lease_seconds: int
+    ) -> bool: ...
+
+    async def release_run_lease(self, run_id: UUID, *, lease_owner: str) -> None: ...
+
+    async def prepare_recovery(self) -> tuple[UUID, ...]: ...
+
+
 def terminal_status_for_result(result: QAResult) -> QAStatus:
     if result.outcome is QAOutcome.ANSWER or result.outcome is QAOutcome.CONFLICT:
         return QAStatus.COMPLETED
@@ -287,10 +342,12 @@ __all__ = [
     "FeedbackRecord",
     "FeedbackReviewStatus",
     "GroundedQARepository",
+    "GroundedQAExecutionRepository",
     "MessageRecord",
     "MessageRole",
     "QAPhase",
     "QAPhaseTiming",
+    "QARetrievalScope",
     "QARunRecord",
     "QARunUsage",
     "QARunVersions",

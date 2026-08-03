@@ -16,9 +16,10 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
+from typing import Literal
 from uuid import UUID
 
-from application.ingestion import IngestionConfig
+from application.ingestion import DocumentDeletionService, IngestionConfig
 from application.ingestion.source_registration import SourceRegistrationService
 from domain.models import DocumentStatus, IngestionTask, SourceType, TaskOperation, TaskStatus
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
@@ -90,6 +91,12 @@ class DocumentItem(BaseModel):
 class SourceDetailResponse(BaseModel):
     source: SourceItem
     documents: list[DocumentItem]
+
+
+class DeleteDocumentResponse(BaseModel):
+    document_id: str
+    status: Literal["deleted", "already_deleted"]
+    task_id: str | None = None
 
 
 class TaskStatusResponse(BaseModel):
@@ -269,6 +276,19 @@ async def get_source_detail(
         document_items: list[DocumentItem] = []
         for document in docs:
             latest_version = await version_repo.get_latest(document.id)
+            current_version = (
+                await version_repo.get(document.current_version_id)
+                if document.current_version_id is not None
+                else None
+            )
+            if document.deleted_at is not None:
+                document_status = "deleted"
+            elif current_version is not None and current_version.status is DocumentStatus.PUBLISHED:
+                document_status = "available"
+            elif latest_version is not None and latest_version.status is DocumentStatus.FAILED:
+                document_status = "failed"
+            else:
+                document_status = "unavailable"
             document_items.append(
                 DocumentItem(
                     id=str(document.id),
@@ -280,21 +300,62 @@ async def get_source_detail(
                     current_version_id=(
                         str(document.current_version_id) if document.current_version_id else None
                     ),
-                    status="deleted" if document.deleted_at else "active",
+                    status=document_status,
                     created_at=document.created_at.isoformat(),
                 )
             )
 
-        return SourceDetailResponse(
-            source=SourceItem(
-                id=str(source.id),
-                space_id=str(source.space_id),
-                source_type=source.source_type.value,
-                uri=source.uri,
-                created_at=source.created_at.isoformat(),
-            ),
-            documents=document_items,
-        )
+    return SourceDetailResponse(
+        source=SourceItem(
+            id=str(source.id),
+            space_id=str(source.space_id),
+            source_type=source.source_type.value,
+            uri=source.uri,
+            created_at=source.created_at.isoformat(),
+        ),
+        documents=document_items,
+    )
+
+
+@router.delete(
+    "/spaces/{space_id}/sources/{source_id}/documents/{document_id}",
+    response_model=DeleteDocumentResponse,
+)
+async def delete_document(
+    space_id: UUID,
+    source_id: UUID,
+    document_id: UUID,
+    request: Request,
+) -> DeleteDocumentResponse:
+    """Tombstone one document and enqueue cleanup of its derived artifacts."""
+    db = _db(request)
+
+    async with db.session() as session:
+        source = await SourceRepository(session).get(source_id)
+        if source is None or source.space_id != space_id:
+            raise HTTPException(status_code=404, detail="Source not found")
+
+        document_repo = DocumentRepository(session)
+        document = await document_repo.get(document_id)
+        if document is None or document.source_id != source_id:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        already_deleted = document.deleted_at is not None
+        task = await DocumentDeletionService(
+            document_repo=document_repo,
+            version_repo=DocumentVersionRepository(session),
+            task_repo=IngestionTaskRepository(session),
+        ).delete_document(document)
+        await session.commit()
+
+    if task is not None:
+        await _enqueue_ingestion_task(task.id, db)
+
+    return DeleteDocumentResponse(
+        document_id=str(document_id),
+        status="already_deleted" if already_deleted else "deleted",
+        task_id=str(task.id) if task is not None else None,
+    )
 
 
 @router.post(

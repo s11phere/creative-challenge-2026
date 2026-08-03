@@ -57,6 +57,59 @@ docker compose -f deploy/compose.yaml run --rm migrate
 健康响应不会返回主机、密码或底层异常。进一步定位使用响应头中的 `X-Trace-ID` 和
 `X-Request-ID` 关联结构化日志。
 
+## knowledge_agent 模型决策失败
+
+默认 `MODEL_PROVIDER=fake` 不需要凭据。接入 OpenAI-compatible Chat Provider 时，只在被 Git 忽略的
+`.env` 中配置 `MODEL_PROVIDER=openai-compatible`、`MODEL_ALLOW_EXTERNAL=true`、
+`FAST_CHAT_ENDPOINT`、`FAST_CHAT_MODEL` 和 `FAST_CHAT_API_KEY`；API 与 Worker 必须使用相同配置。
+若只接入 Chat，额外设置 `EMBEDDING_PROVIDER=fake` 和 `RERANKER_PROVIDER=fake`，避免把已有
+fake/local 索引误判为缺少外部 Embedding revision。
+不要把密钥、问题、模型原始响应、Tool 输出或引用原文写入日志或 Issue。
+
+`RUN_LLM_DECISION_INVALID` 表示 Provider 没有返回严格的单个 JSON 决策；检查模型是否遵循
+`call_tool/complete/refuse` schema。`RUN_LLM_MAX_ITERATIONS` 表示模型在五轮内未终止；
+`TOOL_NOT_ALLOWED`、`TOOL_MODEL_OUTPUT_DENIED` 或 `TOOL_APPROVAL_REQUIRED` 表示服务端安全边界拒绝
+模型选择。当前允许的 Agent Tool 是只读 `inspect_retrieval 1.0.0` 和 `grounded_qa 1.0.0`，写 Tool
+不可通过 prompt 开启。
+
+### 开发环境记录完整 QA 运行轨迹
+
+普通 Worker 日志会为模型失败记录 `error_code`、`error_type`、`capability` 和 `retryable`，但不会
+记录问题、prompt、文档正文、模型响应或 Tool 内容。需要定位 `QA_MODEL_FAILED` 或优化 Agent 时，
+可在被 Git 忽略的本地环境文件中显式启用：
+
+```text
+QA_DEBUG_TRACE_ENABLED=true
+QA_DEBUG_TRACE_MAX_BYTES=10000000
+```
+
+Compose 将每个 Run 写入宿主机 `tmp/qa-debug/<run_id>.jsonl`，事件包括 `llm_request`、
+`llm_response`、`llm_error`、`tool_call`、`tool_result`、`runtime_result` 和 `run_result`。单文件达到
+上限后轮转为 `.jsonl.1`。该文件包含完整问题、证据上下文、模型结果和 Tool payload，只能用于本地
+开发排查，不得提交、上传或粘贴到 Issue；使用完毕后关闭开关并删除相应文件。`APP_ENV=production`
+时该能力强制禁用，即使误设开关也不会写入内容。
+
+若轨迹显示 Chat 请求已收到 HTTP 200，随后以 `MODEL_TIMEOUT` 或 `QA_TIMED_OUT` 结束，通常是
+Provider 在非流式响应体生成阶段超过 read timeout，而不是连接失败。Chat 使用独立的
+`FAST_CHAT_TIMEOUT_SECONDS`（开发默认 120 秒）；Embedding/Reranker 继续使用
+`MODEL_TIMEOUT_SECONDS`。为避免重复计费和重复生成，Chat 在收到响应头后的 read timeout 不会整单
+重发，连接错误和限流仍遵循有限重试。最终 Grounded QA 生成预算为 150 秒，Worker 外层任务预算为
+300 秒；三者应保持 `FAST_CHAT_TIMEOUT_SECONDS < generation timeout < QA_TASK_TIMEOUT_MS`。
+
+若 Provider 返回 HTTP 200，但 `message.content` 为空、`reasoning_content` 占满 completion token
+且 `finish_reason=length`，则 `QA_MODEL_FAILED` 的直接原因是隐藏推理耗尽了结构化回答预算。默认
+`FAST_CHAT_REASONING_ENABLED=false` 会为 OpenAI-compatible Chat 显式发送
+`thinking.type=disabled`；只有确实需要推理模型且已单独配置足够的推理与回答预算时才应开启。
+
+`QA_STRUCTURED_RESPONSE_INVALID` 表示模型响应不是可验证的 `grounded-answer-v1`。回答正文由服务端
+根据已校验、带 Evidence ID 的 `claims` 规范化生成；模型返回的冗余 `answer` 字段不会再因排版或
+连接文本差异导致整个 Run 失败。JSON schema、Claim ID 唯一性、Evidence ID 白名单和 Citation 完整性
+仍严格校验。
+
+若模型已经生成多条带引用 claim，最终却显示证据不足，应检查引用是否仅指向 `context_only`
+上下文扩展块。`context_only` 可共同支撑 claim，但按 ADR-007 不能成为唯一证据。系统会剔除这类
+候选 claim，并发布其余至少含一个直接 `matched` 证据的 claims；只有没有可发布 claim 时才拒答。
+
 ## Web 显示 API 连接失败
 
 先直连 `http://127.0.0.1:8000/api/v1/health/live`。直连成功但 Web 同源 `/api` 失败时，检查
@@ -110,15 +163,18 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 
 - 已有阶段 2 的 6 张核心业务表、摄入流水线和 Worker 消费者；当前支持上传文件，尚无目录监听。
 - 阶段 3 的 Keyword/Dense/Hybrid/Hybrid+Reranker 检索 API 已可用。provisional 知识问答 Web/API
-  可以创建进程内会话、提交问题、查询/取消 queued Run 并重放安全 SSE；这不是已完成的问答业务能力。
-  当前没有 QA PostgreSQL 表或 Worker 完成链，Run 会保持 queued，证据区为空，不能将其视为模型或检索故障。
-- provisional QA 的会话、Run 与事件均只在 API 进程内保存。重启 API 会丢失这些状态；断开 SSE 连接不会
-  取消 Run，只有显式取消请求才会记录取消意图。真实回答、Citation、原文跳转、重试、反馈审核和恢复语义
-  必须等待阶段 4 正式门禁、持久化和 Worker 实现。
-- `GroundedQAApplicationPort` 已在纯 Application 层用内存 Repository 和合成 fake 跑通完整终态，
-  但 API/Worker 当前未装配该执行服务；因此通过服务单测不代表 Web/API Run 会离开 queued。
-- 阶段 3 评测配置仍为 provisional：阶段 0 和阶段 2 已正式关闭，但 development 质量门禁
-  未通过，且当前评测集代表性不足，因此阶段 3 已按 ADR-010 终止。2026-07-29 冻结语料
+  可以创建持久会话、提交问题，由独立 Worker 调用真实 PostgreSQL SearchService 产出回答或拒答；
+  终态响应和 Web 证据区展示经过当前 Space/版本/Chunk 再校验的 Citation 身份。
+- provisional QA 的会话、Message、Run/Attempt、Evidence、Citation、Feedback 与 SSE 事件均保存到
+  PostgreSQL。API 启动时会重排队安全的非终态 attempt，保留终态并清理中断时尚未发布的 Evidence；
+  断开 SSE 不会取消 Run，只有显式取消请求才会记录取消意图。Worker 使用 attempt lease/heartbeat，
+  启动时接管 queued 或租约过期运行，重复投递不会重复发布终态。Citation 可按需解析固定版本的
+  最小原文片段；用户重试和反馈审核尚未实现。
+- 默认 `FakeModelGateway` 使用确定性抽取式回答，返回相关证据片段而不是高质量综合回答；这是当前
+  流程验证基线。Stage 3 达标并冻结检索配置后再调整召回、重排和回答表现，不得把当前结果用于 holdout。
+- 阶段 3 评测配置仍为 provisional：阶段 0 和阶段 2 已正式关闭，但当前 development 质量门禁
+  未通过，且当前评测集代表性不足，因此阶段 3 已按 ADR-010 终止。不要运行当前 holdout；重新开启
+  必须使用新的 dataset/config version。
   development 的最佳 Dense Recall@5 只有 51.90%，BGE Reranker 没有净收益且 P95 为
   3523.9 ms。不要手工打开 `formal_runs_enabled` 或运行当前 holdout；重新开启必须使用新的
   dataset/config version。
@@ -130,12 +186,29 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 加速，Compose 已保留实测较快的限制。
 - 需要检索时先确认 Space 存在、Document 有当前 published version，且查询模式所需的 Embedding/Reranker 能力已配置；无命中是成功的空列表，不是系统故障。
 - 模型服务不可用不会阻断 PostgreSQL/Redis 管理面 ready；Dense 会返回明确 Provider 错误，Hybrid 只有 profile 明确允许时才可降级为 Keyword。
-- 已有离线 Agent Runtime、Tool/Skill Registry、声明式执行器和 Skill 模板；它们仅以合成
-  fake 验证，不含业务 Skill、HTTP API、Web 入口或 PostgreSQL 运行/检查点持久化。
-- Registry 的活动版本和生命周期事件当前只在进程内；进程重启恢复、旧版本引用清理和
-  Worker 接管必须等待阶段 4 AgentRun/Evidence 模型与阶段 5 Step 5。
-- Web 分别展示真实健康状态、真实数据来源/摄入任务和 provisional QA 状态；QA 证据面板刻意不伪造
-  Citation 或原文内容。
+- 已有离线 Agent Runtime、Tool/Skill Registry、声明式执行器、内存检查点恢复和 Skill 模板；
+  `knowledge_qa 0.1.0` 首次由配置初始化，随后以 PostgreSQL active pointer 为准，现有 QA HTTP/Web 入口创建的每个 Run 都固定包摘要，
+  Worker 校验后才调用唯一 QA Application Port。可用 `GET /api/v1/skills` 和
+  `GET /api/v1/skills/knowledge_qa/versions` 检查安装摘要、active 版本和 manifest 预算。
+- `knowledge_agent 0.1.0` 通过 `fast_chat` 执行受约束 LLM 决策，并在同一持久 QA Run 中调用一次
+  `grounded_qa`。外层模型只看到 Tool 状态/计数，不看到回答或引用原文；通用 Runtime 决策历史仍未
+  单独持久化，恢复和最终结果以 QA PostgreSQL 状态为准。
+- 若 Run 以 `QA_SKILL_INVALID` 失败，检查 API 与 Worker 的 `SKILL_ROOT_PATH`、
+  `KNOWLEDGE_QA_SKILL_VERSION` 和镜像内 `skills/knowledge_qa` 内容是否一致。不要就地修改已被 Run
+  引用的同名版本；发布新 semver 并保留旧包供排队/恢复 Run 校验。
+- Registry active pointer 已持久化到 `skill_activations`；激活或回滚出现
+  `SKILL_ACTIVATION_CONFLICT` 时，应刷新 Catalog 的 `active_revision` 后重试，不能绕过 CAS。
+  QA 的 PostgreSQL Run/Attempt/Event 是当前执行恢复事实源。通用 Runtime Checkpoint、持久生命周期
+  事件和旧版本引用清理仍待阶段 5 后续实现。
+- 知识整理入口会把选中的 Source/Document/DocumentVersion 固定到 QA Run。若排队期间来源撤下、
+  文档发布新版本或 selector 不再匹配，运行会以稳定范围错误失败，不会自动跟随新版本；重新确认
+  当前版本后创建新 Run。`compare_sources` 缺少两个来源的 Citation 时会拒答。
+- `create_review_cards` 当前只生成预览。`write.code=SKILL_WRITE_PORT_UNAVAILABLE` 且
+  `side_effects=0` 是预期结果；在派生知识 Application Port 和持久确认协议落地前不要绕过该标记
+  直接写表或文件。
+- Web 分别展示真实健康状态、真实数据来源/摄入任务和 provisional QA 状态；QA 证据面板只对
+  服务端已发布的 Citation 按需请求原文，不接受客户端提供的 locator 或版本。若返回 `invalid`，
+  先检查 Blob hash、parser 版本和 locator 是否仍与固定 DocumentVersion 一致，不要回退到相似文本。
 - 阶段 0 语料已按 `docs/stage-0-acceptance.md` 冻结为 `internal_team_only`；真实语料只可在
   manifest 允许列表内用于本地/组内评测，禁止 Git 分发、公开演示和未经策略允许的外部 Provider
   外发。阶段 2 Step 9 已关闭，但阶段 3 正式质量门禁未通过且已终止；阶段 4 仍未正式启动。

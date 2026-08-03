@@ -10,9 +10,10 @@
 
 ## 1. 结论摘要
 
-截至 2026-07-19，Step 0～4 和 Step 9 的通用可执行部分已通过实现审查；Step 5～8、
-Step 9 持久化引用清理和 Step 10 仍受前序阶段与数据门禁阻塞。这里的“完成”只表示
-Runtime/Registry 离线工程基础完成，不表示业务 Skill、API、Web 或阶段退出条件完成。
+截至 2026-08-01，Step 0～4 和 Step 9 的通用可执行部分已通过实现审查；Step 5 已完成 QA
+持久化/Worker 子集和通用 Runtime Checkpoint PostgreSQL 子集，Step 6 已交付 active provisional
+`knowledge_qa`，Step 7 复用现有 QA API/Web。Step 8 已交付三个知识整理 Skill 的 provisional
+只读子集。Worker 检查点恢复、派生知识写入/确认、旧版本清理和正式质量门禁仍未完成。
 
 阶段 5 的目标是把阶段 2 至阶段 4 已验证的摄入、检索、引用和问答能力封装为稳定、
 可版本化、可审计、可恢复的 Skill，并确保同一个 Skill 通过 Web、HTTP API 和测试入口
@@ -271,6 +272,8 @@ active -> TIMED_OUT
 - 将阶段 3/4 能力通过 Application Port 暴露为只读 Tool；Tool 不直接访问检索表或 ORM。
 - 写 Tool 必须接收幂等键，并在执行前生成持久化审批请求；模型输出不能视为用户确认。
 - Tool handler 由应用启动代码显式注册；manifest 只引用已注册名称和版本。
+- LLM 决策节点只允许严格版本化 JSON 的 `call_tool`、`complete`、`refuse` 三种动作；模型不能
+  直接执行 Tool，所有调用仍需经过 Tool Registry 的权限、Space、预算、审批和幂等校验。
 
 **完成标准**：未知 Tool、版本不匹配、非法 schema、越权调用、预算不足、跨 Space 访问和
 未确认写入都在副作用发生前被拒绝；Tool 契约测试可使用确定性 fake 独立运行。
@@ -380,6 +383,49 @@ Provider 可重试错误按节点 `max_retries` 有界执行，并在每次重�
 数据模型或迁移。PostgreSQL 持久化、租约、审批、Worker 重启和重复副作用验证等待阶段 4
 模型交接后继续。
 
+**部分完成情况（2026-07-31）**：阶段 4 已提供共享 AgentRun 投影、Conversation/Evidence
+Repository Port 和内存事务替身，但正式门禁仍禁止新增 QA/Runtime 业务表和迁移。因此本次只完成
+不依赖生产持久化的恢复闭环：扩展共享 `RunCheckpoint` 的规范化状态摘要、下一安全节点和连续序号
+契约；新增 `RuntimeStateStore` 原子提交 Port 与 `InMemoryRuntimeStateStore` 事务替身；执行器在节点
+成功后原子保存运行使用量和下一安全恢复点，并支持从该节点继续。恢复会重新校验调用者、Space、
+固定 Skill、包摘要、checkpoint schema、状态摘要、序号和预算，已完成节点不会重放。故障注入覆盖
+摘要篡改、序号间隙、预算回退和无部分提交。普通 handler 异常同时修正为稳定
+`RUN_NODE_FAILED`，不再因冻结异常对象产生二次故障。
+
+本步骤仍未完成 PostgreSQL Adapter、Alembic revision、租约/心跳、Worker 重启与重复投递、审批
+持久化和旧检查点清理；这些内容继续等待阶段 3 正式退出及阶段 4 正式持久化门禁关闭，不能据此
+宣称 Step 5 或阶段 5 完成。定向验证：Ruff format 通过，Runtime/Skill 相关测试 `30 passed`。
+
+**QA 持久化子集（2026-07-31，用户明确授权）**：在不建立第二套 Runtime 身份的前提下，
+`qa_runs` 作为共享运行投影并新增 append-only `qa_run_attempts`；Conversation、Message、Evidence、
+Citation、Feedback 与 `qa-sse-v1` Event 已有 PostgreSQL Adapter 和前向 Alembic revision。API 启动
+会保留终态、重排队安全的非终态 attempt，并清理中断时未发布的 Evidence。隔离数据库验证了空库
+upgrade、downgrade、单一 head、跨 Repository 实例读取和中断恢复；Compose 验证了 completed Run、
+回答、Citation 及 SSE 事件跨 API 重启保留。该子集不等于通用 AgentRun/Checkpoint 持久化，租约、
+Worker 重启、重复投递、审批和旧版本引用清理仍未完成，因此 Step 5 状态仍为部分完成。
+
+**QA Worker 子集（2026-07-31，用户确认继续）**：新增 attempt lease/heartbeat 前向迁移与执行
+Repository Port；API 只投递 ID 和安全控制元数据，独立 Dramatiq Worker 调用共享执行器和唯一 QA
+Application Port。Worker 启动扫描未租用 queued/cancel_requested 和租约过期 attempt；行锁与 lease
+阻止并发消费，终态发布继续幂等。隔离 Compose 验证 Worker 停止时 Run 保持 queued、重启后自动
+completed；重复投递前后 Attempt/Citation/Event 均为 `1/1/3`。这关闭 QA 范围的 Worker、租约和
+重复投递缺口，但不等于通用 Agent Runtime Checkpoint、审批或旧 Skill 版本清理已完成，Step 5
+仍为部分完成。
+
+**通用 Runtime Checkpoint PostgreSQL 子集（2026-08-01）**：新增 `runtime_runs` 快照表和
+append-only `runtime_checkpoints` 表，并通过 `PostgresRuntimeStateStore` 复用现有 `qa_runs.id`
+作为唯一运行身份。提交校验固定 Space/Skill 摘要、连续序号、预算用量和 verified checkpoint；
+相同序号重投递幂等返回已提交检查点，跨 Adapter 实例可恢复最近检查点。新增 Alembic revision
+`4bf6c7d8e9f0` 和隔离 PostgreSQL 集成测试，覆盖升级后的写入、读取、幂等重放及级联清理。
+Worker 自动 resume、租约恢复、审批和派生知识写入仍属于后续步骤。
+
+**Runtime Worker 恢复子集（2026-08-01）**：唯一 QA Worker 执行入口现在在取得 QA lease 后，
+按同一 `run_id` 查询 Runtime 快照与最新 checkpoint；对非终态且身份匹配的运行调用
+`DeterministicWorkflowExecutor.resume`，否则从初始 Runtime 状态执行。这样 Worker 重启或重复
+投递会从最近安全节点继续，已提交节点不会再次调用 handler；QA lease/heartbeat 仍是并发与租约
+过期接管的权威事实源；续租失败会取消旧 Worker 的在途执行，避免失去 lease 后继续调用 Tool。
+持久审批、跨进程故障注入验收和派生知识写入仍未完成。
+
 ### 步骤 6：封装 `knowledge_qa` Skill
 
 本步骤必须等待阶段 2 至阶段 4 的相关退出条件和接口完成。
@@ -403,6 +449,52 @@ Provider 可重试错误按节点 `max_retries` 有界执行，并在每次重�
 阶段 4 GroundedAnswer/Citation Application 用例均不存在；当前只能使用合成 Skill 和 fake
 验证 Runtime，不能创建平行问答 schema 或宣称 `knowledge_qa` 可用。
 
+**部分完成情况（2026-07-31）**：阶段 2 已正式完成，阶段 3 SearchService 和阶段 4 唯一
+provisional `GroundedQAApplicationPort` 已存在，因此完成了本步骤当前允许的合成契约部分。新增
+`application.skills.KnowledgeQASkillAdapter`，只向 QA Port 提交并执行问题，不复制 query rewrite、
+检索、Evidence、生成、拒答或 Citation 逻辑；调用者、Space 和幂等键来自服务端 Run 上下文，
+客户端不能注入 Evidence、Skill 版本、权限或 system prompt。固定的 QA/retrieval/profile/prompt/
+schema/corpus/dataset 版本通过服务端配置传入并在执行前交叉校验。
+
+新增 `skills/_provisional/knowledge_qa` 声明式包及输入/输出 schema。该目录被受信根批量 reload
+显式跳过，不能安装、激活或从 API/Web 调用，仅由契约测试显式加载。输出直接投影阶段 4 的
+`QARunRecord/QAResult`；证据不足保持正常 refusal，权限/策略、结构/引用、取消、超时以及
+检索/模型/存储故障保持不同稳定错误。测试使用合成 fake QA Port 和 `repository_fixture` 元数据，
+未读取 corpus 正文、未调用真实 Provider，也未运行 development/holdout。
+
+本步骤仍等待阶段 3 正式退出，以及阶段 4 PostgreSQL、Worker、终态 Citation API 和正式质量
+验收；因此没有生产 handler 注册、活动版本、真实引用解析或 Web/API 入口，不满足 Step 6 完成
+标准，也不能宣称 `knowledge_qa` 可用。
+
+**可用 provisional 实现（2026-07-31，用户确认继续）**：前述工程缺口中的 PostgreSQL QA
+Run/Attempt/Event、独立 Worker、终态 Citation API 和固定版本原文解析已经落地。因此声明式包迁移到
+`skills/knowledge_qa`，Registry 从受信根安装并按配置显式激活 `0.1.0`。API 创建新 QA Run 时固定
+`skill_name/skill_version/skill_content_sha256`；Worker 领取同一 Run 后按固定版本重新加载并校验摘要，
+再由确定性 Runtime 的注册 handler 调用唯一 `GroundedQAApplicationPort.execute(run_id)`。该模式不
+创建第二个 Conversation/Run，不复制检索、生成或 Citation 逻辑，QA PostgreSQL 状态仍是恢复事实源。
+
+旧 QA 版本 JSON 缺少摘要时仍可读取；新 Run 必须带摘要。包缺失或摘要变化会在任何 QA 业务执行前以
+`QA_SKILL_INVALID` 安全失败。合成测试同时保留独立 submit 模式，并验证 Worker 模式只执行相同 Run。
+该实现可真实使用但质量仍为 provisional；Stage 3 正式退出、Stage 4 answer holdout 和 Stage 5 通用
+Checkpoint/版本引用清理未完成，因此 Step 6 尚不记为正式完成。
+
+**受约束 LLM Agent 增量（2026-07-31）**：新增 `knowledge_agent 0.1.0` 完整受信包和公开提交入口，
+但不建立第二套 Run、Worker 或 SSE。Worker 从固定 QA Run 加载包后，通过 `ModelGateway.fast_chat`
+执行严格 JSON 决策；模型仅能调用服务端固定的只读 `grounded_qa 1.0.0`，最多两次决策和一次 Tool
+调用。Tool Registry 强制版本、权限、Space、预算、schema 和幂等键，拒绝未知、未允许模型查看输出
+或具备写权限的 Tool。Tool 复用同一 `GroundedQAApplicationPort.execute(run_id)`，仅向外层模型返回
+状态、Citation 数和结果类型，不返回回答、Evidence 或原文；QA PostgreSQL Run 继续作为终态、恢复、
+取消、SSE 与 Citation 的唯一事实源。默认 fake 产生确定性路由决策，允许的 OpenAI-compatible
+Provider 使用同一边界执行真实模型决策。该增量不等于通用 AgentRun/Checkpoint 或写入审批完成。
+
+**真实 Provider 能力路由修复（2026-07-31）**：验证发现单一 `MODEL_PROVIDER=openai-compatible`
+会错误要求同时配置 Embedding revision。新增能力级 `CapabilityRoutedModelGateway`；通过
+`EMBEDDING_PROVIDER`/`RERANKER_PROVIDER` 显式选择 `inherit` 或 `fake`，使真实 `fast_chat` 与既有
+fake/local 检索索引并存。Grounded QA 还将版本化 `grounded-answer-v1` JSON Schema 和“无 Markdown、
+answer 必须等于 claims 按序拼接”约束注入 system prompt，真实 Provider 的结构化响应继续由服务端
+严格解析、Evidence 校验和一次修复预算控制。隔离 Compose 已验证外部 Chat 200 响应、3 次 Chat
+调用（Agent 路由、QA 生成、Agent 终止）、3 条 Citation、原文定位、API/Worker 重启和幂等重放。
+
 ### 步骤 7：Runtime API 与 Web 调用入口
 
 - 在 `/api/v1/skills` 下提供 Skill/版本查询和受控激活/回滚接口。
@@ -424,6 +516,45 @@ Provider 可重试错误按节点 `max_retries` 有界执行，并在每次重�
 后台任务、取消和恢复协议尚未接受；因此未新增 `/api/v1/skills`、`/api/v1/runs`、Web
 入口或 OpenAPI 内容，避免形成第二套临时协议。
 
+**再次复核（2026-07-31）**：ADR-007 已接受，阶段 4 也已有 `qa-sse-v1` 和 provisional
+内存 API，但 Step 5 仍只有内存检查点恢复，Step 6 仍是不会批量注册的 provisional QA Port
+契约。当前缺少 PostgreSQL AgentRun/Event、Worker 完成链、API 重启恢复、持久取消/审批和活动
+`knowledge_qa`，因此本步骤仍无可安全接入的公开子集。继续跳过 Runtime API、Web 和 OpenAPI
+变更；不得用进程内 Repository、fake 结果或新的 Runtime SSE schema 绕过持久化门禁。
+
+**可用 provisional 子集（2026-07-31，用户明确授权）**：为先跑通真实使用流程，现有 QA
+transport 和 Web 问答入口已接入唯一 `GroundedQAApplicationPort`，由 API 进程执行真实 PostgreSQL
+`SearchService` 检索和 Citation target 再校验。默认 fake Chat 产生确定性抽取式结构化回答，外部
+Chat Provider 在策略允许并配置后复用相同生成/校验路径；终态查询与 Web 展示回答、限制和引用身份。
+实现没有新增平行 Runtime/SSE schema，也没有激活 `_provisional/knowledge_qa`。该子集可用于后续
+开发。Run/Attempt/Event/Evidence/Citation/Feedback 随后已切换为 PostgreSQL 事实源，并验证 API/
+Worker 重启恢复；执行已进入独立 Worker，已发布 Citation 也可按需解析固定版本最小原文片段。
+`knowledge_qa 0.1.0` 随后已在该既有链路中显式激活，Web、HTTP API 和契约测试现在共享同一固定包与
+QA Application Port。仍未新增平行 `/skills`、`/runs` 或 SSE 协议；通用 Runtime 查询/恢复/审批、
+Skill 管理 UI 和 PostgreSQL Checkpoint 仍不存在，故 Step 7 正式完成标准仍未满足，Stage 3/4/5
+状态不变。
+
+**只读 Catalog 子集（2026-07-31）**：新增 `/api/v1/skills` 和
+`/api/v1/skills/{skill_name}/versions`，仅返回受信 Registry 已安装版本、active 配置版本、内容摘要、
+权限、能力和 manifest 预算；QA Run 响应同时返回其持久化 Skill 名称、版本和摘要。Web 问答工作区
+显示 active 版本，并在提交后显示 Run 的 fixed 版本。接口不接受路径、entrypoint、版本、权限或预算
+覆盖；激活/回滚仍只能由启动配置控制，等待 active pointer 的持久化事实源。该子集完成 Step 7 的
+版本可见性和三入口身份核对部分，Runtime Run 管理 API、Skill 管理写入口和通用 Checkpoint 仍未完成。
+
+**Skill 管理 Web 补充（2026-07-31）**：Web 新增受信 Skill 管理工作区，复用既有 Catalog、
+版本查询、持久化激活和回滚 API，展示完整内容摘要、权限、模型能力和运行预算。激活与回滚请求
+必须携带当前 `expected_revision`，冲突时由既有稳定错误协议拒绝；页面不提供包安装、任意路径、
+权限编辑或旧版本删除能力。该子集关闭 Step 7 的 Skill 管理 Web 缺口，但通用 Runtime Run 管理与
+PostgreSQL Checkpoint 仍未完成。
+
+**持久 active pointer 子集（2026-07-31）**：新增 PostgreSQL `skill_activations` 前向迁移，保存
+Skill 名称、active semver、内容摘要和递增 revision。首次启动仅用配置初始化缺失记录，此后数据库为
+事实源；Catalog 与新 QA Run 提交前同步 pointer，API 重启后恢复同一版本。新增受控 activate/rollback
+接口，只接受受信 Registry 中已安装的目标版本和 `expected_revision`，并以
+`SKILL_ACTIVATION_CONFLICT` 拒绝并发覆盖；路径、entrypoint、权限和预算仍不可写。切换只影响后续
+Run，Worker 对排队 Run 继续使用其固定 version/digest。通用 Runtime Run 管理、Checkpoint、Skill
+管理 Web 和旧版本删除仍未完成。
+
 ### 步骤 8：知识整理 Skill 与写入确认
 
 本步骤只在 `knowledge_qa` 的真实链路和引用完整性已经稳定后开始。
@@ -444,6 +575,30 @@ Provider 可重试错误按节点 `max_retries` 有界执行，并在每次重�
 
 **暂缓情况（2026-07-19）**：已复核并跳过。真实 `knowledge_qa`、可定位引用和派生知识写入
 Application 用例均未落地；当前不创建只有固定 fixture、无法满足引用完整性的三个业务 Skill。
+
+**Provisional 只读实现（2026-07-31）**：`summarize_document`、`compare_sources` 和
+`create_review_cards 0.1.0` 已作为完整受信包注册，并通过现有 QA API、QA Run、Worker、SSE、
+Runtime handler 和唯一 Grounded QA Application Port 执行，不新增平行 Run/Checkpoint 协议。
+提交时校验 Space 归属并持久化 Source/Document/DocumentVersion 固定范围；检索要求固定版本仍是
+对应文档的 current published version，版本更新、撤下、删除或选择器不一致会失败而不会扩大范围。
+比较回答必须包含至少两个来源的 Citation，否则按证据不足拒答。复习卡只生成带引用预览，response
+和 Skill output 均以 `SKILL_WRITE_PORT_UNAVAILABLE`、`side_effects=0` 标记写入阻塞。
+
+本子集达到三个 Skill 的只读可追溯标准，但没有派生知识 Application Port、持久审批或幂等写入，
+因此仅记为 Step 8 provisional 只读完成，不记为完整完成或阶段 5 正式退出。
+
+**持久审批与派生写入子集（2026-08-01）**：新增 `runtime_approvals` 和
+`derived_knowledge_items` PostgreSQL 表及对应 Adapter。审批请求按 `run_id/action/idempotency_key`
+固定身份，只有 approved 且未过期的记录可授权写 Tool；派生知识按 `run_id/idempotency_key`
+唯一约束写入，并保存结构化内容、Space、创建者和 Citation evidence IDs，重复提交返回原记录。
+`create_review_cards` 已支持注入审批 Port 与 DerivedKnowledgeWriter；默认 QA Worker 仍保持预览模式，
+后续 API/SSE 步骤负责提供审批申请/决定入口。隔离 PostgreSQL 验证迁移、审批幂等和派生写入幂等。
+
+**QA API/SSE 控制入口（2026-08-01）**：现有 `/qa/runs/{run_id}/approvals` 与
+`/approvals/{approval_id}/decision` 提供持久审批申请和批准/拒绝；批准的复习卡结果通过
+`PostgresDerivedKnowledgeStore` 幂等写入。新增 `/qa/runs/{run_id}/resume` 只重新排队同一
+QA Run，并复用原有 Worker lease、checkpoint resume 和 `qa-sse-v1` 事件流；终态 Run、被其他
+Worker 持有的 Run 或不可恢复 Run 会被拒绝。
 
 ### 步骤 9：热加载、版本回滚与恢复兼容
 
@@ -474,6 +629,17 @@ Registry 不提供旧版本删除 API；AgentRun/Checkpoint/审计引用查询�
 `158 passed, 22 skipped`，其中 21 个为未启用真实依赖的集成测试，1 个为 Windows 符号链接
 权限限制。
 
+**受控版本清理补充（2026-08-01）**：新增 PostgreSQL Skill 引用查询，覆盖 `qa_runs`、
+`runtime_runs` 和 `runtime_checkpoints` 的固定 name/version/digest。管理 API 只允许在目标版本非
+active、客户端摘要匹配且持久引用总数为零时，从当前进程 Registry 移除版本；有历史 Run 或
+checkpoint 引用时返回 `SKILL_CLEANUP_BLOCKED`。受信磁盘包不会由 HTTP 请求删除，部署文件清理
+仍属于受控运维操作。
+
+**持久 pointer 补充（2026-07-31）**：active pointer 已从纯进程状态提升为 PostgreSQL 事实源，
+revision CAS 保证并发激活/回滚不会静默覆盖。Registry reload 仍负责安装与摘要校验，数据库不会引入
+任意包位置。该改动关闭 active pointer 的进程重启恢复缺口，但不等同于通用 AgentRun/Checkpoint
+持久化，也未开放旧版本删除；历史和排队 QA Run 的版本引用继续由 `qa_runs.versions` 保留。
+
 ### 步骤 10：测试、文档与阶段验收
 
 - 运行后端规范检查、单元/契约/集成/安全测试以及前端 lint、typecheck、test 和 build。
@@ -490,9 +656,12 @@ Registry 不提供旧版本删除 API；AgentRun/Checkpoint/审计引用查询�
 **完成标准**：本计划的阶段退出条件全部通过；验证命令和结果有可复现记录；文档与运行时
 行为一致。
 
-**暂缓情况（2026-07-19）**：已复核并跳过阶段验收。Step 5～8 尚未交付，阶段 0 数据门禁
-仍未关闭，不能运行真实 Skill 三入口端到端旅程、持久化恢复、引用质量 Eval 或宣称阶段退出。
-当前仅完成已落地 Runtime/Registry 的后端格式、lint、类型、单元/契约和完整现有测试回归。
+**Provisional 验收（2026-07-31）**：Step 5～8 的可用子集已交付，见
+`docs/stage-5-acceptance.md`。后端、前端、迁移、QA persistence、Compose Worker 和三个知识整理
+入口均完成本地/隔离验证；安全矩阵覆盖受信包、权限、Space/版本、prompt injection 和日志边界。
+通用 Runtime Checkpoint、持久审批/派生写入、Skill 管理 Web 和旧版本引用清理的临时框架已闭环；
+由于 Stage 3/4 正式质量门禁和跨进程故障注入正式验收仍未关闭，本步骤只记为 provisional 验收，
+不宣称阶段 5 正式退出。
 
 ## 6. 执行依赖与状态
 
@@ -503,12 +672,12 @@ Registry 不提供旧版本删除 API；AgentRun/Checkpoint/审计引用查询�
 | 2. Tool Registry | 步骤 1；阶段 3/4 Port 可先用 fake | 通用契约与 Registry 已完成；真实 Tool 待阶段 3/4 |
 | 3. Skill Registry | 步骤 0/1；受信目录和摘要规则确定 | 已完成 |
 | 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 已完成 |
-| 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | 已复核并跳过；等待阶段 4 模型 |
-| 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | 已复核并跳过；等待前序阶段 |
-| 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 已复核并跳过；等待前序协议 |
-| 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | 已复核并跳过；等待步骤 6/7 |
+| 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | PostgreSQL QA Run/Attempt、Worker lease/heartbeat 和重启恢复已完成；通用 Runtime Checkpoint、审批与清理仍阻塞 |
+| 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | active provisional `0.1.0` 已由固定摘要 Worker 执行；正式质量门禁仍未关闭 |
+| 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 现有 QA API/Web/Worker、Skill Catalog、持久激活/回滚 Web 和 Run fixed identity 已完成；通用 Run 管理仍阻塞 |
+| 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | provisional 只读完成；固定版本摘要/比较/复习卡预览可用，派生知识写入与确认仍阻塞 |
 | 9. 热加载与回滚 | 步骤 3/5；不可变版本和恢复语义已验证 | 通用部分已完成；持久化引用清理等待步骤 5 |
-| 10. 测试与验收 | 步骤 0～9；阶段 0 数据门禁关闭 | 已复核并跳过；等待全部交付和数据门禁 |
+| 10. 测试与验收 | 步骤 0～9；阶段 0 数据门禁关闭 | provisional 验收完成；正式退出等待通用 Checkpoint、持久写入、Skill Web、旧版本清理及 Stage 3/4 质量门禁 |
 
 允许通用 Runtime、Registry 和 fake 契约与阶段 2～4 并行开发，但合并时必须以阶段 3/4 的
 正式 Port 和 schema 为准；不得要求前序模块反向依赖 Agent Runtime 私有类型。

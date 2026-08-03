@@ -1,9 +1,16 @@
 """Bounded Agent Runtime implementations."""
 
+from .checkpoints import (
+    CHECKPOINT_SCHEMA_VERSION,
+    InMemoryRuntimeStateStore,
+    build_checkpoint,
+    checkpoint_state_sha256,
+)
 from .executor import (
     DeterministicWorkflowExecutor,
     NodeBudgetReservation,
     NodeExecutionContext,
+    NodeExecutionError,
     NodeHandler,
     NodeOutcome,
     NodeResult,
@@ -14,6 +21,16 @@ from .executor import (
     WorkflowDefinition,
     WorkflowNode,
     load_workflow,
+)
+from .llm_decision import (
+    AgentToolRegistry,
+    BoundedLLMAgentNode,
+    LLMDecision,
+    LLMDecisionAction,
+    LLMDecisionError,
+    LLMDecisionNode,
+    LLMDecisionVerifyNode,
+    parse_llm_decision,
 )
 from .skills import (
     FileSystemSkillRegistry,
@@ -40,12 +57,15 @@ from .tools import (
 )
 
 __all__ = [
+    "CHECKPOINT_SCHEMA_VERSION",
     "DeterministicWorkflowExecutor",
     "FileSystemSkillRegistry",
     "JSONValue",
     "InMemoryToolRegistry",
+    "InMemoryRuntimeStateStore",
     "NodeBudgetReservation",
     "NodeExecutionContext",
+    "NodeExecutionError",
     "NodeHandler",
     "NodeOutcome",
     "NodeResult",
@@ -71,5 +91,15 @@ __all__ = [
     "ToolRegistryErrorCode",
     "WorkflowDefinition",
     "WorkflowNode",
+    "build_checkpoint",
+    "checkpoint_state_sha256",
     "load_workflow",
+    "LLMDecision",
+    "AgentToolRegistry",
+    "BoundedLLMAgentNode",
+    "LLMDecisionVerifyNode",
+    "LLMDecisionAction",
+    "LLMDecisionError",
+    "LLMDecisionNode",
+    "parse_llm_decision",
 ]

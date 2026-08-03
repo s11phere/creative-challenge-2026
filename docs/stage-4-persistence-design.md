@@ -1,16 +1,22 @@
 # Stage 4 Grounded QA Persistence Design Review
 
-- Status: Provisional design reviewed; migration implementation is not authorized
+- Status: Provisional PostgreSQL and Worker execution subset implemented
 - Date: 2026-07-23
 - Governing decision: ADR-007
 
 ## Gate
 
-Stage 0 authorization and freeze, Stage 2 Step 9, and the formal Stage 3 exit remain open. This
-document records the proposed relational shape and transaction boundaries only. It does not add an
-ORM model, Alembic revision, PostgreSQL table, Worker dispatch, or a claim that Grounded QA is
-available. The in-memory repository is a contract test double and is not a production persistence
-adapter.
+Stage 0 and Stage 2 are closed; the formal Stage 3 exit remains open. The relational design below
+remains the target formal shape. A user-authorized provisional subset now has ORM models, a forward
+Alembic revision, PostgreSQL QA Repository/Event Store, and API restart recovery. It does not include
+excerpt navigation, formal QA configuration, or a claim that Stage 4 is complete.
+
+The implemented subset uses `qa_runs` as the stable shared run projection and append-only
+`qa_run_attempts`; Evidence, Citation, Feedback, and events are durable. Structured nested values
+remain versioned JSON while the formal normalized claim/locator/timing tables described below are
+still deferred. Restart recovery preserves terminal runs, requeues safe non-terminal attempts, and
+removes unpublished Evidence before rerun. The Worker receives identifiers only, claims an attempt
+under a renewable PostgreSQL lease, and safely ignores duplicate delivery after terminal publication.
 
 ## Proposed Ownership
 

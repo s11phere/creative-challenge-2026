@@ -243,6 +243,8 @@ class PostgresRetrievalStore:
             statement = statement.where(SourceModel.id.in_(filters.source_ids))
         if filters.document_ids:
             statement = statement.where(DocumentModel.id.in_(filters.document_ids))
+        if filters.version_ids:
+            statement = statement.where(DocumentVersionModel.id.in_(filters.version_ids))
         return statement
 
     def _dense_statement(self, query: DenseCandidateQuery) -> Select[tuple[Any, ...]]:
@@ -337,7 +339,7 @@ class PostgresRetrievalStore:
                     source_key=str(row["source_uri"] or row["stable_key"] or row["source_id"]),
                     text=str(row["chunk_text"]),
                     chunk_hash=str(row["chunk_hash"]),
-                    locators=_locators(row["chunk_meta"]),
+                    locators=locators_from_meta(row["chunk_meta"]),
                     channel=channel,
                     rank=rank,
                     score=score,
@@ -405,7 +407,7 @@ class PostgresRetrievalStore:
                 await self._session.execute(select(func.set_config(name, value, True)))
 
 
-def _locators(raw_meta: object) -> tuple[SearchLocator, ...]:
+def locators_from_meta(raw_meta: object) -> tuple[SearchLocator, ...]:
     meta: Mapping[str, object] = raw_meta if isinstance(raw_meta, Mapping) else {}
     locators: list[SearchLocator] = []
     line_locator = _locator(meta, "start_line", "end_line", LocatorKind.LINES)
@@ -415,6 +417,11 @@ def _locators(raw_meta: object) -> tuple[SearchLocator, ...]:
     if page_locator is not None:
         locators.append(page_locator)
     return tuple(locators)
+
+
+def _locators(raw_meta: object) -> tuple[SearchLocator, ...]:
+    """Backward-compatible private alias for existing retrieval tests."""
+    return locators_from_meta(raw_meta)
 
 
 _FTS_TERM = re.compile(r"[A-Za-z0-9]+|[\u3400-\u9fff]+")

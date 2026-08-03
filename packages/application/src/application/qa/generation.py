@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -42,6 +43,8 @@ from model_gateway import (
 from .context_builder import ContextBundle
 from .evidence import EvidenceVerifier
 from .profile import QAGenerationProfileV1
+
+logger = logging.getLogger(__name__)
 
 
 class StructuredOutputError(ValueError):
@@ -138,6 +141,17 @@ class StructuredAnswerParser:
         except SchemaError as exc:
             raise QAContractError("Grounded answer schema is invalid") from exc
         self._validator = Draft202012Validator(schema)
+        self._format_instruction = (
+            "Return exactly one JSON object and no Markdown or explanatory text. "
+            "For an answer, put every supported statement in claims; the server derives the "
+            "published answer from the ordered claim texts. The JSON object must conform to "
+            "this schema:\n"
+            + json.dumps(schema, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        )
+
+    @property
+    def format_instruction(self) -> str:
+        return self._format_instruction
 
     def parse(self, text: str) -> StructuredQADraft:
         try:
@@ -170,9 +184,9 @@ class StructuredAnswerParser:
         claim_ids = tuple(claim.claim_id for claim in claims)
         if len(claim_ids) != len(set(claim_ids)):
             raise StructuredOutputError("Model output claim IDs must be unique")
-        answer = str(value["answer"])
-        if answer != "\n".join(claim.text for claim in claims):
-            raise StructuredOutputError("Answer text must be the ordered concatenation of claims")
+        # The top-level answer is a model convenience field. Claims are the cited,
+        # independently verified source of truth for the published answer.
+        answer = "\n".join(claim.text for claim in claims)
         return StructuredAnswerDraft(text=answer, claims=claims, limitations=limitations)
 
 
@@ -286,6 +300,15 @@ class GroundedAnswerGenerator:
                     capability=CapabilityAlias.FAST_CHAT,
                 )
         except TimeoutError as exc:
+            logger.warning(
+                "qa_model_call_timed_out",
+                extra={
+                    "capability": CapabilityAlias.FAST_CHAT.value,
+                    "error_code": QAErrorCode.TIMED_OUT.value,
+                    "retryable": True,
+                    "error_type": type(exc).__name__,
+                },
+            )
             raise QAError(
                 QAErrorCode.TIMED_OUT,
                 "QA generation exceeded the active timeout.",
@@ -298,12 +321,29 @@ class GroundedAnswerGenerator:
                 ModelErrorCode.AUTHENTICATION: QAErrorCode.MODEL_AUTHENTICATION_FAILED,
                 ModelErrorCode.POLICY_DENIED: QAErrorCode.POLICY_DENIED,
             }.get(exc.code, QAErrorCode.MODEL_FAILED)
+            logger.warning(
+                "qa_model_call_failed",
+                extra={
+                    "capability": exc.capability.value,
+                    "error_code": exc.code.value,
+                    "retryable": exc.retryable,
+                    "error_type": type(exc).__name__,
+                },
+            )
             raise QAError(
                 code,
                 "The configured QA model is unavailable.",
                 retryable=exc.retryable,
             ) from exc
         if response.capability is not CapabilityAlias.FAST_CHAT:
+            logger.error(
+                "qa_model_wrong_capability",
+                extra={
+                    "capability": response.capability.value,
+                    "error_code": ModelErrorCode.UNSUPPORTED_CAPABILITY.value,
+                    "retryable": False,
+                },
+            )
             raise QAError(QAErrorCode.MODEL_FAILED, "The QA model returned a wrong capability.")
         return response
 
@@ -352,11 +392,12 @@ class GroundedAnswerGenerator:
                 VerificationMetrics(1.0, 1.0, GroundedConfidence.HIGH),
             )
 
-        supported_claims = sum(
-            any(evidence_by_id[evidence_id].matched for evidence_id in claim.evidence_ids)
+        publishable_claims = tuple(
+            claim
             for claim in draft.claims
+            if any(evidence_by_id[evidence_id].matched for evidence_id in claim.evidence_ids)
         )
-        claim_support_rate = supported_claims / len(draft.claims)
+        claim_support_rate = len(publishable_claims) / len(draft.claims)
         citation_completeness_rate = sum(bool(claim.evidence_ids) for claim in draft.claims) / len(
             draft.claims
         )
@@ -370,9 +411,8 @@ class GroundedAnswerGenerator:
             citation_completeness_rate,
             confidence,
         )
-        if (
-            claim_support_rate < self._profile.min_claim_support_rate
-            or citation_completeness_rate < self._profile.min_citation_completeness_rate
+        if not publishable_claims or (
+            citation_completeness_rate < self._profile.min_citation_completeness_rate
         ):
             return (
                 _insufficient_evidence_result(
@@ -381,17 +421,31 @@ class GroundedAnswerGenerator:
                 verification,
             )
 
-        ordered_ids = tuple(dict.fromkeys(selected_ids))
+        published_ids = tuple(
+            evidence_id for claim in publishable_claims for evidence_id in claim.evidence_ids
+        )
+        ordered_ids = tuple(dict.fromkeys(published_ids))
         selected = tuple(evidence_by_id[evidence_id] for evidence_id in ordered_ids)
         claims = tuple(
-            Claim(claim.claim_id, claim.text, claim.evidence_ids) for claim in draft.claims
+            Claim(claim.claim_id, claim.text, claim.evidence_ids) for claim in publishable_claims
         )
         citations = tuple(_citation_from_evidence(candidate) for candidate in selected)
+        limitations = draft.limitations
+        if len(publishable_claims) < len(draft.claims):
+            limitations = tuple(
+                dict.fromkeys(
+                    (
+                        *limitations,
+                        "Some candidate claims were omitted because they were supported only by "
+                        "retrieval context expansion.",
+                    )
+                )
+            )
         answer = GroundedAnswer(
-            text=draft.text,
+            text="\n".join(claim.text for claim in publishable_claims),
             claims=claims,
             citations=citations,
-            limitations=draft.limitations,
+            limitations=limitations,
         )
         await self._check_cancelled()
         try:
@@ -423,7 +477,9 @@ class GroundedAnswerGenerator:
             raise QAError(QAErrorCode.CANCELLED, "QA generation was cancelled.")
 
     def _initial_request(self, context: ContextBundle) -> ChatRequest:
-        system = "\n".join((*context.system_rules, self._prompt_contract))
+        system = "\n".join(
+            (*context.system_rules, self._prompt_contract, self._parser.format_instruction)
+        )
         user_sections = [f"<question>\n{context.question}\n</question>"]
         user_sections.extend(
             f'<history role="{turn.role.value}">\n{turn.content}\n</history>'
@@ -443,6 +499,7 @@ class GroundedAnswerGenerator:
         system = "\n".join(
             (
                 self._prompt_contract,
+                self._parser.format_instruction,
                 "Repair the candidate into exact grounded-answer-v1 JSON. Do not add facts or IDs.",
             )
         )

@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，但正式质量门禁未通过。PR #3 的 GPU 配置复现出 provisional Claim Recall@10=69.7548%，因当前评测集代表性局限，阶段 3 已按 [ADR-010](docs/adr/010-stage-3-termination-and-evaluation-boundary.md) 终止；正式 holdout 未执行，配置仍未冻结。阶段 4 仍未正式启动，但 provisional Step 0-10 的领域/Application、内存持久化、API/SSE、Web、反馈和回答评测门禁已跑通；阶段 5 通用 Agent Runtime/Skill 基础已并行通过审查。**
+**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，但正式质量门禁未通过。PR #3 的 GPU 配置复现出 provisional Claim Recall@10=69.7548%，因当前评测集代表性局限，阶段 3 已按 [ADR-010](docs/adr/010-stage-3-termination-and-evaluation-boundary.md) 终止；正式 holdout 未执行，配置仍未冻结。阶段 4 provisional 的领域/Application、PostgreSQL 持久化、API/SSE、Worker、Web、反馈和回答评测门禁已跑通，但正式质量门禁仍未关闭；阶段 5 provisional Skill/Runtime 基础已并行落地。**
 
 已交付的核心能力：
 
@@ -14,14 +14,40 @@
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
 | 阶段 3 ⏹️ 已终止（工程完成，质量门禁未通过） | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；PR3 GPU development Claim Recall@10 为 69.7548%，当前评测集代表性不足，正式 holdout 未执行，配置保持 provisional |
-| 阶段 4 🟡 provisional Step 0-10 | ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、查询/上下文、结构化生成、拒答/冲突/故障、内存 Repository、SSE/问答 API、Web 对话工作区、反馈候选和回答评测 validate-only 已完成；PostgreSQL/Alembic、Worker 完成链、真实引用 UI/E2E、默认配置与 holdout 未完成 |
-| 阶段 5 🟡 通用基础 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、版本固定、预算/权限/审计、事务式 reload/回滚和 Skill 模板已通过审查 |
+| 阶段 4 🟡 provisional Step 0-10 | ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测 validate-only 已完成；默认配置与 holdout 未完成 |
+| 阶段 5 🟡 provisional Skills | ADR-006、Runtime/Registry 通用基础已通过审查；`knowledge_agent`、`knowledge_qa` 与三个知识整理 Skill `0.1.0` 复用现有持久 QA Run/Worker/SSE；Step 10 provisional 验收已记录 |
 
-当前 Web 展示系统健康、数据来源和 provisional 知识问答工作区；HTTP API 可创建内存会话、提交问题、查询/取消 queued Run、重放安全 SSE 并提交已发布回答的反馈。由于没有 PostgreSQL QA 表、Worker 完成链和终态 Citation API，Run 不会形成真实回答，证据面板不会伪造引用，因此仍不能宣称真实问答或引用能力已经可用。
-纯 Application 层的 `GroundedQAApplicationPort` 已用合成 Search/Citation/Chat fake 验证幂等提交、
-Evidence 保存、结构化生成、原子发布、失败与取消语义；当前 HTTP/Worker 尚未接入该执行路径。
-阶段 5 当前只有离线通用 Runtime/Registry 和合成 fake 契约；没有业务 Skill、Runtime API、
-运行/检查点持久化或 Web Skill 入口，不能据此宣称 `knowledge_qa` 可用或阶段 5 整体完成。
+当前 Web 展示系统健康、数据来源和 provisional 知识问答工作区；HTTP API 可创建持久会话、提交
+问题，由 API 仅向 Redis 投递 Run ID，再由独立 Worker 调用唯一 `GroundedQAApplicationPort`、
+真实 PostgreSQL `SearchService` 和
+Citation target adapter 生成回答或拒答。默认 fake 模型提供确定性抽取式回答；配置允许的外部
+Chat Provider 仍走相同结构化生成与引用校验路径。Web 会展示终态回答、限制和文档版本/locator
+引用身份；点击 Citation 后按 `run_id + evidence_id` 解析固定版本的最小原文片段并高亮。
+
+该链路是可真实使用的 provisional 版本，不是阶段 4/5 正式完成：QA 会话、Message、Run/Attempt、
+Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL；API/Worker 重启可恢复
+未完成运行，重复投递不会重复发布终态；Citation 原文解析不会接受客户端伪造的版本、locator 或 Blob 路径；
+阶段 3 默认检索配置和质量门禁也尚未冻结。
+阶段 5 的 `knowledge_qa 0.1.0` 已从本地受信根显式激活：API 在新 QA Run 中固定 Skill 名称、
+版本和内容摘要，Worker 恢复时按该固定身份校验声明式 workflow，再调用唯一 QA Application Port。
+现有 QA Web/API 因此已是该 provisional Skill 的真实入口，但尚无通用 Runtime API、PostgreSQL
+Runtime Checkpoint、Skill 管理 Web 或旧版本清理。`/api/v1/skills` 可查询 active/已安装版本、
+摘要、预算和 pointer revision，并通过受控 CAS 接口激活或回滚到受信根中已安装的版本；pointer
+保存在 PostgreSQL，API 重启后恢复。不能据此宣称阶段 5 整体完成。
+`summarize_document`、`compare_sources` 和 `create_review_cards` 也已提供 provisional HTTP
+入口并固定提交时的 Source/Document/DocumentVersion 范围；版本变更、撤下或跨 Space 选择不会
+扩大检索范围。比较结果必须引用至少两个来源，否则按证据不足拒答。复习卡当前只返回带引用预览，
+并以 `SKILL_WRITE_PORT_UNAVAILABLE` 明确报告 `side_effects=0`，尚无派生知识写入或确认流程。
+`knowledge_agent 0.2.0` 提供真实的受约束 LLM/Tool 循环：模型可先调用只读
+`inspect_retrieval 1.0.0` 调整多查询、候选数和上下文预算，再调用一次 `grounded_qa 1.0.0`，
+由现有 QA Run、Worker、SSE、Grounded QA Port 和 Citation 链路完成问答。动态数值由服务端
+profile 封顶，Space/版本边界不能由模型扩大；规划失败会降级到原问题的 Grounded QA，而不是
+把 Run 变成基础设施失败。Tool 仅向外层模型返回状态和覆盖计数，不返回回答或原文。旧
+`0.1.0` 保留用于固定 Run 恢复和回滚。默认 fake 可跑通流程，配置允许的
+OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。写 Tool 仍被明确拒绝。
+真实本地组合使用外部 OpenAI-compatible `fast_chat`、
+`EMBEDDING_PROVIDER=text-embeddings-inference` 和本地 Qwen3 TEI Embedding；当前
+`RERANKER_PROVIDER=fake`。三项能力独立路由，Embedding 不会随外部 Chat 回退为 fake。
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
 [Stage 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
 [Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；历史 `90.48%` Recall@5 结果已判定为虚假，当前 PR3 GPU development Claim Recall@10=69.7548%，仍未达到正式门禁。阶段 3 已终止；若未来重新开启，必须发布新的 dataset/config version 并重新走评测流程。
@@ -60,6 +86,11 @@ POSTGRES_PASSWORD=your-database-password
 docker compose -f deploy/compose.yaml --env-file .env up --build --detach --wait
 ```
 
+真实模型组合需要在被 Git 忽略的 `.env` 中同时配置外部 Chat、
+`EMBEDDING_PROVIDER=text-embeddings-inference`、`EMBEDDING_ENDPOINT=http://tei:80`、固定的
+Qwen3 Embedding 模型/revision，以及适配 TEI 限制的 `EMBEDDING_BATCH_SIZE`。完整字段见
+`.env.example`，凭据不得提交仓库。
+
 > **注意**：Docker Compose v5 可能需要显式指定 `--env-file .env`；若不加也能正常运行则无需此参数。
 
 3. 打开工作台：<http://127.0.0.1:5173>
@@ -70,6 +101,8 @@ API、Worker 和 Web 达到各自完成或健康条件。
 > 首次启动 Embedding 模型服务（`--profile embedding`）时，TEI 会从 HuggingFace Hub
 > 自动下载 Qwen3-Embedding-0.6B（约 400 MB）。模型文件会缓存在 Docker 层面，后续启动
 > 无需重下载。中国用户可参考 [模型下载文档](docs/model-setup.md) 使用镜像源加速。
+在“数据来源”中上传并等待文档状态发布后，进入“知识问答”即可使用当前 Space 的真实索引提问。
+默认 fake 模型返回可复现的相关证据摘录，适合先跑通流程；回答质量将在阶段 3 达标后继续调整。
 
 ## Smoke Test
 
@@ -179,6 +212,7 @@ docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml --env-file .env
 - [ADR-007：Grounded QA 持久化、引用、执行与 SSE](docs/adr/007-grounded-qa-persistence-and-sse.md)
 - [阶段 5 实施计划](docs/stage-5-implementation-plan.md)
 - [阶段 5 实现审查记录](docs/stage-5-implementation-review.md)
+- [阶段 5 provisional 验收记录](docs/stage-5-acceptance.md)
 - [OpenAPI](docs/openapi.json)
 - [架构决策记录](docs/adr/README.md)
 

@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     worker_processes: int = Field(default=1, ge=1)
     worker_threads: int = Field(default=4, ge=1)
     worker_shutdown_timeout_ms: int = Field(default=30_000, ge=1_000)
+    qa_task_timeout_ms: int = Field(default=300_000, ge=10_000)
+    qa_task_max_retries: int = Field(default=12, ge=0, le=100)
+    qa_task_retry_delay_ms: int = Field(default=3_000, ge=100, le=60_000)
+    qa_task_lease_seconds: int = Field(default=30, ge=10, le=600)
+    qa_task_heartbeat_interval_s: int = Field(default=10, ge=1, le=300)
     diagnostic_task_timeout_ms: int = Field(default=10_000, ge=1_000)
     diagnostic_task_max_retries: int = Field(default=3, ge=0)
     diagnostic_task_min_backoff_ms: int = Field(default=1_000, ge=100)
@@ -92,12 +97,16 @@ class Settings(BaseSettings):
     reranker_api_key: SecretStr | None = None
     reranker_model: str | None = None
     embedding_protocol: Literal["openai-compatible", "tei"] = "openai-compatible"
+    embedding_provider: Literal["inherit", "fake", "text-embeddings-inference"] = "inherit"
+    reranker_provider: Literal["inherit", "fake"] = "inherit"
     embedding_query_instruction_version: str = "none-v1"
     embedding_document_instruction_version: str = "none-v1"
     embedding_normalization: str = "none"
     embedding_precision: str = "float32"
     model_allow_external: bool = False
     model_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    fast_chat_timeout_seconds: float = Field(default=120.0, gt=0, le=300)
+    fast_chat_reasoning_enabled: bool = False
     model_max_retries: int = Field(default=2, ge=0, le=5)
     model_retry_backoff_seconds: float = Field(default=0.1, ge=0, le=10)
 
@@ -105,14 +114,23 @@ class Settings(BaseSettings):
     retrieval_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     retrieval_debug_diagnostics: bool = False
 
+    # --- Development QA diagnostics (full content, local-only, opt-in) ---
+    qa_debug_trace_enabled: bool = False
+    qa_debug_trace_path: str = "./tmp/qa-debug"
+    qa_debug_trace_max_bytes: int = Field(default=10_000_000, ge=100_000, le=500_000_000)
+
+    # --- Skill Registry ---
+    skill_root_path: str = "./skills"
+    knowledge_qa_skill_version: str = "0.1.0"
+    knowledge_agent_skill_version: str = "0.2.0"
+
     def active_embedding_identity(self, *, allow_unconfigured: bool = False) -> EmbeddingIdentity:
         """Return the one identity shared by ingestion and online retrieval."""
         self.query_embedding_prefix()
-        model_revision = self.embedding_model_revision
-        if not model_revision:
-            model_revision = (
-                "fake-sha256-v1" if self.model_provider == "fake" else self.embedding_model
-            )
+        if self.model_provider == "fake" or self.embedding_provider == "fake":
+            model_revision = "fake-sha256-v1"
+        else:
+            model_revision = self.embedding_model_revision or self.embedding_model
         if not model_revision:
             if allow_unconfigured:
                 model_revision = "embedding-unconfigured-v1"

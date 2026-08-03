@@ -4,29 +4,36 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from time import monotonic
 from typing import Any, Protocol, cast
+from uuid import UUID
 
 import yaml
 from domain.agent_runtime import (
     AgentRun,
     BudgetExceededError,
     BudgetUsage,
+    RecoveryRejectedError,
+    RunCheckpoint,
     RunError,
     RunErrorCategory,
     RunEvent,
     RunStatus,
     RunStep,
+    RuntimeStateStore,
     ToolPermission,
     ToolRegistry,
+    validate_recovery,
 )
 from jsonschema import Draft202012Validator
 from model_gateway import ModelErrorCode, ModelGateway, ModelGatewayError
 from yaml.events import AliasEvent
 
+from .checkpoints import build_checkpoint, checkpoint_state_sha256
 from .skills import (
     FileSystemSkillRegistry,
     PinnedSkill,
@@ -93,6 +100,19 @@ class NodeOutcome(StrEnum):
     CONTINUE = "continue"
     COMPLETE = "complete"
     REFUSE = "refuse"
+
+
+@dataclass(frozen=True)
+class NodeExecutionError(Exception):
+    code: str
+    category: RunErrorCategory
+    message: str
+    retryable: bool = False
+    timed_out: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.code.startswith(("SKILL_", "TOOL_", "RUN_", "AUTH_", "DEPENDENCY_")):
+            raise ValueError("node error code does not use an ADR-006 prefix")
 
 
 class RuntimeAuditEventType(StrEnum):
@@ -206,6 +226,7 @@ class DeterministicWorkflowExecutor:
         available_capabilities: frozenset[str] = frozenset(),
         tool_registry: ToolRegistry | None = None,
         audit_sink: RuntimeAuditSink | None = None,
+        state_store: RuntimeStateStore | None = None,
         cancellation_check: CancellationCheck | None = None,
         clock_ms: ClockMilliseconds | None = None,
     ) -> None:
@@ -217,6 +238,7 @@ class DeterministicWorkflowExecutor:
         )
         self._tool_registry = tool_registry
         self._audit_sink = audit_sink
+        self._state_store = state_store
         self._cancellation_check = cancellation_check or _not_cancelled
         self._clock_ms = clock_ms or _monotonic_ms
 
@@ -226,8 +248,42 @@ class DeterministicWorkflowExecutor:
         pin: PinnedSkill,
         input_data: Mapping[str, JSONValue],
     ) -> RuntimeExecutionResult:
+        return await self._execute_from(run, pin, input_data, state={}, node_id=None)
+
+    async def resume(
+        self,
+        run: AgentRun,
+        pin: PinnedSkill,
+        checkpoint: RunCheckpoint,
+        input_data: Mapping[str, JSONValue],
+        *,
+        caller_id: str,
+        space_id: UUID,
+    ) -> RuntimeExecutionResult:
+        validate_recovery(run, checkpoint, caller_id=caller_id, space_id=space_id)
+        self._skill_registry.validate_checkpoint_compatibility(
+            pin, checkpoint, tool_registry=self._tool_registry
+        )
+        checkpoint_state = cast(Mapping[str, JSONValue], checkpoint.state)
+        if checkpoint.state_sha256 != checkpoint_state_sha256(checkpoint_state):
+            raise RecoveryRejectedError("checkpoint state digest is invalid")
+        if checkpoint.next_node is None:
+            raise RecoveryRejectedError("checkpoint has no safe continuation")
+        state = cast(dict[str, JSONValue], deepcopy(dict(checkpoint.state)))
+        return await self._execute_from(
+            run, pin, input_data, state=state, node_id=checkpoint.next_node
+        )
+
+    async def _execute_from(
+        self,
+        run: AgentRun,
+        pin: PinnedSkill,
+        input_data: Mapping[str, JSONValue],
+        *,
+        state: dict[str, JSONValue],
+        node_id: str | None,
+    ) -> RuntimeExecutionResult:
         events: list[RuntimeAuditEvent] = []
-        state: dict[str, JSONValue] = {}
         started_ms = self._clock_ms()
         base_elapsed_ms = run.usage.elapsed_ms
         try:
@@ -247,7 +303,7 @@ class DeterministicWorkflowExecutor:
                 RuntimeAuditEventType.RUN_STARTED,
             )
             node_map = workflow.node_map()
-            node_id = workflow.start
+            node_id = node_id or workflow.start
             while True:
                 run = self._account_elapsed(run, started_ms, base_elapsed_ms)
                 if run.status == RunStatus.CANCEL_REQUESTED or await self._cancellation_check(run):
@@ -365,6 +421,12 @@ class DeterministicWorkflowExecutor:
                         category=RunErrorCategory.SCHEMA,
                         message="Non-terminal workflow node has no successor.",
                     )
+                if self._state_store is not None:
+                    next_step = node_map[node.next_node].step
+                    run, checkpoint = build_checkpoint(
+                        run, state=state, next_step=next_step, next_node=node.next_node
+                    )
+                    run, _ = await self._state_store.commit(run, checkpoint)
                 node_id = node.next_node
         except ModelGatewayError as exc:
             failure = _model_failure(exc)
@@ -380,15 +442,22 @@ class DeterministicWorkflowExecutor:
                 category=RunErrorCategory.BUDGET,
                 message="Run budget is exhausted.",
             )
+        except NodeExecutionError as exc:
+            failure = _RuntimeError(
+                code=exc.code,
+                category=exc.category,
+                message=exc.message,
+                retryable=exc.retryable,
+                timed_out=exc.timed_out,
+            )
         except _RuntimeError as exc:
             failure = exc
-        except Exception as exc:
+        except Exception:
             failure = _RuntimeError(
                 code="RUN_NODE_FAILED",
                 category=RunErrorCategory.INTERNAL,
                 message="Workflow node failed.",
             )
-            failure.__cause__ = exc
         return await self._fail(run, pin, events, failure)
 
     def _validate_start(self, run: AgentRun, pin: PinnedSkill) -> SkillPackage:

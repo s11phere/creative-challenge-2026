@@ -36,6 +36,9 @@ Evidence identity from the same run.
 - A Conversation belongs permanently to one Space and one caller/owner scope.
 - Messages are append-only conversation facts. A user question creates a new run; retry creates a
   new attempt and never rewrites the earlier result.
+- A run may persist an explicit retrieval scope containing Space-owned Source, Document, and immutable
+  DocumentVersion identities. Execution uses that fixed scope only; a later publication, withdrawal,
+  deletion, or selector mismatch fails rather than following a new current version or widening scope.
 - The persisted AgentRun identity is shared with the existing bounded runtime contract. Stage 4 may
   add a QA-specific projection linked to that identity, but must not create a parallel runtime model.
 - Evidence records preserve Space, source, document, immutable document version, chunk, locator,

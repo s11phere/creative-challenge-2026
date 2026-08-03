@@ -42,6 +42,7 @@ from domain.qa_persistence import (
     QARunVersions,
 )
 from domain.retrieval import LocatorKind, SearchLocator
+from pydantic import TypeAdapter
 
 SPACE_ID = UUID(int=1)
 OTHER_SPACE_ID = UUID(int=2)
@@ -68,6 +69,22 @@ def _versions() -> QARunVersions:
         corpus_version="v0-provisional",
         dataset_version="knowledge-qa-v0-provisional",
     )
+
+
+def test_legacy_versions_without_skill_digest_remain_readable() -> None:
+    payload = _versions().__dict__.copy()
+    payload.pop("skill_name")
+    payload.pop("skill_content_sha256")
+
+    restored = TypeAdapter(QARunVersions).validate_python(payload)
+
+    assert restored.skill_name == "knowledge_qa"
+    assert restored.skill_content_sha256 is None
+
+
+def test_skill_digest_requires_canonical_sha256() -> None:
+    with pytest.raises(ValueError, match="lowercase SHA-256"):
+        replace(_versions(), skill_content_sha256="A" * 64)
 
 
 def _candidate(*, space_id: UUID = SPACE_ID) -> EvidenceCandidate:
@@ -201,6 +218,26 @@ async def test_conversation_run_and_evidence_are_space_scoped_and_idempotent() -
                 candidate=_candidate(space_id=OTHER_SPACE_ID),
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_conversation_creation_is_idempotent_only_for_the_same_owner_and_space() -> None:
+    repo = InMemoryGroundedQARepository()
+    conversation = ConversationRecord(
+        conversation_id=CONVERSATION_ID,
+        space_id=SPACE_ID,
+        owner_id="owner-1",
+    )
+    assert await repo.create_conversation(conversation) == conversation
+    assert (
+        await repo.create_conversation(replace(conversation, updated_at=datetime.now(UTC)))
+        == conversation
+    )
+
+    with pytest.raises(QAContractError, match="another owner"):
+        await repo.create_conversation(replace(conversation, owner_id="owner-2"))
+    with pytest.raises(QAContractError, match="another owner"):
+        await repo.create_conversation(replace(conversation, space_id=OTHER_SPACE_ID))
 
 
 @pytest.mark.asyncio

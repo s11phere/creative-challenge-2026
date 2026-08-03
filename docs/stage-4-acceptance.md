@@ -45,24 +45,71 @@ holdout 149，`formal_run_eligible=false`，未产生模型调用或回答执行
 
 继续实现补充（2026-07-31）：`GroundedQAApplicationPort` 已通过合成 SearchService、Citation target、
 结构化 Chat fake 和内存 Repository 验证幂等提交、Evidence 保存、回答原子发布、检索失败与显式取消；
-定向 QA service/persistence/API 测试为 `15 passed`。该服务没有接入 API/Worker，也没有新增受正式门禁
-约束的数据库实现。
+定向 QA service/persistence/API 测试为 `15 passed`。截至该次记录，该服务尚未接入 API/Worker，
+也没有新增受正式门禁约束的数据库实现。
+
+可用 provisional 补充（2026-07-31）：按用户明确方向，现有 QA API 已在 API 进程内接入该唯一
+Application Port，并复用真实 PostgreSQL SearchService 和新增 Citation target adapter。隔离 Compose
+空卷完成迁移、摄入 manifest 允许的 `omnistudio/README.md`（上传前 SHA-256 与 manifest 一致）后，
+QA Run 从 queued 到 completed，返回回答及绑定同一 Space 的 source/document/version/chunk 和
+`lines 120-126` locator。默认模型仍为确定性抽取 fake；未运行 development 或 holdout。
+
+持久化补充（2026-07-31）：新增前向 Alembic revision 和 PostgreSQL Repository/Event Store，
+持久保存 Conversation、Message、Run、append-only Attempt、Evidence、Citation、Feedback 与
+`qa-sse-v1` 事件。隔离 PostgreSQL 已验证空库 upgrade、downgrade、单一 head、终态数据跨 Repository
+实例读取，以及中断 attempt 重排队和未发布 Evidence 清理。隔离 Compose 中已完成 Run 在 API 重启后
+仍保持 completed，回答、1 条 Citation 和 accepted/completed 事件均可读取/重放。执行器仍在 API
+进程内，未接入 Worker，未实现引用原文 API。
+
+本次补充验证：Ruff format/check、mypy（84 个源文件）、后端全量 pytest（`602 passed, 43
+skipped`）、OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）与 production build 均通过。
+PostgreSQL 持久化集成测试在同一保留卷连续运行两次，均为 `2 passed`；Windows 沙箱既有
+`.pytest_cache` 写权限警告不影响结果。
+
+Worker 补充（2026-07-31）：API 已不再持有 QA 执行协程，只在 Run 提交事务完成后向既有
+Redis/Dramatiq 边界投递 `run_id/trace_id/event_version`。独立 Worker 通过 PostgreSQL attempt
+lease/heartbeat 领取工作，调用同一个 `GroundedQAApplicationPort`，并在启动时扫描未租用 queued、
+cancel_requested 和租约过期运行。隔离 Compose 验证：Worker 停止时新 Run 保持 queued；重启后自动
+接管并 completed，返回 answer 和 1 条 Citation。同一 completed Run 重复投递前后均保持
+Attempt/Citation/Event 计数 `1/1/3`。新迁移已完成空库 upgrade、downgrade、单一 head 和 lease
+互斥集成测试；未实现引用原文 API，未运行 development/holdout。
+
+Worker 补充验证：Ruff format/check、mypy（86 个源文件）、后端全量 pytest（`605 passed, 44
+skipped`）、OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）与 production build 均通过；
+隔离 PostgreSQL QA persistence/lease 集成测试为 `3 passed`。Windows 沙箱既有 `.pytest_cache`
+写权限警告不影响结果。
+
+原文解析补充（2026-07-31）：新增只接受 `run_id + evidence_id` 的已发布 Citation Application
+用例和 HTTP 端点，客户端不能提交 Space、版本、Chunk、locator 或 Blob 路径。Resolver 重新校验
+固定版本链、Blob SHA-256 和 excerpt SHA-256；Markdown 使用既有 parser 在精确源行范围内重建
+规范化 Evidence 文本，TXT 按一基闭区间行号，PDF 按单页解析。Web Citation 按钮支持键盘操作，
+按需展示并高亮最小片段，以及加载、失败和不可用状态。保留 Compose 中历史 completed Run 的
+`lines 20-22` Citation 已返回 `valid` 非空片段，伪造 evidence ID 返回 404；未输出或记录原文。
+本轮回归：后端 pytest `609 passed, 44 skipped`，Ruff format/check、mypy（87 个源文件）、
+OpenAPI 一致性、Web lint/typecheck/Vitest（`16 passed`）和 production build 均通过。
+
+Stage 5 Skill 接入补充（2026-07-31）：现有 QA API/Web/Worker 链路现由本地受信根中的
+`knowledge_qa 0.1.0` 声明式包驱动。API 将包摘要固定到 PostgreSQL QA Run，Worker 恢复时校验该
+固定身份并通过唯一 `GroundedQAApplicationPort` 执行同一个 Run；Stage 4 的持久化、SSE、取消、
+Citation 和原文协议没有产生第二套实现。该接入不改变 Stage 4 provisional 状态或正式质量门禁。
 
 ## 正式退出矩阵
 
 | 项目 | 状态 | 原因 |
 | --- | --- | --- |
-| 领域、Application、SSE/API、Web 契约回归 | 已完成（provisional） | 仅内存态与 fake/合成验证 |
-| QA PostgreSQL 迁移、upgrade/downgrade、保留语义 | 未执行 | 不新增受门禁限制的业务表 |
-| Worker/Dramatiq 执行、取消恢复、API 重启恢复 | 未执行 | 没有 QA Worker 完成链 |
-| 导入到引用、原文、反馈的 Compose E2E | 未执行 | 无真实回答与 Citation 发布 |
+| 领域、Application、SSE/API、Web 契约回归 | 已完成（provisional） | fake/合成契约与真实 PostgreSQL 链路均已验证 |
+| QA PostgreSQL 迁移、upgrade/downgrade、保留语义 | provisional 已执行 | 空库往返迁移、单一 head、终态保留和中断恢复通过 |
+| Worker/Dramatiq 执行 | provisional 已执行 | ID-only 消息、lease/heartbeat、启动恢复和重复投递通过 |
+| API/Worker 重启恢复 | provisional 已执行 | Worker 停止时 queued，重启接管；终态读取与 SSE 重放通过 |
+| 导入到回答、引用和原文的 Compose E2E | provisional 已执行 | 真实摄入/检索/固定版本最小片段解析通过；反馈旅程未执行 |
 | Playwright 桌面/移动截图 | 未执行 | 真实回答/Citation 用户旅程不存在 |
 | development 消融、默认 QA 配置冻结、正式 holdout | 未执行 | Stage 3 质量门禁及 Stage 4 正式门禁未关闭 |
-| Citation target resolution 与回答质量结论 | 未执行 | 不存在真实 Citation 或 answer report |
+| Citation target resolution 与回答质量结论 | 部分执行 | PostgreSQL/Blob/locator 解析通过；无质量冻结或正式 answer report |
 
 ## 阶段 5 边界
 
-Grounded QA schema、SSE v1、安全边界和唯一 provisional QA Application Port 已可供后续设计及
-fake 契约复用，但当前 API/SSE 为进程内 provisional 实现，没有持久执行、终态 Citation 或唯一生产
-QA Application Port。阶段 5 不得据此实现、接入或宣称 `knowledge_qa` Skill；阶段 3 已按 ADR-010
-终止且质量门禁未通过，这一记录不能替代阶段 4 的持久化、Worker、真实 Citation 和评测门禁。
+Grounded QA schema、SSE v1、安全边界和唯一 provisional QA Application Port 已可供后续设计；
+现有 QA API/Web 也可作为真实检索和引用身份的临时可用入口。QA 状态和事件已有 PostgreSQL
+事实源及 API/Worker 重启恢复，执行已进入独立 Worker，固定版本原文片段可按需解析。阶段 5 的
+`knowledge_qa 0.1.0` 已可在该 provisional 链路中活动使用；不得据此宣称阶段 4/5 正式完成，正式
+退出仍须关闭 Stage 3、完整反馈旅程、质量和 holdout 门禁。

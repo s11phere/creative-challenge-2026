@@ -31,24 +31,29 @@
 | 阶段 1 | 完成 | Step 0～8 工程实现与验收完成；GitHub Actions 已由用户确认正常 | 仅保留已记录的运行限制 |
 | 阶段 2 | 正式完成 | Step 0～8 工程闭环和 Step 9 冻结语料验收完成；74 个 P0 来源解析/定位/分块成功率 100%，隔离依赖和 Compose E2E 通过 | 仅保留 `internal_team_only` 分发边界和已记录运行限制 |
 | 阶段 3 | 已终止（工程完成，质量门禁未通过） | Keyword/Dense/Hybrid/Hybrid+Reranker、上下文扩展、Space/版本边界、检索 API、离线评测和移交已落地；PR #3 GPU 复现结果已归档 | 当前评测集代表性不足，未运行正式 holdout；配置保持 provisional。见 ADR-010 |
-| 阶段 4 | 未正式开始 | 已有 `docs/stage-4-implementation-plan.md` | GroundedAnswer/Citation、Conversation/AgentRun/Evidence 持久化、问答 API/SSE/Web 和回答评测均未落地 |
-| 阶段 5 | 通用基础已审查 | ADR-006、Runtime 领域契约、Tool/Skill Registry、确定性执行器、预算/权限/审计、受信包版本固定和事务式 reload/回滚已落地 | 无 AgentRun/Checkpoint 持久化、`knowledge_qa`、Runtime API/Web 或业务 Skill；阶段整体未退出 |
+| 阶段 4 | provisional Step 0～10 | GroundedAnswer/Citation、PostgreSQL QA 持久化、API/SSE/Web、Worker 重启恢复、原文解析和回答评测门禁已落地 | Playwright 完整旅程、反馈闭环、默认配置冻结和正式 answer holdout 未完成 |
+| 阶段 5 | provisional Skills | 通用 Runtime/Registry 已审查；四个 `0.1.0` Skill 固定摘要并复用现有 QA Run/Worker/SSE；Skill Catalog、PostgreSQL active pointer 和受控激活/回滚已提供 | 通用 AgentRun/Checkpoint 持久化、派生知识写入/确认、Skill 管理 Web、旧版本清理和正式验收未完成 |
 
 当前可见能力和数据面：
 
-- Web 只提供系统健康和数据来源/摄入任务页面；没有搜索、会话、引用或问答界面。
-- OpenAPI 提供健康、来源创建/上传/摄入、任务查询/取消/重试，以及
-  `POST /api/v1/spaces/{space_id}/search`。
-- PostgreSQL 有 `spaces`、`sources`、`documents`、`document_versions`、`chunks` 和
-  `ingestion_tasks` 六张业务表；`chunks` 含 768 维 pgvector、IVFFlat 和阶段 3 FTS 列/索引。
+- Web 提供系统健康、数据来源/摄入任务和 provisional 知识问答；Citation 可按需解析固定版本原文。
+- OpenAPI 提供健康、来源创建/上传/摄入、任务查询/取消/重试、检索、provisional QA/Citation，
+  以及只读 Skill/版本查询。
+- PostgreSQL 除摄入/检索表外，已有 QA Conversation、Message、Run/Attempt、Evidence、Citation、
+  Feedback 和 SSE Event 持久化；`chunks` 含 768 维 pgvector、IVFFlat 和阶段 3 FTS 列/索引。
 - `ModelGateway` 的 `fast_chat` 能力当前只提供非流式完整响应；阶段 4 的 SSE、断线重连、取消和最终
   结构校验仍是待设计协议，不能假设 Provider 原生流式语义已经存在。
-- 摄入已按 `docs/stage-2-acceptance.md` 完成内部冻结语料正式验收；阶段 3 已终止但正式质量
-  门禁未通过，不得宣称正式检索基线、引用问答或产品闭环达标。
-- 阶段 5 只有离线通用 Runtime/Registry 和合成 fake 契约，不能宣称 `knowledge_qa` 或其他
-  业务 Skill 可用。
-- ADR-001～006、ADR-009 和 ADR-010 已接受；除非触发其重新评估条件，不重复讨论已固定基线。ADR-007
-  保留给阶段 4 的 Grounded QA、持久化和 SSE/后台执行协议。
+- 摄入已按 `docs/stage-2-acceptance.md` 完成内部冻结语料正式验收；检索仍未关闭真实模型与
+  holdout 门禁，不得宣称正式检索基线、引用问答或产品闭环达标。阶段 3 已按 ADR-010 终止，
+  当前不得运行既有 holdout。
+- 阶段 5 的 `knowledge_qa 0.1.0` 已作为 active provisional Skill 复用现有 QA Web/API/Worker；
+  不得据此宣称正式质量基线、通用 Runtime 持久化或阶段 5 整体退出。
+- `summarize_document`、`compare_sources` 和 `create_review_cards 0.1.0` 已通过现有 QA API/Worker
+  提供 provisional 只读执行；Run 固定 Source/Document/DocumentVersion，复习卡写入仍明确阻塞且
+  必须保持零副作用。
+- Step 10 已形成 `docs/stage-5-acceptance.md` provisional 验收记录；该记录不替代 Stage 3/4
+  正式质量门禁，也不代表阶段 5 正式退出。
+- ADR-001～007 和 ADR-009 已接受；除非触发其重新评估条件，不重复讨论已固定基线。
 
 当前事实的权威文档：
 
@@ -139,8 +144,10 @@
 - 每次运行限制工具白名单、最大步骤、超时和 Token。
 - Skill 是包含 manifest、workflow、prompt、schema、eval 和版本的工作流包，不是单个 prompt 文件。
 - 运行开始后固定 Skill 版本；旧版本必须可回滚。
-- 阶段 5 通用 Runtime 不得直接接入 API/Worker 或复制业务问答逻辑；等待阶段 4 提供唯一 QA
-  Application Port、Conversation/AgentRun/Evidence 持久化和 SSE/取消协议。
+- 阶段 5 `knowledge_qa` 只通过已存在的唯一 QA Application Port 和 QA Run 身份接入现有 Worker；
+  不得复制业务问答逻辑或新增平行 Runtime Run、持久化、SSE/取消协议。
+- 知识整理 Skill 同样只复用该 QA Run/Worker/SSE；`compare_sources` 至少需要两个来源的 Citation，
+  `create_review_cards` 在稳定派生知识 Application Port 和持久确认存在前只能生成预览。
 
 ## 4. 技术基线
 

@@ -19,10 +19,10 @@ dataset:
       content_sha256: ec56aa778587f0b66b78a2aa2d55dad04e187930f1b75423bb42b5d31a077b28
 profile:
   path: cases/evals/configs/qa-profile-v1.yaml
-  sha256: 962666479786b6156345c76e0dfc7bcc28b991cb75a3c35186e39eed16462f3c
+  sha256: f5fa98807d3b69b4b873c9fcdad40dfcf70cbd5c976f69de83847d36f73805a0
 prompt:
   path: cases/evals/prompts/grounded-qa-v1-provisional.txt
-  sha256: a5a3ee3bc48ae53cbc066afadaf37be92faeebc449596ddaf7a7582bc6df8b72
+  sha256: a05344c70c2b56fddd3d575f5a452260a4d981c18c9e0975652d3494611d74a8
   template_id: grounded-qa-v1-provisional
 protocol:
   outcome_labels:

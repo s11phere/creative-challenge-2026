@@ -8,9 +8,10 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .contracts import ModelErrorCode, ModelGateway, ModelProvider
+from .contracts import CapabilityAlias, ModelErrorCode, ModelGateway, ModelProvider
 from .fake import FakeModelGateway, FakeScenario
 from .openai_compatible import OpenAICompatibleGateway
+from .routed import CapabilityRoutedModelGateway
 from .unavailable import UnavailableModelGateway
 
 
@@ -30,11 +31,16 @@ class GatewayConfig:
     reranker_model: str | None = None
     allow_external: bool = False
     timeout_seconds: float = 15.0
+    fast_chat_timeout_seconds: float = 120.0
+    fast_chat_reasoning_enabled: bool = False
     max_retries: int = 2
     retry_backoff_seconds: float = 0.1
     reranker_batch_size: int = 32
     fake_scenario: FakeScenario = FakeScenario.NORMAL
     embedding_protocol: str = "openai-compatible"
+    embedding_provider: ModelProvider | None = None
+    fake_embedding: bool = False
+    fake_reranker: bool = False
 
 
 def create_model_gateway(
@@ -64,25 +70,15 @@ def create_model_gateway(
             config.reranker_model,
             allow_external=config.allow_external,
         )
-        return OpenAICompatibleGateway(
-            embedding_endpoint=endpoint if error is None else None,
-            embedding_model=config.embedding_model,
-            reranker_endpoint=reranker_endpoint if reranker_error is None else None,
-            reranker_api_key=config.reranker_api_key or config.api_key,
-            reranker_model=config.reranker_model,
-            embedding_api_key=config.embedding_api_key or config.api_key,
-            embedding_status_code=status,
-            embedding_error_code=error or ModelErrorCode.UNAVAILABLE,
-            reranker_status_code=reranker_status,
-            reranker_error_code=reranker_error or ModelErrorCode.UNAVAILABLE,
-            timeout_seconds=config.timeout_seconds,
-            max_retries=config.max_retries,
-            retry_backoff_seconds=config.retry_backoff_seconds,
-            reranker_batch_size=config.reranker_batch_size,
+        gateway = _create_tei_gateway(
+            config,
             client=client,
-            provider=ModelProvider.TEXT_EMBEDDINGS_INFERENCE,
-            embedding_protocol="tei",
+            embedding_status=status,
+            embedding_error=error,
+            reranker_status=reranker_status,
+            reranker_error=reranker_error,
         )
+        return _with_fake_fallback(gateway, config)
     chat_endpoint = config.fast_chat_endpoint or config.endpoint
     embedding_endpoint = config.embedding_endpoint or config.endpoint
     chat_status, chat_error = _capability_configuration_status(
@@ -101,7 +97,7 @@ def create_model_gateway(
         config.reranker_model,
         allow_external=config.allow_external,
     )
-    return OpenAICompatibleGateway(
+    gateway = OpenAICompatibleGateway(
         endpoint=None,
         fast_chat_endpoint=chat_endpoint if chat_error is None else None,
         embedding_endpoint=embedding_endpoint if embedding_error is None else None,
@@ -122,10 +118,84 @@ def create_model_gateway(
         provider=config.provider,
         embedding_protocol=config.embedding_protocol,
         timeout_seconds=config.timeout_seconds,
+        fast_chat_timeout_seconds=config.fast_chat_timeout_seconds,
+        fast_chat_reasoning_enabled=config.fast_chat_reasoning_enabled,
         max_retries=config.max_retries,
         retry_backoff_seconds=config.retry_backoff_seconds,
         reranker_batch_size=config.reranker_batch_size,
         client=client,
+    )
+    routed: ModelGateway = gateway
+    if config.embedding_provider is ModelProvider.TEXT_EMBEDDINGS_INFERENCE:
+        status, error = _capability_configuration_status(
+            config.embedding_endpoint,
+            config.embedding_model,
+            allow_external=config.allow_external,
+        )
+        embedding_gateway = _create_tei_gateway(
+            config,
+            client=client,
+            embedding_status=status,
+            embedding_error=error,
+            reranker_status="MODEL_CONFIGURATION_MISSING",
+            reranker_error=ModelErrorCode.UNAVAILABLE,
+        )
+        routed = CapabilityRoutedModelGateway(
+            primary=routed,
+            fallback=embedding_gateway,
+            fallback_capabilities=frozenset({CapabilityAlias.EMBEDDING_ZH}),
+        )
+    return _with_fake_fallback(routed, config)
+
+
+def _create_tei_gateway(
+    config: GatewayConfig,
+    *,
+    client: httpx.AsyncClient | None,
+    embedding_status: str,
+    embedding_error: ModelErrorCode | None,
+    reranker_status: str,
+    reranker_error: ModelErrorCode | None,
+) -> ModelGateway:
+    return OpenAICompatibleGateway(
+        embedding_endpoint=(
+            config.embedding_endpoint or config.endpoint if embedding_error is None else None
+        ),
+        embedding_model=config.embedding_model,
+        reranker_endpoint=config.reranker_endpoint if reranker_error is None else None,
+        reranker_api_key=config.reranker_api_key or config.api_key,
+        reranker_model=config.reranker_model,
+        embedding_api_key=config.embedding_api_key or config.api_key,
+        embedding_status_code=embedding_status,
+        embedding_error_code=embedding_error or ModelErrorCode.UNAVAILABLE,
+        reranker_status_code=reranker_status,
+        reranker_error_code=reranker_error or ModelErrorCode.UNAVAILABLE,
+        timeout_seconds=config.timeout_seconds,
+        fast_chat_timeout_seconds=config.fast_chat_timeout_seconds,
+        fast_chat_reasoning_enabled=config.fast_chat_reasoning_enabled,
+        max_retries=config.max_retries,
+        retry_backoff_seconds=config.retry_backoff_seconds,
+        client=client,
+        provider=ModelProvider.TEXT_EMBEDDINGS_INFERENCE,
+        embedding_protocol="tei",
+    )
+
+
+def _with_fake_fallback(gateway: ModelGateway, config: GatewayConfig) -> ModelGateway:
+    capabilities = frozenset(
+        capability
+        for enabled, capability in (
+            (config.fake_embedding, CapabilityAlias.EMBEDDING_ZH),
+            (config.fake_reranker, CapabilityAlias.RERANKER_MULTILINGUAL),
+        )
+        if enabled
+    )
+    if not capabilities:
+        return gateway
+    return CapabilityRoutedModelGateway(
+        primary=gateway,
+        fallback=FakeModelGateway(scenario=config.fake_scenario),
+        fallback_capabilities=capabilities,
     )
 
 
