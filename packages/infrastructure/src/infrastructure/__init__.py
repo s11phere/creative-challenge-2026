@@ -26,6 +26,7 @@ from .repositories import (
 )
 from .retrieval import DensePathComparison, DenseSearchMode, PostgresRetrievalStore
 from .runtime_approval import (
+    ApprovalRecord,
     DerivedKnowledgeRecord,
     PostgresApprovalPort,
     PostgresDerivedKnowledgeStore,
@@ -53,6 +54,7 @@ __all__ = [
     "PostgresSkillReferenceChecker",
     "SkillReferenceReport",
     "DerivedKnowledgeRecord",
+    "ApprovalRecord",
     "PostgresApprovalPort",
     "PostgresDerivedKnowledgeStore",
     "SourceModel",

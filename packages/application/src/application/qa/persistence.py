@@ -24,6 +24,8 @@ from domain.qa_persistence import (
     ConversationRecord,
     EvidenceRecord,
     FeedbackRecord,
+    FeedbackReviewRecord,
+    FeedbackReviewStatus,
     MessageRecord,
     MessageRole,
     QARunRecord,
@@ -380,6 +382,66 @@ class InMemoryGroundedQARepository:
             self._feedback[feedback.feedback_id] = feedback
             self._feedback_keys[key] = feedback.feedback_id
             return feedback
+
+    async def get_feedback(self, feedback_id: UUID) -> FeedbackRecord | None:
+        async with self._lock:
+            return self._feedback.get(feedback_id)
+
+    async def list_feedback(
+        self, space_id: UUID, review_status: FeedbackReviewStatus | None = None
+    ) -> tuple[FeedbackRecord, ...]:
+        async with self._lock:
+            records = [
+                record
+                for record in self._feedback.values()
+                if record.space_id == space_id
+                and (review_status is None or record.review_status is review_status)
+            ]
+            return tuple(
+                sorted(records, key=lambda record: (record.created_at, str(record.feedback_id)))
+            )
+
+    async def review_feedback(self, review: FeedbackReviewRecord) -> FeedbackRecord:
+        async with self._lock:
+            current = self._feedback.get(review.feedback_id)
+            if current is None:
+                raise QAContractError("Feedback not found")
+            if current.space_id != review.space_id:
+                raise QAContractError("Feedback does not belong to the requested Space")
+            evidence_ids = {
+                evidence.candidate.evidence_id
+                for (attempt_id, _evidence_id), evidence in self._evidence.items()
+                if attempt_id == current.attempt_id
+            }
+            if not set(review.approved_evidence_ids).issubset(evidence_ids):
+                raise QAContractError("Feedback review Evidence does not belong to the QA attempt")
+            if current.review_status is not FeedbackReviewStatus.PENDING_REVIEW:
+                if (
+                    current.review_status is review.review_status
+                    and current.reviewer_id == review.reviewer_id
+                    and current.authorization_confirmed == review.authorization_confirmed
+                    and current.redaction_complete == review.redaction_complete
+                    and current.expected_behavior == review.expected_behavior
+                    and current.approved_evidence_ids == review.approved_evidence_ids
+                    and current.gold_answer_sha256 == review.gold_answer_sha256
+                    and current.rejection_reason == review.rejection_reason
+                ):
+                    return current
+                raise QAContractError("Feedback has already been reviewed")
+            updated = replace(
+                current,
+                review_status=review.review_status,
+                reviewer_id=review.reviewer_id,
+                reviewed_at=review.reviewed_at,
+                authorization_confirmed=review.authorization_confirmed,
+                redaction_complete=review.redaction_complete,
+                expected_behavior=review.expected_behavior,
+                approved_evidence_ids=review.approved_evidence_ids,
+                gold_answer_sha256=review.gold_answer_sha256,
+                rejection_reason=review.rejection_reason,
+            )
+            self._feedback[review.feedback_id] = updated
+            return updated
 
     def _validate_message_owner(self, message: MessageRecord) -> None:
         conversation = self._require_conversation(message.conversation_id)

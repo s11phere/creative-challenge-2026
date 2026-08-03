@@ -12,6 +12,8 @@ import {
   Search,
   ShieldCheck,
   Square,
+  ThumbsDown,
+  ThumbsUp,
   Workflow,
   X,
 } from 'lucide-react'
@@ -28,6 +30,9 @@ import {
   requestApproval,
   resumeRun,
   submitQuestion,
+  submitOrganizationSkill,
+  submitFeedback,
+  type FeedbackDecision,
   type QASkillName,
   type QARun,
   type ConversationHistoryItem,
@@ -105,12 +110,16 @@ export function QAWorkspace({
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null)
   const [selectedSkill, setSelectedSkill] = useState<QASkillName>('knowledge_agent')
   const [selectedSourceId, setSelectedSourceId] = useState('')
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([])
   const [selectedDocumentId, setSelectedDocumentId] = useState('')
   const [focus, setFocus] = useState('')
   const [approval, setApproval] = useState<Awaited<ReturnType<typeof requestApproval>> | null>(null)
+  const [feedbackDecision, setFeedbackDecision] = useState<FeedbackDecision | null>(null)
+  const [feedbackNote, setFeedbackNote] = useState('')
   const excerptRef = useRef<HTMLDivElement>(null)
   const historyInitializedRef = useRef(false)
   const queryClient = useQueryClient()
+
 
   const skillsQuery = useQuery({
     queryKey: ['skills'],
@@ -165,6 +174,8 @@ export function QAWorkspace({
       setLocalQuestions([])
       setRecoveredQuestionId(null)
       setApproval(null)
+      setFeedbackDecision(null)
+      setFeedbackNote('')
       setSelectedEvidenceId(null)
       return
     }
@@ -198,6 +209,8 @@ export function QAWorkspace({
     if (
       skillName === 'knowledge_agent' ||
       skillName === 'knowledge_qa' ||
+      skillName === 'summarize_document' ||
+      skillName === 'compare_sources' ||
       skillName === 'create_review_cards'
     ) {
       setSelectedSkill(skillName)
@@ -205,16 +218,18 @@ export function QAWorkspace({
   }, [currentRun?.skill?.name])
 
   const activeSkill = skillsQuery.data?.find((skill) => skill.name === selectedSkill)
+  const isDocumentSkill = selectedSkill === 'summarize_document' || selectedSkill === 'create_review_cards'
+  const isOrganizationSkill = isDocumentSkill || selectedSkill === 'compare_sources'
   const sourcesQuery = useQuery({
     queryKey: ['sources'],
     queryFn: ({ signal }) => fetchSources(signal),
-    enabled: selectedSkill === 'create_review_cards',
+    enabled: isOrganizationSkill,
     retry: false,
   })
   const sourceDetailQuery = useQuery<SourceDetail>({
     queryKey: ['source', selectedSourceId],
     queryFn: ({ signal }) => fetchSourceDetail(selectedSourceId, signal),
-    enabled: selectedSkill === 'create_review_cards' && Boolean(selectedSourceId),
+    enabled: isDocumentSkill && Boolean(selectedSourceId),
     retry: false,
   })
   const displayedSkill = currentRun?.skill ?? {
@@ -281,6 +296,19 @@ export function QAWorkspace({
             focus.trim() || undefined,
             idempotencyKey,
           )
+        : selectedSkill === 'summarize_document'
+          ? await submitOrganizationSkill(currentConversationId, selectedSkill, {
+              documentId: selectedDocumentId,
+              versionId: sourceDetailQuery.data?.documents.find((doc) => doc.id === selectedDocumentId)?.current_version_id ?? undefined,
+              focus: focus.trim() || undefined,
+              idempotencyKey,
+            })
+          : selectedSkill === 'compare_sources'
+            ? await submitOrganizationSkill(currentConversationId, selectedSkill, {
+                sourceIds: selectedSourceIds,
+                focus: focus.trim() || undefined,
+                idempotencyKey,
+              })
         : await submitQuestion(currentConversationId, text, idempotencyKey, selectedSkill)
       return { text, run }
     },
@@ -295,6 +323,8 @@ export function QAWorkspace({
       setSelectedQuestionId(run.question_message_id)
       setRecoveredQuestionId(null)
       setApproval(null)
+      setFeedbackDecision(null)
+      setFeedbackNote('')
       setSelectedEvidenceId(null)
       setDraft('')
       void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
@@ -320,14 +350,31 @@ export function QAWorkspace({
     onSuccess: setApproval,
   })
 
+  const feedbackMutation = useMutation({
+    mutationFn: ({ decision, note }: { decision: FeedbackDecision; note: string }) =>
+      submitFeedback(currentRun!.run_id, decision, crypto.randomUUID(), note),
+    onError: () => {
+      setFeedbackDecision(null)
+    },
+  })
+
+  const submitFeedbackDecision = (decision: FeedbackDecision) => {
+    setFeedbackDecision(decision)
+    feedbackMutation.mutate({ decision, note: feedbackNote })
+  }
+
   const chooseSkill = (skill: QASkillName) => {
     if (isActive || submitMutation.isPending) return
     setSelectedSkill(skill)
+    setSelectedSourceId('')
+    setSelectedSourceIds([])
     setConversationId(null)
     setSelectedQuestionId(null)
     setLocalQuestions([])
     setRecoveredQuestionId(null)
     setApproval(null)
+    setFeedbackDecision(null)
+    setFeedbackNote('')
     setSelectedEvidenceId(null)
   }
 
@@ -335,6 +382,8 @@ export function QAWorkspace({
     setSelectedQuestionId(question.id)
     setRecoveredQuestionId(question.id)
     setApproval(null)
+    setFeedbackDecision(null)
+    setFeedbackNote('')
     setSelectedEvidenceId(null)
   }
 
@@ -351,16 +400,18 @@ export function QAWorkspace({
   })
 
   const errorMessage = useMemo(() => {
-    const error = submitMutation.error ?? runQuery.error ?? cancelMutation.error ?? resumeMutation.error ?? approvalMutation.error ?? decisionMutation.error
+    const error = submitMutation.error ?? runQuery.error ?? cancelMutation.error ?? resumeMutation.error ?? approvalMutation.error ?? decisionMutation.error ?? feedbackMutation.error
     return error instanceof Error ? error.message : null
-  }, [approvalMutation.error, cancelMutation.error, decisionMutation.error, resumeMutation.error, runQuery.error, submitMutation.error])
+  }, [approvalMutation.error, cancelMutation.error, decisionMutation.error, feedbackMutation.error, resumeMutation.error, runQuery.error, submitMutation.error])
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const text = draft.trim()
-    if (!text || submitMutation.isPending || isActive) return
-    if (selectedSkill === 'create_review_cards' && (!selectedDocumentId || !sourceDetailQuery.data?.documents.find((doc) => doc.id === selectedDocumentId)?.current_version_id)) return
-    submitMutation.mutate(text)
+    if ((!text && !isOrganizationSkill) || submitMutation.isPending || isActive) return
+    if (isDocumentSkill && (!selectedDocumentId || !sourceDetailQuery.data?.documents.find((doc) => doc.id === selectedDocumentId)?.current_version_id)) return
+    if (selectedSkill === 'compare_sources' && selectedSourceIds.length < 2) return
+    const submissionText = text || focus.trim() || (selectedSkill === 'compare_sources' ? '比较所选来源' : '生成文档摘要')
+    submitMutation.mutate(submissionText)
   }
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -399,24 +450,51 @@ export function QAWorkspace({
             <button type="button" aria-pressed={selectedSkill === 'knowledge_qa'} onClick={() => chooseSkill('knowledge_qa')} disabled={submitMutation.isPending || isActive}>
               <Search size={16} aria-hidden="true" />直接问答
             </button>
+            <button type="button" aria-pressed={selectedSkill === 'summarize_document'} onClick={() => chooseSkill('summarize_document')} disabled={submitMutation.isPending || isActive}>
+              <FileText size={16} aria-hidden="true" />摘要文档
+            </button>
+            <button type="button" aria-pressed={selectedSkill === 'compare_sources'} onClick={() => chooseSkill('compare_sources')} disabled={submitMutation.isPending || isActive}>
+              <BookOpenText size={16} aria-hidden="true" />比较来源
+            </button>
             <button type="button" aria-pressed={selectedSkill === 'create_review_cards'} onClick={() => chooseSkill('create_review_cards')} disabled={submitMutation.isPending || isActive}>
               <Workflow size={16} aria-hidden="true" />复习卡
             </button>
           </div>
-          {selectedSkill === 'create_review_cards' && !currentQuestion && (
+          {isDocumentSkill && !currentQuestion && (
             <div className="qa-skill-config">
-              <label htmlFor="review-source">来源</label>
-              <select id="review-source" value={selectedSourceId} onChange={(event) => { setSelectedSourceId(event.target.value); setSelectedDocumentId('') }}>
+              <label htmlFor="document-source">来源</label>
+              <select id="document-source" value={selectedSourceId} onChange={(event) => { setSelectedSourceId(event.target.value); setSelectedDocumentId('') }}>
                 <option value="">选择来源</option>
                 {sourcesQuery.data?.sources.map((source) => <option key={source.id} value={source.id}>{source.uri}</option>)}
               </select>
-              <label htmlFor="review-document">固定文档版本</label>
-              <select id="review-document" value={selectedDocumentId} onChange={(event) => setSelectedDocumentId(event.target.value)} disabled={!sourceDetailQuery.data}>
+              <label htmlFor="document-version">固定文档版本</label>
+              <select id="document-version" value={selectedDocumentId} onChange={(event) => setSelectedDocumentId(event.target.value)} disabled={!sourceDetailQuery.data}>
                 <option value="">选择文档</option>
                 {sourceDetailQuery.data?.documents.filter((doc) => doc.current_version_id).map((doc) => <option key={doc.id} value={doc.id}>{doc.display_name}</option>)}
               </select>
-              <label htmlFor="review-focus">重点（可选）</label>
-              <input id="review-focus" value={focus} onChange={(event) => setFocus(event.target.value)} maxLength={1000} />
+              <label htmlFor="document-focus">重点（可选）</label>
+              <input id="document-focus" value={focus} onChange={(event) => setFocus(event.target.value)} maxLength={1000} />
+            </div>
+          )}
+          {selectedSkill === 'compare_sources' && !currentQuestion && (
+            <div className="qa-skill-config">
+              <label htmlFor="compare-sources">选择至少两个来源</label>
+              <div id="compare-sources" className="qa-source-checks" role="group" aria-label="来源列表">
+                {sourcesQuery.data?.sources.map((source) => (
+                  <label key={source.id}>
+                    <input
+                      type="checkbox"
+                      checked={selectedSourceIds.includes(source.id)}
+                      onChange={(event) => setSelectedSourceIds((current) => event.target.checked
+                        ? [...current, source.id]
+                        : current.filter((id) => id !== source.id))}
+                    />
+                    <span>{source.uri}</span>
+                  </label>
+                ))}
+              </div>
+              <label htmlFor="compare-focus">重点（可选）</label>
+              <input id="compare-focus" value={focus} onChange={(event) => setFocus(event.target.value)} maxLength={1000} />
             </div>
           )}
           {!currentQuestion ? (
@@ -444,6 +522,45 @@ export function QAWorkspace({
                       <div className="qa-answer">
                         <p>{itemRun.result.text ?? itemRun.result.message}</p>
                         {itemRun.result.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}
+                      </div>
+                    )}
+                    {item.id === currentQuestion.id && itemRun?.status === 'completed' && itemRun.result?.type === 'answer' && (
+                      <div className="qa-feedback" aria-label="回答反馈">
+                        <span>回答反馈</span>
+                        <div className="qa-feedback-actions">
+                          <button
+                            type="button"
+                            className="icon-button"
+                            aria-label="回答有帮助"
+                            title="回答有帮助"
+                            aria-pressed={feedbackDecision === 'positive'}
+                            onClick={() => submitFeedbackDecision('positive')}
+                            disabled={feedbackMutation.isPending || feedbackDecision !== null}
+                          >
+                            <ThumbsUp size={16} aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-button"
+                            aria-label="回答需要改进"
+                            title="回答需要改进"
+                            aria-pressed={feedbackDecision === 'negative'}
+                            onClick={() => submitFeedbackDecision('negative')}
+                            disabled={feedbackMutation.isPending || feedbackDecision !== null}
+                          >
+                            <ThumbsDown size={16} aria-hidden="true" />
+                          </button>
+                        </div>
+                        <textarea
+                          aria-label="反馈说明（可选）"
+                          value={feedbackNote}
+                          onChange={(event) => setFeedbackNote(event.target.value)}
+                          maxLength={2000}
+                          rows={2}
+                          placeholder="补充说明（可选）"
+                          disabled={feedbackMutation.isPending || feedbackDecision !== null}
+                        />
+                        {feedbackDecision && <span className="qa-feedback-status" role="status">反馈已提交，等待审核</span>}
                       </div>
                     )}
                   </article>
@@ -499,7 +616,7 @@ export function QAWorkspace({
                 <Square size={15} fill="currentColor" />取消
               </button>
             ) : (
-              <button className="qa-send-button" type="submit" disabled={!draft.trim() || submitMutation.isPending || (selectedSkill === 'create_review_cards' && !selectedDocumentId)}>
+      <button className="qa-send-button" type="submit" disabled={(!draft.trim() && !isOrganizationSkill) || submitMutation.isPending || (isDocumentSkill && !selectedDocumentId) || (selectedSkill === 'compare_sources' && selectedSourceIds.length < 2)}>
                 {submitMutation.isPending ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}提问
               </button>
             )}

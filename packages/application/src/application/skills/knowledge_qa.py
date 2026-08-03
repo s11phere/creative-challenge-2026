@@ -304,7 +304,7 @@ def _project_run(
     if preview_only_write:
         payload["write"] = {
             "status": "blocked",
-            "code": "SKILL_WRITE_PORT_UNAVAILABLE",
+            "code": "SKILL_WRITE_REQUIRES_APPROVAL",
             "side_effects": 0,
         }
     if result.outcome is QAOutcome.ANSWER and result.answer is not None:

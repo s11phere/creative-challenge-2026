@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -16,6 +16,8 @@ from domain.qa_persistence import (
     ConversationRecord,
     FeedbackDecision,
     FeedbackRecord,
+    FeedbackReviewRecord,
+    FeedbackReviewStatus,
     GroundedQARepository,
     MessageRecord,
     MessageRole,
@@ -25,7 +27,7 @@ from domain.qa_persistence import (
 from domain.qa_sse import QAEventStore, QAEventType
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..errors import AppError
 
@@ -45,6 +47,44 @@ class ConversationResponse(BaseModel):
 class QuestionRequest(BaseModel):
     question: str = Field(min_length=1, max_length=12000)
     idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class RunCreateRequest(BaseModel):
+    """Generic Run facade for every server-registered knowledge Skill."""
+
+    skill_name: Literal[
+        "knowledge_qa",
+        "knowledge_agent",
+        "summarize_document",
+        "compare_sources",
+        "create_review_cards",
+    ] = "knowledge_qa"
+    conversation_id: UUID
+    question: str | None = Field(default=None, max_length=12000)
+    document_id: UUID | None = None
+    version_id: UUID | None = None
+    source_ids: list[UUID] | None = Field(default=None, min_length=2, max_length=8)
+    focus: str | None = Field(default=None, min_length=1, max_length=1000)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+    @field_validator("source_ids")
+    @classmethod
+    def unique_sources(cls, value: list[UUID] | None) -> list[UUID] | None:
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("source_ids must be unique")
+        return value
+
+    @model_validator(mode="after")
+    def validate_skill_input(self) -> RunCreateRequest:
+        if self.skill_name in {"knowledge_qa", "knowledge_agent"}:
+            if not self.question or not self.question.strip():
+                raise ValueError("question is required for this Skill")
+        elif self.skill_name in {"summarize_document", "create_review_cards"}:
+            if self.document_id is None or self.version_id is None:
+                raise ValueError("document_id and version_id are required for this Skill")
+        elif self.source_ids is None:
+            raise ValueError("source_ids are required for compare_sources")
+        return self
 
 
 class AnswerResultResponse(BaseModel):
@@ -153,25 +193,86 @@ class FeedbackResponse(BaseModel):
     run_id: UUID
     message_id: UUID
     review_status: str
+    space_id: UUID
+    decision: FeedbackDecision
+    created_at: datetime
+    reviewer_id: str | None = None
+    reviewed_at: datetime | None = None
+    authorization_confirmed: bool = False
+    redaction_complete: bool = False
+    expected_behavior: str | None = None
+    approved_evidence_ids: list[UUID] = Field(default_factory=list)
+    gold_answer_sha256: str | None = None
+    rejection_reason: str | None = None
+
+
+class FeedbackReviewRequest(BaseModel):
+    review_status: Literal["accepted", "rejected"]
+    reviewer_id: str = Field(min_length=1, max_length=255)
+    authorization_confirmed: bool = False
+    redaction_complete: bool = False
+    expected_behavior: Literal["answer", "refuse"] | None = None
+    approved_evidence_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    gold_answer_sha256: str | None = Field(default=None, min_length=64, max_length=64)
+    rejection_reason: str | None = Field(default=None, min_length=1, max_length=2000)
+
+    @field_validator("gold_answer_sha256")
+    @classmethod
+    def validate_digest(cls, value: str | None) -> str | None:
+        if value is not None and any(char not in "0123456789abcdef" for char in value):
+            raise ValueError("gold_answer_sha256 must be lowercase hexadecimal")
+        return value
 
 
 class ApprovalRequest(BaseModel):
-    tool_name: str = Field(min_length=1, max_length=255)
-    tool_version: str = Field(min_length=1, max_length=100)
+    tool_name: Literal["write_review_cards"]
+    tool_version: Literal["1.0.0"]
     idempotency_key: str = Field(min_length=1, max_length=200)
 
 
 class ApprovalDecisionRequest(BaseModel):
     approved: bool
     decided_by: str = Field(min_length=1, max_length=255)
+    expires_at: datetime | None = None
 
 
 class ApprovalResponse(BaseModel):
     approval_id: UUID
     run_id: UUID
-    status: Literal["pending", "approved", "rejected"]
+    status: Literal["pending", "approved", "rejected", "revoked", "expired"]
     side_effects: Literal[0, 1] = 0
     derived_knowledge_id: UUID | None = None
+
+
+class DerivedKnowledgeResponse(BaseModel):
+    item_id: UUID
+    run_id: UUID
+    space_id: UUID
+    kind: str
+    status: Literal["active", "revoked"]
+    citation_ids: list[str]
+    created_by: str
+    created_at: datetime
+    revoked_at: datetime | None = None
+    revoked_by: str | None = None
+
+
+class RevokeDerivedKnowledgeRequest(BaseModel):
+    revoked_by: str = Field(min_length=1, max_length=255)
+
+
+class ApprovalRecordResponse(BaseModel):
+    approval_id: UUID
+    run_id: UUID
+    status: Literal["pending", "approved", "rejected", "revoked", "expired"]
+    tool_name: str
+    tool_version: str
+    requested_at: datetime
+    decided_at: datetime | None = None
+    decided_by: str | None = None
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+    revoked_by: str | None = None
 
 
 class DocumentSkillRequest(BaseModel):
@@ -220,7 +321,7 @@ def _run_response(run: QARunRecord) -> RunResponse:
         write=(
             RunWriteResponse(
                 status="blocked",
-                code="SKILL_WRITE_PORT_UNAVAILABLE",
+                code="SKILL_WRITE_REQUIRES_APPROVAL",
                 side_effects=0,
             )
             if run.versions.skill_name == "create_review_cards"
@@ -228,6 +329,78 @@ def _run_response(run: QARunRecord) -> RunResponse:
         ),
         result=_result_payload(run),
         citations=_citation_payloads(run),
+    )
+
+
+async def _run_response_with_write(run: QARunRecord, request: Request) -> RunResponse:
+    response = _run_response(run)
+    if (
+        run.versions.skill_name == "create_review_cards"
+        and getattr(request.app.state.qa_repository, "_database", None) is not None
+    ):
+        item = await request.app.state.derived_knowledge_store.get(run.run_id)
+        if item is not None:
+            response.write = RunWriteResponse(
+                status="persisted" if item.status == "active" else "blocked",
+                code=None if item.status == "active" else "DERIVED_KNOWLEDGE_REVOKED",
+                side_effects=1 if item.status == "active" else 0,
+            )
+    return response
+
+
+def _approval_response(record: object, *, run_id: UUID) -> ApprovalRecordResponse:
+    status = record.status  # type: ignore[attr-defined]
+    expires_at = record.expires_at  # type: ignore[attr-defined]
+    if status == "approved" and expires_at is not None and expires_at <= datetime.now(UTC):
+        status = "expired"
+    return ApprovalRecordResponse(
+        approval_id=record.approval_id,  # type: ignore[attr-defined]
+        run_id=run_id,
+        status=status,
+        tool_name=record.tool_name,  # type: ignore[attr-defined]
+        tool_version=record.tool_version,  # type: ignore[attr-defined]
+        requested_at=record.requested_at,  # type: ignore[attr-defined]
+        decided_at=record.decided_at,  # type: ignore[attr-defined]
+        decided_by=record.decided_by,  # type: ignore[attr-defined]
+        expires_at=expires_at,
+        revoked_at=record.revoked_at,  # type: ignore[attr-defined]
+        revoked_by=record.revoked_by,  # type: ignore[attr-defined]
+    )
+
+
+def _derived_response(record: object) -> DerivedKnowledgeResponse:
+    return DerivedKnowledgeResponse(
+        item_id=record.id,  # type: ignore[attr-defined]
+        run_id=record.run_id,  # type: ignore[attr-defined]
+        space_id=record.space_id,  # type: ignore[attr-defined]
+        kind=record.kind,  # type: ignore[attr-defined]
+        status=record.status,  # type: ignore[attr-defined]
+        citation_ids=list(record.citation_ids),  # type: ignore[attr-defined]
+        created_by=record.created_by,  # type: ignore[attr-defined]
+        created_at=record.created_at,  # type: ignore[attr-defined]
+        revoked_at=record.revoked_at,  # type: ignore[attr-defined]
+        revoked_by=record.revoked_by,  # type: ignore[attr-defined]
+    )
+
+
+def _feedback_response(feedback: FeedbackRecord) -> FeedbackResponse:
+    """Expose feedback review metadata without question, answer, note, or excerpts."""
+    return FeedbackResponse(
+        feedback_id=feedback.feedback_id,
+        run_id=feedback.run_id,
+        message_id=feedback.message_id,
+        review_status=feedback.review_status.value,
+        space_id=feedback.space_id,
+        decision=feedback.decision,
+        created_at=feedback.created_at,
+        reviewer_id=feedback.reviewer_id,
+        reviewed_at=feedback.reviewed_at,
+        authorization_confirmed=feedback.authorization_confirmed,
+        redaction_complete=feedback.redaction_complete,
+        expected_behavior=feedback.expected_behavior,
+        approved_evidence_ids=list(feedback.approved_evidence_ids),
+        gold_answer_sha256=feedback.gold_answer_sha256,
+        rejection_reason=feedback.rejection_reason,
     )
 
 
@@ -405,6 +578,65 @@ async def submit_question(
     return _run_response(run)
 
 
+@router.post("/runs", response_model=RunResponse, status_code=202)
+async def create_run(body: RunCreateRequest, request: Request) -> RunResponse:
+    """Create a Run through the same QA Application used by every Skill entry point."""
+    conversation = await _conversation(request, body.conversation_id)
+    if body.skill_name in {"summarize_document", "create_review_cards"}:
+        assert body.document_id is not None and body.version_id is not None
+        try:
+            scope = await request.app.state.organization_scope.document_scope(
+                space_id=conversation.space_id,
+                document_id=body.document_id,
+                version_id=body.version_id,
+            )
+        except OrganizationScopeError as exc:
+            raise AppError(exc.code.value, str(exc), 409) from exc
+        prefix = (
+            "Summarize the selected fixed document version."
+            if body.skill_name == "summarize_document"
+            else "Create a citation-backed review-card preview from the selected version."
+        )
+        focus = f" Focus on: {body.focus}" if body.focus else ""
+        return await _submit_scoped_skill(
+            request,
+            conversation,
+            skill_name=body.skill_name,
+            question=f"{prefix}{focus}",
+            idempotency_key=body.idempotency_key,
+            scope=scope,
+        )
+    if body.skill_name == "compare_sources":
+        assert body.source_ids is not None
+        try:
+            scope = await request.app.state.organization_scope.sources_scope(
+                space_id=conversation.space_id,
+                source_ids=frozenset(body.source_ids),
+            )
+        except OrganizationScopeError as exc:
+            raise AppError(exc.code.value, str(exc), 409) from exc
+        focus = f" Focus on: {body.focus}" if body.focus else ""
+        return await _submit_scoped_skill(
+            request,
+            conversation,
+            skill_name=body.skill_name,
+            question=(
+                "Compare the selected fixed sources and distinguish agreement, conflict, and gaps."
+                f"{focus}"
+            ),
+            idempotency_key=body.idempotency_key,
+            scope=scope,
+        )
+    return await _submit_scoped_skill(
+        request,
+        conversation,
+        skill_name=body.skill_name,
+        question=normalize_question(body.question or ""),
+        idempotency_key=body.idempotency_key,
+        scope=QARetrievalScope(),
+    )
+
+
 @router.post(
     "/conversations/{conversation_id}/skills/knowledge_agent/runs",
     response_model=RunResponse,
@@ -569,7 +801,12 @@ async def get_run(run_id: UUID, request: Request) -> RunResponse:
     run = await repo.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    return _run_response(run)
+    return await _run_response_with_write(run, request)
+
+
+@router.get("/runs/{run_id}", response_model=RunResponse)
+async def get_generic_run(run_id: UUID, request: Request) -> RunResponse:
+    return await get_run(run_id, request)
 
 
 @router.get(
@@ -601,6 +838,18 @@ async def resolve_citation(
     )
 
 
+@router.get(
+    "/runs/{run_id}/citations/{evidence_id}",
+    response_model=CitationExcerptResponse,
+)
+async def resolve_generic_citation(
+    run_id: UUID,
+    evidence_id: UUID,
+    request: Request,
+) -> CitationExcerptResponse:
+    return await resolve_citation(run_id, evidence_id, request)
+
+
 @router.post("/qa/runs/{run_id}/cancel", response_model=RunResponse)
 async def cancel_run(run_id: UUID, request: Request) -> RunResponse:
     repo, events = _state(request)
@@ -609,7 +858,12 @@ async def cancel_run(run_id: UUID, request: Request) -> RunResponse:
     except Exception as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
     await events.append(run_id, QAEventType.CANCEL_REQUESTED, {"status": run.status.value})
-    return _run_response(run)
+    return await _run_response_with_write(run, request)
+
+
+@router.post("/runs/{run_id}/cancel", response_model=RunResponse)
+async def cancel_generic_run(run_id: UUID, request: Request) -> RunResponse:
+    return await cancel_run(run_id, request)
 
 
 @router.post("/qa/runs/{run_id}/approvals", response_model=ApprovalResponse, status_code=201)
@@ -641,7 +895,53 @@ async def request_approval(
             idempotency_key=body.idempotency_key,
         ),
     )
-    return ApprovalResponse(approval_id=UUID(approval_id), run_id=run_id, status="pending")
+    record = await request.app.state.approval_port.get(approval_id, run_id=run_id)
+    if record is None:
+        raise HTTPException(status_code=409, detail="Approval was not persisted")
+    return ApprovalResponse(approval_id=record.approval_id, run_id=run_id, status=record.status)
+
+
+@router.post("/runs/{run_id}/approvals", response_model=ApprovalResponse, status_code=201)
+async def request_generic_approval(
+    run_id: UUID, body: ApprovalRequest, request: Request
+) -> ApprovalResponse:
+    return await request_approval(run_id, body, request)
+
+
+@router.get(
+    "/qa/runs/{run_id}/approvals",
+    response_model=list[ApprovalRecordResponse],
+)
+async def list_approvals(run_id: UUID, request: Request) -> list[ApprovalRecordResponse]:
+    run = await request.app.state.qa_repository.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    records = await request.app.state.approval_port.list_for_run(run_id)
+    return [_approval_response(record, run_id=run_id) for record in records]
+
+
+@router.get(
+    "/qa/runs/{run_id}/approvals/{approval_id}",
+    response_model=ApprovalRecordResponse,
+)
+async def get_approval(run_id: UUID, approval_id: UUID, request: Request) -> ApprovalRecordResponse:
+    run = await request.app.state.qa_repository.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    record = await request.app.state.approval_port.get(str(approval_id), run_id=run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    return _approval_response(record, run_id=run_id)
+
+
+@router.get(
+    "/runs/{run_id}/approvals/{approval_id}",
+    response_model=ApprovalRecordResponse,
+)
+async def get_generic_approval(
+    run_id: UUID, approval_id: UUID, request: Request
+) -> ApprovalRecordResponse:
+    return await get_approval(run_id, approval_id, request)
 
 
 @router.post(
@@ -659,10 +959,16 @@ async def decide_approval(
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     decided = await request.app.state.approval_port.decide(
-        str(approval_id), approved=body.approved, decided_by=body.decided_by
+        str(approval_id),
+        approved=body.approved,
+        decided_by=body.decided_by,
+        expires_at=body.expires_at,
     )
     if not decided:
         raise HTTPException(status_code=409, detail="Approval is missing or already decided")
+    approval = await request.app.state.approval_port.get(str(approval_id), run_id=run_id)
+    if approval is None:
+        raise HTTPException(status_code=404, detail="Approval not found")
     derived_id = None
     side_effects: Literal[0, 1] = 0
     if (
@@ -690,10 +996,69 @@ async def decide_approval(
     return ApprovalResponse(
         approval_id=approval_id,
         run_id=run_id,
-        status="approved" if body.approved else "rejected",
+        status=approval.status,
         side_effects=side_effects,
         derived_knowledge_id=derived_id,
     )
+
+
+@router.post(
+    "/qa/runs/{run_id}/approvals/{approval_id}/revoke",
+    response_model=ApprovalResponse,
+)
+async def revoke_approval(
+    run_id: UUID,
+    approval_id: UUID,
+    body: ApprovalDecisionRequest,
+    request: Request,
+) -> ApprovalResponse:
+    run = await request.app.state.qa_repository.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    record = await request.app.state.approval_port.get(str(approval_id), run_id=run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    if not await request.app.state.approval_port.revoke(
+        str(approval_id), revoked_by=body.decided_by
+    ):
+        raise HTTPException(status_code=409, detail="Approval cannot be revoked")
+    updated = await request.app.state.approval_port.get(str(approval_id), run_id=run_id)
+    assert updated is not None
+    return ApprovalResponse(approval_id=approval_id, run_id=run_id, status=updated.status)
+
+
+@router.get(
+    "/runs/{run_id}/approvals",
+    response_model=list[ApprovalRecordResponse],
+)
+async def list_generic_approvals(run_id: UUID, request: Request) -> list[ApprovalRecordResponse]:
+    return await list_approvals(run_id, request)
+
+
+@router.post(
+    "/runs/{run_id}/approvals/{approval_id}/decision",
+    response_model=ApprovalResponse,
+)
+async def decide_generic_approval(
+    run_id: UUID,
+    approval_id: UUID,
+    body: ApprovalDecisionRequest,
+    request: Request,
+) -> ApprovalResponse:
+    return await decide_approval(run_id, approval_id, body, request)
+
+
+@router.post(
+    "/runs/{run_id}/approvals/{approval_id}/revoke",
+    response_model=ApprovalResponse,
+)
+async def revoke_generic_approval(
+    run_id: UUID,
+    approval_id: UUID,
+    body: ApprovalDecisionRequest,
+    request: Request,
+) -> ApprovalResponse:
+    return await revoke_approval(run_id, approval_id, body, request)
 
 
 @router.post("/qa/runs/{run_id}/resume", response_model=RunResponse, status_code=202)
@@ -719,7 +1084,109 @@ async def resume_run(run_id: UUID, request: Request) -> RunResponse:
     await events.append(
         run_id, QAEventType.ACCEPTED, {"status": QAStatus.QUEUED.value, "recovered": True}
     )
-    return _run_response((await repo.get_run(run_id)) or run)
+    return await _run_response_with_write((await repo.get_run(run_id)) or run, request)
+
+
+@router.post("/runs/{run_id}/resume", response_model=RunResponse, status_code=202)
+async def resume_generic_run(run_id: UUID, request: Request) -> RunResponse:
+    return await resume_run(run_id, request)
+
+
+@router.post("/qa/runs/{run_id}/retry", response_model=RunResponse, status_code=202)
+async def retry_run(run_id: UUID, request: Request) -> RunResponse:
+    """Create a new immutable attempt while retaining the failed predecessor."""
+    repo, events = _state(request)
+    current = await repo.get_run(run_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if current.status not in {QAStatus.FAILED, QAStatus.TIMED_OUT}:
+        raise HTTPException(status_code=409, detail="Only failed or timed-out Runs can be retried")
+    retry = QARunRecord(
+        run_id=current.run_id,
+        attempt=QAAttempt(
+            run_id=current.run_id,
+            number=current.attempt.number + 1,
+            previous_attempt_id=current.attempt.attempt_id,
+        ),
+        conversation_id=current.conversation_id,
+        question_message_id=current.question_message_id,
+        space_id=current.space_id,
+        caller_id=current.caller_id,
+        idempotency_key=f"{current.idempotency_key}:retry:{current.attempt.number + 1}",
+        versions=current.versions,
+        retrieval_scope=current.retrieval_scope,
+    )
+    try:
+        created = await repo.create_run(retry)
+        queued = await repo.transition_run(created.run_id, QAEvent.QUEUE)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await events.append(
+        run_id,
+        QAEventType.ACCEPTED,
+        {"status": QAStatus.QUEUED.value, "retry": True, "attempt": queued.attempt.number},
+    )
+    if request.app.state.qa_execution_enabled:
+        request.app.state.qa_runtime.start(run_id)
+    return await _run_response_with_write(queued, request)
+
+
+@router.post("/runs/{run_id}/retry", response_model=RunResponse, status_code=202)
+async def retry_generic_run(run_id: UUID, request: Request) -> RunResponse:
+    return await retry_run(run_id, request)
+
+
+@router.get("/qa/runs/{run_id}/derived-knowledge", response_model=list[DerivedKnowledgeResponse])
+async def list_derived_knowledge(run_id: UUID, request: Request) -> list[DerivedKnowledgeResponse]:
+    run = await request.app.state.qa_repository.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    records = await request.app.state.derived_knowledge_store.list_for_run(run_id)
+    return [_derived_response(record) for record in records]
+
+
+@router.delete(
+    "/qa/runs/{run_id}/derived-knowledge/{item_id}",
+    response_model=DerivedKnowledgeResponse,
+)
+async def revoke_derived_knowledge(
+    run_id: UUID,
+    item_id: UUID,
+    body: RevokeDerivedKnowledgeRequest,
+    request: Request,
+) -> DerivedKnowledgeResponse:
+    run = await request.app.state.qa_repository.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    record = await request.app.state.derived_knowledge_store.revoke(
+        item_id,
+        run_id=run_id,
+        space_id=run.space_id,
+        revoked_by=body.revoked_by,
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="Derived knowledge not found")
+    return _derived_response(record)
+
+
+@router.get("/runs/{run_id}/derived-knowledge", response_model=list[DerivedKnowledgeResponse])
+async def list_generic_derived_knowledge(
+    run_id: UUID, request: Request
+) -> list[DerivedKnowledgeResponse]:
+    return await list_derived_knowledge(run_id, request)
+
+
+@router.delete(
+    "/runs/{run_id}/derived-knowledge/{item_id}",
+    response_model=DerivedKnowledgeResponse,
+)
+async def revoke_generic_derived_knowledge(
+    run_id: UUID,
+    item_id: UUID,
+    body: RevokeDerivedKnowledgeRequest,
+    request: Request,
+) -> DerivedKnowledgeResponse:
+    return await revoke_derived_knowledge(run_id, item_id, body, request)
 
 
 @router.post("/qa/runs/{run_id}/feedback", response_model=FeedbackResponse, status_code=201)
@@ -748,12 +1215,72 @@ async def submit_feedback(
         )
     except Exception as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return FeedbackResponse(
-        feedback_id=feedback.feedback_id,
-        run_id=feedback.run_id,
-        message_id=feedback.message_id,
-        review_status=feedback.review_status.value,
-    )
+    return _feedback_response(feedback)
+
+
+@router.post("/runs/{run_id}/feedback", response_model=FeedbackResponse, status_code=201)
+async def submit_generic_feedback(
+    run_id: UUID, body: FeedbackRequest, request: Request
+) -> FeedbackResponse:
+    return await submit_feedback(run_id, body, request)
+
+
+@router.get("/spaces/{space_id}/feedback", response_model=list[FeedbackResponse])
+async def list_feedback(
+    space_id: UUID,
+    request: Request,
+    review_status: Literal["pending_review", "accepted", "rejected"] | None = Query(default=None),
+) -> list[FeedbackResponse]:
+    repo, _ = _state(request)
+    try:
+        status = FeedbackReviewStatus(review_status) if review_status else None
+        records = await repo.list_feedback(space_id, status)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return [_feedback_response(record) for record in records]
+
+
+@router.get("/spaces/{space_id}/feedback/{feedback_id}", response_model=FeedbackResponse)
+async def get_feedback(space_id: UUID, feedback_id: UUID, request: Request) -> FeedbackResponse:
+    repo, _ = _state(request)
+    feedback = await repo.get_feedback(feedback_id)
+    if feedback is None or feedback.space_id != space_id:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    return _feedback_response(feedback)
+
+
+@router.post(
+    "/spaces/{space_id}/feedback/{feedback_id}/review",
+    response_model=FeedbackResponse,
+)
+async def review_feedback(
+    space_id: UUID,
+    feedback_id: UUID,
+    body: FeedbackReviewRequest,
+    request: Request,
+) -> FeedbackResponse:
+    repo, _ = _state(request)
+    try:
+        reviewed = await repo.review_feedback(
+            FeedbackReviewRecord(
+                feedback_id=feedback_id,
+                space_id=space_id,
+                review_status=FeedbackReviewStatus(body.review_status),
+                reviewer_id=body.reviewer_id,
+                reviewed_at=datetime.now(UTC),
+                authorization_confirmed=body.authorization_confirmed,
+                redaction_complete=body.redaction_complete,
+                expected_behavior=body.expected_behavior,
+                approved_evidence_ids=tuple(body.approved_evidence_ids),
+                gold_answer_sha256=body.gold_answer_sha256,
+                rejection_reason=body.rejection_reason,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _feedback_response(reviewed)
 
 
 @router.get("/qa/runs/{run_id}/events")
@@ -784,3 +1311,12 @@ async def stream_events(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/runs/{run_id}/events")
+async def stream_generic_events(
+    run_id: UUID,
+    request: Request,
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+) -> StreamingResponse:
+    return await stream_events(run_id, request, last_event_id)

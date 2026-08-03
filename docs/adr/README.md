@@ -15,3 +15,5 @@ ADR-010 records the explicit Stage 3 termination and preserves the boundary betw
 completion and formal retrieval quality acceptance.
 ADR-011 records the explicit provisional continuation gate that permits Stage 4/5 engineering to
  continue without treating the non-passing retrieval result as formal quality acceptance.
+ADR-012 records the feedback review lifecycle, Space-scoped metadata-only review API, and
+privacy-safe candidate export rules.

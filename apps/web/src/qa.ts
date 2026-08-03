@@ -1,7 +1,12 @@
 import { apiBaseUrl } from './health'
 
 export const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
-export type QASkillName = 'knowledge_agent' | 'knowledge_qa' | 'create_review_cards'
+export type QASkillName =
+  | 'knowledge_agent'
+  | 'knowledge_qa'
+  | 'summarize_document'
+  | 'compare_sources'
+  | 'create_review_cards'
 
 export type Conversation = {
   conversation_id: string
@@ -36,9 +41,9 @@ export type QARun = {
     version_ids: string[]
   }
   write?: {
-    status: 'blocked'
-    code: 'SKILL_WRITE_PORT_UNAVAILABLE'
-    side_effects: 0
+    status: 'blocked' | 'persisted'
+    code: string | null
+    side_effects: 0 | 1
   } | null
   result?: {
     type: 'answer' | 'refusal' | 'conflict'
@@ -104,6 +109,15 @@ export type Approval = {
   status: 'pending' | 'approved' | 'rejected'
   side_effects: 0 | 1
   derived_knowledge_id: string | null
+}
+
+export type FeedbackDecision = 'positive' | 'negative'
+
+export type FeedbackResponse = {
+  feedback_id: string
+  run_id: string
+  message_id: string
+  review_status: 'pending_review' | 'accepted' | 'rejected'
 }
 
 export type CitationExcerpt = NonNullable<QARun['citations']>[number] & {
@@ -261,4 +275,41 @@ export function fetchCitationExcerpt(
   signal?: AbortSignal,
 ): Promise<CitationExcerpt> {
   return request(`/api/v1/qa/runs/${runId}/citations/${evidenceId}`, { signal })
+}
+
+export function submitOrganizationSkill(
+  conversationId: string,
+  skillName: 'summarize_document' | 'compare_sources',
+  options: {
+    focus?: string
+    documentId?: string
+    versionId?: string
+    sourceIds?: string[]
+    idempotencyKey: string
+  },
+): Promise<QARun> {
+  return request('/api/v1/runs', {
+    method: 'POST',
+    body: JSON.stringify({
+      conversation_id: conversationId,
+      skill_name: skillName,
+      focus: options.focus,
+      document_id: options.documentId,
+      version_id: options.versionId,
+      source_ids: options.sourceIds,
+      idempotency_key: options.idempotencyKey,
+    }),
+  })
+}
+
+export function submitFeedback(
+  runId: string,
+  decision: FeedbackDecision,
+  idempotencyKey: string,
+  note?: string,
+): Promise<FeedbackResponse> {
+  return request(`/api/v1/qa/runs/${runId}/feedback`, {
+    method: 'POST',
+    body: JSON.stringify({ decision, idempotency_key: idempotencyKey, note: note?.trim() || undefined }),
+  })
 }

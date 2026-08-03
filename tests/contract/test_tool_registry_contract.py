@@ -69,6 +69,17 @@ class FakeApprovalPort(ApprovalPort):
     async def is_approved(self, approval_id: str, _context: AgentRunContext) -> bool:
         return self.approved and approval_id == "approval-1"
 
+    async def is_approved_for_tool(
+        self,
+        approval_id: str,
+        context: AgentRunContext,
+        *,
+        tool_name: str,
+        tool_version: str,
+    ) -> bool:
+        _ = tool_name
+        return await self.is_approved(approval_id, context) and tool_version == "1.0.0"
+
 
 def make_run(*, max_tool_calls: int = 2) -> AgentRun:
     return AgentRun(

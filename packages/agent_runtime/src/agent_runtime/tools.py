@@ -212,7 +212,7 @@ class InMemoryToolRegistry:
         definition = self.get(invocation.ref)
         self._validate_preconditions(run, definition, invocation)
         if ToolPermission.WRITE_KNOWLEDGE in definition.permissions:
-            await self._validate_approval(run.context, invocation.approval_id)
+            await self._validate_approval(run.context, invocation.approval_id, definition)
         arguments = dict(invocation.arguments)
         self._validate_instance(
             definition.input_schema, arguments, ToolRegistryErrorCode.INPUT_INVALID
@@ -302,13 +302,25 @@ class InMemoryToolRegistry:
                 "Tool retry count is outside its declared policy.",
             )
 
-    async def _validate_approval(self, context: AgentRunContext, approval_id: str | None) -> None:
+    async def _validate_approval(
+        self, context: AgentRunContext, approval_id: str | None, definition: ToolDefinition
+    ) -> None:
         if approval_id is None or self._approval_port is None:
             raise ToolRegistryError(
                 ToolRegistryErrorCode.APPROVAL_REQUIRED,
                 "Write-capable Tool requires a durable approval.",
             )
-        if not await self._approval_port.is_approved(approval_id, context):
+        validator = getattr(self._approval_port, "is_approved_for_tool", None)
+        if validator is not None:
+            approved = await validator(
+                approval_id,
+                context,
+                tool_name=definition.name,
+                tool_version=definition.version,
+            )
+        else:
+            approved = await self._approval_port.is_approved(approval_id, context)
+        if not approved:
             raise ToolRegistryError(
                 ToolRegistryErrorCode.APPROVAL_REQUIRED,
                 "Write-capable Tool approval is invalid or expired.",

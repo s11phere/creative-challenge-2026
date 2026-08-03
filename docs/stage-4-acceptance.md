@@ -1,5 +1,26 @@
 # 阶段 4 Provisional 工程移交记录
 
+## 2026-08-03 Engineering Completion Update
+
+The Stage 4 engineering surface is complete for the implemented contract: QA Domain/Application,
+PostgreSQL persistence, Worker recovery, SSE replay/cancel, Citation resolution, HTTP API, Web answer
+workflow, user feedback submission, feedback review persistence, and metadata-only review endpoints.
+Migration `6d7e8f9a0b1` was added and OpenAPI was regenerated.
+
+Current closure supersedes the older dated notes below: the final migration head is
+`7e8f9a0b1c2d`, generic `/api/v1/runs` covers all five registered Skills, and isolated PostgreSQL
+QA/Runtime/Skill integration is green (`6 passed`). Runtime checkpoint tamper checks, approval-to-
+tool binding and derived-knowledge Space/citation checks are included in this final run.
+
+Backend unit tests passed (`697 passed, 48 skipped`), Runtime/Skill persistence regression passed (`6 passed`),
+and the Web QA workspace tests passed (`28 passed`). Playwright/browser screenshot coverage is not
+installed in this environment and is not reported as passed. Stage 3 retrieval and Stage 4 answer
+formal holdout gates remain open and are not represented as quality acceptance.
+
+Alembic reports a single head at `7e8f9a0b1c2d`. The isolated PostgreSQL service on port `55440`
+accepted the explicit test credentials and all six selected integration tests passed. Playwright/
+browser execution remains unclaimed because the environment does not provide that dependency.
+
 > 记录日期：2026-07-31
 >
 > 结论：Stage 4 Step 0～10 的门禁允许范围内工程契约和回归验证完成。本记录不是阶段 4 正式退出，
@@ -101,15 +122,16 @@ Citation 和原文协议没有产生第二套实现。该接入不改变 Stage 4
 | QA PostgreSQL 迁移、upgrade/downgrade、保留语义 | provisional 已执行 | 空库往返迁移、单一 head、终态保留和中断恢复通过 |
 | Worker/Dramatiq 执行 | provisional 已执行 | ID-only 消息、lease/heartbeat、启动恢复和重复投递通过 |
 | API/Worker 重启恢复 | provisional 已执行 | Worker 停止时 queued，重启接管；终态读取与 SSE 重放通过 |
-| 导入到回答、引用和原文的 Compose E2E | provisional 已执行 | 真实摄入/检索/固定版本最小片段解析通过；反馈旅程未执行 |
-| Playwright 桌面/移动截图 | 未执行 | 真实回答/Citation 用户旅程不存在 |
+| 导入到回答、引用和原文的 Compose E2E | provisional 已执行 | 真实摄入/检索/固定版本最小片段解析和反馈 API 通过；浏览器级完整旅程未执行 |
+| Playwright 桌面/移动截图 | 环境未执行 | Playwright/浏览器未安装；Web 组件、响应式 CSS 和键盘交互已有自动化单测 |
 | development 消融、默认 QA 配置冻结、正式 holdout | 未执行 | Stage 3 质量门禁及 Stage 4 正式门禁未关闭 |
 | Citation target resolution 与回答质量结论 | 部分执行 | PostgreSQL/Blob/locator 解析通过；无质量冻结或正式 answer report |
 
 ## 阶段 5 边界
 
-Grounded QA schema、SSE v1、安全边界和唯一 provisional QA Application Port 已可供后续设计；
+Grounded QA schema、SSE v1、安全边界和唯一 provisional QA Application Port 已完成实现；
 现有 QA API/Web 也可作为真实检索和引用身份的临时可用入口。QA 状态和事件已有 PostgreSQL
 事实源及 API/Worker 重启恢复，执行已进入独立 Worker，固定版本原文片段可按需解析。阶段 5 的
 `knowledge_qa 0.1.0` 已可在该 provisional 链路中活动使用；不得据此宣称阶段 4/5 正式完成，正式
-退出仍须关闭 Stage 3、完整反馈旅程、质量和 holdout 门禁。
+正式退出仍须关闭 Stage 3、浏览器级旅程、质量和 holdout 门禁；这些是证据/质量边界，不是
+尚未实现的工程功能，也不阻止后续继续使用当前 Stage 4/5 工程闭环。

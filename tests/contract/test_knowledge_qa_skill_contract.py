@@ -447,7 +447,7 @@ async def test_organization_skills_execute_the_fixed_qa_run(
     if skill_name == "create_review_cards":
         assert result.output["write"] == {
             "status": "blocked",
-            "code": "SKILL_WRITE_PORT_UNAVAILABLE",
+            "code": "SKILL_WRITE_REQUIRES_APPROVAL",
             "side_effects": 0,
         }
 

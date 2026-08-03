@@ -28,6 +28,7 @@ from domain.qa_persistence import (
     EvidenceRecord,
     FeedbackDecision,
     FeedbackRecord,
+    FeedbackReviewRecord,
     FeedbackReviewStatus,
     MessageRecord,
     MessageRole,
@@ -471,6 +472,66 @@ class PostgresGroundedQARepository:
             )
         return feedback
 
+    async def get_feedback(self, feedback_id: UUID) -> FeedbackRecord | None:
+        async with self._database.session() as session:
+            model = await session.get(QAFeedbackModel, feedback_id)
+            return _feedback(model) if model is not None else None
+
+    async def list_feedback(
+        self, space_id: UUID, review_status: FeedbackReviewStatus | None = None
+    ) -> tuple[FeedbackRecord, ...]:
+        async with self._database.session() as session:
+            query = select(QAFeedbackModel).where(QAFeedbackModel.space_id == space_id)
+            if review_status is not None:
+                query = query.where(QAFeedbackModel.review_status == review_status.value)
+            query = query.order_by(QAFeedbackModel.created_at, QAFeedbackModel.id)
+            models = (await session.execute(query)).scalars()
+            return tuple(_feedback(model) for model in models)
+
+    async def review_feedback(self, review: FeedbackReviewRecord) -> FeedbackRecord:
+        async with self._database.transaction() as session:
+            model = await session.get(QAFeedbackModel, review.feedback_id, with_for_update=True)
+            if model is None:
+                raise QAContractError("Feedback not found")
+            if model.space_id != review.space_id:
+                raise QAContractError("Feedback does not belong to the requested Space")
+            current = _feedback(model)
+            evidence_rows = (
+                await session.execute(
+                    select(QAEvidenceModel.id).where(
+                        QAEvidenceModel.attempt_id == current.attempt_id,
+                        QAEvidenceModel.space_id == current.space_id,
+                    )
+                )
+            ).scalars()
+            evidence_ids = set(evidence_rows)
+            if not set(review.approved_evidence_ids).issubset(evidence_ids):
+                raise QAContractError("Feedback review Evidence does not belong to the QA attempt")
+            if current.review_status is not FeedbackReviewStatus.PENDING_REVIEW:
+                if (
+                    current.review_status is review.review_status
+                    and current.reviewer_id == review.reviewer_id
+                    and current.authorization_confirmed == review.authorization_confirmed
+                    and current.redaction_complete == review.redaction_complete
+                    and current.expected_behavior == review.expected_behavior
+                    and current.approved_evidence_ids == review.approved_evidence_ids
+                    and current.gold_answer_sha256 == review.gold_answer_sha256
+                    and current.rejection_reason == review.rejection_reason
+                ):
+                    return current
+                raise QAContractError("Feedback has already been reviewed")
+            model.review_status = review.review_status.value
+            model.reviewer_id = review.reviewer_id
+            model.reviewed_at = review.reviewed_at
+            model.authorization_confirmed = review.authorization_confirmed
+            model.redaction_complete = review.redaction_complete
+            model.expected_behavior = review.expected_behavior
+            model.approved_evidence_ids = [str(value) for value in review.approved_evidence_ids]
+            model.gold_answer_sha256 = review.gold_answer_sha256
+            model.rejection_reason = review.rejection_reason
+            await session.flush()
+            return _feedback(model)
+
     async def claim_run(
         self, run_id: UUID, *, lease_owner: str, lease_seconds: int
     ) -> QARunRecord | None:
@@ -604,7 +665,22 @@ class PostgresGroundedQARepository:
             requested.attempt.number != existing.attempt.number + 1
             or requested.attempt.previous_attempt_id != existing.attempt.attempt_id
             or existing.status not in {QAStatus.FAILED, QAStatus.TIMED_OUT}
-            or not _same_run(existing, requested)
+            or (
+                existing.conversation_id,
+                existing.question_message_id,
+                existing.space_id,
+                existing.caller_id,
+                existing.versions,
+                existing.retrieval_scope,
+            )
+            != (
+                requested.conversation_id,
+                requested.question_message_id,
+                requested.space_id,
+                requested.caller_id,
+                requested.versions,
+                requested.retrieval_scope,
+            )
         ):
             raise QAContractError("Retry does not follow the latest eligible QA attempt")
 
@@ -817,6 +893,16 @@ def _feedback(model: QAFeedbackModel) -> FeedbackRecord:
         decision=FeedbackDecision(model.decision),
         note=model.note,
         review_status=FeedbackReviewStatus(model.review_status),
+        reviewer_id=model.reviewer_id,
+        reviewed_at=model.reviewed_at,
+        authorization_confirmed=model.authorization_confirmed,
+        redaction_complete=model.redaction_complete,
+        expected_behavior=model.expected_behavior,
+        approved_evidence_ids=tuple(
+            UUID(str(value)) for value in (model.approved_evidence_ids or [])
+        ),
+        gold_answer_sha256=model.gold_answer_sha256,
+        rejection_reason=model.rejection_reason,
         created_at=model.created_at,
     )
 
@@ -869,9 +955,28 @@ def _same_run(existing: QARunRecord, requested: QARunRecord) -> bool:
 
 
 def _same_feedback(existing: FeedbackRecord, requested: FeedbackRecord) -> bool:
+    return _same_feedback_command(existing, requested)
+
+
+def _same_feedback_command(existing: FeedbackRecord, requested: FeedbackRecord) -> bool:
     return (
-        replace(existing, feedback_id=requested.feedback_id, created_at=requested.created_at)
-        == requested
+        existing.conversation_id,
+        existing.message_id,
+        existing.run_id,
+        existing.attempt_id,
+        existing.space_id,
+        existing.caller_id,
+        existing.decision,
+        existing.note,
+    ) == (
+        requested.conversation_id,
+        requested.message_id,
+        requested.run_id,
+        requested.attempt_id,
+        requested.space_id,
+        requested.caller_id,
+        requested.decision,
+        requested.note,
     )
 
 

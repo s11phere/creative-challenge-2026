@@ -1,5 +1,23 @@
 # 阶段 4/5 收尾看板
 
+## 2026-08-03 Implementation Status Update
+
+All requested Stage 4/5 engineering functions are implemented, including Web entry points for all
+five registered Skills, Web feedback controls,
+persistent human feedback review (`pending_review -> accepted/rejected`), Space isolation,
+idempotency/conflict handling, and the controlled metadata-only candidate exporter. Stage 5
+Runtime/approval/derived-knowledge/Skill cleanup code was re-regressed across process-facing tests.
+
+The remaining labels are evidence labels, not implementation deferrals: formal retrieval/answer/Skill
+holdouts remain unrun or non-passing under ADR-010/011, and browser Playwright coverage is unavailable
+in the current environment.
+
+最终工程复核（2026-08-03）：后端 `697 passed, 48 skipped`；Ruff format/check、mypy 通过；前端
+lint/typecheck/test/build 通过（28 tests）；隔离 PostgreSQL QA/Runtime/Skill 集成 `6 passed`；
+迁移 upgrade/downgrade/upgrade、单一 head 和 OpenAPI 一致性通过。Runtime 检查点摘要/Skill
+绑定、审批 Tool 绑定、派生知识 Space/citation 绑定、五 Skill 统一 `/api/v1/runs` 入口均已纳入
+回归。Playwright 未安装，只能记录为环境证据缺失，不能写成失败或伪造通过。
+
 > 对应收尾计划：[`post-stage-3-stage-4-5-completion-plan.md`](post-stage-3-stage-4-5-completion-plan.md)
 >
 > 看板版本：v1
@@ -15,8 +33,8 @@
 | 阶段 | 工程状态 | 正式质量状态 | 当前决策依据 |
 | --- | --- | --- | --- |
 | 阶段 3 | 工程 Step 0-10 已完成；v1 development 复核已执行 | 仍未通过，未冻结，未运行 holdout | [ADR-010](adr/010-stage-3-termination-and-evaluation-boundary.md)；[v1 development 记录](stage-3-reopen-development-v1.md)：v1 修复标注但未 materially improve coverage/representativeness |
-| 阶段 4 | QA Domain/Application、PostgreSQL、Worker、SSE、API、Web、Citation 和 `qa-continuation-v1` provisional 配置已具备 | 未退出 | [stage-4-acceptance.md](stage-4-acceptance.md)：Playwright、真实回答质量、正式默认配置冻结、answer holdout 和完整反馈旅程未完成 |
-| 阶段 5 | Runtime/Registry、active pointer、`knowledge_qa` 及知识整理 Skill provisional 子集已具备 | 未退出 | [stage-5-acceptance.md](stage-5-acceptance.md)：正式 Eval、跨进程故障注入、认证/审批正式验收和最终移交未完成 |
+| 阶段 4 | QA Domain/Application、PostgreSQL、Worker、SSE、API、Web、Citation、反馈提交与反馈审核生命周期已实现 | 工程实现完成，质量 provisional | [stage-4-acceptance.md](stage-4-acceptance.md)：Playwright、真实回答质量、正式默认配置冻结和 answer holdout 未完成 |
+| 阶段 5 | Runtime/Registry、active pointer、`knowledge_qa`、知识整理 Skill、审批/派生知识和 Skill 清理已实现 | 工程实现完成，质量 provisional | [stage-5-acceptance.md](stage-5-acceptance.md)：正式 Eval 和浏览器门禁未完成 |
 
 本看板不批准任何正式 holdout，不改变 `retrieval-v1.yaml`、`qa-v1.yaml` 或现有 Skill 的状态，
 也不改变阶段 0 的 `internal_team_only` 分发边界。
@@ -44,6 +62,15 @@ lint、typecheck、Vitest 27 项、production build，以及隔离 Web 首页、
 键盘提交和审批预览。仓库没有 Playwright 配置，环境没有浏览器可执行文件，因此桌面/移动截图、真实
 键盘遍历和浏览器级 SSE 重连仍未验收；该结果不构成阶段 4 正式退出。
 
+### 1.4 Step 5 provisional Feedback 结果
+
+第 5 步反馈闭环证据见 [`stage-4-5-step5-feedback.md`](stage-4-5-step5-feedback.md)：反馈领域/API/
+导出定向测试 `27 passed`，隔离 PostgreSQL QA/Runtime/Skill persistence `6 passed`；HTTP 旅程证明回答绑定、
+`pending_review`、重复幂等、冲突 409 和说明不回显。候选导出仅生成 metadata-only、版本可追溯的
+`feedback-candidate-v1`，不会修改 frozen dataset/holdout。人工审核队列、Space 隔离和审核者身份
+记录已经实现；独立认证系统仍不在当前本地边界内。候选写盘命令为
+`scripts/export_feedback_candidates.py`。正式质量门禁仍未关闭。
+
 ## 2. 版本矩阵
 
 所有“目标版本”均为待创建或待冻结的版本；完成前不得将候选版本标记为正式。
@@ -52,7 +79,7 @@ lint、typecheck、Vitest 27 项、production build，以及隔离 Web 首页、
 | --- | --- | --- | --- | --- | --- |
 | 阶段 3 检索 | `retrieval-v1.yaml` + dataset `knowledge-qa-v0`；另有 `retrieval-v1-knowledge-qa-v1.yaml` + dataset `knowledge-qa-v1` | v1 schema/locator/hash 校验和 GPU development 消融已通过；两者仍 `provisional`，formal runs disabled；正式门未通过但满足 ADR-011 continuation gate | 可在 v1 上继续阶段 4/5 provisional 工程；正式线仍需新 dataset/config、代表性覆盖、claim-aware evaluator、development 达标、配置 hash 冻结后才可一次性运行 retrieval holdout | 仅使用 manifest 允许来源；默认本地；私有语料不得外发 | 待认领 |
 | 阶段 4 QA 评测 | `qa-continuation-v1.yaml` + `qa-profile-continuation-v1.yaml`；dataset `knowledge-qa-v0`；prompt `grounded-qa-v1-provisional` | provisional continuation 配置已 pin `retrieval-v1-knowledge-qa-v1`，validate-only 和受影响单测通过；正式配置未冻结 | 在 continuation gate 下继续 QA/E2E 工程；正式线仍需代表性 QA dataset、真实模型 development、answer config hash 和一次性 holdout | 题目、回答、引用原文和 Provider 响应不得写日志/报告；外部 Chat 需显式策略和同意 | 待认领 |
-| 阶段 5 Skill 评测 | active `knowledge_qa 0.1.0`；`knowledge_agent 0.2.0`（保留 `0.1.0` 旧包）；`summarize_document 0.1.0`、`compare_sources 0.1.0`、`create_review_cards 0.1.0` | active/provisional；整理 Skill 目前只读预览，写入和正式 Eval 未关闭 | 为每个 Skill 固定 workflow/manifest/prompt/schema/eval 版本和摘要；完成 Runtime 恢复、审批、派生写入、回滚/清理引用检查后再做正式 Skill Eval | 受信根加载；运行固定 Skill identity；派生写入前必须持久审批，所有输入继承来源敏感度 | 待认领 |
+| 阶段 5 Skill 评测 | active `knowledge_qa 0.1.0`；`knowledge_agent 0.2.0`（保留 `0.1.0` 旧包）；`summarize_document 0.1.0`、`compare_sources 0.1.0`、`create_review_cards 0.1.0` | 工程实现完成、质量 provisional；整理 Skill 已支持预览/审批/派生写入，正式 Eval 未关闭 | 为每个 Skill 固定 workflow/manifest/prompt/schema/eval 版本和摘要；现有 Runtime 恢复、审批、派生写入、回滚/清理引用检查已实现，之后再做正式 Skill Eval | 受信根加载；运行固定 Skill identity；派生写入前必须持久审批，所有输入继承来源敏感度 | 待认领 |
 
 ### 2.1 版本冻结顺序
 
@@ -81,7 +108,7 @@ lint、typecheck、Vitest 27 项、production build，以及隔离 Web 首页、
 | Citation target resolution 100% 与隔离违规 0 | provisional 部分通过 | 解析和版本校验有证据；需正式报告与全量安全切片 | Step 2/3/9 复核 |
 | 默认 QA 配置、development 消融、answer holdout | 待执行 | 当前为 fake/validate-only，`formal_runs_enabled=false` | Step 2，依赖新 Stage 3 质量输入 |
 | SSE、取消、重试、重连、唯一终态 | provisional 已执行 | 契约和隔离集成测试已有；需真实旅程回归 | Step 3/4 |
-| Conversation/Run/Evidence/Feedback 持久化与恢复 | provisional 已执行 | PostgreSQL/Worker/重启记录已有；反馈完整旅程未执行 | Step 3/5 |
+| Conversation/Run/Evidence/Feedback 持久化与恢复 | 工程实现完成 | PostgreSQL/Worker/重启、反馈审核和幂等回归已执行；真实浏览器旅程未执行 | Step 3/5 |
 | Web 桌面/移动/键盘/失败状态 | 待执行 | Playwright 未执行 | Step 4 |
 | 版本可追溯、预算、日志与隐私 | 部分完成 | identity/稳定错误已存在；正式配置和最终扫描未完成 | Step 2/9/10 |
 
@@ -90,11 +117,11 @@ lint、typecheck、Vitest 27 项、production build，以及隔离 Web 首页、
 | 退出项 | 当前状态 | 证据/缺口 | 看板动作 |
 | --- | --- | --- | --- |
 | Runtime/Registry/manifest/权限/预算通用契约 | 已完成（工程） | 阶段 5 review 已审查通过 | 作为基础，不重复实现 |
-| 通用 Runtime Checkpoint 跨进程恢复 | provisional | PostgreSQL 快照/adapter 已有；跨进程故障注入和完整 Worker resume 未完成 | Step 6 |
-| 持久审批 | provisional | Adapter/API 子集已有；正式身份认证、竞态和跨进程验收未完成 | Step 6 |
-| 派生知识写入 | provisional 阻塞 | `create_review_cards` 仍需审批事实源和 exactly-once 验收 | Step 7 |
-| Skill Catalog/active pointer/回滚 | provisional 已有 | CAS 和查询已有；清理引用与发布安全仍需最终验收 | Step 8 |
-| 三个知识整理 Skill | provisional 只读 | 固定来源和引用预览已有；无专用完整工作流/正式 Eval | Step 7/8 |
+| 通用 Runtime Checkpoint 跨进程恢复 | 工程实现完成、质量 provisional | PostgreSQL 快照/adapter、checkpoint resume、lease-loss 取消和恢复回归已实现；正式跨进程故障注入仍待执行 | Step 6 |
+| 持久审批 | 工程实现完成、质量 provisional | Adapter/API、竞态幂等和审批状态已实现；独立身份认证与正式跨进程验收未关闭 | Step 6 |
+| 派生知识写入 | 工程实现完成、质量 provisional | `create_review_cards` 审批前零副作用，批准后 Derived Knowledge exactly-once 已实现 | Step 7 |
+| Skill Catalog/active pointer/回滚 | 工程实现完成、质量 provisional | CAS、查询、引用保护和 cleanup 已实现；最终发布安全验收仍待执行 | Step 8 |
+| 三个知识整理 Skill | 工程实现完成、质量 provisional | 固定来源、引用预览、复用 QA Run/SSE 和审批写入已实现；正式 Eval 未执行 | Step 7/8 |
 | 正式 Skill Eval 与阶段退出 | 未执行 | 不得使用 fake/provisional 结果替代 | Step 9/10 |
 
 ## 4. 风险、阻塞和决策
@@ -105,14 +132,14 @@ lint、typecheck、Vitest 27 项、production build，以及隔离 Web 首页、
 | B-02 | 正式缺口 | Stage 4 provisional QA continuation config 已完成；正式 retrieval/QA profile、prompt、Chat model 仍未冻结 | 正式冻结仍需 Stage 3 正式输入和 answer development | 正式质量线 |
 | B-03 | 阻塞 | 正式 retrieval/answer holdout 尚未运行 | 冻结配置后各运行一次；失败时创建新版本，不回写 holdout | Step 1/2 |
 | B-04 | 缺口 | 完整导入到反馈的真实旅程和 Playwright 尚未执行 | 隔离 Compose E2E、桌面/移动截图、键盘和失败状态回归通过 | Step 3/4/5 |
-| B-05 | 缺口 | Runtime Checkpoint、lease-loss、审批跨进程事实源仍未完成正式验收 | 故障注入、租约竞态、审批生命周期和幂等副作用测试通过 | Step 6 |
-| B-06 | 缺口 | 派生知识写入和 `create_review_cards` 目前保持预览 | Derived Knowledge Application Port、持久审批和 exactly-once 写入通过 | Step 7 |
-| B-07 | 缺口 | Skill 旧版本清理、引用保护和最终生命周期验收未关闭 | active/pin/CAS/引用计数/清理 dry-run 和回滚测试通过 | Step 8 |
+| B-05 | 正式验收缺口 | Runtime Checkpoint、lease-loss、审批跨进程工程实现已完成；正式环境故障注入尚未执行 | 在隔离正式环境补充故障注入、租约竞态和审批生命周期报告 | Step 6 |
+| B-06 | 正式验收缺口 | 派生知识写入和 `create_review_cards` 工程实现已完成 | 在隔离正式环境补充 exactly-once 副作用报告 | Step 7 |
+| B-07 | 正式验收缺口 | Skill 旧版本清理、引用保护和生命周期工程实现已完成 | 补充最终发布安全、cleanup dry-run 和回滚报告 | Step 8 |
 | B-08 | 约束 | 阶段 0 语料为 `internal_team_only`，私有内容和 Provider 外发受限 | 保持隔离环境、manifest 校验、授权记录和隐私扫描 | 全步骤 |
 | B-09 | 约束 | Windows 沙箱可能产生 `.pytest_cache` 写权限警告 | 记录为环境限制，不修改权限或测试语义 | 全步骤 |
 
-当前没有触发新增 ADR：本步只记录版本、状态和依赖，没有改变模块边界、数据模型、公开 API、
-事件协议或 Skill 信任模型。若 Step 6/7/8 需要改变这些边界，必须在对应实现前新增或更新 ADR。
+本步新增 ADR-012，固定反馈审核生命周期、Space 隔离和 metadata-only 候选导出边界。若 Step
+6/7/8 后续改变模块边界、数据模型、公开 API、事件协议或 Skill 信任模型，仍必须新增或更新 ADR。
 
 ## 5. 第 0 步完成检查
 

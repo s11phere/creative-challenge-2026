@@ -4,7 +4,7 @@ from uuid import UUID
 import pytest
 from api.main import create_app
 from application.qa import InMemoryGroundedQARepository
-from domain.grounded_qa import Citation, CitationResolution, CitationStatus
+from domain.grounded_qa import Citation, CitationResolution, CitationStatus, QAEvent
 from domain.qa_persistence import QARetrievalScope
 from domain.qa_sse import QAEventLog
 from domain.retrieval import LocatorKind, SearchLocator
@@ -119,7 +119,47 @@ async def test_provisional_qa_api_creates_run_cancels_and_replays_events() -> No
             },
         )
         assert feedback.status_code == 409
-        assert "Needs review" not in json.dumps(feedback.json())
+    assert "Needs review" not in json.dumps(feedback.json())
+
+
+@pytest.mark.asyncio
+async def test_generic_run_facade_reuses_qa_identity_and_retry_attempts() -> None:
+    repository = InMemoryGroundedQARepository()
+    app = create_app(
+        model_gateway=FakeModelGateway(),
+        enable_qa_execution=False,
+        qa_repository=repository,
+        qa_event_store=QAEventLog(),
+        skill_activation_store=InMemorySkillActivationStore(),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            f"/api/v1/spaces/{UUID(int=51)}/conversations",
+            json={"owner_id": "local-user"},
+        )
+        conversation_id = created.json()["conversation_id"]
+        submitted = await client.post(
+            "/api/v1/runs",
+            json={
+                "conversation_id": conversation_id,
+                "skill_name": "knowledge_qa",
+                "question": "retry me",
+                "idempotency_key": "retry-question",
+            },
+        )
+        run_id = UUID(submitted.json()["run_id"])
+        await repository.transition_run(run_id, QAEvent.START)
+        failed = await repository.transition_run(run_id, QAEvent.FAIL, error_code="QA_TIMED_OUT")
+        assert failed.status.value == "failed"
+        retried = await client.post(f"/api/v1/runs/{run_id}/retry")
+        current = await client.get(f"/api/v1/runs/{run_id}")
+
+    assert submitted.status_code == 202
+    assert retried.status_code == 202, retried.text
+    assert retried.json()["run_id"] == str(run_id)
+    assert retried.json()["attempt_id"] != str(failed.attempt.attempt_id)
+    assert current.status_code == 200
+    assert current.json()["status"] == "queued"
 
 
 @pytest.mark.asyncio
@@ -277,9 +317,56 @@ async def test_document_organization_skill_fixes_scope_on_the_shared_qa_run() ->
     assert preview.status_code == 202
     assert preview.json()["write"] == {
         "status": "blocked",
-        "code": "SKILL_WRITE_PORT_UNAVAILABLE",
+        "code": "SKILL_WRITE_REQUIRES_APPROVAL",
         "side_effects": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_generic_run_facade_accepts_organization_skill_inputs() -> None:
+    app = create_app(
+        model_gateway=FakeModelGateway(),
+        enable_qa_execution=False,
+        qa_repository=InMemoryGroundedQARepository(),
+        qa_event_store=QAEventLog(),
+        skill_activation_store=InMemorySkillActivationStore(),
+    )
+    app.state.organization_scope = FakeOrganizationScope()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            f"/api/v1/spaces/{UUID(int=2)}/conversations",
+            json={"owner_id": "local-user"},
+        )
+        conversation_id = created.json()["conversation_id"]
+        summary = await client.post(
+            "/api/v1/runs",
+            json={
+                "conversation_id": conversation_id,
+                "skill_name": "summarize_document",
+                "document_id": str(UUID(int=31)),
+                "version_id": str(UUID(int=32)),
+                "idempotency_key": "generic-summary-1",
+            },
+        )
+        comparison = await client.post(
+            "/api/v1/runs",
+            json={
+                "conversation_id": conversation_id,
+                "skill_name": "compare_sources",
+                "source_ids": [str(UUID(int=41)), str(UUID(int=42))],
+                "idempotency_key": "generic-compare-1",
+            },
+        )
+
+    assert summary.status_code == 202
+    assert summary.json()["skill"]["name"] == "summarize_document"
+    assert summary.json()["fixed_scope"]["document_ids"] == [str(UUID(int=31))]
+    assert comparison.status_code == 202
+    assert comparison.json()["skill"]["name"] == "compare_sources"
+    assert comparison.json()["fixed_scope"]["source_ids"] == [
+        str(UUID(int=41)),
+        str(UUID(int=42)),
+    ]
 
 
 @pytest.mark.asyncio

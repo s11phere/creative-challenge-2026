@@ -99,3 +99,29 @@ async def test_commit_rejects_sequence_gap_and_usage_rollback() -> None:
     )
     with pytest.raises(RecoveryRejectedError, match="decrease"):
         await store.commit(rollback_run, rollback_checkpoint)
+
+
+@pytest.mark.asyncio
+async def test_commit_replays_an_existing_sequence_without_duplicate_checkpoint() -> None:
+    store = InMemoryRuntimeStateStore()
+    run, checkpoint = build_checkpoint(
+        make_run(), state={"answer": "fixture"}, next_step=RunStep.RETRIEVING, next_node="retrieve"
+    )
+    await store.commit(run, checkpoint)
+
+    replayed_run, replayed_checkpoint = await store.commit(run, checkpoint)
+
+    assert replayed_run == run
+    assert replayed_checkpoint == checkpoint
+
+
+@pytest.mark.asyncio
+async def test_commit_rejects_checkpoint_skill_identity_mismatch() -> None:
+    store = InMemoryRuntimeStateStore()
+    run, checkpoint = build_checkpoint(
+        make_run(), state={}, next_step=RunStep.RETRIEVING, next_node="retrieve"
+    )
+    mismatched = replace(checkpoint, skill_version="9.9.9")
+
+    with pytest.raises(RecoveryRejectedError, match="Skill identity"):
+        await store.commit(run, mismatched)

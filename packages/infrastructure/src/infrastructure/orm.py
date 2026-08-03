@@ -11,6 +11,7 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Computed,
     DateTime,
@@ -515,6 +516,20 @@ class QAFeedbackModel(Base):
     decision: Mapped[str] = mapped_column(String(16), nullable=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     review_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    reviewer_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    authorization_confirmed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    redaction_complete: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    expected_behavior: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    approved_evidence_ids: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    gold_answer_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     __table_args__ = (
         UniqueConstraint(
@@ -608,13 +623,16 @@ class RuntimeApprovalModel(Base):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     decided_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     details: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
     __table_args__ = (
         UniqueConstraint(
             "run_id", "action", "idempotency_key", name="uq_runtime_approvals_idempotency"
         ),
         CheckConstraint(
-            "status in ('pending', 'approved', 'rejected')", name="ck_runtime_approval_status"
+            "status in ('pending', 'approved', 'rejected', 'revoked')",
+            name="ck_runtime_approval_status",
         ),
         Index("idx_runtime_approvals_run_status", "run_id", "status"),
     )
@@ -637,8 +655,12 @@ class DerivedKnowledgeItemModel(Base):
     content: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     citation_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     __table_args__ = (
         UniqueConstraint("run_id", "idempotency_key", name="uq_derived_knowledge_idempotency"),
+        CheckConstraint("status in ('active', 'revoked')", name="ck_derived_knowledge_status"),
         Index("idx_derived_knowledge_space_created", "space_id", "created_at"),
     )

@@ -1,5 +1,12 @@
 # 阶段 3 终止后的阶段 4/5 收尾计划
 
+## Implementation completion note (2026-08-03)
+
+The plan is executed as an engineering plan even though formal quality gates remain provisional.
+The feedback review lifecycle, controlled candidate export, and cross-process Stage 5 regression
+were added rather than deferred. The final state is functionally complete for Stages 0-5 under the
+current contracts; formal holdout acceptance is a separate, explicitly unclaimed outcome.
+
 > 状态：执行计划 v1
 >
 > 适用日期：2026-08-03 起
@@ -154,7 +161,12 @@ SSE sequence 修复，因此本步骤不构成阶段 4 正式验收通过。
 **退出门**：每个候选可追溯到 feedback/run/evidence/config 版本；审核前不会被评测执行器读取，
    holdout 内容与反馈路径隔离。
 
-### Step 6：完成通用 Runtime 的跨进程恢复和审批事实源
+**当前记录**：定向领域/API/导出测试、Space-scoped 审核持久化和 metadata-only CLI 已实现；HTTP 反馈闭环验证了
+`pending_review`、幂等重复、冲突拒绝和说明不回显，详见
+[`stage-4-5-step5-feedback.md`](stage-4-5-step5-feedback.md)。本步骤工程实现完成；独立认证、
+浏览器门禁和正式评测仍保持 provisional，冻结 dataset/holdout 未被修改。
+
+### Step 6：完成通用 Runtime 的跨进程恢复和审批事实源（工程实现完成）
 
 **目的**：把阶段 5 的 provisional Checkpoint/审批实现提升为可运维能力。
 
@@ -168,9 +180,9 @@ SSE sequence 修复，因此本步骤不构成阶段 4 正式验收通过。
   可回滚且不删除受信磁盘包。
 
 **退出门**：隔离 PostgreSQL/Redis 集成测试覆盖恢复、租约互斥、审批竞态、重复副作用和清理引用；
-   失败时保持只读 Skill 行为。
+   当前工程回归已覆盖这些状态；正式跨进程故障注入报告仍待执行，失败时保持只读 Skill 行为。
 
-### Step 7：启用派生知识写入和知识整理 Skill
+### Step 7：启用派生知识写入和知识整理 Skill（工程实现完成）
 
 **目的**：在审批和事实源完备后，安全关闭 `create_review_cards` 的写入阻塞。
 
@@ -184,9 +196,9 @@ SSE sequence 修复，因此本步骤不构成阶段 4 正式验收通过。
   部分派生条目。
 
 **退出门**：审批前 `side_effects=0`；批准后写入 exactly-once、可重放且可查询；来源删除或版本
-   变化不会产生悬空派生条目。
+   变化不会产生悬空派生条目。现有实现和回归满足工程契约，正式 Skill Eval 仍待执行。
 
-### Step 8：完成 Skill 生命周期管理和发布安全
+### Step 8：完成 Skill 生命周期管理和发布安全（工程实现完成）
 
 **目的**：让 Skill 可安装、激活、回滚和受控清理，同时保持运行固定版本。
 
@@ -198,7 +210,8 @@ SSE sequence 修复，因此本步骤不构成阶段 4 正式验收通过。
 - 对旧版本执行 dry-run、引用检查和可审计清理；保留受信磁盘包的部署运维边界。
 
 **退出门**：旧版本有 AgentRun/Checkpoint/QA Run/审计引用时清理被拒绝；pointer 更新不会改变
-   已排队 Run；回滚后新 Run 与 Catalog 摘要一致。
+   已排队 Run；回滚后新 Run 与 Catalog 摘要一致。现有 CAS、引用保护和 cleanup 回归已通过，
+   正式发布安全报告仍待执行。
 
 ### Step 9：性能、可观测性和隐私最终审查
 

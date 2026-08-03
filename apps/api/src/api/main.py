@@ -12,7 +12,13 @@ from application.qa import (
     PublishedCitationApplicationPort,
     PublishedCitationService,
 )
-from application.skills import SkillActivationStore, SkillCatalogPort, SkillLifecycleService
+from application.skills import (
+    DerivedKnowledgeWriter,
+    SkillActivationStore,
+    SkillCatalogPort,
+    SkillLifecycleService,
+)
+from domain.agent_runtime import ApprovalPort
 from domain.grounded_qa import CitationContentKind
 from domain.qa_persistence import GroundedQARepository
 from domain.qa_sse import QAEventStore
@@ -90,6 +96,8 @@ def create_app(
     qa_citation_service: PublishedCitationApplicationPort | None = None,
     skill_catalog: SkillCatalogPort | None = None,
     skill_activation_store: SkillActivationStore | None = None,
+    approval_port: ApprovalPort | None = None,
+    derived_knowledge_store: DerivedKnowledgeWriter | None = None,
 ) -> FastAPI:
     """Application factory. Call once at process start."""
 
@@ -163,8 +171,10 @@ def create_app(
     app.state.skill_reference_checker = PostgresSkillReferenceChecker(database)
     app.state.skill_lifecycle = skill_lifecycle
     app.state.organization_scope = PostgresKnowledgeOrganizationScope(database)
-    app.state.approval_port = PostgresApprovalPort(database)
-    app.state.derived_knowledge_store = PostgresDerivedKnowledgeStore(database)
+    app.state.approval_port = approval_port or PostgresApprovalPort(database)
+    app.state.derived_knowledge_store = derived_knowledge_store or PostgresDerivedKnowledgeStore(
+        database
+    )
 
     app.add_middleware(TraceMiddleware)
     register_error_handlers(app)
