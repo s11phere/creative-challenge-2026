@@ -45,6 +45,7 @@ def test_retrieval_modes_and_error_codes_are_unique() -> None:
     assert {mode.value for mode in RetrievalMode} == {
         "keyword",
         "dense",
+        "dense_rerank",
         "hybrid",
         "hybrid_rerank",
     }
