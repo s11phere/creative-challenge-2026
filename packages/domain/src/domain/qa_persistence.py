@@ -38,6 +38,56 @@ class FeedbackReviewStatus(StrEnum):
     REJECTED = "rejected"
 
 
+@dataclass(frozen=True)
+class FeedbackReviewRecord:
+    """Human review decision for a submitted feedback item."""
+
+    feedback_id: UUID
+    space_id: UUID
+    review_status: FeedbackReviewStatus
+    reviewer_id: str
+    reviewed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    authorization_confirmed: bool = False
+    redaction_complete: bool = False
+    expected_behavior: str | None = None
+    approved_evidence_ids: tuple[UUID, ...] = ()
+    gold_answer_sha256: str | None = None
+    rejection_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.reviewer_id.strip():
+            raise ValueError("feedback reviewer is required")
+        if self.reviewed_at.tzinfo is None:
+            raise ValueError("feedback review timestamp must be timezone-aware")
+        if len(self.approved_evidence_ids) != len(set(self.approved_evidence_ids)):
+            raise ValueError("approved Evidence IDs must be unique")
+        if self.expected_behavior is not None and self.expected_behavior not in {
+            "answer",
+            "refuse",
+        }:
+            raise ValueError("expected behavior must be answer or refuse")
+        if (
+            self.gold_answer_sha256 is not None
+            and re.fullmatch(r"[0-9a-f]{64}", self.gold_answer_sha256) is None
+        ):
+            raise ValueError("gold answer digest must be a lowercase SHA-256")
+        if self.review_status is FeedbackReviewStatus.ACCEPTED:
+            if not self.authorization_confirmed or not self.redaction_complete:
+                raise ValueError(
+                    "accepted feedback requires authorization and redaction confirmation"
+                )
+            if self.expected_behavior is None:
+                raise ValueError("accepted feedback requires expected behavior")
+            if self.expected_behavior == "answer":
+                if not self.gold_answer_sha256:
+                    raise ValueError("answer feedback requires a gold answer digest")
+                if not self.approved_evidence_ids:
+                    raise ValueError("answer feedback requires approved Evidence")
+        elif self.review_status is FeedbackReviewStatus.REJECTED:
+            if not self.rejection_reason or not self.rejection_reason.strip():
+                raise ValueError("rejected feedback requires a rejection reason")
+
+
 class QAPhase(StrEnum):
     PLANNING = "planning"
     RETRIEVAL = "retrieval"
@@ -252,6 +302,14 @@ class FeedbackRecord:
     feedback_id: UUID = field(default_factory=uuid4)
     note: str | None = None
     review_status: FeedbackReviewStatus = FeedbackReviewStatus.PENDING_REVIEW
+    reviewer_id: str | None = None
+    reviewed_at: datetime | None = None
+    authorization_confirmed: bool = False
+    redaction_complete: bool = False
+    expected_behavior: str | None = None
+    approved_evidence_ids: tuple[UUID, ...] = ()
+    gold_answer_sha256: str | None = None
+    rejection_reason: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
@@ -259,6 +317,20 @@ class FeedbackRecord:
             raise ValueError("Feedback caller and idempotency key are required")
         if self.note is not None and not self.note.strip():
             raise ValueError("Feedback note must not be blank when provided")
+        if self.reviewed_at is not None and self.reviewed_at.tzinfo is None:
+            raise ValueError("Feedback review timestamp must be timezone-aware")
+        if self.expected_behavior is not None and self.expected_behavior not in {
+            "answer",
+            "refuse",
+        }:
+            raise ValueError("Feedback expected behavior must be answer or refuse")
+        if len(self.approved_evidence_ids) != len(set(self.approved_evidence_ids)):
+            raise ValueError("Feedback approved Evidence IDs must be unique")
+        if (
+            self.gold_answer_sha256 is not None
+            and re.fullmatch(r"[0-9a-f]{64}", self.gold_answer_sha256) is None
+        ):
+            raise ValueError("Feedback gold answer digest must be a lowercase SHA-256")
 
 
 class GroundedQARepository(Protocol):
@@ -309,6 +381,14 @@ class GroundedQARepository(Protocol):
 
     async def submit_feedback(self, feedback: FeedbackRecord) -> FeedbackRecord: ...
 
+    async def get_feedback(self, feedback_id: UUID) -> FeedbackRecord | None: ...
+
+    async def list_feedback(
+        self, space_id: UUID, review_status: FeedbackReviewStatus | None = None
+    ) -> tuple[FeedbackRecord, ...]: ...
+
+    async def review_feedback(self, review: FeedbackReviewRecord) -> FeedbackRecord: ...
+
 
 class GroundedQAExecutionRepository(GroundedQARepository, Protocol):
     """Durable execution ownership used by at-least-once Worker delivery."""
@@ -340,6 +420,7 @@ __all__ = [
     "EvidenceRecord",
     "FeedbackDecision",
     "FeedbackRecord",
+    "FeedbackReviewRecord",
     "FeedbackReviewStatus",
     "GroundedQARepository",
     "GroundedQAExecutionRepository",

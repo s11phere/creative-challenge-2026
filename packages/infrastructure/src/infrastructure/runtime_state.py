@@ -7,6 +7,7 @@ from copy import deepcopy
 from typing import Any, cast
 from uuid import UUID
 
+from agent_runtime.checkpoints import checkpoint_state_sha256
 from domain.agent_runtime import (
     AgentRun,
     AgentRunContext,
@@ -68,6 +69,8 @@ class PostgresRuntimeStateStore:
                         if replay is not None:
                             return _run(stored), _checkpoint(replay)
                     raise RecoveryRejectedError("checkpoint sequence is not contiguous")
+                if _usage_decreased(stored, run):
+                    raise RecoveryRejectedError("stored run usage cannot decrease")
 
             stored.granted_permissions = sorted(
                 permission.value for permission in run.context.granted_permissions
@@ -121,10 +124,23 @@ class PostgresRuntimeStateStore:
 def _validate_commit(run: AgentRun, checkpoint: RunCheckpoint) -> None:
     if run.context.run_id != checkpoint.run_id:
         raise RecoveryRejectedError("checkpoint belongs to another run")
+    if (
+        checkpoint.skill_name,
+        checkpoint.skill_version,
+        checkpoint.skill_content_sha256,
+    ) != (
+        run.context.skill_name,
+        run.context.skill_version,
+        run.context.skill_content_sha256,
+    ):
+        raise RecoveryRejectedError("checkpoint Skill identity does not match run")
     if run.checkpoint_sequence != checkpoint.sequence:
         raise RecoveryRejectedError("run and checkpoint sequence differ")
     if run.usage != checkpoint.usage or not checkpoint.verified:
         raise RecoveryRejectedError("checkpoint usage or verification is invalid")
+    state = cast(Mapping[str, Any], checkpoint.state)
+    if checkpoint.state_sha256 != checkpoint_state_sha256(state):
+        raise RecoveryRejectedError("checkpoint state digest is invalid")
 
 
 def _validate_identity(stored: RuntimeRunModel, run: AgentRun) -> None:
@@ -210,6 +226,9 @@ def _run(value: RuntimeRunModel) -> AgentRun:
 
 
 def _checkpoint(value: RuntimeCheckpointModel) -> RunCheckpoint:
+    state = cast(Mapping[str, Any], value.state)
+    if value.state_sha256 != checkpoint_state_sha256(state):
+        raise RecoveryRejectedError("stored checkpoint state digest is invalid")
     return RunCheckpoint(
         run_id=value.run_id,
         sequence=value.sequence,
@@ -224,6 +243,31 @@ def _checkpoint(value: RuntimeCheckpointModel) -> RunCheckpoint:
         next_node=value.next_node,
         verified=value.verified,
         created_at=value.created_at,
+    )
+
+
+def _usage_decreased(previous: RuntimeRunModel, current: AgentRun) -> bool:
+    before = previous.usage
+    after = current.usage
+    return any(
+        new < old
+        for old, new in zip(
+            (
+                int(before.get("steps", 0)),
+                int(before.get("tool_calls", 0)),
+                int(before.get("input_tokens", 0)),
+                int(before.get("output_tokens", 0)),
+                int(before.get("elapsed_ms", 0)),
+            ),
+            (
+                after.steps,
+                after.tool_calls,
+                after.input_tokens,
+                after.output_tokens,
+                after.elapsed_ms,
+            ),
+            strict=True,
+        )
     )
 
 

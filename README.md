@@ -1,11 +1,19 @@
 # Agent 驱动的个人知识仓库
 
+## 2026-08-03 Implementation Status
+
+Stages 0-5 engineering capabilities are implemented under the current contracts. Stage 4 includes
+the complete QA/Citation/API/Web/Worker path and a Space-scoped feedback review queue. Stage 5
+includes durable Runtime/approval/derived-knowledge/Skill lifecycle behavior and the controlled
+`scripts/export_feedback_candidates.py` command. These implementation results do not change the
+Stage 3 termination record or claim formal retrieval, answer, or Skill holdout acceptance.
+
 本项目面向个人学习、科研和开发资料，目标是构建一个本地优先、来源可追溯的知识工作台。
 规划中的完整闭环包括文档摄入、增量索引、混合检索、带引用问答和可版本化 Agent Skill。
 
 ## 当前状态
 
-**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，但正式质量门禁未通过。PR #3 的 GPU 配置复现出 provisional Claim Recall@10=69.7548%，因当前评测集代表性局限，阶段 3 已按 [ADR-010](docs/adr/010-stage-3-termination-and-evaluation-boundary.md) 终止；正式 holdout 未执行，配置仍未冻结。阶段 4 provisional 的领域/Application、PostgreSQL 持久化、API/SSE、Worker、Web、反馈和回答评测门禁已跑通，但正式质量门禁仍未关闭；阶段 5 provisional Skill/Runtime 基础已并行落地。**
+**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，但正式质量门禁未通过。PR #3/v1 GPU development 复现出 provisional Claim Recall@10=69.7548%，因当前评测集代表性局限，阶段 3 已按 [ADR-010](docs/adr/010-stage-3-termination-and-evaluation-boundary.md) 保持正式未通过；正式 holdout 未执行，配置仍未冻结。根据 [ADR-011](docs/adr/011-provisional-stage-4-5-continuation-gate.md)，当前结果只允许阶段 4/5 继续 provisional 工程，不构成正式质量接受；阶段 4/5 正式质量门禁仍未关闭。**
 
 已交付的核心能力：
 
@@ -14,8 +22,8 @@
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
 | 阶段 3 ⏹️ 已终止（工程完成，质量门禁未通过） | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；PR3 GPU development Claim Recall@10 为 69.7548%，当前评测集代表性不足，正式 holdout 未执行，配置保持 provisional |
-| 阶段 4 🟡 provisional Step 0-10 | ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测 validate-only 已完成；默认配置与 holdout 未完成 |
-| 阶段 5 🟡 provisional Skills | ADR-006、Runtime/Registry 通用基础已通过审查；`knowledge_agent`、`knowledge_qa` 与三个知识整理 Skill `0.1.0` 复用现有持久 QA Run/Worker/SSE；Step 10 provisional 验收已记录 |
+| 阶段 4 🟡 provisional Step 0-10 | 在 ADR-011 continuation gate 下继续；ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测 validate-only 已完成；默认配置与正式 holdout 未完成 |
+| 阶段 5 🟡 provisional Skills | Step 0-10 工程功能已完成；当前 active 为 `knowledge_agent 0.2.0`（保留 `0.1.0` 回滚包）、`knowledge_qa 0.1.0` 与三个知识整理 Skill `0.1.0`，统一复用持久 QA Run/Worker/SSE；正式质量仍 provisional |
 
 当前 Web 展示系统健康、数据来源和 provisional 知识问答工作区；HTTP API 可创建持久会话、提交
 问题，由 API 仅向 Redis 投递 Run ID，再由独立 Worker 调用唯一 `GroundedQAApplicationPort`、
@@ -30,14 +38,16 @@ Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL
 阶段 3 默认检索配置和质量门禁也尚未冻结。
 阶段 5 的 `knowledge_qa 0.1.0` 已从本地受信根显式激活：API 在新 QA Run 中固定 Skill 名称、
 版本和内容摘要，Worker 恢复时按该固定身份校验声明式 workflow，再调用唯一 QA Application Port。
-现有 QA Web/API 因此已是该 provisional Skill 的真实入口，但尚无通用 Runtime API、PostgreSQL
-Runtime Checkpoint、Skill 管理 Web 或旧版本清理。`/api/v1/skills` 可查询 active/已安装版本、
+现有 QA Web/API 因此已是该 provisional Skill 的真实入口；统一 `/api/v1/runs` facade、PostgreSQL
+Runtime Checkpoint、Skill 管理 Web 和受控旧版本清理均已提供。`/api/v1/skills` 可查询 active/已安装版本、
 摘要、预算和 pointer revision，并通过受控 CAS 接口激活或回滚到受信根中已安装的版本；pointer
-保存在 PostgreSQL，API 重启后恢复。不能据此宣称阶段 5 整体完成。
+保存在 PostgreSQL，API 重启后恢复。阶段 5 工程功能已完成；正式 Skill Eval 和阶段退出仍受
+Stage 3/4 质量门禁约束，不能把 provisional 结果写成正式质量通过。
 `summarize_document`、`compare_sources` 和 `create_review_cards` 也已提供 provisional HTTP
 入口并固定提交时的 Source/Document/DocumentVersion 范围；版本变更、撤下或跨 Space 选择不会
 扩大检索范围。比较结果必须引用至少两个来源，否则按证据不足拒答。复习卡当前只返回带引用预览，
-并以 `SKILL_WRITE_PORT_UNAVAILABLE` 明确报告 `side_effects=0`，尚无派生知识写入或确认流程。
+并以 `SKILL_WRITE_REQUIRES_APPROVAL` 明确报告审批前 `side_effects=0`；批准后通过持久化
+Derived Knowledge Port 幂等写入，并可查询或撤销。
 `knowledge_agent 0.2.0` 提供真实的受约束 LLM/Tool 循环：模型可先调用只读
 `inspect_retrieval 1.0.0` 调整多查询、候选数和上下文预算，再调用一次 `grounded_qa 1.0.0`，
 由现有 QA Run、Worker、SSE、Grounded QA Port 和 Citation 链路完成问答。动态数值由服务端
@@ -228,6 +238,9 @@ docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml --env-file .env
 - [阶段 5 实施计划](docs/stage-5-implementation-plan.md)
 - [阶段 5 实现审查记录](docs/stage-5-implementation-review.md)
 - [阶段 5 provisional 验收记录](docs/stage-5-acceptance.md)
+- [阶段 4/5 收尾看板](docs/stage-4-5-completion-tracker.md)
+- [阶段 3 v1 development 复核记录](docs/stage-3-reopen-development-v1.md)
+- [阶段 3 终止后的阶段 4/5 收尾计划](docs/post-stage-3-stage-4-5-completion-plan.md)
 - [OpenAPI](docs/openapi.json)
 - [架构决策记录](docs/adr/README.md)
 

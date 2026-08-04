@@ -33,6 +33,8 @@ from domain.qa_persistence import (
     EvidenceRecord,
     FeedbackDecision,
     FeedbackRecord,
+    FeedbackReviewRecord,
+    FeedbackReviewStatus,
     MessageRecord,
     MessageRole,
     QAPhase,
@@ -479,6 +481,65 @@ async def test_feedback_is_bound_to_published_message_and_is_idempotent() -> Non
 
     with pytest.raises(QAContractError, match="published QA result"):
         await repo.submit_feedback(replace(feedback, message_id=QUESTION_ID))
+
+
+@pytest.mark.asyncio
+async def test_feedback_review_is_space_bound_and_idempotent() -> None:
+    repo = InMemoryGroundedQARepository()
+    conversation, _question, run = await _seed_run(repo)
+    await _save_evidence(repo, run)
+    answer_message = _answer_message(run)
+    await repo.publish_terminal(
+        run_id=run.run_id,
+        result=_answer(),
+        answer_message=answer_message,
+        citations=(_citation_record(run),),
+    )
+    feedback = await repo.submit_feedback(
+        FeedbackRecord(
+            conversation_id=conversation.conversation_id,
+            message_id=answer_message.message_id,
+            run_id=run.run_id,
+            attempt_id=run.attempt.attempt_id,
+            space_id=SPACE_ID,
+            caller_id="owner-1",
+            idempotency_key="feedback-review-1",
+            decision=FeedbackDecision.NEGATIVE,
+        )
+    )
+    review = FeedbackReviewRecord(
+        feedback_id=feedback.feedback_id,
+        space_id=SPACE_ID,
+        review_status=FeedbackReviewStatus.ACCEPTED,
+        reviewer_id="reviewer-1",
+        authorization_confirmed=True,
+        redaction_complete=True,
+        expected_behavior="answer",
+        approved_evidence_ids=(EVIDENCE_ID,),
+        gold_answer_sha256="b" * 64,
+    )
+    accepted = await repo.review_feedback(review)
+    assert accepted.reviewer_id == "reviewer-1"
+    assert accepted.review_status is FeedbackReviewStatus.ACCEPTED
+    assert (await repo.list_feedback(SPACE_ID, FeedbackReviewStatus.ACCEPTED)) == (accepted,)
+    assert await repo.review_feedback(replace(review, reviewed_at=datetime.now(UTC))) == accepted
+
+    with pytest.raises(QAContractError, match="requested Space"):
+        await repo.review_feedback(replace(review, space_id=OTHER_SPACE_ID))
+
+
+def test_feedback_review_rejects_answer_without_approved_evidence() -> None:
+    with pytest.raises(ValueError, match="approved Evidence"):
+        FeedbackReviewRecord(
+            feedback_id=UUID(int=104),
+            space_id=SPACE_ID,
+            review_status=FeedbackReviewStatus.ACCEPTED,
+            reviewer_id="reviewer-1",
+            authorization_confirmed=True,
+            redaction_complete=True,
+            expected_behavior="answer",
+            gold_answer_sha256="b" * 64,
+        )
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,8 @@ function renderWorkspace() {
 const activeSkills = [
   { name: 'knowledge_agent', active_version: '0.1.0', versions: ['0.1.0'] },
   { name: 'knowledge_qa', active_version: '0.1.0', versions: ['0.1.0'] },
+  { name: 'summarize_document', active_version: '0.1.0', versions: ['0.1.0'] },
+  { name: 'compare_sources', active_version: '0.1.0', versions: ['0.1.0'] },
   { name: 'create_review_cards', active_version: '0.1.0', versions: ['0.1.0'] },
 ]
 
@@ -357,7 +359,7 @@ describe('QAWorkspace', () => {
         },
       ],
     }
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/api/v1/skills')) {
         return Promise.resolve(response(activeSkills))
@@ -389,6 +391,14 @@ describe('QAWorkspace', () => {
           }),
         )
       }
+      if (url.endsWith('/feedback') && init?.method === 'POST') {
+        return Promise.resolve(response({
+          feedback_id: 'feedback-1',
+          run_id: 'run-1',
+          message_id: 'message-2',
+          review_status: 'pending_review',
+        }, 201))
+      }
       return Promise.resolve(response(completed, url.endsWith('/questions') ? 202 : 200))
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -415,6 +425,54 @@ describe('QAWorkspace', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: '关闭原文' }))
     expect(screen.queryByText('The exact source lines.')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '回答有帮助' }))
+    await waitFor(() => expect(screen.getByText('反馈已提交，等待审核')).toBeInTheDocument())
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/qa/runs/run-1/feedback'),
+      expect.objectContaining({ method: 'POST', body: expect.stringContaining('positive') }),
+    )
+  })
+
+  it('submits compare_sources through the generic Run facade', async () => {
+    const sourceIds = ['source-a', 'source-b']
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/skills')) return Promise.resolve(response(activeSkills))
+      if (url.endsWith('/api/v1/spaces/00000000-0000-0000-0000-000000000000/sources')) {
+        return Promise.resolve(response({ sources: sourceIds.map((id) => ({ id, uri: `${id}.md` })) }))
+      }
+      if (url.includes('/spaces/') && url.includes('/conversations') && init?.method === 'POST') {
+        return Promise.resolve(response({ conversation_id: 'conversation-compare', space_id: 'space-1', owner_id: 'local' }))
+      }
+      if (url.endsWith('/api/v1/runs')) {
+        const body = JSON.parse(String(init?.body)) as { skill_name: string; source_ids: string[] }
+        expect(body).toMatchObject({ skill_name: 'compare_sources', source_ids: sourceIds })
+        return Promise.resolve(response({
+          run_id: 'run-compare',
+          attempt_id: 'attempt-compare',
+          status: 'queued',
+          conversation_id: 'conversation-compare',
+          question_message_id: 'message-compare',
+          cancellation_requested: false,
+          error_code: null,
+          skill: { name: 'compare_sources', version: '0.1.0', content_sha256: 'a'.repeat(64) },
+        }, 202))
+      }
+      return Promise.resolve(response({ conversations: [] }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'compare-idempotency' })
+
+    renderWorkspace()
+    fireEvent.click(await screen.findByRole('button', { name: '比较来源' }))
+    await screen.findByText('选择至少两个来源')
+    fireEvent.click(await screen.findByLabelText('source-a.md'))
+    fireEvent.click(await screen.findByLabelText('source-b.md'))
+    await waitFor(() => expect(screen.getByRole('button', { name: '提问' })).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: '提问' }))
+
+    expect(await screen.findByText('比较所选来源')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/runs'), expect.objectContaining({ method: 'POST' }))
   })
 
   it('shows a useful citation error and retries it', async () => {

@@ -1,6 +1,6 @@
 # 阶段 5 实施计划：Agent Runtime 与 Skill 标准化
 
-> 文档状态：通用基础实现已审查；阶段整体未验收
+> 文档状态：Step 0～10 工程实现已完成；正式质量门禁保持 provisional
 >
 > 适用范围：`docs/project-implementation-plan.md` 中的阶段 5
 >
@@ -10,25 +10,25 @@
 
 ## 1. 结论摘要
 
-截至 2026-08-01，Step 0～4 和 Step 9 的通用可执行部分已通过实现审查；Step 5 已完成 QA
-持久化/Worker 子集和通用 Runtime Checkpoint PostgreSQL 子集，Step 6 已交付 active provisional
-`knowledge_qa`，Step 7 复用现有 QA API/Web。Step 8 已交付三个知识整理 Skill 的 provisional
-只读子集。Worker 检查点恢复、派生知识写入/确认、旧版本清理和正式质量门禁仍未完成。
+截至 2026-08-03，Step 0～10 的工程实现均已完成：阶段 4 QA Run/Worker/SSE/API/Web
+链路、通用 Runtime Checkpoint PostgreSQL 持久化、持久审批、派生知识 exactly-once 写入、
+五个 Skill 的统一 Run facade、active pointer CAS/回滚、引用保护清理和反馈审核/候选导出均已
+接入并通过单元、契约和隔离 PostgreSQL 回归。正式检索/回答/Skill 质量门禁仍保持
+`provisional`，不将未执行的 holdout 计为通过。
 
 阶段 5 的目标是把阶段 2 至阶段 4 已验证的摄入、检索、引用和问答能力封装为稳定、
 可版本化、可审计、可恢复的 Skill，并确保同一个 Skill 通过 Web、HTTP API 和测试入口
 调用同一 Application 用例。
 
-当前项目处于阶段 2 Step 0/1 完成后的状态。现阶段可以先行实现 Agent Runtime Port、
-Tool/Skill 契约、Registry、版本固定、预算、权限、检查点接口和确定性测试替身；但以下
-部分必须等待前序阶段提供真实能力后才能接入和验收：
+当前项目已完成阶段 0～4 的工程交接，并在现有 Port 上完成阶段 5 接入。正式质量验收仍受
+以下数据与环境边界约束，但这些边界不再阻塞工程功能实现：
 
 - `knowledge_qa` 的真实执行依赖阶段 2 的已发布 Chunk、阶段 3 的 `RetrievalStore` 和阶段 4
-  的引用问答 Application 用例。
-- Runtime API、会话和运行持久化应复用阶段 4 已落地的 Conversation、AgentRun、Evidence
-  及 SSE/取消协议；不得由阶段 5 重复建立平行模型。
-- `summarize_document`、`compare_sources` 和 `create_review_cards` 在 `knowledge_qa` 闭环稳定
-  前只允许完成契约和确定性 fixture，不计为可用 Skill。
+  的引用问答 Application 用例；当前已通过唯一 QA Port 接入。
+- Runtime API、会话和运行持久化复用阶段 4 的 Conversation、QA Run、Evidence 及 SSE/取消
+  协议；通用 Runtime 快照和 Checkpoint 已通过同一 QA Run 身份持久化，不建立平行执行链。
+- `summarize_document`、`compare_sources` 和 `create_review_cards` 已提供固定版本、引用约束、
+  预览/审批和派生写入路径；正式 Skill Eval 仍待新版本质量输入。
 - Stage 0 已按 `docs/stage-0-acceptance.md` 以 `internal_team_only` 范围冻结；仍只能在完成
   阶段 2/3 正式质量门禁后宣称真实语料上的 Skill 质量达标。
 
@@ -667,17 +667,17 @@ revision CAS 保证并发激活/回滚不会静默覆盖。Registry reload 仍�
 
 | 步骤 | 必须先满足 | 当前状态 |
 | --- | --- | --- |
-| 0. ADR-006 与跨阶段契约 | ADR-001～005、ADR-009；阶段 4 接口草案可核对 | 已完成可执行部分；阶段 3/4 接口待交接 |
+| 0. ADR-006 与跨阶段契约 | ADR-001～005、ADR-009；阶段 4 接口草案可核对 | 已完成；阶段 3/4 Port 已交接 |
 | 1. Runtime 领域契约 | 步骤 0 的状态、预算、权限和版本语义确定 | 已完成 |
-| 2. Tool Registry | 步骤 1；阶段 3/4 Port 可先用 fake | 通用契约与 Registry 已完成；真实 Tool 待阶段 3/4 |
+| 2. Tool Registry | 步骤 1；阶段 3/4 Port 可先用 fake | 已完成；只读检索/问答 Tool 已接入，写 Tool 受审批约束 |
 | 3. Skill Registry | 步骤 0/1；受信目录和摘要规则确定 | 已完成 |
 | 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 已完成 |
-| 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | PostgreSQL QA Run/Attempt、Worker lease/heartbeat 和重启恢复已完成；通用 Runtime Checkpoint、审批与清理仍阻塞 |
-| 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | active provisional `0.1.0` 已由固定摘要 Worker 执行；正式质量门禁仍未关闭 |
-| 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 现有 QA API/Web/Worker、Skill Catalog、持久激活/回滚 Web 和 Run fixed identity 已完成；通用 Run 管理仍阻塞 |
-| 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | provisional 只读完成；固定版本摘要/比较/复习卡预览可用，派生知识写入与确认仍阻塞 |
-| 9. 热加载与回滚 | 步骤 3/5；不可变版本和恢复语义已验证 | 通用部分已完成；持久化引用清理等待步骤 5 |
-| 10. 测试与验收 | 步骤 0～9；阶段 0 数据门禁关闭 | provisional 验收完成；正式退出等待通用 Checkpoint、持久写入、Skill Web、旧版本清理及 Stage 3/4 质量门禁 |
+| 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | 已完成；Runtime Run/Checkpoint、lease-loss 取消、幂等重放和恢复回归通过 |
+| 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | active `0.1.0` 已由固定摘要 Worker 执行；正式质量门禁仍 provisional |
+| 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 已完成；统一 `/api/v1/runs`、Skill Catalog、激活/回滚、取消/恢复/审批入口均可用 |
+| 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | 已完成工程链路；固定版本、引用约束、预览、审批和派生写入均可用 |
+| 9. 热加载与回滚 | 步骤 3/5；不可变版本和恢复语义已验证 | 已完成；PostgreSQL active pointer CAS、回滚和引用保护清理通过 |
+| 10. 测试与验收 | 步骤 0～9；阶段 0 数据门禁关闭 | 工程验收完成；正式退出仍等待 Stage 3/4 质量门禁、浏览器证据和 Skill Eval |
 
 允许通用 Runtime、Registry 和 fake 契约与阶段 2～4 并行开发，但合并时必须以阶段 3/4 的
 正式 Port 和 schema 为准；不得要求前序模块反向依赖 Agent Runtime 私有类型。

@@ -1,5 +1,13 @@
 # 项目架构概览
 
+## Current completion boundary (2026-08-03)
+
+The implemented Stage 4/5 boundary now includes feedback review persistence in `qa_feedback`,
+Space-scoped metadata-only review endpoints, and a separate privacy-safe candidate exporter. The
+exporter consumes repository ports and manifest policy metadata; it does not expose user/source
+content. The architecture remains a modular monolith with the existing Worker and QA Application Port.
+Formal quality gates remain governed by ADR-010 and ADR-011.
+
 > 本文档描述 "Agent 驱动的个人知识仓库" 项目的整体架构、各组件职责与协作关系。
 > 更新于阶段 3 终止决策、阶段 4 provisional Step 0～10 和阶段 5 通用 Runtime/Registry
 > 审查完成时（2026-08-03）。
@@ -115,9 +123,11 @@ Agent Runtime → Domain + ModelGateway
 ├── skills/
 │   ├── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
 │   ├── knowledge_qa/               # active provisional Grounded QA Skill
+│   ├── knowledge_agent/            # active bounded LLM Agent Skill
+│   ├── knowledge_agent_v0_1/       # compatibility/rollback package
 │   ├── summarize_document/         # 固定单文档版本的引用摘要
 │   ├── compare_sources/            # 固定多来源的引用比较
-│   └── create_review_cards/        # 带引用预览；派生知识写入明确阻塞
+│   └── create_review_cards/        # 带引用预览与审批后的派生知识写入
 │
 ├── scripts/                        # OpenAPI 导出、Embedding 重建和检索评测 CLI
 │
@@ -363,15 +373,19 @@ Stage 3 模型组合。
 可执行 entrypoint；manifest 只能引用应用启动时注册的 handler。完整包、workflow、schema 和
 prompt 摘要在运行开始时固定。
 
-**当前边界**：通用部分提供离线 Runtime、Registry、fake 契约和内存检查点恢复；没有独立
-AgentRun/Checkpoint ORM、Runtime API 或 Skill 管理 Web。五个 `0.1.0` Skill 的 active pointer
-由 PostgreSQL `skill_activations` 保存，Catalog 暴露安装版本、manifest 预算和 pointer revision，
-受控 activate/rollback API 只允许选择受信根中的已安装版本并使用 revision CAS。新 QA Run 在提交时
-同步 pointer 并固定名称、版本和内容摘要，Worker 按 Run 固定包执行唯一 QA Application Port。
-QA PostgreSQL Run/Attempt/Event 是业务恢复事实源；通用 Runtime 生命周期事件和 Checkpoint 仍只在
-进程内。知识整理 Run 还持久化固定 Source/Document/DocumentVersion 范围；检索要求这些版本仍为
-所选文档的 current published version，避免排队期间跟随新版本或扩大范围。比较结果若没有至少两个
-来源的 Citation 则拒答；复习卡仅预览并返回零副作用写入阻塞标记。
+**当前边界**：通用 Runtime 通过 PostgreSQL `runtime_runs`/`runtime_checkpoints` 保存不可变
+Skill 身份、规范化状态摘要、连续序号和预算用量，并与 QA Run 共享运行身份；Worker 可从最近
+Checkpoint 恢复，重复提交按序号幂等，租约丢失会取消未提交执行。PostgreSQL `skill_activations`
+保存 active pointer，Catalog 暴露安装版本、manifest 预算和 pointer revision；受控
+activate/rollback API 使用 revision CAS，引用检查器保护 QA Run、Runtime Run 和 Checkpoint
+仍在使用的版本，清理只移除进程 Registry，不删除受信磁盘包。新 QA Run 在提交时固定 Skill
+名称、版本和内容摘要，Worker 按该身份执行唯一 QA Application Port。
+
+持久审批绑定运行、Space、调用者和具体 Tool 名称/版本，支持过期、撤销和幂等重放；派生知识
+写入通过同一 QA Run 的 Citation/Space 校验并 exactly-once 保存，可查询和撤销。知识整理 Run
+持久化固定 Source/Document/DocumentVersion 范围；检索要求这些版本仍为所选文档的 current
+published version，避免排队期间跟随新版本或扩大范围。比较结果若没有至少两个来源的 Citation
+则拒答；复习卡在审批前只返回预览并报告 `side_effects=0`，批准后才通过派生知识 Port 写入。
 
 `knowledge_agent` 是当前 LLM Agent 业务入口。它通过现有 `fast_chat` 能力产生严格的
 `call_tool/complete/refuse` 决策。`knowledge_agent 0.2.0` 最多三次调用
@@ -607,6 +621,7 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | 007 | Grounded QA Persistence, Citation, Execution, And SSE Semantics | 固定唯一 QA Port、引用生命周期、运行/取消、Worker 和 SSE 语义；仅协议已接受 |
 | 009 | Redis / Dramatiq Task Delivery | 队列选型 Redis + Dramatiq，状态存 DB |
 | 010 | Stage 3 Termination And Evaluation Boundary | 阶段 3 工程完成但质量门禁未通过；因评测集代表性局限终止，保持 provisional 配置且不运行 holdout |
+| 011 | Provisional Stage 4/5 Continuation Gate | 保持正式质量门不变；当前 retrieval development 仅满足显式 continuation floor 时允许阶段 4/5 provisional 工程继续 |
 
 ADR-007 已接受并已有 provisional 纯契约、内存 Repository、SSE/API/Web 验证，但未授权用这些
 内存能力替代 PostgreSQL/Worker 生产协议。ADR-008 仍为保留编号；正式迁移和后台执行仍须等待
@@ -687,8 +702,9 @@ tests/
   声明式执行、权限、有限重试、取消/超时、内存原子检查点/恢复、审计脱敏和原子 reload/回滚
 
 前端 Vitest 覆盖系统健康、数据来源、上传/触发、任务轮询/取消/重试、API 不可达、非法响应、
-有界超时、键盘焦点，以及 provisional 问答导航、提问、queued、显式取消和不伪造 Citation。
-阶段 3 搜索 UI、真实回答/Citation 和 Playwright E2E 仍未落地。
+有界超时、键盘焦点，以及五个 Skill 的入口、提问、queued、显式取消、审批和不伪造 Citation。
+真实回答/Citation、Web Skill 管理和反馈工作区已落地；仅 Playwright 浏览器级 E2E 因环境缺少
+浏览器依赖尚未执行。
 
 所有真实依赖集成测试必须指向隔离 PostgreSQL/Redis 和 Blob 根，禁止复用含业务数据的本地卷；
 CI 使用独立服务运行集成套件。测试数量不在本文档固定，以测试收集结果和阶段验收记录为准。
@@ -780,7 +796,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 2** | **✅ 正式完成** | **Step 0～9 完成；冻结 manifest 的 74 个 P0 来源成功率 100%，退出记录见 `docs/stage-2-acceptance.md`** |
 | **阶段 3** | **⏹️ 已终止** | **工程 Step 0～10 已完成；正式质量门禁未通过，因当前评测集代表性局限终止，未运行正式 holdout，配置保持 provisional（ADR-010）** |
 | 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、PostgreSQL QA 持久化、SSE/API/Web、Worker lease/重启恢复、原文解析和回答评测门禁已落地；默认配置和 holdout 未落地 |
-| **阶段 5** | **🟡 provisional Skills** | **Step 0～4、Step 8 只读子集和 Step 9 通用部分通过；四个 `0.1.0` Skill 复用现有 QA Run/Worker/SSE，通用 Runtime Checkpoint、派生知识写入、Skill 管理 Web 和正式验收仍阻塞** |
+| **阶段 5** | **🟡 provisional Skills** | **Step 0～10 工程功能已实现；当前 active 为 `knowledge_agent 0.2.0`（保留 `0.1.0` 回滚包）、`knowledge_qa 0.1.0` 和三个知识整理 `0.1.0` Skill，质量状态仍受 Stage 3/4 正式 Eval 门禁约束** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 
@@ -811,10 +827,12 @@ chunks、Claim Recall@10=69.7548%、Evidence Recall@10=62.3431%、MRR=0.6839、P
 质量未通过；因评测集代表性局限已终止，配置仍为 provisional 且 holdout 未执行；完整复现记录见
 `docs/stage-3-acceptance.md`。
 
-阶段 5 通用基础和 provisional 业务 Skill 审查见 `docs/stage-5-implementation-review.md`。这些
-可用子集不改变 Stage 3/4/5 的正式状态，也不替代通用 Runtime Checkpoint、派生知识持久写入或
-正式质量门禁。
+阶段 5 通用基础和业务 Skill 审查见 `docs/stage-5-implementation-review.md`，工程收尾补充见
+`docs/stage-5-acceptance.md`。这些实现不改变 Stage 3/4/5 的正式质量状态；正式质量门禁仍需
+独立、版本化的 dataset/config、真实模型 development 和一次性 holdout。
 
 阶段 0 和阶段 2 已分别按 `docs/stage-0-acceptance.md`、`docs/stage-2-acceptance.md` 交接；
-阶段 3 终止后不得直接运行当前 holdout。若未来重新开启，必须按 ADR-010 使用新的 dataset/config
-version 重新完成 development 和正式门禁。GitHub Actions 已由用户确认运行正常；阶段 0 当前仅允许组员内部使用。
+阶段 3 终止后不得直接运行当前 holdout。根据 ADR-011，当前 retrieval development 只要满足
+显式 continuation floor 即可支持阶段 4/5 provisional 工程，但不能形成正式质量结论。若未来重新
+开启正式质量线，必须按 ADR-010/011 使用新的 dataset/config version 重新完成 development 和正式
+门禁。GitHub Actions 已由用户确认运行正常；阶段 0 当前仅允许组员内部使用。

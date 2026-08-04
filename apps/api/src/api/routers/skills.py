@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import NoReturn
 
+from agent_runtime import SkillRegistryError, SkillRegistryErrorCode
 from application.skills import SkillLifecycleError, SkillLifecycleErrorCode
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -163,6 +164,17 @@ async def cleanup_skill_version(
         )
     except AppError:
         raise
+    except SkillRegistryError as exc:
+        status = (
+            409
+            if exc.code
+            in {
+                SkillRegistryErrorCode.CLEANUP_BLOCKED,
+                SkillRegistryErrorCode.DIGEST_MISMATCH,
+            }
+            else 404
+        )
+        raise AppError(exc.code.value, str(exc), status) from exc
     except Exception as exc:
         _raise_lifecycle_error(SkillLifecycleError(SkillLifecycleErrorCode.NOT_FOUND, str(exc)))
     return SkillCleanupResponse(name=skill_name, version=version, removed=True, references=0)

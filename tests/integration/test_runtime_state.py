@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from uuid import uuid4
 
 import pytest
@@ -8,6 +9,7 @@ from agent_runtime.checkpoints import build_checkpoint
 from domain.agent_runtime import (
     AgentRun,
     AgentRunContext,
+    RecoveryRejectedError,
     RunBudget,
     RunEvent,
     RunStep,
@@ -25,7 +27,7 @@ from domain.qa_persistence import (
 )
 from infrastructure.config import settings
 from infrastructure.database import Database
-from infrastructure.orm import SpaceModel
+from infrastructure.orm import QACitationModel, SpaceModel
 from infrastructure.qa_persistence import PostgresGroundedQARepository
 from infrastructure.repositories import SpaceRepository
 from infrastructure.runtime_approval import PostgresApprovalPort, PostgresDerivedKnowledgeStore
@@ -65,7 +67,7 @@ async def test_runtime_checkpoint_is_persistent_and_idempotent() -> None:
                 idempotency_key="runtime-question",
             )
         )
-        await qa.create_run(
+        created_run = await qa.create_run(
             QARunRecord(
                 run_id=run_id,
                 attempt=QAAttempt(run_id=run_id),
@@ -88,6 +90,18 @@ async def test_runtime_checkpoint_is_persistent_and_idempotent() -> None:
                 ),
             )
         )
+        citation_id = uuid4()
+        async with database.transaction() as session:
+            session.add(
+                QACitationModel(
+                    id=uuid4(),
+                    run_id=run_id,
+                    attempt_id=created_run.attempt.attempt_id,
+                    message_id=message.message_id,
+                    evidence_id=citation_id,
+                    payload={},
+                )
+            )
         run = AgentRun(
             context=AgentRunContext(
                 run_id=run_id,
@@ -108,6 +122,10 @@ async def test_runtime_checkpoint_is_persistent_and_idempotent() -> None:
             next_node="retrieve",
         )
         store = PostgresRuntimeStateStore(database)
+        with pytest.raises(RecoveryRejectedError, match="digest"):
+            await store.commit(run, replace(checkpoint, state_sha256="c" * 64))
+        with pytest.raises(RecoveryRejectedError, match="Skill identity"):
+            await store.commit(run, replace(checkpoint, skill_version="9.9.9"))
         persisted, saved = await store.commit(run, checkpoint)
         assert persisted.checkpoint_sequence == 1
         assert saved.state_sha256 == checkpoint.state_sha256
@@ -152,7 +170,7 @@ async def test_approval_and_derived_write_are_durable_and_idempotent() -> None:
                 idempotency_key="review-card-question",
             )
         )
-        await qa.create_run(
+        created_run = await qa.create_run(
             QARunRecord(
                 run_id=run_id,
                 attempt=QAAttempt(run_id=run_id),
@@ -175,6 +193,18 @@ async def test_approval_and_derived_write_are_durable_and_idempotent() -> None:
                 ),
             )
         )
+        citation_id = uuid4()
+        async with database.transaction() as session:
+            session.add(
+                QACitationModel(
+                    id=uuid4(),
+                    run_id=run_id,
+                    attempt_id=created_run.attempt.attempt_id,
+                    message_id=message.message_id,
+                    evidence_id=citation_id,
+                    payload={},
+                )
+            )
         context = AgentRunContext(
             run_id=run_id,
             space_id=space_id,
@@ -197,15 +227,27 @@ async def test_approval_and_derived_write_are_durable_and_idempotent() -> None:
         assert not await approvals.is_approved(approval_id, context)
         assert await approvals.decide(approval_id, approved=True, decided_by=caller_id)
         assert await PostgresApprovalPort(database).is_approved(approval_id, context)
+        assert not await PostgresApprovalPort(database).is_approved_for_tool(
+            approval_id, context, tool_name="other_write", tool_version="1.0.0"
+        )
 
         writer = PostgresDerivedKnowledgeStore(database)
+        with pytest.raises(ValueError, match="Space"):
+            await writer.write_review_cards(
+                run_id=run_id,
+                space_id=uuid4(),
+                created_by=caller_id,
+                idempotency_key="wrong-space",
+                content={"cards": []},
+                citation_ids=(str(citation_id),),
+            )
         first = await writer.write_review_cards(
             run_id=run_id,
             space_id=space_id,
             created_by=caller_id,
             idempotency_key="review-card-write",
             content={"cards": [{"front": "fixture", "back": "supported"}]},
-            citation_ids=(str(uuid4()),),
+            citation_ids=(str(citation_id),),
         )
         replay = await PostgresDerivedKnowledgeStore(database).write_review_cards(
             run_id=run_id,
@@ -216,6 +258,21 @@ async def test_approval_and_derived_write_are_durable_and_idempotent() -> None:
             citation_ids=first.citation_ids,
         )
         assert replay.id == first.id
+        approval_record = await approvals.get(approval_id, run_id=run_id)
+        assert approval_record is not None
+        assert approval_record.status == "approved"
+        assert len(await approvals.list_for_run(run_id)) == 1
+        derived = await writer.get(first.id, run_id=run_id)
+        assert derived is not None
+        assert derived.status == "active"
+        assert len(await writer.list_for_run(run_id)) == 1
+        revoked = await writer.revoke(
+            first.id, run_id=run_id, space_id=space_id, revoked_by=caller_id
+        )
+        assert revoked is not None
+        assert revoked.status == "revoked"
+        assert await approvals.revoke(approval_id, revoked_by=caller_id)
+        assert not await PostgresApprovalPort(database).is_approved(approval_id, context)
     finally:
         async with database.transaction() as session:
             await session.execute(delete(SpaceModel).where(SpaceModel.id == space_id))

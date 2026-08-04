@@ -67,11 +67,11 @@ def build_checkpoint(
 
 
 class InMemoryRuntimeStateStore:
-    """Transaction double for the future PostgreSQL run/checkpoint adapter."""
+    """Transaction double with the same append-only semantics as PostgreSQL."""
 
     def __init__(self) -> None:
         self._runs: dict[UUID, AgentRun] = {}
-        self._checkpoints: dict[UUID, RunCheckpoint] = {}
+        self._checkpoints: dict[UUID, dict[int, RunCheckpoint]] = {}
         self._lock = asyncio.Lock()
 
     async def commit(
@@ -83,6 +83,10 @@ class InMemoryRuntimeStateStore:
             if existing is not None:
                 if existing.context != run.context or existing.budget != run.budget:
                     raise RecoveryRejectedError("stored run identity is immutable")
+                if run.checkpoint_sequence == existing.checkpoint_sequence:
+                    replay = self._checkpoints[run.context.run_id].get(run.checkpoint_sequence)
+                    if replay is not None:
+                        return deepcopy(existing), deepcopy(replay)
                 if run.checkpoint_sequence != existing.checkpoint_sequence + 1:
                     raise RecoveryRejectedError("checkpoint sequence is not contiguous")
                 if _usage_decreased(existing, run):
@@ -92,7 +96,9 @@ class InMemoryRuntimeStateStore:
             stored_run = deepcopy(run)
             stored_checkpoint = deepcopy(checkpoint)
             self._runs[run.context.run_id] = stored_run
-            self._checkpoints[run.context.run_id] = stored_checkpoint
+            self._checkpoints.setdefault(run.context.run_id, {})[stored_checkpoint.sequence] = (
+                stored_checkpoint
+            )
             return deepcopy(stored_run), deepcopy(stored_checkpoint)
 
     async def get_run(self, run_id: UUID) -> AgentRun | None:
@@ -102,13 +108,26 @@ class InMemoryRuntimeStateStore:
 
     async def get_latest(self, run_id: UUID) -> RunCheckpoint | None:
         async with self._lock:
-            checkpoint = self._checkpoints.get(run_id)
+            checkpoints = self._checkpoints.get(run_id)
+            checkpoint = (
+                max(checkpoints.values(), key=lambda item: item.sequence) if checkpoints else None
+            )
             return deepcopy(checkpoint) if checkpoint is not None else None
 
     @staticmethod
     def _validate_commit(run: AgentRun, checkpoint: RunCheckpoint) -> None:
         if run.context.run_id != checkpoint.run_id:
             raise RecoveryRejectedError("checkpoint belongs to another run")
+        if (
+            checkpoint.skill_name,
+            checkpoint.skill_version,
+            checkpoint.skill_content_sha256,
+        ) != (
+            run.context.skill_name,
+            run.context.skill_version,
+            run.context.skill_content_sha256,
+        ):
+            raise RecoveryRejectedError("checkpoint Skill identity does not match run")
         if run.checkpoint_sequence != checkpoint.sequence:
             raise RecoveryRejectedError("run and checkpoint sequence differ")
         if run.usage != checkpoint.usage or not checkpoint.verified:

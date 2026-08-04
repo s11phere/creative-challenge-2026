@@ -1,0 +1,71 @@
+schema_version: qa-eval-config-v1
+status: provisional
+corpus:
+  version: v0
+  manifest_path: cases/evals/corpus/v0/manifest.yaml
+  manifest_sha256: 53d6f863060dd7d5e6affb0abda64348f0b498995b3d1cda5ef80f0e576ca738
+dataset:
+  version: v0
+  cases_path: cases/evals/datasets/knowledge-qa-v0/cases.jsonl
+  cases_sha256: 19b58c1471ff69b748233c61470cb19ce38c74d0bf6b83c4555cde18d7456fda
+  schema_path: cases/evals/datasets/knowledge-qa-v0/schema.json
+  schema_sha256: deefac883f895bb04d709c37cab2c0f61ed22cf6a6c53838a4ad0cc144b53282
+  splits:
+    development:
+      count: 127
+      content_sha256: 6e870ee94cb64367d111557a2d1fdfc0d3f8b231e2d60cde7e7118e3881e239c
+    holdout:
+      count: 149
+      content_sha256: ec56aa778587f0b66b78a2aa2d55dad04e187930f1b75423bb42b5d31a077b28
+profile:
+  path: cases/evals/configs/qa-profile-continuation-v1.yaml
+  sha256: 1f20cdfd15b67052ce4bfe6d1490772911365d32049103ff62acc24f79d741f7
+prompt:
+  path: cases/evals/prompts/grounded-qa-v1-provisional.txt
+  sha256: a05344c70c2b56fddd3d575f5a452260a4d981c18c9e0975652d3494611d74a8
+  template_id: grounded-qa-v1-provisional
+protocol:
+  outcome_labels:
+    - answer
+    - refuse
+    - conflict
+    - failed
+  metrics:
+    - claim_support_rate
+    - citation_validity_rate
+    - forbidden_claim_rate
+    - refusal_precision
+    - refusal_recall
+    - conflict_precision
+    - safety_violation_rate
+    - latency_p50_p95
+    - infrastructure_failure_rate
+  denominators:
+    answer: expected_answer_cases_only
+    refuse: expected_refuse_cases_only
+    conflict: expected_conflict_cases_only
+    failed: all_cases_reported_separately_never_counted_as_refusal
+  safety_slices:
+    - no_answer
+    - cross_space
+    - withdrawn_version
+    - source_conflict
+    - adversarial_document
+    - bilingual
+  human_review:
+    required_for:
+      - claim_support_disagreement
+      - citation_locator_disagreement
+      - conflict_disagreement
+    reviewer_count: 2
+    tie_breaker: named_third_reviewer_before_report_finalization
+runtime:
+  target: deterministic-fake-only
+  concurrency: 1
+  sampling: one_complete_pass
+  model_mode: fake
+gates:
+  formal_manifest_status: frozen
+  stage_2_step_9_acceptance_path: docs/stage-2-acceptance.md
+  stage_3_acceptance_path: docs/stage-3-acceptance.md
+  formal_runs_enabled: false

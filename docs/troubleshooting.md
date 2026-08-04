@@ -225,29 +225,53 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 加速，Compose 已保留实测较快的限制。
 - 需要检索时先确认 Space 存在、Document 有当前 published version，且查询模式所需的 Embedding/Reranker 能力已配置；无命中是成功的空列表，不是系统故障。
 - 模型服务不可用不会阻断 PostgreSQL/Redis 管理面 ready；Dense 会返回明确 Provider 错误，Hybrid 只有 profile 明确允许时才可降级为 Keyword。
-- 已有离线 Agent Runtime、Tool/Skill Registry、声明式执行器、内存检查点恢复和 Skill 模板；
+- 已有 Agent Runtime、Tool/Skill Registry、声明式执行器、内存与 PostgreSQL 检查点恢复和 Skill 模板；
   `knowledge_qa 0.1.0` 首次由配置初始化，随后以 PostgreSQL active pointer 为准，现有 QA HTTP/Web 入口创建的每个 Run 都固定包摘要，
   Worker 校验后才调用唯一 QA Application Port。可用 `GET /api/v1/skills` 和
   `GET /api/v1/skills/knowledge_qa/versions` 检查安装摘要、active 版本和 manifest 预算。
-- `knowledge_agent 0.1.0` 通过 `fast_chat` 执行受约束 LLM 决策，并在同一持久 QA Run 中调用一次
-  `grounded_qa`。外层模型只看到 Tool 状态/计数，不看到回答或引用原文；通用 Runtime 决策历史仍未
+- `knowledge_agent 0.2.0` 通过 `fast_chat` 执行受约束 LLM 决策，可在同一持久 QA Run 中调用
+  `inspect_retrieval` 后调用一次 `grounded_qa`；`0.1.0` 保留用于固定 Run 恢复和回滚。外层模型只看到
+  Tool 状态/计数，不看到回答或引用原文；通用 Runtime 决策历史仍未
   单独持久化，恢复和最终结果以 QA PostgreSQL 状态为准。
 - 若 Run 以 `QA_SKILL_INVALID` 失败，检查 API 与 Worker 的 `SKILL_ROOT_PATH`、
   `KNOWLEDGE_QA_SKILL_VERSION` 和镜像内 `skills/knowledge_qa` 内容是否一致。不要就地修改已被 Run
   引用的同名版本；发布新 semver 并保留旧包供排队/恢复 Run 校验。
 - Registry active pointer 已持久化到 `skill_activations`；激活或回滚出现
   `SKILL_ACTIVATION_CONFLICT` 时，应刷新 Catalog 的 `active_revision` 后重试，不能绕过 CAS。
-  QA 的 PostgreSQL Run/Attempt/Event 是当前执行恢复事实源。通用 Runtime Checkpoint、持久生命周期
-  事件和旧版本引用清理仍待阶段 5 后续实现。
+  QA 的 PostgreSQL Run/Attempt/Event 是当前执行恢复事实源；通用 Runtime Checkpoint、持久生命周期
+  事件、审批查询/撤销和旧版本引用清理均已提供。正式跨进程故障注入仍需独立环境验收。
 - 知识整理入口会把选中的 Source/Document/DocumentVersion 固定到 QA Run。若排队期间来源撤下、
   文档发布新版本或 selector 不再匹配，运行会以稳定范围错误失败，不会自动跟随新版本；重新确认
   当前版本后创建新 Run。`compare_sources` 缺少两个来源的 Citation 时会拒答。
-- `create_review_cards` 当前只生成预览。`write.code=SKILL_WRITE_PORT_UNAVAILABLE` 且
-  `side_effects=0` 是预期结果；在派生知识 Application Port 和持久确认协议落地前不要绕过该标记
-  直接写表或文件。
-- Web 分别展示真实健康状态、真实数据来源/摄入任务和 provisional QA 状态；QA 证据面板只对
+- `create_review_cards` 默认先生成预览。`write.code=SKILL_WRITE_REQUIRES_APPROVAL` 且
+  `side_effects=0` 表示尚未获得持久化审批；审批后可通过
+  `/api/v1/runs/{run_id}/derived-knowledge` 查询写入状态，撤销使用对应 DELETE 端点。
+- Web 展示真实健康状态、真实数据来源/摄入任务、五个 Skill 入口和 provisional QA 状态；QA 证据面板只对
   服务端已发布的 Citation 按需请求原文，不接受客户端提供的 locator 或版本。若返回 `invalid`，
   先检查 Blob hash、parser 版本和 locator 是否仍与固定 DocumentVersion 一致，不要回退到相似文本。
 - 阶段 0 语料已按 `docs/stage-0-acceptance.md` 冻结为 `internal_team_only`；真实语料只可在
   manifest 允许列表内用于本地/组内评测，禁止 Git 分发、公开演示和未经策略允许的外部 Provider
-  外发。阶段 2 Step 9 已关闭，但阶段 3 正式质量门禁未通过且已终止；阶段 4 仍未正式启动。
+  外发。阶段 2 Step 9 已关闭，阶段 3 正式质量门禁未通过且已终止；阶段 4/5 工程功能已完成，
+  正式质量门禁仍保持 provisional。
+# Feedback review and candidate export
+
+Feedback submission creates a `pending_review` record. Reviewers use the Space-scoped API under
+`/api/v1/spaces/{space_id}/feedback`; responses intentionally contain metadata only. Accepted reviews
+must include authorization/redaction confirmation, expected behavior, and the required gold digest.
+Rejected reviews must include a reason. Replaying the same review is idempotent; a conflicting second
+review is rejected.
+
+To export accepted candidates, provide an isolated database and an explicit Space ID:
+
+```powershell
+.venv\Scripts\python.exe scripts/export_feedback_candidates.py `
+  --space-id <space-uuid> `
+  --output tmp/feedback-candidates-development.jsonl
+```
+
+The command refuses existing files and frozen/holdout paths. It writes metadata-only JSONL and skips
+missing runs or incomplete review records. It does not run a formal evaluation.
+
+The older provisional notes above describe the pre-completion baseline; the current Runtime
+checkpoint, approval, derived-knowledge, Skill cleanup, and feedback review implementations are
+covered by the Stage 4/5 completion tracker and their regression tests.
