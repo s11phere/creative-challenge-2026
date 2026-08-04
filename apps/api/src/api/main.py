@@ -78,6 +78,11 @@ class ReadyResponse(BaseModel):
     checks: ReadinessChecks
 
 
+class LimitsResponse(BaseModel):
+    max_upload_size_mb: int
+    max_upload_size_bytes: int
+
+
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     500: {
         "model": ErrorResponse,
@@ -258,6 +263,18 @@ def _register_routes(app: FastAPI) -> None:
                 redis=redis_result,
                 model=model_result,
             ),
+        )
+
+    @app.get(
+        "/api/v1/config/limits",
+        response_model=LimitsResponse,
+        responses=ERROR_RESPONSES,
+    )
+    async def config_limits() -> LimitsResponse:
+        """Client-facing upload limits from the live configuration."""
+        return LimitsResponse(
+            max_upload_size_mb=settings.max_upload_size_mb,
+            max_upload_size_bytes=settings.max_upload_size_mb * 1024 * 1024,
         )
 
 

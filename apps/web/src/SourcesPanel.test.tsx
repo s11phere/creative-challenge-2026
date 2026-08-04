@@ -81,6 +81,68 @@ describe('SourcesPanel task controls', () => {
     )
   })
 
+  it('rolls back a freshly created source when the upload fails', async () => {
+    let sourceDeleted = false
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/sources') && init?.method === 'POST') {
+        return Promise.resolve(jsonResponse({
+          source_id: 'browser-source', space_id: 'space-1', source_type: 'upload',
+          uri: 'web-upload://browser', is_new: true,
+        }))
+      }
+      if (url.endsWith('/sources/browser-source/upload') && init?.method === 'POST') {
+        return Promise.resolve(jsonResponse({ detail: 'boom' }, 500))
+      }
+      if (url.endsWith('/sources/browser-source') && init?.method === 'DELETE') {
+        sourceDeleted = true
+        return Promise.resolve(jsonResponse({ source_id: 'browser-source', status: 'deleted' }))
+      }
+      if (url.endsWith('/sources')) {
+        return Promise.resolve(jsonResponse({ sources: [] }))
+      }
+      return Promise.resolve(jsonResponse({ sources: [] }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderPanel()
+
+    const input = await screen.findByLabelText('选择要上传的文件')
+    fireEvent.change(input, {
+      target: { files: [new File(['content'], 'fail.md', { type: 'text/markdown' })] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '上传并摄入' }))
+
+    expect(await screen.findByText(/上传失败/)).toBeInTheDocument()
+    await waitFor(() => expect(sourceDeleted).toBe(true))
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/sources/browser-source'),
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+    // The rolled-back source must not appear as a new card below.
+    expect(screen.queryByText(/web-upload:\/\/browser/)).not.toBeInTheDocument()
+  })
+
+  it('shows the configured upload size limit in the direct upload hint', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/config/limits')) {
+        return Promise.resolve(jsonResponse({
+          max_upload_size_mb: 50, max_upload_size_bytes: 52428800,
+        }))
+      }
+      if (url.endsWith('/sources')) {
+        return Promise.resolve(jsonResponse({ sources: [] }))
+      }
+      return Promise.resolve(jsonResponse({ sources: [] }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderPanel()
+
+    expect(await screen.findByText(/单个文件不超过 50 MB/)).toBeInTheDocument()
+  })
+
   it('switches to the new task after retry and exposes action labels', async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)

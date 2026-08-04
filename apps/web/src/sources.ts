@@ -63,6 +63,11 @@ export type IngestResult = {
   task_id: string
 }
 
+export type UploadLimits = {
+  max_upload_size_mb: number
+  max_upload_size_bytes: number
+}
+
 export class SourcesApiError extends Error {
   code: string
   status: number
@@ -117,6 +122,11 @@ export function fetchSources(signal?: AbortSignal): Promise<SourceList> {
   return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources`, { method: 'GET', signal })
 }
 
+/** Upload limits (max file size) from the live API configuration. */
+export function fetchUploadLimits(signal?: AbortSignal): Promise<UploadLimits> {
+  return apiFetch(`/api/v1/config/limits`, { method: 'GET', signal })
+}
+
 /** Get source detail with documents. */
 export function fetchSourceDetail(sourceId: string, signal?: AbortSignal): Promise<SourceDetail> {
   return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources/${sourceId}/detail`, {
@@ -142,6 +152,16 @@ export function createUploadSource(uri: string): Promise<CreateSourceResult> {
     method: 'POST',
     body: { source_type: 'upload', uri },
   })
+}
+
+export type DeleteSourceResult = {
+  source_id: string
+  status: 'deleted'
+}
+
+/** Delete an empty source. The API refuses sources that hold documents. */
+export function deleteSource(sourceId: string): Promise<DeleteSourceResult> {
+  return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources/${sourceId}`, { method: 'DELETE' })
 }
 
 /** Upload a file to a source and trigger ingestion. */

@@ -71,6 +71,11 @@ def test_context_is_deterministic_and_keeps_trust_boundaries_separate() -> None:
     assert 'trust="untrusted_document"' in first.evidence[0].rendered_block
 
 
+def test_system_rules_direct_answer_language_to_follow_question() -> None:
+    """The model must answer in the question's language unless asked otherwise."""
+    assert "same language as the user's question" in "\n".join(SYSTEM_RULES)
+
+
 def test_context_applies_history_source_document_and_total_budgets_without_truncation() -> None:
     source = UUID(int=20)
     document = UUID(int=30)

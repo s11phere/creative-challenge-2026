@@ -19,9 +19,11 @@ import {
   cancelTask,
   createUploadSource,
   deleteDocument,
+  deleteSource,
   fetchSourceDetail,
   fetchSources,
   fetchTaskStatus,
+  fetchUploadLimits,
   retryTask,
   SourcesApiError,
   triggerIngestion,
@@ -202,18 +204,47 @@ function DirectUpload({ sources }: { sources: SourceInfo[] }) {
   const [isDragging, setIsDragging] = useState(false)
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
 
+  const limitsQuery = useQuery({
+    queryKey: ['upload-limits'],
+    queryFn: ({ signal }) => fetchUploadLimits(signal),
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  })
+  const maxUploadSizeMb = limitsQuery.data?.max_upload_size_mb
+
+  // Tracks a source created by the in-flight upload so a failed upload can
+  // roll it back instead of leaving an empty source card behind.
+  const createdSourceRef = useRef<string | null>(null)
+
   const uploadMut = useMutation({
     mutationFn: async (selected: File) => {
       const existing = sources.find((source) => source.uri === WEB_UPLOAD_URI)
-      const sourceId = existing?.id ?? (await createUploadSource(WEB_UPLOAD_URI)).source_id
-      return uploadFile(sourceId, selected)
+      if (existing) {
+        return { sourceId: existing.id, result: await uploadFile(existing.id, selected) }
+      }
+      const created = await createUploadSource(WEB_UPLOAD_URI)
+      createdSourceRef.current = created.source_id
+      return { sourceId: created.source_id, result: await uploadFile(created.source_id, selected) }
     },
-    onSuccess: (result) => {
+    onSuccess: ({ sourceId, result }) => {
+      createdSourceRef.current = null
       void queryClient.invalidateQueries({ queryKey: ['sources'] })
-      void queryClient.invalidateQueries({ queryKey: ['source', result.source_id] })
+      void queryClient.invalidateQueries({ queryKey: ['source', sourceId] })
       setActiveTaskId(result.task_id)
       setFile(null)
       if (inputRef.current) inputRef.current.value = ''
+    },
+    onError: async () => {
+      const createdId = createdSourceRef.current
+      createdSourceRef.current = null
+      if (!createdId) return
+      try {
+        await deleteSource(createdId)
+      } catch {
+        // Best-effort rollback. If the API refuses (e.g. the source already
+        // holds content) the empty source stays visible for manual management.
+      }
+      void queryClient.invalidateQueries({ queryKey: ['sources'] })
     },
   })
 
@@ -253,7 +284,13 @@ function DirectUpload({ sources }: { sources: SourceInfo[] }) {
         </span>
         <div className="direct-upload-copy">
           <strong>{file?.name ?? '上传知识文件'}</strong>
-          <span>{file ? `${(file.size / 1024).toFixed(1)} KB` : 'PDF、Markdown 或文本文件'}</span>
+          <span>
+            {file
+              ? `${(file.size / 1024).toFixed(1)} KB${maxUploadSizeMb && file.size > maxUploadSizeMb * 1024 * 1024 ? '（超过大小限制）' : ''}`
+              : maxUploadSizeMb
+                ? `PDF、Markdown 或文本文件 · 单个文件不超过 ${maxUploadSizeMb} MB`
+                : 'PDF、Markdown 或文本文件'}
+          </span>
         </div>
         <button type="button" className="file-picker-button" onClick={() => inputRef.current?.click()}>
           <FileUp size={16} />
@@ -276,7 +313,7 @@ function DirectUpload({ sources }: { sources: SourceInfo[] }) {
             : String(uploadMut.error)}
         </div>
       )}
-      {uploadMut.data && !uploadMut.data.task_id && (
+      {uploadMut.data && !uploadMut.data.result.task_id && (
         <div className="upload-result">文件内容未变化，无需重复摄入。</div>
       )}
       {activeTaskId && <TaskRow taskId={activeTaskId} onTaskChange={setActiveTaskId} />}

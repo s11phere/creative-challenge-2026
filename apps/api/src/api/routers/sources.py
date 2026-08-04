@@ -3,6 +3,7 @@
 Implements the Step 8 API surface:
 - ``POST   /api/v1/spaces/{space_id}/sources`` — create a new source
 - ``GET    /api/v1/spaces/{space_id}/sources`` — list sources
+- ``DELETE /api/v1/spaces/{space_id}/sources/{source_id}`` — delete an empty source (rollback for failed uploads)
 - ``GET    /api/v1/spaces/{space_id}/sources/{source_id}/detail`` — get source detail
 - ``POST   /api/v1/spaces/{space_id}/sources/{source_id}/upload`` — upload a file
 - ``POST   /api/v1/spaces/{space_id}/sources/{source_id}/ingest`` — trigger ingestion
@@ -97,6 +98,11 @@ class DeleteDocumentResponse(BaseModel):
     document_id: str
     status: Literal["deleted", "already_deleted"]
     task_id: str | None = None
+
+
+class DeleteSourceResponse(BaseModel):
+    source_id: str
+    status: Literal["deleted"]
 
 
 class TaskStatusResponse(BaseModel):
@@ -224,6 +230,42 @@ async def create_source(
             uri=result.source.uri,
             is_new=result.is_new,
         )
+
+
+@router.delete(
+    "/spaces/{space_id}/sources/{source_id}",
+    response_model=DeleteSourceResponse,
+)
+async def delete_source(
+    space_id: UUID,
+    source_id: UUID,
+    request: Request,
+) -> DeleteSourceResponse:
+    """Delete an empty source (no documents) and its derived rows.
+
+    Intended as rollback for a source created by a failed browser upload.
+    Sources that already hold documents are refused so content is never
+    removed through this endpoint; callers must delete documents first.
+    """
+    db = _db(request)
+
+    async with db.session() as session:
+        source_repo = SourceRepository(session)
+        source = await source_repo.get(source_id)
+        if source is None or source.space_id != space_id:
+            raise HTTPException(status_code=404, detail="Source not found")
+
+        docs = await DocumentRepository(session).get_by_source(source_id)
+        if docs:
+            raise HTTPException(
+                status_code=409,
+                detail="Source contains documents and cannot be deleted",
+            )
+
+        await source_repo.delete(source_id)
+        await session.commit()
+
+    return DeleteSourceResponse(source_id=str(source_id), status="deleted")
 
 
 @router.get("/spaces/{space_id}/sources", response_model=SourceListResponse)

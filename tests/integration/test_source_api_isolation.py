@@ -159,6 +159,86 @@ class TestCrossSpaceIsolation:
 
 
 # ============================================================
+# Delete empty source (failed-upload rollback)
+# ============================================================
+
+
+class TestDeleteSource:
+    """DELETE /spaces/{space_id}/sources/{source_id} is a guarded rollback
+    endpoint: sources holding documents must be refused so the UI can safely
+    remove a source that a failed browser upload just created."""
+
+    @pytest.mark.asyncio
+    async def test_delete_empty_source_succeeds(
+        self,
+        session: AsyncSession,
+        app_client: AsyncClient,
+        api_database: Database,
+    ) -> None:
+        """Deleting a source with no documents removes it from the database."""
+        space_repo = SpaceRepository(session)
+        source_repo = SourceRepository(session)
+
+        space = await space_repo.create(Space(name="Delete Source Test"))
+        source = await source_repo.create(
+            Source(space_id=space.id, source_type=SourceType.UPLOAD, uri="web-upload://browser")
+        )
+        await session.commit()
+
+        resp = await app_client.delete(f"/api/v1/spaces/{space.id}/sources/{source.id}")
+        assert resp.status_code == 200, (
+            f"Expected 200 for empty source delete, got {resp.status_code}: {resp.text}"
+        )
+        assert resp.json() == {"source_id": str(source.id), "status": "deleted"}
+
+        # The source must be gone from the database.
+        async with api_database.session() as verification_session:
+            gone = await SourceRepository(verification_session).get(source.id)
+        assert gone is None
+
+    @pytest.mark.asyncio
+    async def test_delete_source_with_documents_returns_409(
+        self, session: AsyncSession, app_client: AsyncClient
+    ) -> None:
+        """A source that already holds a document must not be deletable."""
+        space_repo = SpaceRepository(session)
+        source_repo = SourceRepository(session)
+        document_repo = DocumentRepository(session)
+
+        space = await space_repo.create(Space(name="Delete Refused Test"))
+        source = await source_repo.create(
+            Source(space_id=space.id, source_type=SourceType.UPLOAD, uri="doc.md")
+        )
+        await document_repo.create(Document(source_id=source.id, stable_key="doc.md"))
+        await session.commit()
+
+        resp = await app_client.delete(f"/api/v1/spaces/{space.id}/sources/{source.id}")
+        assert resp.status_code == 409, (
+            f"Expected 409 for source with documents, got {resp.status_code}: {resp.text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_delete_source_wrong_space_returns_404(
+        self, session: AsyncSession, app_client: AsyncClient
+    ) -> None:
+        """Deleting a source through the wrong space_id must return 404."""
+        space_repo = SpaceRepository(session)
+        source_repo = SourceRepository(session)
+
+        space = await space_repo.create(Space(name="Delete Wrong Space"))
+        source = await source_repo.create(
+            Source(space_id=space.id, source_type=SourceType.UPLOAD, uri="doc.md")
+        )
+        await session.commit()
+
+        wrong = uuid4()
+        resp = await app_client.delete(f"/api/v1/spaces/{wrong}/sources/{source.id}")
+        assert resp.status_code == 404, (
+            f"Expected 404 for wrong space_id, got {resp.status_code}: {resp.text}"
+        )
+
+
+# ============================================================
 # Redis enqueue resilience (PR review item #6)
 # ============================================================
 
