@@ -127,6 +127,7 @@ class Settings(BaseSettings):
     def active_embedding_identity(self, *, allow_unconfigured: bool = False) -> EmbeddingIdentity:
         """Return the one identity shared by ingestion and online retrieval."""
         self.query_embedding_prefix()
+        model_revision: str | None
         if self.model_provider == "fake" or self.embedding_provider == "fake":
             model_revision = "fake-sha256-v1"
         else:
