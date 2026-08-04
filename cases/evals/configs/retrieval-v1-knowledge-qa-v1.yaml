@@ -82,6 +82,12 @@ experiments:
     profile:
       <<: *baseline_profile
       reranker_enabled: true
+  - id: dense-rerank
+    mode: dense_rerank
+    dense_mode: exact
+    profile:
+      <<: *baseline_profile
+      reranker_enabled: true
 gates:
   formal_manifest_status: frozen
   stage_2_step_9_acceptance_path: docs/stage-2-acceptance.md

@@ -83,6 +83,12 @@ experiments:
     profile:
       <<: *baseline_profile
       reranker_enabled: true
+  - id: dense-rerank
+    mode: dense_rerank
+    dense_mode: exact
+    profile:
+      <<: *baseline_profile
+      reranker_enabled: true
 
   # ── candidate pool expansion (dense only) ────────────────────
   - id: dense-exact-k100
