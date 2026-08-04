@@ -176,6 +176,40 @@ class SearchService:
                 ),
             )
 
+        if request.mode is RetrievalMode.DENSE_RERANK:
+            embedding, dense = await self._dense(request, profile)
+            if not profile.reranker_enabled:
+                raise RetrievalError(
+                    RetrievalErrorCode.PROFILE_INCOMPATIBLE,
+                    "dense_rerank mode requires an enabled reranker profile.",
+                )
+            fused = _dense_fused_candidates(dense)
+            try:
+                response = await self._rerank(request, fused, profile)
+                hits = _reranked_hits(fused, response, final_k=profile.final_k)
+            except RetrievalError as exc:
+                if not self._can_fallback_reranker(request, profile, exc):
+                    raise
+                hits = _raw_hits(
+                    dense,
+                    final_k=profile.final_k,
+                    max_chunks_per_document=profile.max_chunks_per_document,
+                )
+                response = None
+            return SearchResult(
+                hits=hits,
+                diagnostics=self._diagnostics(
+                    request,
+                    profile,
+                    executed_mode=RetrievalMode.DENSE_RERANK,
+                    embedding=embedding,
+                    dense=dense,
+                    fused_count=len(fused),
+                    rerank_response=response,
+                    final_count=len(hits),
+                ),
+            )
+
         (
             keyword,
             hybrid_embedding,
@@ -786,6 +820,24 @@ def _fused_hits(fused: tuple[FusedCandidate, ...], *, final_k: int) -> tuple[Sea
             context_only=item.context_only,
         )
         for final_rank, item in enumerate(fused[:final_k], start=1)
+    )
+
+
+def _dense_fused_candidates(dense: CandidateBatch) -> tuple[FusedCandidate, ...]:
+    """Wrap a dense candidate batch as fused candidates for reranking.
+
+    Used by ``dense_rerank`` mode so a reranker can reorder the pure dense
+    candidates without any keyword channel participation.
+    """
+    return tuple(
+        FusedCandidate(
+            candidate=candidate,
+            fused_score=candidate.score or 0.0,
+            fused_rank=index,
+            dense_rank=candidate.rank,
+            dense_score=candidate.score,
+        )
+        for index, candidate in enumerate(dense.candidates, start=1)
     )
 
 

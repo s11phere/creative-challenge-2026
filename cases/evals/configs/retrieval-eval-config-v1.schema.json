@@ -91,7 +91,7 @@
         "required": ["id", "mode", "dense_mode", "profile"],
         "properties": {
           "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"},
-          "mode": {"enum": ["keyword", "dense", "hybrid", "hybrid_rerank"]},
+          "mode": {"enum": ["keyword", "dense", "dense_rerank", "hybrid", "hybrid_rerank"]},
           "dense_mode": {"enum": ["exact", "ivfflat"]},
           "ivfflat_probes": {"type": "integer", "minimum": 1},
           "profile": {"$ref": "#/$defs/profile"}

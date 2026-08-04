@@ -611,6 +611,31 @@ async def test_hybrid_rerank_maps_scores_back_to_chunks(repos) -> None:
     assert result.diagnostics.executed_mode is RetrievalMode.HYBRID_RERANK
 
 
+async def test_dense_rerank_reranks_only_dense_candidates(repos) -> None:
+    store = _FakeStore(
+        keyword=(
+            _candidate(1, channel=CandidateChannel.KEYWORD, rank=1, score=0.9),
+            _candidate(2, channel=CandidateChannel.KEYWORD, rank=2, score=0.8),
+        ),
+        dense=(
+            _candidate(1, channel=CandidateChannel.DENSE, rank=1, score=0.9),
+            _candidate(2, channel=CandidateChannel.DENSE, rank=2, score=0.8),
+        ),
+    )
+    reranker = _FakeReranker(scores=(RerankScore(0, 0.1), RerankScore(1, 0.9)))
+    result = await _service(repos, store, _FakeEmbedder(), reranker).search(
+        SearchRequest("kernel", SPACE_ID, mode=RetrievalMode.DENSE_RERANK),
+        _profile(reranker_enabled=True),
+    )
+    # Only the dense channel feeds the reranker: the keyword candidates never
+    # enter the fused list, so rank order is the pure dense order.
+    assert [hit.chunk_id for hit in result.hits] == [UUID(int=2), UUID(int=1)]
+    assert [hit.rerank_rank for hit in result.hits] == [1, 2]
+    assert result.diagnostics.executed_mode is RetrievalMode.DENSE_RERANK
+    assert result.diagnostics.candidate_counts.keyword == 0
+    assert result.diagnostics.candidate_counts.dense == 2
+
+
 async def test_hybrid_rerank_filters_toc_and_boundary_duplicates_before_reranking(repos) -> None:
     version_id = UUID(int=400)
     boundary = "repeated sliding window boundary text"

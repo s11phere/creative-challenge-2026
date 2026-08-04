@@ -473,6 +473,7 @@ def _mode_failure_category(mode: str) -> EvaluationFailureCategory:
     return {
         "keyword": EvaluationFailureCategory.KEYWORD_RECALL,
         "dense": EvaluationFailureCategory.DENSE_RECALL,
+        "dense_rerank": EvaluationFailureCategory.RERANK,
         "hybrid": EvaluationFailureCategory.FUSION,
         "hybrid_rerank": EvaluationFailureCategory.RERANK,
     }.get(mode, EvaluationFailureCategory.INFRASTRUCTURE)

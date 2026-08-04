@@ -21,6 +21,7 @@ _LATIN_CHARACTER = re.compile(r"[A-Za-z]")
 class RetrievalMode(StrEnum):
     KEYWORD = "keyword"
     DENSE = "dense"
+    DENSE_RERANK = "dense_rerank"
     HYBRID = "hybrid"
     HYBRID_RERANK = "hybrid_rerank"
 
