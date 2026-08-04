@@ -106,12 +106,19 @@ class EvaluationConfigError(ValueError):
     """Raised when an evaluation input violates the frozen protocol."""
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+def _sha256(path: Path, *, normalize_text: bool = False) -> str:
+    if not normalize_text:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+    content = path.read_bytes()
+    try:
+        content = content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise EvaluationConfigError(f"pinned text input is not valid UTF-8: {path}") from exc
+    return hashlib.sha256(content).hexdigest()
 
 
 def _resolve_repository_path(raw_path: str) -> Path:
@@ -132,10 +139,19 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     return value
 
 
-def _validate_sha(path: Path, expected: str, label: str) -> None:
-    actual = _sha256(path)
-    if actual != expected:
-        raise EvaluationConfigError(f"{label} SHA-256 mismatch: expected {expected}, got {actual}")
+def _validate_sha(path: Path, expected: str, label: str, *, normalize_text: bool = False) -> None:
+    # Frozen inputs are hashed over either the exact raw bytes or the LF-normalized
+    # text. Git's core.autocrlf converts LF files to CRLF on Windows checkouts, so
+    # a text file may present either spelling of the same frozen content. Accepting
+    # both tolerates that checkout artifact without accepting real byte changes
+    # (a tampered file matches neither).
+    if _sha256(path) == expected:
+        return
+    if normalize_text and _sha256(path, normalize_text=True) == expected:
+        return
+    raise EvaluationConfigError(
+        f"{label} SHA-256 mismatch: expected {expected}, got {_sha256(path)}"
+    )
 
 
 def _split_content_hash(raw_lines: Sequence[str]) -> str:
@@ -164,7 +180,12 @@ def validate_evaluation_config(
     dataset_config = config["dataset"]
     gates = config["gates"]
     manifest_path = _resolve_repository_path(corpus_config["manifest_path"])
-    _validate_sha(manifest_path, corpus_config["manifest_sha256"], "Corpus manifest")
+    _validate_sha(
+        manifest_path,
+        corpus_config["manifest_sha256"],
+        "Corpus manifest",
+        normalize_text=True,
+    )
     manifest = _load_yaml_mapping(manifest_path)
     if manifest.get("corpus_version") != corpus_config["version"]:
         raise EvaluationConfigError("Corpus version does not match evaluation config")
@@ -199,7 +220,15 @@ def validate_evaluation_config(
             content_sha256 = source.get("content_sha256")
             if not isinstance(content_sha256, str):
                 raise EvaluationConfigError(f"Source {source_key} has no content_sha256")
-            _validate_sha(source_path, content_sha256, f"Source {source_key}")
+            # Text sources are frozen against their LF-normalized bytes (git stores LF);
+            # Windows checkouts convert them to CRLF via core.autocrlf. Only binary
+            # formats (PDF) are hashed over raw file bytes.
+            _validate_sha(
+                source_path,
+                content_sha256,
+                f"Source {source_key}",
+                normalize_text=source.get("format") != "pdf",
+            )
             source_by_key[source_key] = (space["id"], source)
             sensitivity_counts[sensitivity] += 1
             repository_fixture_count += int("repository_fixture" in allowed_uses)
@@ -207,8 +236,13 @@ def validate_evaluation_config(
 
     cases_path = _resolve_repository_path(dataset_config["cases_path"])
     dataset_schema_path = _resolve_repository_path(dataset_config["schema_path"])
-    _validate_sha(cases_path, dataset_config["cases_sha256"], "Dataset")
-    _validate_sha(dataset_schema_path, dataset_config["schema_sha256"], "Dataset schema")
+    _validate_sha(cases_path, dataset_config["cases_sha256"], "Dataset", normalize_text=True)
+    _validate_sha(
+        dataset_schema_path,
+        dataset_config["schema_sha256"],
+        "Dataset schema",
+        normalize_text=True,
+    )
     dataset_schema = json.loads(dataset_schema_path.read_text(encoding="utf-8"))
     case_validator = Draft202012Validator(dataset_schema)
     raw_lines = [line for line in cases_path.read_text(encoding="utf-8").splitlines() if line]
@@ -426,6 +460,13 @@ def _create_gateway() -> ModelGateway:
             reranker_api_key=secret(settings.reranker_api_key),
             reranker_model=settings.reranker_model,
             embedding_protocol=settings.embedding_protocol,
+            embedding_provider=(
+                ModelProvider.TEXT_EMBEDDINGS_INFERENCE
+                if settings.embedding_provider == "text-embeddings-inference"
+                else None
+            ),
+            fake_embedding=settings.embedding_provider == "fake",
+            fake_reranker=settings.reranker_provider == "fake",
             allow_external=settings.model_allow_external,
             timeout_seconds=settings.model_timeout_seconds,
             max_retries=settings.model_max_retries,

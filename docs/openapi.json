@@ -1004,6 +1004,7 @@
         "enum": [
           "keyword",
           "dense",
+          "dense_rerank",
           "hybrid",
           "hybrid_rerank"
         ],

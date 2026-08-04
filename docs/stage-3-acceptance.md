@@ -60,6 +60,43 @@
 `status: provisional` 与 `formal_runs_enabled: false` 继续保留。
 原始机器可读报告保存在被忽略的 `tmp/pr3-gpu-recall-repro-development-final.json`。
 
+## 2026-08-04 dense_rerank 模式与 @10 复跑（provisional）
+
+新增 `dense_rerank` 检索模式：**dense-exact 候选直接交由 reranker 精排**，不再像
+`hybrid_rerank` 那样先把 FTS 与 dense 做 RRF 融合再精排。该模式对应 7 月验收记载的
+"最终 provisional 方案"（Dense@30 → Reranker），并修复了"reranker 作用在融合候选上"的
+语义偏差。
+
+**评测脚本工具修复（本次一并落地）：**
+
+1. **CRLF 哈希兼容**：`core.autocrlf=true` 会把 git 中的 LF 文件检出为 CRLF，导致
+   `_validate_sha` 按原始字节哈希对不上配置里 LF 冻结的哈希。`scripts/evaluate_retrieval.py`
+   现在同时接受原始字节或 LF 规范化哈希（文本源文件容差 LF，PDF 保持原始字节）。
+2. **网关 embedding/reranker 路由**：评测脚本 `_create_gateway()` 此前未传
+   `embedding_provider`/`fake_embedding`/`fake_reranker`，当 `MODEL_PROVIDER=fake` 时
+   `create_model_gateway` 直接返回 `FakeModelGateway`，导致整条评测（含 embedding）误用
+   fake 向量。现已与 `apps/worker/qa_tasks.py` 对齐，按 `EMBEDDING_PROVIDER`/`RERANKER_PROVIDER`
+   正确路由真实 TEI embedding/reranker。
+
+**实测（development，P0 111 例，GPU Qwen3 Embedding + bge-reranker-v2-m3，failure 0%）：**
+
+| 数据集 | 路径 | Claim Recall@10 | MRR | P95 |
+| --- | --- | --- | --- | --- |
+| v0 | **dense-rerank** | **82.37%** | **0.709** | 317ms |
+| v0 | hybrid-rerank | 71.97% | 0.659 | 336ms |
+| v0 | dense-exact | 73.12% | 0.639 | 275ms |
+| v1 | **dense-rerank** | **78.75%** | **0.723** | 306ms |
+| v1 | hybrid-rerank | 70.03% | 0.686 | 242ms |
+| v1 | dense-exact | 70.03% | 0.670 | 264ms |
+
+结论：**reranker 应作用在纯 dense 候选上**。v0/v1 上 `dense-rerank` 的 Claim Recall@10 均显著
+高于 `hybrid-rerank`（v0 高 +10.4pp、v1 高 +8.7pp），MRR 亦最高——把 keyword 候选混入 rerank
+池会稀释精排（与 `recall-optimization-report-v2.md` 的"凡是往 rerank 池里加候选都走不通"
+教训一致）。v1 为修正定位/摘要后的数据集，绝对数字整体低于 v0 属正常。所有结果仍为
+provisional engineering，`formal_run_eligible=false`；`retrieval-v1.yaml` 与
+`retrieval-v1-knowledge-qa-v1.yaml` 均已加入 `dense-rerank` 实验。报告保存在被忽略的
+`tmp/retrieval-recall10-densererank.json` 与 `tmp/retrieval-v1-dataset-recall10.json`。
+
 ## 2026-07-29 冻结语料 development 复核（未通过）
 
 阶段 0 和阶段 2 正式交接后，使用冻结 `knowledge-qa-v0`、本地 Qwen3 Embedding 与
