@@ -43,4 +43,3 @@ runtime:
   timeout_seconds: 180
   max_model_calls: 2
   external_provider_mode: denied_until_policy_and_consent
-
