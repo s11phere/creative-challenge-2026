@@ -217,7 +217,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/blob_store.py` | `BlobStore` Port（含 `store_and_verify`） |
 | `src/domain/chunking.py` | 结构分块输入输出、`ChunkerConfig`、Chunk identity/hash 和 `Chunker` Port |
 | `src/domain/embedding.py` | `EmbeddingIdentity`、处理配置摘要和 768 维版本边界 |
-| `src/domain/retrieval.py` | SearchRequest/SearchResult、`RetrievalProfileV1`、候选/诊断/locator、`RetrievalStore`、QueryEmbedder 和 Reranker Port |
+| `src/domain/retrieval.py` | SearchRequest/SearchResult、`RetrievalMode`（keyword/dense/dense_rerank/hybrid/hybrid_rerank）、`RetrievalProfileV1`、候选/诊断/locator、`RetrievalStore`、QueryEmbedder 和 Reranker Port |
 | `src/domain/grounded_qa.py` | provisional GroundedAnswer/Claim/Evidence/Citation/Refusal/Conflict 契约、稳定拒答/错误、取消 Port、不可重开 attempt/retry、引用校验和 QA 状态投影 |
 | `src/domain/qa_persistence.py` | provisional Conversation/Message/Run/Attempt/Evidence/Citation/Feedback、版本/用量与 Repository Port；不依赖数据库实现 |
 | `src/domain/qa_sse.py` | provisional `qa-sse-v1` 事件、异步 Event Store Port、单调 sequence、唯一终态和安全 payload |
@@ -242,7 +242,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/ingestion/embedding.py` | INDEX/VALIDATE/PUBLISH Embedding 流水线和原子发布编排 |
 | `src/application/ingestion/orchestrator.py` | discover/parse/chunk/embed/publish 状态机、幂等重入、取消、删除与清理 |
 | `src/application/ingestion/rebuild.py` | 固定 Embedding identity 的受控重建计划 |
-| `src/application/retrieval/search.py` | `SearchService`：Space 校验、单路/混合召回、RRF、去重、扩展、精排和降级编排 |
+| `src/application/retrieval/search.py` | `SearchService`：Space 校验、keyword/dense/hybrid 召回、RRF、去重、扩展、精排（`hybrid_rerank`/`dense_rerank`）和降级编排 |
 | `src/application/retrieval/dense.py` | Query Embedding Adapter 边界、批处理、超时和顺序保持 |
 | `src/application/retrieval/reranker.py` | ModelGateway Reranker Adapter 和响应映射 |
 | `src/application/retrieval/profile.py` | 版本化 `RetrievalProfileV1` 配置解析 |
@@ -660,7 +660,7 @@ tests/
 │   ├── test_data_model.py                 # 6 表 CRUD、身份、版本和任务约束
 │   ├── test_local_dependencies.py         # pgvector/Alembic/Redis/readiness
 │   ├── test_postgres_retrieval_store.py   # FTS、exact/IVFFlat、发布集合和上下文
-│   ├── test_search_api.py                 # 四种检索模式、错误/降级和 HTTP schema
+│   ├── test_search_api.py                 # 五种检索模式、错误/降级和 HTTP schema
 │   ├── test_source_api_isolation.py       # Space/Source/Task 越权边界
 │   └── test_stage3_retrieval_lifecycle.py # 摄入、重建、原子切换、撤下和再次检索
 └── contract/
