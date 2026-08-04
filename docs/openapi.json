@@ -1216,7 +1216,7 @@
           },
           "mode": {
             "$ref": "#/components/schemas/RetrievalMode",
-            "default": "hybrid_rerank"
+            "default": "dense_rerank"
           },
           "query": {
             "maxLength": 512,

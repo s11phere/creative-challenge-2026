@@ -86,6 +86,20 @@ docker compose -f deploy/compose.yaml up --build --detach --wait
 The single Compose command builds and starts PostgreSQL/pgvector, Redis, the migration gate, API,
 Worker and Web. Open `http://127.0.0.1:5173`; nginx forwards same-origin `/api` requests to the API.
 
+When the Web QA or `knowledge_agent` flow needs real answers, start the `embedding` profile as
+well. A base-stack start without that profile leaves `http://tei:80` unavailable and ingestion or
+retrieval will fail even though Web and API are healthy:
+
+```powershell
+docker compose -f deploy/compose.yaml --env-file .env `
+  --profile embedding up --build --detach --wait
+```
+
+If the configured host ports are already occupied, set `WEB_PORT`, `API_PORT`, `POSTGRES_PORT`, and
+`REDIS_PORT` in the ignored `.env` and pass the same file to every Compose command. Do not use
+`down --volumes` to resolve a port conflict; it permanently deletes the local database and Redis
+volumes.
+
 Stop containers while keeping PostgreSQL and Redis data:
 
 ```powershell
@@ -123,6 +137,49 @@ API/Worker can use the published service at `http://localhost:8080` instead.
 rejected unless `MODEL_ALLOW_EXTERNAL=true` is also set. URL-embedded credentials and endpoint query
 parameters are always rejected. Default tests use the fake or a synthetic local HTTP stub and never
 call a real or paid model.
+
+### Web QA provider split
+
+`text-embeddings-inference` is an embedding/reranking adapter, not a Chat adapter. Do not set it as
+the sole `MODEL_PROVIDER` when using `knowledge_qa` or `knowledge_agent`; that leaves `fast_chat`
+unavailable. The supported local-development split is:
+
+```dotenv
+MODEL_PROVIDER=openai-compatible
+MODEL_ALLOW_EXTERNAL=true
+FAST_CHAT_ENDPOINT=https://api.example.com/v1
+FAST_CHAT_API_KEY=<ignored-local-secret>
+FAST_CHAT_MODEL=<chat-model>
+
+EMBEDDING_PROVIDER=text-embeddings-inference
+EMBEDDING_ENDPOINT=http://tei:80
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
+EMBEDDING_PROTOCOL=tei
+
+# Use this when the optional GPU reranker profile is not running.
+RERANKER_PROVIDER=fake
+```
+
+Replace the Chat endpoint, model, and key with values approved for the deployment. Enabling
+`MODEL_ALLOW_EXTERNAL=true` means retrieved document snippets and questions may be sent to that
+external provider; private or restricted sources require an explicit policy decision. After changing
+these variables, recreate both `api` and `worker` so both processes load the same configuration:
+
+```powershell
+docker compose -f deploy/compose.yaml --env-file .env `
+  --profile embedding up --detach --force-recreate api worker
+```
+
+The optional `reranker` profile can replace the fake reranker. If a prewarmed TEI cache already
+exists, set `TEI_VOLUME_NAME` in `.env`; otherwise Compose creates and populates `deploy_teidata`.
+Verify the resulting capability split before opening Web:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/health/ready | ConvertTo-Json -Depth 8
+```
+
+The response should report `fast_chat`, `embedding_zh`, and either
+`reranker_multilingual` with `MODEL_FAKE_READY` or a healthy `tei-reranker`.
 
 ## Stage 3 Retrieval Validation
 

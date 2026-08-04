@@ -317,5 +317,8 @@ volumes:
   pgdata:
   redisdata:
   blobdata:
+  # Allow reusing a prewarmed model cache (for example after a first-download
+  # interruption) without changing the service mount or model configuration.
   teidata:
+    name: ${TEI_VOLUME_NAME:-deploy_teidata}
   rerankerdata:

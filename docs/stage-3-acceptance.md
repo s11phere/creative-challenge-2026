@@ -242,7 +242,8 @@ BGE Reranker 重排前 10 -> 返回前 5。Dense@30 在 37 个 evidence unit 中
 内存。扩大 Qwen3 batch 或并发在本机反而降低吞吐，因此 Compose 保留上述实测限制。
 
 仓库已将新建 Space、空 profile 和完全等于旧生成默认值的 Space 更新为上述检索 profile，Search
-API 的缺省模式改为 `hybrid_rerank`，Compose `embedding` profile 改为固定 revision 的 Qwen3。
+API 的缺省模式改为 `dense_rerank`，即 dense-exact 候选直接交给 reranker；显式传入
+`hybrid_rerank` 仍保留兼容。Compose `embedding` profile 改为固定 revision 的 Qwen3。
 真实在线环境还必须配置对应 instruction identity 与 L2 normalization，并以新的
 `embedding_version` 全量重建候选 DocumentVersion；在重建并发布前，旧向量不会与新查询向量混用。
 

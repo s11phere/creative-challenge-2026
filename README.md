@@ -86,6 +86,21 @@ POSTGRES_PASSWORD=your-database-password
 docker compose -f deploy/compose.yaml --env-file .env up --build --detach --wait
 ```
 
+The command above is the deterministic fake-provider path. For Web QA or `knowledge_agent` with a
+real Chat provider and the local GPU embedding service, configure the capability split described in
+`.env.example` and start the embedding profile explicitly:
+
+```bash
+docker compose -f deploy/compose.yaml --env-file .env \
+  --profile embedding up --build --detach --wait
+```
+
+`text-embeddings-inference` is not a Chat provider. Use
+`MODEL_PROVIDER=openai-compatible` plus `FAST_CHAT_ENDPOINT`, `FAST_CHAT_MODEL`, and
+`MODEL_ALLOW_EXTERNAL=true` for external Chat, while keeping
+`EMBEDDING_PROVIDER=text-embeddings-inference`. Set `RERANKER_PROVIDER=fake` for local QA when the
+optional GPU reranker profile is not running. After changing `.env`, recreate both `api` and `worker`.
+
 真实模型组合需要在被 Git 忽略的 `.env` 中同时配置外部 Chat、
 `EMBEDDING_PROVIDER=text-embeddings-inference`、`EMBEDDING_ENDPOINT=http://tei:80`、固定的
 Qwen3 Embedding 模型/revision，以及适配 TEI 限制的 `EMBEDDING_BATCH_SIZE`。完整字段见

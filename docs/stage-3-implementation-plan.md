@@ -238,7 +238,7 @@ docs/
 ### Step 1：建立检索领域契约与安全边界
 
 1. 新增纯领域类型：
-   - `RetrievalMode`: `keyword`、`dense`、`hybrid`、`hybrid_rerank`；
+   - `RetrievalMode`: `keyword`、`dense`、`dense_rerank`、`hybrid`、`hybrid_rerank`；
    - `SearchRequest`: query、space_id、mode、允许的 source/document filters；
    - `SearchHit`: chunk/version/document/source ID、locator、各阶段 rank/score 和安全摘要；
    - `SearchDiagnostics`: profile/model/index 版本、候选数、阶段耗时、降级和过滤原因；

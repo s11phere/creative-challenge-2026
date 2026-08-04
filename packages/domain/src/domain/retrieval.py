@@ -156,7 +156,7 @@ def analyze_keyword_query(query: str) -> KeywordQueryAnalysis:
 class SearchRequest:
     query: str
     space_id: UUID
-    mode: RetrievalMode = RetrievalMode.HYBRID_RERANK
+    mode: RetrievalMode = RetrievalMode.DENSE_RERANK
     filters: SearchFilters = SearchFilters()
     execution_context: SearchExecutionContext = SearchExecutionContext.ONLINE
 

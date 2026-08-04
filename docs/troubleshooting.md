@@ -59,6 +59,45 @@ docker compose -f deploy/compose.yaml run --rm migrate
 
 ## knowledge_agent 模型决策失败
 
+### 先区分 Chat、Embedding 和 Reranker
+
+`MODEL_PROVIDER=text-embeddings-inference` 只提供 `embedding_zh`（以及配置好的
+reranker），不会提供 `fast_chat`。如果 Web/API 的 `/health/ready` 正常，但
+`knowledge_agent` 直接失败，请先检查是否把 TEI 误配置成了唯一的 `MODEL_PROVIDER`，或者
+是否忘记启动 `embedding` profile。使用真实 Chat 时，API 和 Worker 都需要同时加载以下
+配置，并在修改后重新创建两个容器：
+
+```dotenv
+MODEL_PROVIDER=openai-compatible
+MODEL_ALLOW_EXTERNAL=true
+FAST_CHAT_ENDPOINT=https://api.example.com/v1
+FAST_CHAT_API_KEY=<ignored-local-secret>
+FAST_CHAT_MODEL=<chat-model>
+EMBEDDING_PROVIDER=text-embeddings-inference
+EMBEDDING_ENDPOINT=http://tei:80
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
+RERANKER_PROVIDER=fake
+```
+
+`RERANKER_PROVIDER=fake` 只适用于可选 GPU `reranker` profile 没有运行的本地体验；若要使用
+真实精排，改为 `inherit` 并同时启动 `--profile reranker`。外部 Chat 开启后，问题和检索到
+的文档片段可能发送到该 Provider，私有或 restricted 来源必须先通过数据策略检查。
+
+启动/重建和检查命令：
+
+```powershell
+docker compose -f deploy/compose.yaml --env-file .env `
+  --profile embedding up --build --detach --wait
+docker compose -f deploy/compose.yaml --env-file .env `
+  --profile embedding up --detach --force-recreate api worker
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/health/ready | ConvertTo-Json -Depth 8
+```
+
+健康响应中 `fast_chat`、`embedding_zh` 必须为 `MODEL_CAPABILITY_CONFIGURED`；没有 GPU
+reranker 时，`reranker_multilingual` 应显示 `MODEL_FAKE_READY`。如果只启动基础 Compose
+服务而没有 `--profile embedding`，`http://tei:80` 不存在，上传会在向量化阶段重试后失败；
+这不会被 API 的 PostgreSQL/Redis readiness 单独检查发现。
+
 默认 `MODEL_PROVIDER=fake` 不需要凭据。接入 OpenAI-compatible Chat Provider 时，只在被 Git 忽略的
 `.env` 中配置 `MODEL_PROVIDER=openai-compatible`、`MODEL_ALLOW_EXTERNAL=true`、
 `FAST_CHAT_ENDPOINT`、`FAST_CHAT_MODEL` 和 `FAST_CHAT_API_KEY`；API 与 Worker 必须使用相同配置。

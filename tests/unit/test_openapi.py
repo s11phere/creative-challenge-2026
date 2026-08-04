@@ -48,7 +48,7 @@ async def test_openapi_includes_health_endpoints() -> None:
     }
 
     search_operation = paths["/api/v1/spaces/{space_id}/search"]["post"]
-    assert schemas["SearchApiRequest"]["properties"]["mode"]["default"] == "hybrid_rerank"
+    assert schemas["SearchApiRequest"]["properties"]["mode"]["default"] == "dense_rerank"
     assert search_operation["requestBody"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/SearchApiRequest"
     }
