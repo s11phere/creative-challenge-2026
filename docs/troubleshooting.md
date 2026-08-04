@@ -51,6 +51,41 @@ docker compose -f deploy/compose.yaml run --rm migrate
 先确认 PostgreSQL healthy、账号与数据库名一致，再重新运行一次性迁移。不要在包含数据的环境
 直接执行 `downgrade`。只有确认测试数据可以永久删除时，才使用 `down --volumes` 重建空库。
 
+## `.env` 配置陷阱
+
+以下三条来自 2026-08-04 本地重建时实际遇到的问题，排查 `.env` 相关故障时优先核对。
+
+### 1. `POSTGRES_DB` 必须与实际数据所在的库一致
+
+`POSTGRES_DB` 指错库（例如指向一个只有 `alembic_version` 的空库）时，表现是"看似莫名"的
+故障：
+
+- 迁移失败：`relation "documents" does not exist`，`ALTER TABLE` 找不到前置表；
+- dense 检索 0 命中：查询打到空库，实际语料在另一个库。
+
+处置：先用
+`docker exec <postgres-container> psql -U <user> -d <库名> -c '\dt'`
+确认业务表实际存在哪个库，再让 `.env` 的 `POSTGRES_DB` 与之对齐。注意 `.env` 当前指向的库
+可能与运行中旧容器（创建时写入的配置）不一致，重建容器前先核对当前 `.env` 值。
+
+### 2. `MODEL_PROVIDER=fake` 会让 embedding/reranker 身份一起 fake 化
+
+`MODEL_PROVIDER=fake` 不只影响回答：它会把查询端 embedding identity 的 model_revision
+强制改为 `fake-sha256-v1`（见 `packages/infrastructure/src/infrastructure/config.py`），
+导致查询 embedding_version 与真实模型摄入的语料版本不一致，dense 检索按版本过滤后
+0 命中（`reranker_version` 也会显示为 empty）。
+
+所以 `MODEL_PROVIDER=fake` 只适合"空库 + 纯流程验证"；语料一旦用真实 embedding 摄入，
+切回 fake 会让 dense_rerank 检索失效。要跑真实检索，`MODEL_PROVIDER` 必须是真实
+（如 `openai-compatible`）且 `EMBEDDING_PROVIDER=text-embeddings-inference`。
+
+### 3. 外部 Chat 的数据边界
+
+`MODEL_ALLOW_EXTERNAL=true` 开启后，QA 会把问题以及检索到的文档片段发送给外部 Provider
+（例如 DeepSeek）。阶段 0 语料为 `internal_team_only`，含版权资料，接入外部 API 前必须确认
+来源授权和团队策略，禁止把未授权内容公开演示或外发。密钥只写在被 Git 忽略的 `.env`，不得
+进入仓库、日志或截图。
+
 ## Readiness 返回 503
 
 | 机器码 | 含义 | 检查方向 |
