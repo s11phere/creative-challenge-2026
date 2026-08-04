@@ -1,6 +1,6 @@
 # 阶段 5 Provisional 工程验收记录
 
-## 2026-08-03 Engineering Completion Update
+## 2026-08-04 Engineering Completion Update
 
 Runtime checkpoint persistence, approval and derived-knowledge exactly-once behavior, active Skill
 pointer CAS/rollback, reference-aware cleanup, the three knowledge-organization Skills, their Web
@@ -58,7 +58,7 @@ git diff --check
 ```
 
 结果：Ruff format/check 通过；mypy 覆盖 102 个源文件；后端全量 pytest 为
-`697 passed, 48 skipped`；Web lint/typecheck、Vitest `28 passed` 和 production build 通过；
+`698 passed, 48 skipped`；Web lint/typecheck、Vitest `28 passed` 和 production build 通过；
 OpenAPI 重导出及一致性测试通过。Windows 沙箱不能写 `.pytest_cache` 的既有警告不影响结果。
 
 一次性隔离 PostgreSQL 已验证迁移 `upgrade head -> downgrade 29d0e1f2a3b4 -> upgrade head`、

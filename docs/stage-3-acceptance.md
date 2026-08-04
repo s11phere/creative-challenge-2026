@@ -1,6 +1,6 @@
 # 阶段 3 验收记录
 
-> 验收日期：2026-08-03
+> 验收日期：2026-08-04
 >
 > 结论：阶段 3 Step 10 的工程集成验收与文档移交完成；阶段 0 和阶段 2 已分别按
 > `docs/stage-0-acceptance.md`、`docs/stage-2-acceptance.md` 正式交接。阶段 3 正式质量门禁未通过，
@@ -20,7 +20,7 @@
 - PostgreSQL 16 + pgvector、Redis 7 + AOF；每次集成测试使用独立数据库/Redis 实例。
 - 默认 `MODEL_PROVIDER=fake`。本地模型服务使用 Compose `embedding`/`reranker` profile，镜像
   digest 和模型 revision 固定；`MODEL_ALLOW_EXTERNAL=false`。
-- PR #3 的 GPU 评测配置为 Qwen3-Embedding-0.6B、revision
+- PR #3/PR #4 的 GPU 评测配置为 Qwen3-Embedding-0.6B、revision
   `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`、768 维、float32、L2 normalization，query 和
   document 均使用 `qwen3-knowledge-qa-v1`；TEI `max-batch-tokens=512`、client batch=8、
   batch requests=1，应用 embedding batch=8。Reranker 为 `BAAI/bge-reranker-v2-m3`，应用
@@ -31,8 +31,9 @@
 
 - 工程实现已完成，正式质量门禁未通过；终止原因是当前 development 评测集的代表性不足，
   不是 Recall 指标达标或正式质量豁免。
-- 当前 PR #3 GPU 复现结果保持原样：Claim Recall@10 `69.7548%`、Evidence Recall@10
-  `62.3431%`、MRR `0.6839`、P95 `383.5 ms`、failure rate `0%`。
+- PR #3 的 GPU 复现结果保留为历史记录；PR #4 已修正默认与评测路径为 `dense_rerank`。
+  当前修正后的 v0/v1 development Claim Recall@10 为 `82.37%`/`78.75%`，仍属于 provisional
+  工程证据，不改变阶段 3 终止与 formal holdout 边界。
 - `cases/evals/configs/retrieval-v1.yaml` 继续保持 `status: provisional` 和
   `formal_runs_enabled: false`；正式 holdout 未执行。禁止通过修改 flag、改写报告或拼接历史结果
   将当前配置标记为正式基线。

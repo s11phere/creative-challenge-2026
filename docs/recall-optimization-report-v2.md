@@ -4,6 +4,12 @@
 > **最终状态（2026-08-02 收口）：dev claim@10 = 75.8%（MRR 0.676），holdout 87.0%。检索侧（B/C/D/E）全部杠杆实测收口，75.8% 是检索侧天花板；剩余 recall 空间在 A 环节（中文查询↔英文/math 页的语义桥接），归 Stage 4 查询改写（R4-04，pilot 证据 +2.8pp 固定 / +4.3pp oracle）。**
 > **模型栈**：embedding = **Qwen3-Embedding-0.6B**（768d，`qwen3-knowledge-qa-v1` 前后缀）；reranker = **bge-reranker-v2-m3**（rerank k30 → top10）；chunk = StructureChunker 段落原子（max_segment 4096）+ pdf dict 多栏修复；融合 = dense@30（exact）+ keyword@1 → RRF(α=0.5)。
 
+> **Superseded (2026-08-04):** This is a historical optimization notebook, not the current
+> retrieval baseline. Its `75.8%` development and `87.0%` holdout claims were produced before PR #4
+> and must not be used as current or formal quality results. The current online default is
+> `dense_rerank`; Stage 3 remains terminated and its existing holdout must not be run. See
+> `docs/stage-3-acceptance.md` and ADR-010/011 for the authoritative boundary.
+
 **TL;DR**
 1. **根因**：正确 chunk 被 dense 排名压到池内 6–30 位——不是 TOC、不是候选池不足（Oracle 94.3% 证明池够），瓶颈在 dense 排序本身。
 2. **有效改进**：PDF 段落结构 + 段落边界 chunk（dev 73.0→73.8）+ 多栏布局修复（73.8→75.8）；门禁放宽到 k=10（61.9→72.5）。

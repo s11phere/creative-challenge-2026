@@ -8,11 +8,13 @@
 
 ## 1. 结论摘要
 
-当前状态（2026-08-03）：Stage 0 已按 `docs/stage-0-acceptance.md` 以
+当前状态（2026-08-04）：Stage 0 已按 `docs/stage-0-acceptance.md` 以
 `internal_team_only` 范围冻结。阶段 3 的工程实现已完成，但正式质量门禁未通过；因当前
 评测集代表性局限，阶段 3 已按 `docs/adr/010-stage-3-termination-and-evaluation-boundary.md`
 终止。`retrieval-v1.yaml` 仍为 provisional，正式 holdout 未执行；本计划中的 provisional
-结果不得视为正式质量结论。
+结果不得视为正式质量结论。PR #4 已将 API/QA 的默认检索模式修正为 `dense_rerank`：
+dense-exact 候选直接交由 reranker 精排；`hybrid_rerank` 只保留为显式兼容模式。修正后的
+GPU development 结果见 `docs/stage-3-acceptance.md`，不改变 ADR-010 的终止与 holdout 边界。
 
 阶段 3 的目标是用可复现数据证明检索链路有效，而不是实现回答生成、引用绑定或
 `knowledge_qa` Skill。阶段 2 已经提供已发布 `DocumentVersion`、带定位信息的 `Chunk`、

@@ -25,7 +25,7 @@ the exact same digests as the Docker Hub API responses.
 
 ## Current Machine Check
 
-Checked on 2026-07-18:
+Checked on 2026-08-04:
 
 | Item | Result | Action |
 | --- | --- | --- |
@@ -37,7 +37,7 @@ Checked on 2026-07-18:
 | Docker daemon | Available during Step 7/8 Compose verification | Verify `docker version` before startup |
 | PostgreSQL / pgvector | Compose service verified | No host installation needed |
 | Redis | Compose service with AOF verified | No host installation needed |
-| Model endpoint | Pinned TEI GPU profile verified on 2026-08-03 | Fake remains the default; real model is opt-in |
+| Model endpoint | Pinned TEI GPU embedding and reranker profiles verified on 2026-08-04 | Fake remains the default; real models are opt-in |
 
 ## Windows Setup
 
@@ -80,19 +80,20 @@ Create an ignored local environment file and replace the two placeholder secrets
 
 ```powershell
 Copy-Item .env.example .env
-docker compose -f deploy/compose.yaml up --build --detach --wait
+docker compose -f deploy/compose.yaml --env-file .env up --build --detach --wait
 ```
 
 The single Compose command builds and starts PostgreSQL/pgvector, Redis, the migration gate, API,
 Worker and Web. Open `http://127.0.0.1:5173`; nginx forwards same-origin `/api` requests to the API.
 
-When the Web QA or `knowledge_agent` flow needs real answers, start the `embedding` profile as
-well. A base-stack start without that profile leaves `http://tei:80` unavailable and ingestion or
-retrieval will fail even though Web and API are healthy:
+When the Web QA or `knowledge_agent` flow needs the complete local GPU retrieval path, start both
+model profiles as well. A base-stack start without the embedding profile leaves `http://tei:80`
+unavailable; without the reranker profile, the default `dense_rerank` path can only use the explicit
+fake fallback:
 
 ```powershell
 docker compose -f deploy/compose.yaml --env-file .env `
-  --profile embedding up --build --detach --wait
+  --profile embedding --profile reranker up --build --detach --wait
 ```
 
 If the configured host ports are already occupied, set `WEB_PORT`, `API_PORT`, `POSTGRES_PORT`, and
@@ -118,12 +119,13 @@ belong only in an ignored local `.env` or the process environment.
 Private or restricted corpus content must not be sent to an external endpoint. Enabling an external
 endpoint requires an explicit deployment setting and a policy check in addition to credentials.
 
-Stage 1 defaults to `MODEL_PROVIDER=fake`. To use a local OpenAI-compatible endpoint, set
-`MODEL_PROVIDER=openai-compatible`, `MODEL_ENDPOINT`, `FAST_CHAT_MODEL`, and `EMBEDDING_MODEL`.
-Embedding-only operation is supported with `EMBEDDING_ENDPOINT` and `EMBEDDING_MODEL`; the
-chat model may be omitted. The optional Compose `embedding` profile provides a pinned
-Text Embeddings Inference GPU image and `Qwen/Qwen3-Embedding-0.6B` revision. Configure
-`MODEL_PROVIDER=text-embeddings-inference`, `EMBEDDING_ENDPOINT=http://tei:80`,
+Stage 1 defaults to `MODEL_PROVIDER=fake`. A Web QA or `knowledge_agent` deployment with an
+OpenAI-compatible Chat endpoint must use `MODEL_PROVIDER=openai-compatible`; route the local TEI
+embedding capability separately with `EMBEDDING_PROVIDER=text-embeddings-inference`. A pure
+retrieval-only process may use `MODEL_PROVIDER=text-embeddings-inference`, but that provider cannot
+serve `fast_chat`. The optional Compose `embedding` profile provides a pinned Text Embeddings
+Inference GPU image and `Qwen/Qwen3-Embedding-0.6B` revision. Configure
+`EMBEDDING_ENDPOINT=http://tei:80`,
 `EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B`,
 `EMBEDDING_MODEL_REVISION=97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`,
 `EMBEDDING_QUERY_INSTRUCTION_VERSION=qwen3-knowledge-qa-v1`,
@@ -156,8 +158,9 @@ EMBEDDING_ENDPOINT=http://tei:80
 EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
 EMBEDDING_PROTOCOL=tei
 
-# Use this when the optional GPU reranker profile is not running.
-RERANKER_PROVIDER=fake
+RERANKER_PROVIDER=inherit
+RERANKER_ENDPOINT=http://tei-reranker:80
+RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 ```
 
 Replace the Chat endpoint, model, and key with values approved for the deployment. Enabling
@@ -167,21 +170,53 @@ these variables, recreate both `api` and `worker` so both processes load the sam
 
 ```powershell
 docker compose -f deploy/compose.yaml --env-file .env `
-  --profile embedding up --detach --force-recreate api worker
+  --profile embedding --profile reranker up --detach --force-recreate api worker
 ```
 
-The optional `reranker` profile can replace the fake reranker. If a prewarmed TEI cache already
-exists, set `TEI_VOLUME_NAME` in `.env`; otherwise Compose creates and populates `deploy_teidata`.
-Verify the resulting capability split before opening Web:
+Set `RERANKER_PROVIDER=fake` only when deliberately validating the workflow without the optional
+GPU reranker. If a prewarmed TEI cache already exists, set `TEI_VOLUME_NAME` in `.env`; otherwise
+Compose creates and populates `deploy_teidata`. Verify the resulting capability split before opening
+Web:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/health/ready | ConvertTo-Json -Depth 8
 ```
 
-The response should report `fast_chat`, `embedding_zh`, and either
-`reranker_multilingual` with `MODEL_FAKE_READY` or a healthy `tei-reranker`.
+The response should report `fast_chat`, `embedding_zh`, and `reranker_multilingual`. It validates
+configuration routing only; make one `dense_rerank` search request before treating the GPU path as
+usable.
+
+### Reusing already-running GPU TEI services
+
+On Docker Desktop, do not start a duplicate model pair when compatible GPU TEI containers are
+already published on the host. Keep API and Worker in the same capability configuration and point
+them at the host-published ports instead:
+
+```dotenv
+EMBEDDING_PROVIDER=text-embeddings-inference
+EMBEDDING_ENDPOINT=http://host.docker.internal:<embedding-port>
+EMBEDDING_PROTOCOL=tei
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
+EMBEDDING_MODEL_REVISION=97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
+EMBEDDING_QUERY_INSTRUCTION_VERSION=qwen3-knowledge-qa-v1
+EMBEDDING_DOCUMENT_INSTRUCTION_VERSION=qwen3-knowledge-qa-v1
+EMBEDDING_NORMALIZATION=l2
+RERANKER_PROVIDER=inherit
+RERANKER_ENDPOINT=http://host.docker.internal:<reranker-port>
+RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+```
+
+`host.docker.internal` is an explicitly allowed local endpoint name. This pattern is specific to
+Docker Desktop; use a reviewed reachable host address on other platforms. Recreate `api` and
+`worker` after changing either endpoint, then verify the Web proxy and an actual `dense_rerank`
+request. Do not mix a new embedding identity with vectors already published under another identity.
 
 ## Stage 3 Retrieval Validation
+
+The Search API and QA workflow default to `dense_rerank`: dense-exact candidates are sent directly
+to the configured reranker. `hybrid_rerank` is retained only for explicit compatibility requests.
+The corrected 2026-08-04 GPU development results remain provisional under ADR-010; do not enable or
+run the existing formal holdout.
 
 阶段 3 的检索默认使用 PostgreSQL FTS 与 pgvector exact 路径；IVFFlat 只作为对比实验，未通过
 正式质量门槛前不会替换 exact 默认值。`MODEL_PROVIDER=fake` 可运行确定性工程测试；需要本地

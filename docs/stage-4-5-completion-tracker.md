@@ -1,6 +1,6 @@
 # 阶段 4/5 收尾看板
 
-## 2026-08-03 Implementation Status Update
+## 2026-08-04 Implementation Status Update
 
 All requested Stage 4/5 engineering functions are implemented, including Web entry points for all
 five registered Skills, Web feedback controls,
@@ -12,7 +12,7 @@ The remaining labels are evidence labels, not implementation deferrals: formal r
 holdouts remain unrun or non-passing under ADR-010/011, and browser Playwright coverage is unavailable
 in the current environment.
 
-最终工程复核（2026-08-03）：后端 `697 passed, 48 skipped`；Ruff format/check、mypy 通过；前端
+最终工程复核（2026-08-04）：后端 `698 passed, 48 skipped`；Ruff format/check、mypy 通过；前端
 lint/typecheck/test/build 通过（28 tests）；隔离 PostgreSQL QA/Runtime/Skill 集成 `6 passed`；
 迁移 upgrade/downgrade/upgrade、单一 head 和 OpenAPI 一致性通过。Runtime 检查点摘要/Skill
 绑定、审批 Tool 绑定、派生知识 Space/citation 绑定、五 Skill 统一 `/api/v1/runs` 入口均已纳入

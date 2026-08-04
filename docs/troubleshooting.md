@@ -5,6 +5,13 @@
 
 ## 快速诊断
 
+### Current Retrieval Boundary (2026-08-04)
+
+The Search API and QA workflow now default to `dense_rerank`: dense-exact candidates go directly to
+the configured reranker. `hybrid_rerank` is retained only for explicit compatibility requests. PR #4
+corrected the GPU development reproduction, but the result remains provisional and Stage 3 stays
+terminated under ADR-010. Do not enable or run the existing formal holdout.
+
 ```powershell
 docker compose -f deploy/compose.yaml ps
 docker compose -f deploy/compose.yaml logs --tail 100 api worker web migrate postgres redis
@@ -76,20 +83,22 @@ FAST_CHAT_MODEL=<chat-model>
 EMBEDDING_PROVIDER=text-embeddings-inference
 EMBEDDING_ENDPOINT=http://tei:80
 EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
-RERANKER_PROVIDER=fake
+RERANKER_PROVIDER=inherit
+RERANKER_ENDPOINT=http://tei-reranker:80
+RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 ```
 
-`RERANKER_PROVIDER=fake` 只适用于可选 GPU `reranker` profile 没有运行的本地体验；若要使用
-真实精排，改为 `inherit` 并同时启动 `--profile reranker`。外部 Chat 开启后，问题和检索到
+`RERANKER_PROVIDER=fake` 只适用于可选 GPU `reranker` profile 没有运行的本地体验；完整 GPU
+路径使用上面的 `inherit` 配置并同时启动 `--profile reranker`。外部 Chat 开启后，问题和检索到
 的文档片段可能发送到该 Provider，私有或 restricted 来源必须先通过数据策略检查。
 
 启动/重建和检查命令：
 
 ```powershell
 docker compose -f deploy/compose.yaml --env-file .env `
-  --profile embedding up --build --detach --wait
+  --profile embedding --profile reranker up --build --detach --wait
 docker compose -f deploy/compose.yaml --env-file .env `
-  --profile embedding up --detach --force-recreate api worker
+  --profile embedding --profile reranker up --detach --force-recreate api worker
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/health/ready | ConvertTo-Json -Depth 8
 ```
 
@@ -201,22 +210,22 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 ## 当前功能限制
 
 - 已有阶段 2 的 6 张核心业务表、摄入流水线和 Worker 消费者；当前支持上传文件，尚无目录监听。
-- 阶段 3 的 Keyword/Dense/Hybrid/Hybrid+Reranker 检索 API 已可用。provisional 知识问答 Web/API
-  可以创建持久会话、提交问题，由独立 Worker 调用真实 PostgreSQL SearchService 产出回答或拒答；
-  终态响应和 Web 证据区展示经过当前 Space/版本/Chunk 再校验的 Citation 身份。
+- 阶段 3 的 Keyword/Dense/Dense+Reranker/Hybrid/Hybrid+Reranker 检索 API 已可用；默认模式为
+  `dense_rerank`，即纯 dense 候选直接精排。provisional 知识问答 Web/API 可以创建持久会话、
+  提交问题，由独立 Worker 调用真实 PostgreSQL SearchService 产出回答或拒答；终态响应和 Web
+  证据区展示经过当前 Space/版本/Chunk 再校验的 Citation 身份。
 - provisional QA 的会话、Message、Run/Attempt、Evidence、Citation、Feedback 与 SSE 事件均保存到
   PostgreSQL。API 启动时会重排队安全的非终态 attempt，保留终态并清理中断时尚未发布的 Evidence；
   断开 SSE 不会取消 Run，只有显式取消请求才会记录取消意图。Worker 使用 attempt lease/heartbeat，
   启动时接管 queued 或租约过期运行，重复投递不会重复发布终态。Citation 可按需解析固定版本的
-  最小原文片段；用户重试和反馈审核尚未实现。
+  最小原文片段；用户重试、反馈提交及 `pending_review -> accepted/rejected` 的持久审核 API 已实现，
+  但 Playwright 浏览器级完整旅程仍未执行。
 - 默认 `FakeModelGateway` 使用确定性抽取式回答，返回相关证据片段而不是高质量综合回答；这是当前
   流程验证基线。Stage 3 达标并冻结检索配置后再调整召回、重排和回答表现，不得把当前结果用于 holdout。
-- 阶段 3 评测配置仍为 provisional：阶段 0 和阶段 2 已正式关闭，但当前 development 质量门禁
-  未通过，且当前评测集代表性不足，因此阶段 3 已按 ADR-010 终止。不要运行当前 holdout；重新开启
-  必须使用新的 dataset/config version。
-  development 的最佳 Dense Recall@5 只有 51.90%，BGE Reranker 没有净收益且 P95 为
-  3523.9 ms。不要手工打开 `formal_runs_enabled` 或运行当前 holdout；重新开启必须使用新的
-  dataset/config version。
+- 阶段 3 评测配置仍为 provisional：阶段 0 和阶段 2 已正式关闭，但当前评测集代表性不足，
+  因此阶段 3 已按 ADR-010 终止。PR #4 修正后的 GPU development 表明 `dense_rerank` 在 v0/v1
+  上的 Claim Recall@10 为 82.37%/78.75%，高于 `hybrid_rerank`；这不构成正式质量结论，也不允许
+  运行当前 holdout。不要手工打开 `formal_runs_enabled`；重新开启必须使用新的 dataset/config version。
 - P0 检索评测只纳入 Markdown/TXT/PDF 证据来源；Code/Notebook 属于 P1。validation 会同时记录
   原始与纳入 case 数，无证据安全 case 不得因格式过滤而跳过。
 - Qwen3 Embedding 与 BGE Reranker 同时运行时，
@@ -231,8 +240,8 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
   `GET /api/v1/skills/knowledge_qa/versions` 检查安装摘要、active 版本和 manifest 预算。
 - `knowledge_agent 0.2.0` 通过 `fast_chat` 执行受约束 LLM 决策，可在同一持久 QA Run 中调用
   `inspect_retrieval` 后调用一次 `grounded_qa`；`0.1.0` 保留用于固定 Run 恢复和回滚。外层模型只看到
-  Tool 状态/计数，不看到回答或引用原文；通用 Runtime 决策历史仍未
-  单独持久化，恢复和最终结果以 QA PostgreSQL 状态为准。
+  Tool 状态/计数，不看到回答或引用原文；Runtime checkpoint 快照与 append-only checkpoint 已持久化，
+  当前恢复和最终结果仍以 QA PostgreSQL 状态为准。
 - 若 Run 以 `QA_SKILL_INVALID` 失败，检查 API 与 Worker 的 `SKILL_ROOT_PATH`、
   `KNOWLEDGE_QA_SKILL_VERSION` 和镜像内 `skills/knowledge_qa` 内容是否一致。不要就地修改已被 Run
   引用的同名版本；发布新 semver 并保留旧包供排队/恢复 Run 校验。

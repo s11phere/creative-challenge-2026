@@ -1,6 +1,6 @@
 # 阶段 4 Provisional 工程移交记录
 
-## 2026-08-03 Engineering Completion Update
+## 2026-08-04 Engineering Completion Update
 
 The Stage 4 engineering surface is complete for the implemented contract: QA Domain/Application,
 PostgreSQL persistence, Worker recovery, SSE replay/cancel, Citation resolution, HTTP API, Web answer
@@ -12,7 +12,7 @@ Current closure supersedes the older dated notes below: the final migration head
 QA/Runtime/Skill integration is green (`6 passed`). Runtime checkpoint tamper checks, approval-to-
 tool binding and derived-knowledge Space/citation checks are included in this final run.
 
-Backend unit tests passed (`697 passed, 48 skipped`), Runtime/Skill persistence regression passed (`6 passed`),
+Backend unit tests passed (`698 passed, 48 skipped`), Runtime/Skill persistence regression passed (`6 passed`),
 and the Web QA workspace tests passed (`28 passed`). Playwright/browser screenshot coverage is not
 installed in this environment and is not reported as passed. Stage 3 retrieval and Stage 4 answer
 formal holdout gates remain open and are not represented as quality acceptance.

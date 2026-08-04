@@ -1,6 +1,6 @@
 # 项目架构概览
 
-## Current completion boundary (2026-08-03)
+## Current completion boundary (2026-08-04)
 
 The implemented Stage 4/5 boundary now includes feedback review persistence in `qa_feedback`,
 Space-scoped metadata-only review endpoints, and a separate privacy-safe candidate exporter. The
@@ -8,9 +8,14 @@ exporter consumes repository ports and manifest policy metadata; it does not exp
 content. The architecture remains a modular monolith with the existing Worker and QA Application Port.
 Formal quality gates remain governed by ADR-010 and ADR-011.
 
+PR #4 corrected the online and evaluation retrieval path to `dense_rerank`: dense-exact candidates
+are reranked directly. `hybrid_rerank` remains an explicit compatibility mode, not the default for
+Search API or QA. The corrected GPU development runs are provisional evidence only; they do not
+reopen Stage 3 or authorize the existing holdout.
+
 > 本文档描述 "Agent 驱动的个人知识仓库" 项目的整体架构、各组件职责与协作关系。
 > 更新于阶段 3 终止决策、阶段 4 provisional Step 0～10 和阶段 5 通用 Runtime/Registry
-> 审查完成时（2026-08-03）。
+> 审查完成时（2026-08-04）。
 
 ---
 
@@ -826,6 +831,11 @@ chunks、Claim Recall@10=69.7548%、Evidence Recall@10=62.3431%、MRR=0.6839、P
 无失败和 must-exclude 违规。该结果低于 PR 文档宣称的 75.8%，因此阶段 3 工程完成但正式
 质量未通过；因评测集代表性局限已终止，配置仍为 provisional 且 holdout 未执行；完整复现记录见
 `docs/stage-3-acceptance.md`。
+
+The paragraph above records the historical PR #3 reproduction. PR #4 subsequently corrected the
+evaluation and online default to `dense_rerank`; the v0/v1 development Claim Recall@10 results were
+82.37%/78.75%, respectively. These are provisional results only and do not change the Stage 3
+termination or formal holdout boundary.
 
 阶段 5 通用基础和业务 Skill 审查见 `docs/stage-5-implementation-review.md`，工程收尾补充见
 `docs/stage-5-acceptance.md`。这些实现不改变 Stage 3/4/5 的正式质量状态；正式质量门禁仍需

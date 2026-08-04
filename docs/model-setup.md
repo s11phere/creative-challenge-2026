@@ -11,9 +11,23 @@ TEI（Text Embeddings Inference）服务需要加载 embedding 模型。
 | Embedding | Qwen3-Embedding-0.6B | `Qwen/Qwen3-Embedding-0.6B` | ~400 MB |
 | Reranker | bge-reranker-v2-m3 | `BAAI/bge-reranker-v2-m3` | ~2.2 GB |
 
+## Application routing
+
+For the default `dense_rerank` route, API and Worker need both services. When they run in the same
+Compose project, configure `EMBEDDING_ENDPOINT=http://tei:80`,
+`RERANKER_ENDPOINT=http://tei-reranker:80`, `EMBEDDING_PROVIDER=text-embeddings-inference`, and
+`RERANKER_PROVIDER=inherit`. `text-embeddings-inference` supplies embedding/reranking only; Web QA
+and `knowledge_agent` still require a separate `fast_chat` provider.
+
+When reusing compatible GPU TEI services already published by another Docker Desktop Compose project,
+point both API and Worker at `http://host.docker.internal:<port>` instead of starting duplicate model
+containers. Keep the Qwen3 model revision, instruction identity, normalization, and BGE reranker
+model aligned with the published vectors. See `docs/development-environment.md` for the complete
+capability split and verification sequence.
+
 ## 方式一：自动下载（默认，推荐）
 
-TEI 容器首次启动时自动从 HuggingFace Hub 下载模型，后续启动使用 Docker 层面缓存。
+TEI 容器首次启动时自动从 HuggingFace Hub 下载模型，后续启动使用命名 Docker 卷缓存。
 无需手动操作。embedding 与 reranker 是两个独立 TEI 服务，分别由 `embedding` / `reranker` profile 控制：
 
 ```bash
@@ -115,7 +129,7 @@ docker compose -f deploy/compose.yaml -f compose.offline.yaml \
 curl http://localhost:8080/health
 ```
 
-预期返回 `OK`。
+预期返回 HTTP 2xx；TEI 版本可能返回空响应体，因此以状态码而不是固定响应文本判断健康。
 
 测试 embedding：
 
@@ -123,10 +137,19 @@ curl http://localhost:8080/health
 curl http://localhost:8080/embed \
   -X POST \
   -H "Content-Type: application/json" \
-  -d '{"inputs": "测试文本", "normalize": true}'
+  -d '{"inputs": ["测试文本"], "dimensions": 768}'
 ```
 
 ### 验证 reranker
+
+Use a valid JSON request when checking the reranker endpoint:
+
+```bash
+curl http://localhost:8081/rerank \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"query":"retrieval test","texts":["relevant text","unrelated text"]}'
+```
 
 reranker 服务默认端口 `8081`：
 
@@ -134,7 +157,7 @@ reranker 服务默认端口 `8081`：
 curl http://localhost:8081/health
 ```
 
-预期返回 `OK`。测试 rerank：
+预期返回 HTTP 2xx；TEI 版本可能返回空响应体，因此以状态码而不是固定响应文本判断健康。测试 rerank：
 
 ```bash
 curl http://localhost:8081/rerank \

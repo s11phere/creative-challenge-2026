@@ -1,8 +1,10 @@
 # Agent 驱动的个人知识仓库
 
-## 2026-08-03 Implementation Status
+## 2026-08-04 Implementation Status
 
-Stages 0-5 engineering capabilities are implemented under the current contracts. Stage 4 includes
+Stages 0-5 engineering capabilities are implemented under the current contracts. Stage 3 now
+defaults to `dense_rerank`: dense candidates are reranked directly, while `hybrid_rerank` remains
+an explicit compatibility mode. Stage 4 includes
 the complete QA/Citation/API/Web/Worker path and a Space-scoped feedback review queue. Stage 5
 includes durable Runtime/approval/derived-knowledge/Skill lifecycle behavior and the controlled
 `scripts/export_feedback_candidates.py` command. These implementation results do not change the
@@ -13,7 +15,7 @@ Stage 3 termination record or claim formal retrieval, answer, or Skill holdout a
 
 ## 当前状态
 
-**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，但正式质量门禁未通过。PR #3/v1 GPU development 复现出 provisional Claim Recall@10=69.7548%，因当前评测集代表性局限，阶段 3 已按 [ADR-010](docs/adr/010-stage-3-termination-and-evaluation-boundary.md) 保持正式未通过；正式 holdout 未执行，配置仍未冻结。根据 [ADR-011](docs/adr/011-provisional-stage-4-5-continuation-gate.md)，当前结果只允许阶段 4/5 继续 provisional 工程，不构成正式质量接受；阶段 4/5 正式质量门禁仍未关闭。**
+**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，但正式质量门禁未通过。PR #4 已修正复现与在线默认路径为 `dense_rerank`（纯 dense 候选直接精排）；其 GPU development 结果在 v0/v1 上的 Claim Recall@10 分别为 82.37%/78.75%，高于 `hybrid_rerank`，但仍仅为 provisional 工程证据。因当前评测集代表性局限，阶段 3 已按 [ADR-010](docs/adr/010-stage-3-termination-and-evaluation-boundary.md) 保持正式未通过；正式 holdout 未执行，配置仍未冻结。根据 [ADR-011](docs/adr/011-provisional-stage-4-5-continuation-gate.md)，当前结果只允许阶段 4/5 继续 provisional 工程，不构成正式质量接受；阶段 4/5 正式质量门禁仍未关闭。**
 
 已交付的核心能力：
 
@@ -21,7 +23,7 @@ Stage 3 termination record or claim formal retrieval, answer, or Skill holdout a
 |------|------|
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
-| 阶段 3 ⏹️ 已终止（工程完成，质量门禁未通过） | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；PR3 GPU development Claim Recall@10 为 69.7548%，当前评测集代表性不足，正式 holdout 未执行，配置保持 provisional |
+| 阶段 3 ⏹️ 已终止（工程完成，质量门禁未通过） | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；API/QA 默认 `dense_rerank`，PR #4 GPU development 在 v0/v1 Claim Recall@10 为 82.37%/78.75%，但评测集代表性仍不足，正式 holdout 未执行，配置保持 provisional |
 | 阶段 4 🟡 provisional Step 0-10 | 在 ADR-011 continuation gate 下继续；ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测 validate-only 已完成；默认配置与正式 holdout 未完成 |
 | 阶段 5 🟡 provisional Skills | Step 0-10 工程功能已完成；当前 active 为 `knowledge_agent 0.2.0`（保留 `0.1.0` 回滚包）、`knowledge_qa 0.1.0` 与三个知识整理 Skill `0.1.0`，统一复用持久 QA Run/Worker/SSE；正式质量仍 provisional |
 
@@ -56,11 +58,16 @@ profile 封顶，Space/版本边界不能由模型扩大；规划失败会降级
 `0.1.0` 保留用于固定 Run 恢复和回滚。默认 fake 可跑通流程，配置允许的
 OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。写 Tool 仍被明确拒绝。
 真实本地组合使用外部 OpenAI-compatible `fast_chat`、
-`EMBEDDING_PROVIDER=text-embeddings-inference` 和本地 Qwen3 TEI Embedding；当前
-`RERANKER_PROVIDER=fake`。三项能力独立路由，Embedding 不会随外部 Chat 回退为 fake。
+`EMBEDDING_PROVIDER=text-embeddings-inference`、本地 Qwen3 TEI Embedding 和本地
+BGE reranker；完整 GPU 路径使用 `RERANKER_PROVIDER=inherit`。`RERANKER_PROVIDER=fake`
+只适用于不启动 reranker 服务时的确定性流程验证。三项能力独立路由，Embedding 不会随外部
+Chat 回退为 fake。
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
 [Stage 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
-[Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；历史 `90.48%` Recall@5 结果已判定为虚假，当前 PR3 GPU development Claim Recall@10=69.7548%，仍未达到正式门禁。阶段 3 已终止；若未来重新开启，必须发布新的 dataset/config version 并重新走评测流程。
+[Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；历史 `90.48%` Recall@5 和
+`75.8%` Claim Recall@10 均不能作为当前代码的质量结论。PR #4 的 `dense_rerank` development
+复现也仍是 provisional，阶段 3 已终止；若未来重新开启，必须发布新的 dataset/config version
+并重新走评测流程。
 
 ## 快速启动
 
@@ -97,19 +104,22 @@ docker compose -f deploy/compose.yaml --env-file .env up --build --detach --wait
 ```
 
 The command above is the deterministic fake-provider path. For Web QA or `knowledge_agent` with a
-real Chat provider and the local GPU embedding service, configure the capability split described in
-`.env.example` and start the embedding profile explicitly:
+real Chat provider and the complete local GPU retrieval path, configure the capability split
+described in `.env.example` and start both model profiles explicitly:
 
 ```bash
 docker compose -f deploy/compose.yaml --env-file .env \
-  --profile embedding up --build --detach --wait
+  --profile embedding --profile reranker up --build --detach --wait
 ```
 
 `text-embeddings-inference` is not a Chat provider. Use
 `MODEL_PROVIDER=openai-compatible` plus `FAST_CHAT_ENDPOINT`, `FAST_CHAT_MODEL`, and
 `MODEL_ALLOW_EXTERNAL=true` for external Chat, while keeping
-`EMBEDDING_PROVIDER=text-embeddings-inference`. Set `RERANKER_PROVIDER=fake` for local QA when the
-optional GPU reranker profile is not running. After changing `.env`, recreate both `api` and `worker`.
+`EMBEDDING_PROVIDER=text-embeddings-inference`. For the default `dense_rerank` route, set
+`RERANKER_PROVIDER=inherit`, `RERANKER_ENDPOINT=http://tei-reranker:80`, and
+`RERANKER_MODEL=BAAI/bge-reranker-v2-m3`. Set `RERANKER_PROVIDER=fake` only when deliberately
+validating the flow without the optional GPU reranker. After changing `.env`, recreate both `api`
+and `worker`.
 
 真实模型组合需要在被 Git 忽略的 `.env` 中同时配置外部 Chat、
 `EMBEDDING_PROVIDER=text-embeddings-inference`、`EMBEDDING_ENDPOINT=http://tei:80`、固定的
@@ -124,7 +134,7 @@ Qwen3 Embedding 模型/revision，以及适配 TEI 限制的 `EMBEDDING_BATCH_SI
 API、Worker 和 Web 达到各自完成或健康条件。
 
 > 首次启动 Embedding 模型服务（`--profile embedding`）时，TEI 会从 HuggingFace Hub
-> 自动下载 Qwen3-Embedding-0.6B（约 400 MB）。模型文件会缓存在 Docker 层面，后续启动
+> 自动下载 Qwen3-Embedding-0.6B（约 400 MB）。模型文件会缓存到命名 Docker 卷，后续启动
 > 无需重下载。中国用户可参考 [模型下载文档](docs/model-setup.md) 使用镜像源加速。
 在“数据来源”中上传并等待文档状态发布后，进入“知识问答”即可使用当前 Space 的真实索引提问。
 默认 fake 模型返回可复现的相关证据摘录，适合先跑通流程；回答质量将在阶段 3 达标后继续调整。
@@ -139,7 +149,8 @@ docker compose -f deploy/compose.yaml --env-file .env ps
 ```
 
 预期 `live` 返回 `alive`，`ready` 返回 `ready`，PostgreSQL 和 Redis 分别报告
-`POSTGRESQL_OK`、`REDIS_OK`。默认确定性模型替身报告 `MODEL_FAKE_READY`。
+`POSTGRESQL_OK`、`REDIS_OK`。模型能力会按实际配置报告 `MODEL_FAKE_READY` 或
+`MODEL_CAPABILITY_CONFIGURED`；`ready` 只验证路由配置，仍应以一次真实检索请求验证 GPU 服务。
 
 ## 停止与清理
 
@@ -199,10 +210,12 @@ git diff --exit-code -- docs/openapi.json
 | Redis | `127.0.0.1:6379` | Dramatiq broker，启用 AOF |
 | OTel Collector | `4317`、`4318` | 仅 `--profile otel` 启动 |
 | Embedding | `127.0.0.1:8080` | Qwen3-Embedding-0.6B（TEI），需 `--profile embedding` |
+| Reranker | `127.0.0.1:8081` | BAAI/bge-reranker-v2-m3（TEI），需 `--profile reranker` |
 
-端口可通过 `.env` 中的 `WEB_PORT`、`API_PORT`、`POSTGRES_PORT`、`REDIS_PORT` 和 `EMBEDDING_PORT` 覆盖。
+端口可通过 `.env` 中的 `WEB_PORT`、`API_PORT`、`POSTGRES_PORT`、`REDIS_PORT`、`EMBEDDING_PORT`
+和 `RERANKER_PORT` 覆盖。
 
-Embedding（Qwen3-Embedding-0.6B）服务需通过 `--profile embedding` 显式启动。首次启动时，TEI 会自动从 HuggingFace Hub 下载模型（缓存至 Docker 层面，后续启动无需重下载）。
+Embedding（Qwen3-Embedding-0.6B）服务需通过 `--profile embedding` 显式启动。首次启动时，TEI 会自动从 HuggingFace Hub 下载模型（缓存至命名 Docker 卷，后续启动无需重下载）。
 
 **GPU 模式（默认）：**
 ```bash
