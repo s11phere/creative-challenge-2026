@@ -115,9 +115,7 @@ def _sha256(path: Path, *, normalize_text: bool = False) -> str:
         return digest.hexdigest()
     content = path.read_bytes()
     try:
-        content = (
-            content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
-        )
+        content = content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
     except UnicodeDecodeError as exc:
         raise EvaluationConfigError(f"pinned text input is not valid UTF-8: {path}") from exc
     return hashlib.sha256(content).hexdigest()
@@ -238,9 +236,7 @@ def validate_evaluation_config(
 
     cases_path = _resolve_repository_path(dataset_config["cases_path"])
     dataset_schema_path = _resolve_repository_path(dataset_config["schema_path"])
-    _validate_sha(
-        cases_path, dataset_config["cases_sha256"], "Dataset", normalize_text=True
-    )
+    _validate_sha(cases_path, dataset_config["cases_sha256"], "Dataset", normalize_text=True)
     _validate_sha(
         dataset_schema_path,
         dataset_config["schema_sha256"],
