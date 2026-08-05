@@ -3,7 +3,8 @@
 Implements the Step 8 API surface:
 - ``POST   /api/v1/spaces/{space_id}/sources`` — create a new source
 - ``GET    /api/v1/spaces/{space_id}/sources`` — list sources
-- ``DELETE /api/v1/spaces/{space_id}/sources/{source_id}`` — delete an empty source (rollback for failed uploads)
+- ``DELETE /api/v1/spaces/{space_id}/sources/{source_id}`` — delete an empty
+  source (rollback for failed uploads)
 - ``GET    /api/v1/spaces/{space_id}/sources/{source_id}/detail`` — get source detail
 - ``POST   /api/v1/spaces/{space_id}/sources/{source_id}/upload`` — upload a file
 - ``POST   /api/v1/spaces/{space_id}/sources/{source_id}/ingest`` — trigger ingestion

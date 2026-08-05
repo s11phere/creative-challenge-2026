@@ -748,6 +748,25 @@
         "title": "DeleteDocumentResponse",
         "type": "object"
       },
+      "DeleteSourceResponse": {
+        "properties": {
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "deleted",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "status"
+        ],
+        "title": "DeleteSourceResponse",
+        "type": "object"
+      },
       "DependencyCheck": {
         "properties": {
           "code": {
@@ -1237,6 +1256,24 @@
           "task_id"
         ],
         "title": "IngestResponse",
+        "type": "object"
+      },
+      "LimitsResponse": {
+        "properties": {
+          "max_upload_size_bytes": {
+            "title": "Max Upload Size Bytes",
+            "type": "integer"
+          },
+          "max_upload_size_mb": {
+            "title": "Max Upload Size Mb",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_upload_size_mb",
+          "max_upload_size_bytes"
+        ],
+        "title": "LimitsResponse",
         "type": "object"
       },
       "LiveResponse": {
@@ -2668,6 +2705,35 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/config/limits": {
+      "get": {
+        "description": "Client-facing upload limits from the live configuration.",
+        "operationId": "config_limits_api_v1_config_limits_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Config Limits"
+      }
+    },
     "/api/v1/conversations/{conversation_id}/questions": {
       "post": {
         "operationId": "submit_question_api_v1_conversations__conversation_id__questions_post",
@@ -5229,6 +5295,57 @@
           }
         },
         "summary": "Create Source"
+      }
+    },
+    "/api/v1/spaces/{space_id}/sources/{source_id}": {
+      "delete": {
+        "description": "Delete an empty source (no documents) and its derived rows.\n\nIntended as rollback for a source created by a failed browser upload.\nSources that already hold documents are refused so content is never\nremoved through this endpoint; callers must delete documents first.",
+        "operationId": "delete_source_api_v1_spaces__space_id__sources__source_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Space Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteSourceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Source"
       }
     },
     "/api/v1/spaces/{space_id}/sources/{source_id}/detail": {
