@@ -77,6 +77,22 @@ class FixedSkillIdentity:
 
 
 @dataclass(frozen=True)
+class ClarificationContinuation:
+    """Server-only state required to resume one resource choice on the same Run."""
+
+    skill: FixedSkillIdentity
+    selection_source: ConversationRunSelectionSource
+    question: str
+    resource_type: str
+
+    def __post_init__(self) -> None:
+        if not self.question.strip() or len(self.question) > 12_000:
+            raise ValueError("clarification continuation question must be bounded")
+        if self.resource_type not in {"source", "document"}:
+            raise ValueError("clarification continuation resource type is unsupported")
+
+
+@dataclass(frozen=True)
 class ConversationRunUsage:
     """Actual usage; product budgets are deliberately not part of this value object."""
 
@@ -118,6 +134,7 @@ class Clarification:
     kind: ClarificationKind
     message: str
     resource_candidates: tuple[ResourceCandidate, ...] = ()
+    continuation: ClarificationContinuation | None = None
 
     def __post_init__(self) -> None:
         if not self.clarification_id.strip() or not self.message.strip():
@@ -127,6 +144,8 @@ class Clarification:
             raise ValueError("clarification candidate IDs must be unique")
         if len(self.resource_candidates) > 20:
             raise ValueError("clarification cannot expose more than twenty candidates")
+        if self.continuation is not None and not self.resource_candidates:
+            raise ValueError("clarification continuation requires resource candidates")
 
 
 @dataclass(frozen=True)
@@ -229,6 +248,10 @@ class ConversationRunRepository(Protocol):
 
     async def request_conversation_cancel(self, run_id: UUID) -> ConversationRun: ...
 
+    async def reopen_clarification(
+        self, run_id: UUID, *, clarification_id: str
+    ) -> ConversationRun: ...
+
     async def prepare_conversation_recovery(self) -> tuple[UUID, ...]: ...
 
     async def prepare_assistant_recovery(self) -> tuple[UUID, ...]: ...
@@ -290,6 +313,7 @@ __all__ = [
     "AssistantResult",
     "AssistantResultKind",
     "Clarification",
+    "ClarificationContinuation",
     "ClarificationKind",
     "ConversationRun",
     "ConversationRunKind",

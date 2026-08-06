@@ -255,7 +255,7 @@ function App() {
             }}
           >
             <MessageSquareText size={18} />
-            知识问答
+            对话
           </a>
         </nav>
 
@@ -387,7 +387,7 @@ function App() {
               {activeView === 'status'
                 ? '运行概览'
                 : activeView === 'qa'
-                  ? '当前知识空间'
+                  ? '当前会话'
                   : activeView === 'skills'
                     ? '技能与版本'
                     : '知识库内容'}
@@ -396,7 +396,7 @@ function App() {
               {activeView === 'status'
                 ? '系统状态'
                 : activeView === 'qa'
-                  ? '知识问答'
+                  ? '对话'
                   : activeView === 'skills'
                     ? '技能管理'
                     : '数据来源'}

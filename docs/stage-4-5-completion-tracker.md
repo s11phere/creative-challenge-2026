@@ -27,6 +27,21 @@ uses the same Worker queue after a soft watermark, and lease recovery/cancellati
 bounded recent-window fallback. The implementation remains provisional under ADR-010/ADR-011; no
 formal retrieval, answer, or Skill holdout was run.
 
+## 2026-08-06 Assistant Conversation Evolution Step 6
+
+Step 6 replaces the fixed QA Skill-mode entry with a general conversation workspace. `/` opens a
+searchable ARIA combobox/listbox with keyboard, pointer, and IME-safe selection. Direct replies,
+Skill runs, clarifications, approvals, failures, and grounded citations each use their own rendered
+state; the citation panel appears only for a grounded result with citations. Collapsed Run details
+show actual model identity, input/output token usage, and latency only.
+
+Resource clarifications render safe inline candidates. The server keeps the continuation state
+private, revalidates a selected candidate in the original Run's Space, and resumes the same parent
+Run rather than creating another conversation. `GET /api/v2/conversations/{conversation_id}/runs`
+restores persisted v2 Runs and pending clarifications after a refresh. This is provisional engineering
+work under ADR-010/ADR-011: no formal retrieval, answer, or Skill holdout was run, and browser
+Playwright desktop/mobile evidence remains unavailable in the current environment.
+
 ## 2026-08-06 Assistant Conversation Evolution Step 1
 
 按 `agent-conversation-evolution-plan.md` 的 Step 1，新增了共享 `ConversationRun` 父身份和 API v2

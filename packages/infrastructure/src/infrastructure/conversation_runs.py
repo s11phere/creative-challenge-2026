@@ -10,6 +10,7 @@ from domain.conversation_run import (
     AssistantResult,
     AssistantResultKind,
     Clarification,
+    ClarificationContinuation,
     ClarificationKind,
     ConversationRun,
     ConversationRunKind,
@@ -196,6 +197,29 @@ class PostgresConversationRunRepository:
                 return current
             model.status = ConversationRunStatus.CANCEL_REQUESTED.value
             model.cancellation_requested = True
+            await session.flush()
+            return _run(model)
+
+    async def reopen_clarification(
+        self, run_id: UUID, *, clarification_id: str
+    ) -> ConversationRun:
+        async with self._database.transaction() as session:
+            model = await self._locked_assistant_run(session, run_id)
+            current = _run(model)
+            clarification = current.result.clarification if current.result is not None else None
+            if (
+                current.status is not ConversationRunStatus.WAITING_CLARIFICATION
+                or clarification is None
+                or clarification.clarification_id != clarification_id
+                or clarification.continuation is None
+                or current.cancellation_requested
+            ):
+                raise QAContractError("Conversation clarification cannot be resumed")
+            model.status = ConversationRunStatus.CREATED.value
+            model.error_code = None
+            model.result = None
+            model.updated_at = datetime.now(UTC)
+            _clear_lease(model)
             await session.flush()
             return _run(model)
 
@@ -686,6 +710,20 @@ def _result_value(value: AssistantResult | None) -> dict[str, Any] | None:
                     }
                     for candidate in clarification.resource_candidates
                 ],
+                "continuation": (
+                    {
+                        "skill": {
+                            "name": clarification.continuation.skill.name,
+                            "version": clarification.continuation.skill.version,
+                            "content_sha256": clarification.continuation.skill.content_sha256,
+                        },
+                        "selection_source": clarification.continuation.selection_source.value,
+                        "question": clarification.continuation.question,
+                        "resource_type": clarification.continuation.resource_type,
+                    }
+                    if clarification.continuation is not None
+                    else None
+                ),
             }
             if clarification is not None
             else None
@@ -709,11 +747,28 @@ def _result(value: dict[str, Any] | None) -> AssistantResult | None:
             )
             for item in raw_clarification.get("resource_candidates", [])
         )
+        raw_continuation = raw_clarification.get("continuation")
+        continuation = None
+        if raw_continuation is not None:
+            raw_skill = raw_continuation["skill"]
+            continuation = ClarificationContinuation(
+                skill=FixedSkillIdentity(
+                    name=raw_skill["name"],
+                    version=raw_skill["version"],
+                    content_sha256=raw_skill["content_sha256"],
+                ),
+                selection_source=ConversationRunSelectionSource(
+                    raw_continuation["selection_source"]
+                ),
+                question=raw_continuation["question"],
+                resource_type=raw_continuation["resource_type"],
+            )
         clarification = Clarification(
             clarification_id=raw_clarification["clarification_id"],
             kind=ClarificationKind(raw_clarification["kind"]),
             message=raw_clarification["message"],
             resource_candidates=candidates,
+            continuation=continuation,
         )
     raw_message_id = value.get("message_id")
     return AssistantResult(

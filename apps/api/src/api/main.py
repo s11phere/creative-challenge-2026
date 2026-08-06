@@ -142,6 +142,7 @@ def create_app(
             "get_conversation_run",
             "list_conversation_runs",
             "request_conversation_cancel",
+            "reopen_clarification",
             "prepare_conversation_recovery",
             "prepare_assistant_recovery",
             "prepare_context_compaction_recovery",
@@ -282,6 +283,7 @@ def create_app(
     app.state.assistant_turn_service = assistant_turn_service
     app.state.assistant_command_service = assistant_command_service
     app.state.assistant_agent_service = assistant_agent_service
+    app.state.assistant_skill_invoker = assistant_skill_invoker
     app.state.conversation_context_service = conversation_context
     app.state.assistant_event_log = assistant_event_log
     app.state.assistant_runtime = assistant_runtime

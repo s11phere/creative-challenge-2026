@@ -305,6 +305,29 @@ class InMemoryGroundedQARepository:
             self._conversation_runs[run_id] = updated
             return updated
 
+    async def reopen_clarification(
+        self, run_id: UUID, *, clarification_id: str
+    ) -> ConversationRun:
+        async with self._lock:
+            run = self._require_assistant_conversation_run(run_id)
+            clarification = run.result.clarification if run.result is not None else None
+            if (
+                run.status is not ConversationRunStatus.WAITING_CLARIFICATION
+                or clarification is None
+                or clarification.clarification_id != clarification_id
+                or clarification.continuation is None
+                or run.cancellation_requested
+            ):
+                raise QAContractError("Conversation clarification cannot be resumed")
+            reopened = replace(
+                run,
+                status=ConversationRunStatus.CREATED,
+                result=None,
+                updated_at=datetime.now(UTC),
+            )
+            self._conversation_runs[run_id] = reopened
+            return reopened
+
     async def prepare_conversation_recovery(self) -> tuple[UUID, ...]:
         async with self._lock:
             return tuple(

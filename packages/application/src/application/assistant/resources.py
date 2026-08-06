@@ -62,6 +62,10 @@ class ResourceResolutionPort(Protocol):
         context: ConversationContextSnapshot | None = None,
     ) -> ResolvedResource: ...
 
+    async def select_candidate(
+        self, *, space_id: UUID, resource_type: str, candidate_id: str
+    ) -> ResolvedResource: ...
+
 
 _INTERNAL_ID = re.compile(r"(?:[0-9a-f]{32,64}|[0-9a-f]{8}-[0-9a-f-]{27,})", re.IGNORECASE)
 
@@ -122,6 +126,43 @@ class NaturalLanguageResourceResolver(ResourceResolutionPort):
                 tuple(match.candidate for match in matches[:20]),
             )
         return matches[0]
+
+    async def select_candidate(
+        self, *, space_id: UUID, resource_type: str, candidate_id: str
+    ) -> ResolvedResource:
+        if resource_type not in {"source", "document"} or not candidate_id.startswith("candidate:"):
+            raise ResourceResolutionError(
+                ResourceResolutionErrorCode.NOT_FOUND,
+                "The selected resource is no longer available in the current Space.",
+            )
+        for match in await self._current_resources(space_id=space_id, resource_type=resource_type):
+            if match.candidate.candidate_id == candidate_id:
+                return match
+        raise ResourceResolutionError(
+            ResourceResolutionErrorCode.NOT_FOUND,
+            "The selected resource is no longer available in the current Space.",
+        )
+
+    async def _current_resources(
+        self, *, space_id: UUID, resource_type: str
+    ) -> tuple[ResolvedResource, ...]:
+        matches: list[ResolvedResource] = []
+        for source in await self.sources.get_by_space(space_id):
+            current: list[tuple[Document, DocumentVersion]] = []
+            for document in await self.documents.get_by_source(source.id):
+                if document.deleted_at is not None or document.current_version_id is None:
+                    continue
+                version = await self.versions.get(document.current_version_id)
+                if version is not None and version.status is DocumentStatus.PUBLISHED:
+                    current.append((document, version))
+            if resource_type == "source" and current:
+                matches.append(self._source_result(source, current))
+            elif resource_type == "document":
+                matches.extend(
+                    self._document_result(source, document, version)
+                    for document, version in current
+                )
+        return tuple(matches)
 
     def _source_result(
         self, source: Source, current: list[tuple[Document, DocumentVersion]]

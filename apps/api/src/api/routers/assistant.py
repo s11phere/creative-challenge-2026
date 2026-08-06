@@ -88,14 +88,25 @@ class ClarificationResponse(BaseModel):
     resource_candidates: list[ResourceCandidateResponse]
 
 
+class ClarificationSelectionRequest(BaseModel):
+    candidate_id: str = Field(min_length=10, max_length=200)
+
+
 class ConversationRunResponse(BaseModel):
     run_id: UUID
+    user_message_id: UUID
     status: str
     run_kind: str
+    error_code: str | None = None
     selection: SelectionResponse
+    model_identity: str
     assistant_message: AssistantMessageResponse | None = None
     clarification: ClarificationResponse | None = None
     usage: UsageResponse
+
+
+class ConversationRunsResponse(BaseModel):
+    runs: list[ConversationRunResponse]
 
 
 class CommandExecutionResponse(BaseModel):
@@ -199,12 +210,72 @@ async def list_commands(request: Request) -> CommandCatalogResponse:
     )
 
 
+@router.get(
+    "/conversations/{conversation_id}/runs",
+    response_model=ConversationRunsResponse,
+    responses=_ERROR_RESPONSES,
+)
+async def list_conversation_runs(
+    conversation_id: UUID, request: Request
+) -> ConversationRunsResponse:
+    conversation = await request.app.state.qa_repository.get_conversation(conversation_id)
+    if conversation is None or conversation.archived_at is not None:
+        raise AppError("CONVERSATION_NOT_FOUND", "Conversation not found", 404)
+    runs = await request.app.state.conversation_run_repository.list_conversation_runs(
+        conversation_id
+    )
+    return ConversationRunsResponse(runs=[await _response(run, request) for run in runs])
+
+
 @router.get("/runs/{run_id}", response_model=ConversationRunResponse, responses=_ERROR_RESPONSES)
 async def get_run(run_id: UUID, request: Request) -> ConversationRunResponse:
     run = await request.app.state.assistant_turn_service.get(run_id)
     if run is None:
         raise AppError("RUN_NOT_FOUND", "Run not found", 404)
     return await _response(run, request)
+
+
+@router.post(
+    "/runs/{run_id}/clarifications/{clarification_id}",
+    response_model=ConversationRunResponse,
+    status_code=202,
+    responses=_ERROR_RESPONSES,
+)
+async def select_clarification_resource(
+    run_id: UUID,
+    clarification_id: str,
+    body: ClarificationSelectionRequest,
+    request: Request,
+) -> ConversationRunResponse:
+    run = await request.app.state.assistant_turn_service.get(run_id)
+    if run is None:
+        raise AppError("RUN_NOT_FOUND", "Run not found", 404)
+    try:
+        resumed = await request.app.state.assistant_skill_invoker.resume_resource_clarification(
+            run,
+            clarification_id=clarification_id,
+            candidate_id=body.candidate_id,
+            context_service=request.app.state.conversation_context_service,
+        )
+    except ValueError as exc:
+        code = str(exc)
+        if code not in {
+            "RUN_CLARIFICATION_INVALID",
+            "SKILL_NOT_ACTIVE",
+            "RESOURCE_NOT_FOUND",
+            "RESOURCE_CONFLICT",
+        }:
+            code = "RUN_CLARIFICATION_INVALID"
+        raise AppError(code, "Clarification choice could not be completed.", 409) from exc
+    await request.app.state.assistant_event_log.append(
+        resumed.run_id,
+        AssistantEventType.SKILL_STARTED,
+        {
+            "status": resumed.status.value,
+            "skill": resumed.skill.name if resumed.skill else "unknown",
+        },
+    )
+    return await _response(resumed, request)
 
 
 @router.post(
@@ -287,8 +358,10 @@ async def _response(run: ConversationRun, request: Request) -> ConversationRunRe
         )
     return ConversationRunResponse(
         run_id=run.run_id,
+        user_message_id=run.user_message_id,
         status=run.status.value,
         run_kind=run.run_kind.value,
+        error_code=run.error_code,
         selection=SelectionResponse(
             source=run.selection_source.value,
             skill=(
@@ -301,6 +374,7 @@ async def _response(run: ConversationRun, request: Request) -> ConversationRunRe
                 else None
             ),
         ),
+        model_identity=run.model_identity,
         assistant_message=assistant_message,
         clarification=clarification,
         usage=UsageResponse(

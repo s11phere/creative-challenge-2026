@@ -48,6 +48,14 @@ Clarifications use the server-authored `assistant-clarification-v1` schema. Reso
 contain only safe display metadata. A candidate selection derives a confirmation idempotency key
 from the original parent run; it cannot create duplicate work or broaden scope.
 
+The continuation needed to resume a resource clarification is persisted only with that parent Run.
+It contains the server-pinned Skill, original selection source, bounded question, and expected
+resource type; it is never serialized into an API response. On selection, the Application layer
+loads the waiting Run, checks the clarification identity and pinned active Skill, then resolves the
+submitted candidate again inside the Run's current Space. A stale, forged, cross-Space, or otherwise
+unavailable candidate fails without reopening the Run. A valid selection reopens and promotes the
+same parent Run; it never creates a replacement conversation or Run.
+
 The versioned command catalog combines base commands and active Skill invocation metadata without
 exposing full prompts, inactive versions, internal budgets, remaining tokens, or Tool limits. The
 server, not the client, parses the original input: a first non-whitespace `/` begins a
@@ -96,6 +104,12 @@ API v2 and `agent-run-sse-v2` are independently versioned. V2 lifecycle events a
 They remain projections of PostgreSQL-persisted state with monotonic per-run sequencing and a single
 terminal state. Existing `qa-sse-v1` remains available to v1 callers; grounded QA lifecycle events
 are projected into v2 without changing the existing v1 event contract.
+
+`GET /api/v2/conversations/{conversation_id}/runs` returns the durable v2 Run projection in
+creation order. It is the recovery read model for an active Run, waiting clarification, completed
+direct response, and the v2 identity of a grounded result after a browser refresh. Grounded result
+and citation bodies continue to use the existing scoped v1 QA read endpoints; v2 does not expose
+evidence bodies, internal continuation data, or runtime guardrail values.
 
 ### Privacy and quality boundary
 

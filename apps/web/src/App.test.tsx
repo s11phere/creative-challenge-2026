@@ -214,17 +214,17 @@ describe('system status workspace', () => {
     )
   })
 
-  it('opens the grounded QA workspace from primary navigation', async () => {
+  it('opens the conversation workspace from primary navigation', async () => {
     vi.stubGlobal('fetch', mockHealthyFetch())
 
     renderApp()
     await screen.findByText('本地服务运行正常')
-    fireEvent.click(screen.getByRole('link', { name: '知识问答' }))
+    fireEvent.click(screen.getByRole('link', { name: '对话' }))
 
-    expect(screen.getByRole('heading', { level: 1, name: '知识问答' })).toBeInTheDocument()
-    expect(screen.getByRole('textbox', { name: '问题' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '引用证据' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '知识问答' })).toHaveAttribute(
+    expect(screen.getByRole('heading', { level: 1, name: '对话' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: '消息' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '引用证据' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '对话' })).toHaveAttribute(
       'aria-current',
       'page',
     )
@@ -282,7 +282,7 @@ describe('system status workspace', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     renderApp()
-    fireEvent.click(screen.getByRole('link', { name: '知识问答' }))
+    fireEvent.click(screen.getByRole('link', { name: '对话' }))
 
     const entries = await waitFor(() => {
       const items = Array.from(document.querySelectorAll<HTMLButtonElement>('.sidebar-history-select'))
@@ -293,7 +293,7 @@ describe('system status workspace', () => {
     expect(entries[1]).toHaveTextContent('1 个问题')
 
     fireEvent.click(entries[1])
-    expect(screen.getByRole('textbox', { name: '问题' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '引用证据' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: '消息' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '引用证据' })).not.toBeInTheDocument()
   })
 })

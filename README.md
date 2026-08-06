@@ -66,6 +66,13 @@ append-only; versioned rolling summaries retain their covered range, digest, pro
 and sensitivity. Router/direct-answer/Skill handoff share one bounded snapshot, while QA remains
 evidence-isolated. `/compact` and soft-watermark compaction are durable background runs on the
 existing Worker queue. This remains provisional engineering capability under ADR-010/011.
+
+Assistant Conversation Evolution Step 6 将原 QA 工作区演进为通用对话工作区：输入 `/` 时显示可搜索、
+可键盘操作的命令面板，资源歧义在消息内显示安全候选。选择候选会重新校验当前 Space 并回到原 Run，
+不会重建会话。`GET /api/v2/conversations/{conversation_id}/runs` 用于刷新后恢复对话 Run 和待澄清
+状态；引用侧栏只在已完成的 grounded Run 有 Citation 时出现。折叠运行信息只显示实际模型、token
+和耗时，不显示预算、剩余额度或 Tool 上限。
+
 QA；资源歧义只显示 server-authored 候选，不暴露内部 UUID。该自动路由和 Step 4 Command API
 均为 provisional；Step 5 才实现上下文压缩。
 真实本地组合使用外部 OpenAI-compatible `fast_chat`、

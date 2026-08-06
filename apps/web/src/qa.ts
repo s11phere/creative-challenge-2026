@@ -125,6 +125,62 @@ export type CitationExcerpt = NonNullable<QARun['citations']>[number] & {
   excerpt: string | null
 }
 
+export type AssistantCommand = {
+  name: string
+  aliases: string[]
+  kind: 'base' | 'skill'
+  description: string
+  argument_hint: string
+  input_mode: string
+}
+
+export type AssistantRun = {
+  run_id: string
+  user_message_id: string
+  status: string
+  run_kind: 'assistant_turn' | 'grounded_qa' | 'skill' | 'context_compaction'
+  error_code: string | null
+  selection: {
+    source: 'auto' | 'command' | 'none'
+    skill: { name: string; version: string; content_sha256: string } | null
+  }
+  model_identity: string
+  assistant_message: { message_id: string; content: string } | null
+  clarification: {
+    clarification_id: string
+    kind: string
+    message: string
+    resource_candidates: Array<{
+      candidate_id: string
+      resource_type: string
+      label: string
+      source_label: string | null
+      version_label: string | null
+    }>
+  } | null
+  usage: {
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+    model_latency_ms: number
+  }
+}
+
+export type AssistantCommandResult = {
+  command: string
+  status: string
+  content: string | null
+  conversation_id: string | null
+  run: AssistantRun | null
+  commands: AssistantCommand[]
+}
+
+export type AssistantTurnResult = AssistantRun | AssistantCommandResult
+
+function isAssistantRun(value: AssistantTurnResult): value is AssistantRun {
+  return 'run_id' in value
+}
+
 export class QAApiError extends Error {
   status: number
 
@@ -313,3 +369,53 @@ export function submitFeedback(
     body: JSON.stringify({ decision, idempotency_key: idempotencyKey, note: note?.trim() || undefined }),
   })
 }
+
+export function fetchAssistantCommands(signal?: AbortSignal): Promise<AssistantCommand[]> {
+  return request<{ commands: AssistantCommand[] }>('/api/v2/commands', { signal }).then(
+    (response) => response.commands ?? [],
+  )
+}
+
+export function submitAssistantTurn(
+  conversationId: string,
+  content: string,
+  idempotencyKey: string,
+): Promise<AssistantTurnResult> {
+  return request(`/api/v2/conversations/${conversationId}/turns`, {
+    method: 'POST',
+    body: JSON.stringify({ content, idempotency_key: idempotencyKey }),
+  })
+}
+
+export function fetchAssistantRun(runId: string, signal?: AbortSignal): Promise<AssistantRun> {
+  return request(`/api/v2/runs/${runId}`, { signal })
+}
+
+export function fetchAssistantConversationRuns(
+  conversationId: string,
+  signal?: AbortSignal,
+): Promise<AssistantRun[]> {
+  return request<{ runs: AssistantRun[] }>(`/api/v2/conversations/${conversationId}/runs`, {
+    signal,
+  }).then((response) => response.runs ?? [])
+}
+
+export function cancelAssistantRun(runId: string): Promise<AssistantRun> {
+  return request(`/api/v2/runs/${runId}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
+}
+
+export function selectClarificationResource(
+  runId: string,
+  clarificationId: string,
+  candidateId: string,
+): Promise<AssistantRun> {
+  return request(`/api/v2/runs/${runId}/clarifications/${clarificationId}`, {
+    method: 'POST',
+    body: JSON.stringify({ candidate_id: candidateId }),
+  })
+}
+
+export { isAssistantRun }

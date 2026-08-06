@@ -452,11 +452,13 @@ Registry 在服务端重验
      — provisional PostgreSQL 会话与 Run 创建；API 只投递 Run ID，由独立 Worker 执行唯一 Grounded QA 用例
    - `POST /api/v1/conversations/{conversation_id}/skills/knowledge_agent/runs` — 在同一 QA Run/Worker/SSE
      协议中启动固定版本的只读 LLM Agent，不接受客户端指定 Tool、prompt、权限或版本
-   - `POST /api/v2/conversations/{conversation_id}/turns`、`GET /api/v2/runs/{run_id}`、
-     `GET /api/v2/runs/{run_id}/events`、`POST /api/v2/runs/{run_id}/cancel` — 普通 Assistant
+   - `POST /api/v2/conversations/{conversation_id}/turns`、`GET /api/v2/conversations/{conversation_id}/runs`、
+     `GET /api/v2/runs/{run_id}`、`GET /api/v2/runs/{run_id}/events`、
+     `POST /api/v2/runs/{run_id}/clarifications/{clarification_id}`、`POST /api/v2/runs/{run_id}/cancel` — 普通 Assistant
      direct-conversation 的 provisional Worker 路径；v1 QA Run 作为同一 UUID 的 `grounded_qa`
      投影继续兼容。Step 3 已接入自动 Skill 调用，Step 4 增加 `GET /api/v2/commands` 和显式命令 turn
-     映射；资源解析和 QA 投影仍复用同一 Application/Worker 路径
+     映射。会话 Run 列表支持刷新恢复；资源候选选择只接受安全候选 ID，服务端在原 Run 的 Space
+     内重新解析后继续同一 Run。资源解析和 QA 投影仍复用同一 Application/Worker 路径
    - `GET /api/v1/qa/runs/{run_id}`、`POST /api/v1/qa/runs/{run_id}/cancel`、
      `GET /api/v1/qa/runs/{run_id}/events`、`POST /api/v1/qa/runs/{run_id}/feedback` — provisional
      Run 查询/取消、SSE 重放和反馈契约；终态响应包含结构化回答/拒答及已校验 Citation 身份
