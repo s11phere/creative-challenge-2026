@@ -22,6 +22,7 @@ from application.qa import (
     GroundedAnswerGenerator,
     GroundedQAExecutionProfile,
     GroundedQAService,
+    LlmQueryRewriter,
     QAGenerationProfileV1,
     QAPlanningProfileV1,
     QASearchCoordinator,
@@ -282,7 +283,7 @@ class GroundedQAExecutor:
     ) -> GroundedQAService:
         return GroundedQAService(
             repository=self._repository,
-            planner=QueryPlanner(),
+            planner=QueryPlanner(rewriter=LlmQueryRewriter(generation_gateway)),
             search=QASearchCoordinator(DatabaseSearchService(self._database, gateway)),
             evidence_binding=EvidenceBindingService(),
             context_builder=ContextBuilder(),
@@ -512,7 +513,10 @@ class GroundedQAExecutor:
 def _profiles() -> tuple[QAPlanningProfileV1, RetrievalProfileV1, QAGenerationProfileV1]:
     identity = settings.active_embedding_identity()
     retrieval = RetrievalProfileV1(embedding_version=identity.version)
-    planning = QAPlanningProfileV1()
+    # R4-04: multi-query rewriting is enabled based on the query-expansion pilot
+    # (question-only rewrites lift dev recall@10 by ~+2.8pp); when fast_chat is
+    # unavailable the QueryPlanner falls back to the original question.
+    planning = QAPlanningProfileV1(rewrite_enabled=True, max_subqueries=4)
     generation = QAGenerationProfileV1(
         retrieval_profile_reference=retrieval.profile_version,
         model_identity=(settings.fast_chat_model or "fake-fast-chat-v1"),

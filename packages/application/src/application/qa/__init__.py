@@ -63,6 +63,7 @@ from .query_planning import (
     SearchServicePort,
     classify_question,
 )
+from .query_rewriting import LlmQueryRewriter
 from .service import (
     AgentRetrievalPlan,
     GroundedQAApplicationPort,
@@ -100,6 +101,7 @@ __all__ = [
     "GroundedQAService",
     "GroundedConfidence",
     "InMemoryGroundedQARepository",
+    "LlmQueryRewriter",
     "MergedSearchResult",
     "QAGenerationProfileV1",
     "QAPlanningProfileV1",

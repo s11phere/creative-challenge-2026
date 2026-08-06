@@ -273,3 +273,22 @@ uv run python scripts/evaluate_retrieval.py --config <cfg> --split development -
 - **评测库语料**：cs512（新 parser + 段落边界 chunk + 多栏修复，5403 chunks，v0 manifest）。
 - **模型**：Qwen3-Embedding-0.6B（TEI）；bge-reranker-v2-m3（TEI 原生）。无 LLM（fast_chat 未配置）。
 - **结论**：检索侧收口于 75.8%。剩余 recall 归 Stage 4 查询改写（证据已备：+2.8pp）。
+
+---
+
+## 九、2026-08-06 后续：查询改写落地验证
+
+### LLM 查询改写——落地并验证（context 覆盖率 +27.5pp）
+
+实现 `LlmQueryRewriter`（fast_chat/DeepSeek 驱动，question-only，JSON 解析）+ 接线 `QueryPlanner` +
+`rewrite_enabled=true`。**关键：recall@10 是错误度量**（top-10 截断掩盖改写价值）；用 QA 真实 context
+宽度（limit=32, `max_evidence_items`）测 context 覆盖率：
+
+| 范围 | 改写关 | 改写开 | Δ |
+|---|---|---|---|
+| 35 失败 case | 41.18% | **68.71%** | **+27.5pp**（19 改善 / 0 回退 / 8 到 1.0） |
+| 50 case（含通过） | 58.83% | 78.10% | +19.3pp |
+
+合并机制用分数排序（score-merge），相对 q0-priority 在 limit=32 下多兑现 +2.9pp、0 回退。回退：
+`rewrite_enabled` 总开关 + rewriter 失败自动回退原问题。验证工具：`tmp/verify_context_coverage.py`、
+`tmp/verify_multiquery_recall.py`。

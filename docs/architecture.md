@@ -265,6 +265,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/qa/evidence.py` | provisional SearchHit/Evidence 绑定、生成前/发布前归属校验、历史 Citation 状态和最小原文解析 |
 | `src/application/qa/profile.py` | provisional QA profile 的查询、历史、Evidence、生成和完整性阈值投影 |
 | `src/application/qa/query_planning.py` | 确定性问题分类、有界改写回退、Space/filter 不变的多查询检索和去重 |
+| `src/application/qa/query_rewriting.py` | `LlmQueryRewriter`：fast_chat 驱动的 question-only 改写、严格 JSON 解析（R4-04） |
 | `src/application/qa/context_builder.py` | 系统/问题/历史/不可信 Evidence 隔离、配额裁剪和稳定上下文摘要 |
 | `src/application/qa/generation.py` | `fast_chat` 非流式结构化生成、JSON schema 解析、一次修复、空证据拒答、显式取消、细分模型故障、冲突/发布竞态校验和安全版本/用量结果 |
 | `src/application/qa/persistence.py` | provisional 内存 Grounded QA Repository；验证 Space/owner、幂等、attempt、取消、usage、Evidence/Feedback 和原子终态发布 |

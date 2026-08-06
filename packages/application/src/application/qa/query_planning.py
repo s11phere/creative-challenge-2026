@@ -141,7 +141,7 @@ class QASearchCoordinator:
             raise QAContractError("Merged search limit must be positive")
 
         diagnostics: list[QueryRetrievalDiagnostic] = []
-        by_chunk: dict[object, tuple[tuple[bool, int, int, str], SearchHit]] = {}
+        by_chunk: dict[object, tuple[tuple[bool, float, int, int, str], SearchHit]] = {}
         total_hits = 0
         for query_index, query in enumerate(plan.queries):
             result = await self._search_service.search(
@@ -159,7 +159,7 @@ class QASearchCoordinator:
             )
             total_hits += len(result.hits)
             for hit in result.hits:
-                key = (hit.context_only, query_index, hit.final_rank, str(hit.chunk_id))
+                key = _merged_hit_key(hit, query_index)
                 existing = by_chunk.get(hit.chunk_id)
                 if existing is not None and not _same_hit_identity(existing[1], hit):
                     raise QAContractError("Duplicate SearchHit identity differs across queries")
@@ -196,6 +196,17 @@ def _validate_rewrites(
     if len(novel) != len(normalized):
         raise QAContractError("Query rewriter returned duplicate or original queries")
     return novel
+
+
+def _merged_hit_key(hit: SearchHit, query_index: int) -> tuple[bool, float, int, int, str]:
+    """Order merged hits by matched status then rerank score across queries.
+
+    Matched hits precede context-only hits; higher rerank scores rank first so
+    a rewrite that surfaces gold with a strong score can outrank the original
+    query's weaker hits. Ties fall back to query order, then original rank.
+    """
+    score = hit.rerank_score if hit.rerank_score is not None else 0.0
+    return (hit.context_only, -score, query_index, hit.final_rank, str(hit.chunk_id))
 
 
 def _same_hit_identity(left: SearchHit, right: SearchHit) -> bool:

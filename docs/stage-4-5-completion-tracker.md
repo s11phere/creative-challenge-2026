@@ -1,5 +1,26 @@
 # 阶段 4/5 收尾看板
 
+## 2026-08-06 更新：LLM 查询改写落地并验证（R4-04）
+
+**R4-04 决策：开启查询改写（`rewrite_enabled=true`，`max_subqueries=4`）**，证据来自 context 覆盖率实测。
+
+新增 `LlmQueryRewriter`（`packages/application/src/application/qa/query_rewriting.py`，fast_chat 驱动，
+question-only 改写为搜索子查询，严格 JSON 解析，TDD 9 测试）。接线 `QueryPlanner` 并在
+`qa_execution.py` 默认开启。外部 Provider 走 DeepSeek（OpenAI-compatible），`.env` 配置
+`MODEL_PROVIDER=openai-compatible` + `FAST_CHAT_*` + `MODEL_ALLOW_EXTERNAL=true`，embedding/rerank
+保持本地 TEI（`EMBEDDING_PROVIDER=text-embeddings-inference`）。
+
+**验证（`tmp/verify_context_coverage.py`，QA 真实 context 宽度 limit=32）**：
+
+| 范围 | 改写关 | 改写开 | Δ |
+|---|---|---|---|
+| 35 失败 case context 覆盖率 | 41.18% | **68.71%** | **+27.5pp**（19 改善 / 0 回退 / 8 到 1.0） |
+
+**关键修正**：recall@10 是错误度量（top-10 截断掩盖改写的价值）；LLM 实际收到的是 32 条 context，
+改写把失败 case 的 gold 证据覆盖率从 41% 提升到 69%，零回退。合并机制用分数排序
+（`QASearchCoordinator._merged_hit_key`，score-merge 相对 q0-priority 在 limit=32 下多兑现 +2.9pp，
+0 回退）。回退机制：`rewrite_enabled` 总开关 + rewriter 失败自动回退原问题。
+
 ## 2026-08-04 Implementation Status Update
 
 All requested Stage 4/5 engineering functions are implemented, including Web entry points for all

@@ -84,6 +84,7 @@ def _hit(
     rank: int,
     context_only: bool = False,
     text: str = "evidence",
+    rerank_score: float | None = None,
 ) -> SearchHit:
     return SearchHit(
         chunk_id=chunk_id,
@@ -101,6 +102,7 @@ def _hit(
         locators=(),
         final_rank=rank,
         context_only=context_only,
+        rerank_score=rerank_score,
     )
 
 
@@ -213,6 +215,70 @@ async def test_multi_query_search_preserves_scope_and_deduplicates_deterministic
     assert all(request.space_id == SPACE_ID for request in service.requests)
     assert all(request.filters == filters for request in service.requests)
     assert tuple(request.query for request in service.requests) == plan.queries
+
+
+@pytest.mark.asyncio
+async def test_multi_query_merge_ranks_high_rerank_hits_across_queries() -> None:
+    # A rewrite (q1) surfaces gold with a higher rerank score than q0's own hits,
+    # so the merged top-k must put the rewrite-recovered chunk first.
+    first = SearchResult(
+        hits=(
+            _hit(UUID(int=1), rank=1, rerank_score=0.3),
+            _hit(UUID(int=2), rank=2, rerank_score=0.4),
+        ),
+        diagnostics=_diagnostics(),
+    )
+    second = SearchResult(
+        hits=(_hit(UUID(int=3), rank=1, rerank_score=0.9),),
+        diagnostics=_diagnostics(),
+    )
+    service = FakeSearchService((first, second))
+    plan = (
+        await QueryPlanner(StaticRewriter(("gold query",))).plan(
+            _question(), replace(QAPlanningProfileV1(), rewrite_enabled=True)
+        )
+    ).plan
+    merged = await QASearchCoordinator(service).search(
+        base_request=SearchRequest(query=plan.original_question, space_id=SPACE_ID),
+        plan=plan,
+        profile=RetrievalProfileV1(embedding_version="embedding-v1"),
+        limit=3,
+    )
+    assert tuple(hit.chunk_id for hit in merged.hits) == (UUID(int=3), UUID(int=2), UUID(int=1))
+    assert merged.hits[0].final_rank == 1
+
+
+@pytest.mark.asyncio
+async def test_multi_query_merge_prefers_matched_over_context_only_per_chunk() -> None:
+    # The same chunk is context-only in q0 but matched in q1 with a score; the
+    # merged representation must keep the matched one and rank it above matched
+    # hits from q0 that score lower.
+    shared = UUID(int=10)
+    first = SearchResult(
+        hits=(
+            _hit(shared, rank=1, context_only=True),
+            _hit(UUID(int=11), rank=2, rerank_score=0.2),
+        ),
+        diagnostics=_diagnostics(),
+    )
+    second = SearchResult(
+        hits=(_hit(shared, rank=2, rerank_score=0.9), _hit(UUID(int=12), rank=1, rerank_score=0.5)),
+        diagnostics=_diagnostics(),
+    )
+    service = FakeSearchService((first, second))
+    plan = (
+        await QueryPlanner(StaticRewriter(("gold query",))).plan(
+            _question(), replace(QAPlanningProfileV1(), rewrite_enabled=True)
+        )
+    ).plan
+    merged = await QASearchCoordinator(service).search(
+        base_request=SearchRequest(query=plan.original_question, space_id=SPACE_ID),
+        plan=plan,
+        profile=RetrievalProfileV1(embedding_version="embedding-v1"),
+        limit=3,
+    )
+    assert tuple(hit.chunk_id for hit in merged.hits) == (shared, UUID(int=12), UUID(int=11))
+    assert merged.hits[0].context_only is False
 
 
 @pytest.mark.asyncio
