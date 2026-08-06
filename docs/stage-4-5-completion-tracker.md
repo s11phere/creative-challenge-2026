@@ -12,6 +12,21 @@ The remaining labels are evidence labels, not implementation deferrals: formal r
 holdouts remain unrun or non-passing under ADR-010/011, and browser Playwright coverage is unavailable
 in the current environment.
 
+## 2026-08-06 Assistant Conversation Evolution Step 5
+
+Step 5 adds `ConversationContextService`, append-only versioned rolling summaries, and the
+`context_compaction` Worker use case. A summary records one conversation/Space, its covered message
+range, digest, prompt/model version, and inherited `private_local` sensitivity. Original messages
+remain queryable and are never rewritten or deleted.
+
+Routing, direct response, resource-reference handling, and the Skill standalone request now share
+the same bounded snapshot: rolling summary, recent window, and current request. QA keeps its
+separate evidence `ContextBuilder`; standalone Skill requests do not cause full-chat history to be
+copied into QA/Skill execution. `/compact` creates an idempotent durable Run, automatic compaction
+uses the same Worker queue after a soft watermark, and lease recovery/cancellation/failure retain a
+bounded recent-window fallback. The implementation remains provisional under ADR-010/ADR-011; no
+formal retrieval, answer, or Skill holdout was run.
+
 ## 2026-08-06 Assistant Conversation Evolution Step 1
 
 按 `agent-conversation-evolution-plan.md` 的 Step 1，新增了共享 `ConversationRun` 父身份和 API v2

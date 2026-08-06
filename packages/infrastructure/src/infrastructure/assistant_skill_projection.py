@@ -43,13 +43,12 @@ class AssistantQASkillProjection(SkillProjectionPort):
         arguments: Mapping[str, object],
         resource_scope: object | None,
     ) -> ConversationRun:
-        _ = arguments
         versions = await self._versions(skill.name)
         scope = (
-            resource_scope
-            if isinstance(resource_scope, QARetrievalScope)
-            else QARetrievalScope()
+            resource_scope if isinstance(resource_scope, QARetrievalScope) else QARetrievalScope()
         )
+        standalone_request = arguments.get("standalone_request")
+        context_sensitivity = arguments.get("context_sensitivity")
         qa_run = QARunRecord(
             run_id=run.run_id,
             attempt=QAAttempt(run_id=run.run_id),
@@ -60,6 +59,10 @@ class AssistantQASkillProjection(SkillProjectionPort):
             idempotency_key=run.idempotency_key,
             versions=versions,
             retrieval_scope=scope,
+            standalone_request=standalone_request if isinstance(standalone_request, str) else None,
+            context_sensitivity=(
+                context_sensitivity if isinstance(context_sensitivity, str) else "private_local"
+            ),
         )
         created = await self._repository.create_run(qa_run)
         if created.status is QAStatus.CREATED:

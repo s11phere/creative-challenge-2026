@@ -8,8 +8,14 @@ from contextlib import suppress
 from uuid import UUID, uuid4
 
 import dramatiq
-from application.assistant import AssistantAgentService, AssistantSkillInvocationService
-from domain.conversation_run import ConversationRunStatus
+from application.assistant import (
+    AssistantAgentService,
+    AssistantSkillInvocationService,
+    ConversationCompactionService,
+    ConversationContextService,
+)
+from domain.assistant_sse import AssistantEventType
+from domain.conversation_run import ConversationRunKind, ConversationRunStatus
 from domain.qa_persistence import QARunVersions
 from infrastructure.assistant_events import PostgresAssistantEventStore
 from infrastructure.assistant_resources import PostgresAssistantResourceResolver
@@ -115,6 +121,7 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
         return False
     registry = assistant_skill_registry()
     qa_repository = PostgresGroundedQARepository(database)
+    context = ConversationContextService(data=qa_repository, runs=runs)
 
     async def _versions(skill_name: str) -> QARunVersions:
         return qa_execution_versions(registry, skill_name=skill_name)
@@ -139,7 +146,23 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
         events=PostgresAssistantEventStore(database),
         skill_catalog=FileSystemSkillCatalog(registry, include_manifest_v2=True),
         skill_invoker=invoker,
+        context=context,
     )
+    compaction = ConversationCompactionService(
+        context=context,
+        data=qa_repository,
+        runs=runs,
+        gateway=gateway,
+    )
+    events = PostgresAssistantEventStore(database)
+    if claimed.run_kind is ConversationRunKind.CONTEXT_COMPACTION:
+        return await _run_compaction_with_lease(
+            compaction=compaction,
+            events=events,
+            runs=runs,
+            run_id=run_id,
+            lease_owner=lease_owner,
+        )
     if claimed.status in _TERMINAL:
         await service.execute(run_id)
         return True
@@ -156,6 +179,56 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
             name=f"assistant-execution-{run_id}",
         )
         return await _wait_for_execution(execution, lease_lost, run_id=run_id)
+    finally:
+        stop.set()
+        await heartbeat
+        await runs.release_conversation_run_lease(run_id, lease_owner=lease_owner)
+
+
+async def _run_compaction_with_lease(
+    *,
+    compaction: ConversationCompactionService,
+    events: PostgresAssistantEventStore,
+    runs: PostgresConversationRunRepository,
+    run_id: UUID,
+    lease_owner: str,
+) -> bool:
+    stop = asyncio.Event()
+    lease_lost = asyncio.Event()
+    heartbeat = asyncio.create_task(
+        _heartbeat(runs, run_id, lease_owner, stop, lease_lost),
+        name=f"context-compaction-heartbeat-{run_id}",
+    )
+    try:
+        await events.append(
+            run_id,
+            AssistantEventType.PHASE,
+            {"status": ConversationRunStatus.RUNNING.value, "phase": "context_compaction"},
+        )
+        execution = asyncio.create_task(
+            compaction.execute(run_id), name=f"context-compaction-{run_id}"
+        )
+        completed = await _wait_for_execution(execution, lease_lost, run_id=run_id)
+        result = await runs.get_conversation_run(run_id)
+        if result is None:
+            return completed
+        if result.status is ConversationRunStatus.COMPLETED:
+            await events.append(
+                run_id,
+                AssistantEventType.COMPLETED,
+                {"status": result.status.value, "action": "compact"},
+            )
+        elif result.status is ConversationRunStatus.CANCELLED:
+            await events.append(
+                run_id, AssistantEventType.CANCELLED, {"status": result.status.value}
+            )
+        elif result.status is ConversationRunStatus.FAILED:
+            await events.append(
+                run_id,
+                AssistantEventType.FAILED,
+                {"status": result.status.value, "error_code": result.error_code},
+            )
+        return completed
     finally:
         stop.set()
         await heartbeat
@@ -232,9 +305,9 @@ def recover_assistant_runs_sync() -> tuple[UUID, ...]:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        run_ids = loop.run_until_complete(
-            PostgresConversationRunRepository(database).prepare_assistant_recovery()
-        )
+        runs = PostgresConversationRunRepository(database)
+        run_ids = loop.run_until_complete(runs.prepare_assistant_recovery())
+        run_ids += loop.run_until_complete(runs.prepare_context_compaction_recovery())
     finally:
         loop.close()
     for run_id in run_ids:

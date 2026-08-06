@@ -190,7 +190,8 @@ class ConversationRun:
         ):
             raise ValueError("clarifying Runs require a clarification result")
         if (
-            self.status
+            self.run_kind is not ConversationRunKind.CONTEXT_COMPACTION
+            and self.status
             in {
                 ConversationRunStatus.COMPLETED,
                 ConversationRunStatus.REFUSED,
@@ -198,6 +199,8 @@ class ConversationRun:
             and self.result is None
         ):
             raise ValueError("business terminal ConversationRuns require a result")
+        if self.run_kind is ConversationRunKind.CONTEXT_COMPACTION and self.result is not None:
+            raise ValueError("context compaction Runs cannot publish an assistant result")
         if self.status in {
             ConversationRunStatus.FAILED,
             ConversationRunStatus.CANCELLED,
@@ -216,6 +219,8 @@ class ConversationRunRepository(Protocol):
         self, run: ConversationRun, user_message: MessageRecord
     ) -> ConversationRun: ...
 
+    async def create_context_compaction_run(self, run: ConversationRun) -> ConversationRun: ...
+
     async def get_conversation_run(self, run_id: UUID) -> ConversationRun | None: ...
 
     async def list_conversation_runs(
@@ -227,6 +232,8 @@ class ConversationRunRepository(Protocol):
     async def prepare_conversation_recovery(self) -> tuple[UUID, ...]: ...
 
     async def prepare_assistant_recovery(self) -> tuple[UUID, ...]: ...
+
+    async def prepare_context_compaction_recovery(self) -> tuple[UUID, ...]: ...
 
     async def claim_conversation_run(
         self, run_id: UUID, *, lease_owner: str, lease_seconds: int
@@ -269,6 +276,14 @@ class ConversationRunRepository(Protocol):
     async def fail_conversation_run(self, run_id: UUID, *, error_code: str) -> ConversationRun: ...
 
     async def cancel_conversation_run(self, run_id: UUID) -> ConversationRun: ...
+
+    async def complete_context_compaction(
+        self,
+        run_id: UUID,
+        *,
+        usage: ConversationRunUsage,
+        model_identity: str,
+    ) -> ConversationRun: ...
 
 
 __all__ = [

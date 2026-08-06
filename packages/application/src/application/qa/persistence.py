@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from domain.conversation_context import ConversationSummary
 from domain.conversation_run import (
     AssistantResult,
     AssistantResultKind,
@@ -62,6 +63,7 @@ class InMemoryGroundedQARepository:
         self._conversation_runs: dict[UUID, ConversationRun] = {}
         self._conversation_run_keys: dict[tuple[UUID, str, str], UUID] = {}
         self._conversation_run_leases: dict[UUID, tuple[str, datetime]] = {}
+        self._summaries: dict[UUID, ConversationSummary] = {}
         self._evidence: dict[tuple[UUID, UUID], EvidenceRecord] = {}
         self._citations: dict[tuple[UUID, UUID], CitationRecord] = {}
         self._feedback: dict[UUID, FeedbackRecord] = {}
@@ -161,6 +163,39 @@ class InMemoryGroundedQARepository:
                 )
             )
 
+    async def list_conversation_summaries(
+        self, conversation_id: UUID
+    ) -> tuple[ConversationSummary, ...]:
+        async with self._lock:
+            self._require_conversation(conversation_id)
+            return tuple(
+                sorted(
+                    (
+                        item
+                        for item in self._summaries.values()
+                        if item.conversation_id == conversation_id
+                    ),
+                    key=lambda item: (item.created_at, str(item.summary_id)),
+                )
+            )
+
+    async def create_conversation_summary(
+        self, summary: ConversationSummary
+    ) -> ConversationSummary:
+        async with self._lock:
+            conversation = self._require_conversation(summary.conversation_id)
+            if conversation.space_id != summary.space_id:
+                raise QAContractError("Conversation summary crosses Space boundary")
+            for existing in self._summaries.values():
+                if (
+                    existing.conversation_id == summary.conversation_id
+                    and existing.covered_end_message_id == summary.covered_end_message_id
+                    and existing.prompt_version == summary.prompt_version
+                ):
+                    return existing
+            self._summaries[summary.summary_id] = summary
+            return summary
+
     async def create_turn(
         self, run: ConversationRun, user_message: MessageRecord
     ) -> ConversationRun:
@@ -198,6 +233,35 @@ class InMemoryGroundedQARepository:
                 self._conversations[conversation.conversation_id] = replace(
                     conversation, updated_at=user_message.created_at
                 )
+            return run
+
+    async def create_context_compaction_run(self, run: ConversationRun) -> ConversationRun:
+        async with self._lock:
+            if run.run_kind is not ConversationRunKind.CONTEXT_COMPACTION:
+                raise QAContractError("Context compaction Run kind is invalid")
+            conversation = self._require_conversation(run.conversation_id)
+            message = self._messages.get(run.user_message_id)
+            if (
+                message is None
+                or message.role is not MessageRole.USER
+                or message.conversation_id != run.conversation_id
+                or message.space_id != run.space_id
+                or conversation.owner_id != run.caller_id
+                or conversation.space_id != run.space_id
+            ):
+                raise QAContractError("Context compaction Run ownership is invalid")
+            key = (run.space_id, run.caller_id, run.idempotency_key)
+            existing_id = self._conversation_run_keys.get(key)
+            if existing_id is not None:
+                existing = self._conversation_runs[existing_id]
+                if (
+                    existing.conversation_id == run.conversation_id
+                    and existing.user_message_id == run.user_message_id
+                ):
+                    return existing
+                raise QAContractError("Context compaction idempotency key has conflicting content")
+            self._conversation_runs[run.run_id] = run
+            self._conversation_run_keys[key] = run.run_id
             return run
 
     async def get_conversation_run(self, run_id: UUID) -> ConversationRun | None:
@@ -283,6 +347,31 @@ class InMemoryGroundedQARepository:
                 recovered.append(run_id)
             return tuple(recovered)
 
+    async def prepare_context_compaction_recovery(self) -> tuple[UUID, ...]:
+        async with self._lock:
+            now = datetime.now(UTC)
+            recovered: list[UUID] = []
+            for run_id, run in self._conversation_runs.items():
+                if run.run_kind is not ConversationRunKind.CONTEXT_COMPACTION:
+                    continue
+                if run.status not in {
+                    ConversationRunStatus.CREATED,
+                    ConversationRunStatus.QUEUED,
+                    ConversationRunStatus.RUNNING,
+                    ConversationRunStatus.CANCEL_REQUESTED,
+                }:
+                    continue
+                lease = self._conversation_run_leases.get(run_id)
+                if lease is not None and lease[1] > now:
+                    continue
+                self._conversation_run_leases.pop(run_id, None)
+                if run.status is ConversationRunStatus.RUNNING:
+                    self._conversation_runs[run_id] = replace(
+                        run, status=ConversationRunStatus.QUEUED, updated_at=now
+                    )
+                recovered.append(run_id)
+            return tuple(recovered)
+
     async def claim_conversation_run(
         self, run_id: UUID, *, lease_owner: str, lease_seconds: int
     ) -> ConversationRun | None:
@@ -290,7 +379,10 @@ class InMemoryGroundedQARepository:
             raise ValueError("ConversationRun lease owner and duration are required")
         async with self._lock:
             run = self._conversation_runs.get(run_id)
-            if run is None or run.run_kind is not ConversationRunKind.ASSISTANT_TURN:
+            if run is None or run.run_kind not in {
+                ConversationRunKind.ASSISTANT_TURN,
+                ConversationRunKind.CONTEXT_COMPACTION,
+            }:
                 return None
             if run.status in {
                 ConversationRunStatus.COMPLETED,
@@ -390,7 +482,7 @@ class InMemoryGroundedQARepository:
         model_identity: str,
     ) -> ConversationRun:
         async with self._lock:
-            run = self._require_assistant_conversation_run(run_id)
+            run = self._require_executable_conversation_run(run_id)
             if run.status in {
                 ConversationRunStatus.COMPLETED,
                 ConversationRunStatus.REFUSED,
@@ -433,7 +525,7 @@ class InMemoryGroundedQARepository:
         model_identity: str,
     ) -> ConversationRun:
         async with self._lock:
-            run = self._require_assistant_conversation_run(run_id)
+            run = self._require_executable_conversation_run(run_id)
             if run.status in {
                 ConversationRunStatus.COMPLETED,
                 ConversationRunStatus.REFUSED,
@@ -465,7 +557,7 @@ class InMemoryGroundedQARepository:
         if not error_code.strip():
             raise ValueError("ConversationRun failure requires an error code")
         async with self._lock:
-            run = self._require_assistant_conversation_run(run_id)
+            run = self._require_executable_conversation_run(run_id)
             if run.status in {
                 ConversationRunStatus.COMPLETED,
                 ConversationRunStatus.REFUSED,
@@ -489,7 +581,7 @@ class InMemoryGroundedQARepository:
 
     async def cancel_conversation_run(self, run_id: UUID) -> ConversationRun:
         async with self._lock:
-            run = self._require_assistant_conversation_run(run_id)
+            run = self._require_executable_conversation_run(run_id)
             if run.status in {
                 ConversationRunStatus.COMPLETED,
                 ConversationRunStatus.REFUSED,
@@ -505,6 +597,44 @@ class InMemoryGroundedQARepository:
         if run is None or run.run_kind is not ConversationRunKind.ASSISTANT_TURN:
             raise QAContractError("Assistant ConversationRun does not exist")
         return run
+
+    def _require_executable_conversation_run(self, run_id: UUID) -> ConversationRun:
+        run = self._conversation_runs.get(run_id)
+        if run is None or run.run_kind not in {
+            ConversationRunKind.ASSISTANT_TURN,
+            ConversationRunKind.CONTEXT_COMPACTION,
+        }:
+            raise QAContractError("ConversationRun does not exist")
+        return run
+
+    async def complete_context_compaction(
+        self,
+        run_id: UUID,
+        *,
+        usage: ConversationRunUsage,
+        model_identity: str,
+    ) -> ConversationRun:
+        async with self._lock:
+            run = self._conversation_runs.get(run_id)
+            if run is None or run.run_kind is not ConversationRunKind.CONTEXT_COMPACTION:
+                raise QAContractError("Context compaction Run does not exist")
+            if run.status in {
+                ConversationRunStatus.COMPLETED,
+                ConversationRunStatus.FAILED,
+                ConversationRunStatus.CANCELLED,
+                ConversationRunStatus.TIMED_OUT,
+            }:
+                return run
+            completed = replace(
+                run,
+                status=ConversationRunStatus.COMPLETED,
+                usage=usage,
+                model_identity=model_identity,
+                updated_at=datetime.now(UTC),
+            )
+            self._conversation_runs[run_id] = completed
+            self._conversation_run_leases.pop(run_id, None)
+            return completed
 
     @staticmethod
     def _validate_direct_message(run: ConversationRun, message: MessageRecord) -> None:

@@ -14,6 +14,8 @@ from application.assistant import (
     AssistantCommandService,
     AssistantMessageReader,
     AssistantSkillInvocationService,
+    ConversationContextDataPort,
+    ConversationContextService,
     ConversationReader,
     ConversationRunService,
 )
@@ -136,11 +138,13 @@ def create_app(
     if conversation_run_repository is None:
         parent_methods = (
             "create_turn",
+            "create_context_compaction_run",
             "get_conversation_run",
             "list_conversation_runs",
             "request_conversation_cancel",
             "prepare_conversation_recovery",
             "prepare_assistant_recovery",
+            "prepare_context_compaction_recovery",
             "claim_conversation_run",
             "renew_conversation_run_lease",
             "release_conversation_run_lease",
@@ -149,6 +153,7 @@ def create_app(
             "publish_clarification",
             "fail_conversation_run",
             "cancel_conversation_run",
+            "complete_context_compaction",
         )
         conversation_run_repository = (
             cast(ConversationRunRepository, qa_repository)
@@ -186,6 +191,10 @@ def create_app(
     assistant_runtime = assistant_runtime or AssistantWorkerDispatcher(
         repository=conversation_run_repository
     )
+    conversation_context = ConversationContextService(
+        data=cast(ConversationContextDataPort, qa_repository),
+        runs=conversation_run_repository,
+    )
     qa_runtime = QAWorkerDispatcher(
         repository=qa_repository,
         skill_registry=skill_registry,
@@ -218,6 +227,7 @@ def create_app(
         conversations=qa_repository,
         qa=qa_repository,
         skill_invoker=assistant_skill_invoker,
+        context=conversation_context,
     )
     assistant_agent_service = AssistantAgentService(
         runs=conversation_run_repository,
@@ -226,6 +236,7 @@ def create_app(
         events=assistant_event_log,
         skill_catalog=assistant_catalog,
         skill_invoker=assistant_skill_invoker,
+        context=conversation_context,
     )
     qa_citation_service = qa_citation_service or PublishedCitationService(
         runs=qa_repository,
@@ -271,6 +282,7 @@ def create_app(
     app.state.assistant_turn_service = assistant_turn_service
     app.state.assistant_command_service = assistant_command_service
     app.state.assistant_agent_service = assistant_agent_service
+    app.state.conversation_context_service = conversation_context
     app.state.assistant_event_log = assistant_event_log
     app.state.assistant_runtime = assistant_runtime
     app.state.qa_event_log = qa_event_log

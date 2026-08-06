@@ -19,6 +19,7 @@ from domain.qa_persistence import ConversationRecord, GroundedQARepository
 
 from application.skills import SkillCatalogPort, SkillInvocationView
 
+from .context import ConversationContextService, ConversationContextSnapshot
 from .runs import AssistantTurnApplicationPort, AssistantTurnSubmission
 
 
@@ -155,8 +156,7 @@ class AssistantCommandCatalog:
     def list(self) -> tuple[CommandDescriptor, ...]:
         descriptors = list(_BASE_COMMANDS)
         descriptors.extend(
-            self._skill_descriptor(item)
-            for item in self._skill_catalog.list_active_invocations()
+            self._skill_descriptor(item) for item in self._skill_catalog.list_active_invocations()
         )
         by_name: dict[str, CommandDescriptor] = {}
         for descriptor in descriptors:
@@ -283,6 +283,7 @@ class AssistantCommandService:
         conversations: ConversationWriter,
         qa: GroundedQARepository,
         skill_invoker: SkillCommandInvoker | None = None,
+        context: ConversationContextService | None = None,
     ) -> None:
         self.catalog = catalog
         self.parser = parser
@@ -291,6 +292,7 @@ class AssistantCommandService:
         self._conversations = conversations
         self._qa = qa
         self._skill_invoker = skill_invoker
+        self._context = context
 
     async def help(self) -> CommandExecutionResult:
         return CommandExecutionResult(
@@ -334,11 +336,17 @@ class AssistantCommandService:
             raise CommandParseError(
                 "RUN_COMMAND_ARGUMENT_REQUIRED", "Compaction request is incomplete."
             )
+        if self._context is None:
+            raise CommandParseError("RUN_CONTEXT_COMPACTION_FAILED", "Compaction is unavailable.")
+        run = await self._context.request_manual_compaction(
+            conversation_id, content=content, idempotency_key=idempotency_key
+        )
         return CommandExecutionResult(
             command="compact",
-            status="deferred",
+            status=run.status.value,
             content="上下文压缩将在 Step 5 的 Worker 用例中执行。",
             conversation_id=conversation_id,
+            run=run,
         )
 
     async def stop(self, conversation_id: UUID) -> CommandExecutionResult:
@@ -415,12 +423,22 @@ class AssistantCommandService:
                 "SKILL_NOT_ACTIVE", "The requested Skill command is not active."
             )
         try:
-            promoted = await self._skill_invoker.invoke(
-                run,
-                skill=skill,
-                arguments=parsed.arguments,
-                selection_source=ConversationRunSelectionSource.COMMAND,
-            )
+            context = await self._context.snapshot(run) if self._context is not None else None
+            if context is None:
+                promoted = await self._skill_invoker.invoke(
+                    run,
+                    skill=skill,
+                    arguments=parsed.arguments,
+                    selection_source=ConversationRunSelectionSource.COMMAND,
+                )
+            else:
+                promoted = await self._skill_invoker.invoke(
+                    run,
+                    skill=skill,
+                    arguments=parsed.arguments,
+                    selection_source=ConversationRunSelectionSource.COMMAND,
+                    context=context,
+                )
         except ValueError as exc:
             code = str(exc)
             if code not in {"SKILL_NOT_ACTIVE", "RESOURCE_NOT_FOUND", "RESOURCE_CONFLICT"}:
@@ -444,6 +462,7 @@ class SkillCommandInvoker(Protocol):
         skill: SkillInvocationView,
         arguments: Mapping[str, object],
         selection_source: ConversationRunSelectionSource,
+        context: ConversationContextSnapshot | None = None,
     ) -> ConversationRun: ...
 
 

@@ -60,6 +60,12 @@ OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。写 Tool �
 Assistant v2 使用独立的 active invocation catalog，包含 `/ask`、`/summarize`、`/compare`、`/cards`
 对应的 v2 Skill 元数据；模型只能返回 Skill 意图，服务端负责当前 Space 资源解析、版本 pin、
 权限和 QA Worker 投影。legacy v1 Skill pointer 和 API 仍可恢复历史 Run。普通聊天不会强制进入
+
+Assistant Conversation Evolution Step 5 adds bounded multi-turn context. Original messages remain
+append-only; versioned rolling summaries retain their covered range, digest, prompt/model version,
+and sensitivity. Router/direct-answer/Skill handoff share one bounded snapshot, while QA remains
+evidence-isolated. `/compact` and soft-watermark compaction are durable background runs on the
+existing Worker queue. This remains provisional engineering capability under ADR-010/011.
 QA；资源歧义只显示 server-authored 候选，不暴露内部 UUID。该自动路由和 Step 4 Command API
 均为 provisional；Step 5 才实现上下文压缩。
 真实本地组合使用外部 OpenAI-compatible `fast_chat`、

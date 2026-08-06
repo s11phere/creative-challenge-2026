@@ -350,7 +350,7 @@ class GroundedQAService:
         if message is None or message.role is not MessageRole.USER:
             raise QAContractError("QA run question is unavailable")
         return QuestionInput(
-            question=message.content,
+            question=run.standalone_request or message.content,
             space_id=run.space_id,
             caller_id=run.caller_id,
             conversation_id=run.conversation_id,
@@ -358,6 +358,10 @@ class GroundedQAService:
         )
 
     async def _history_for_run(self, run: QARunRecord) -> tuple[ConversationTurn, ...]:
+        if run.standalone_request is not None:
+            # Assistant context is already bounded into the standalone request. QA receives
+            # only evidence and the task-specific request, never a second full chat history.
+            return ()
         messages = await self._repository.list_messages(run.conversation_id)
         turns: list[ConversationTurn] = []
         for message in messages:

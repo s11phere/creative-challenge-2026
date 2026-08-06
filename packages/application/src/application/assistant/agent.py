@@ -34,6 +34,8 @@ from model_gateway import (
 
 from application.skills import SkillCatalogPort, SkillInvocationView
 
+from .context import ConversationContextService, ConversationContextSnapshot
+
 _CONTRACT_ROOT = files("application.assistant").joinpath("contracts")
 _BASE_PROMPT = _CONTRACT_ROOT.joinpath("base-system-prompt-v1.txt").read_text(encoding="utf-8")
 _BASE_PROMPT_V2 = _CONTRACT_ROOT.joinpath("base-system-prompt-v2.txt").read_text(encoding="utf-8")
@@ -55,6 +57,7 @@ class AssistantSkillInvoker(Protocol):
         skill: SkillInvocationView,
         arguments: Mapping[str, object],
         selection_source: ConversationRunSelectionSource = ConversationRunSelectionSource.AUTO,
+        context: ConversationContextSnapshot | None = None,
     ) -> ConversationRun: ...
 
 
@@ -116,6 +119,7 @@ class AssistantAgentService:
         decision_parser: AssistantRouterDecisionParser | None = None,
         skill_catalog: SkillCatalogPort | None = None,
         skill_invoker: AssistantSkillInvoker | None = None,
+        context: ConversationContextService | None = None,
     ) -> None:
         self._runs = runs
         self._messages = messages
@@ -124,6 +128,7 @@ class AssistantAgentService:
         self._decision_parser = decision_parser or AssistantRouterDecisionParser()
         self._skill_catalog = skill_catalog
         self._skill_invoker = skill_invoker
+        self._context = context
 
     async def execute(self, run_id: UUID) -> ConversationRun | None:
         """Finish a Worker-claimed turn; API handlers only enqueue this work."""
@@ -163,6 +168,7 @@ class AssistantAgentService:
             return await self._fail(run_id, "RUN_AGENT_DECISION_INVALID")
 
         try:
+            context = await self._context.snapshot(run) if self._context is not None else None
             response = await self._gateway.chat(
                 ChatRequest(
                     messages=(
@@ -170,7 +176,14 @@ class AssistantAgentService:
                             role=ChatRole.SYSTEM,
                             content=self._system_prompt(),
                         ),
-                        ChatMessage(role=ChatRole.USER, content=user_message.content),
+                        ChatMessage(
+                            role=ChatRole.USER,
+                            content=(
+                                context.router_input()
+                                if context is not None
+                                else user_message.content
+                            ),
+                        ),
                     ),
                     temperature=0.0,
                     max_tokens=12000,
@@ -246,9 +259,14 @@ class AssistantAgentService:
                 {"status": ConversationRunStatus.RUNNING.value, "skill": skill.name},
             )
             try:
-                invoked = await self._skill_invoker.invoke(
-                    run, skill=skill, arguments=arguments
-                )
+                if context is None:
+                    invoked = await self._skill_invoker.invoke(
+                        run, skill=skill, arguments=arguments
+                    )
+                else:
+                    invoked = await self._skill_invoker.invoke(
+                        run, skill=skill, arguments=arguments, context=context
+                    )
             except AssistantAgentError as exc:
                 return await self._fail(run_id, str(exc))
             except ValueError as exc:

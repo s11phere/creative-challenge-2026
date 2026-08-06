@@ -58,8 +58,8 @@ Space, schema, approval, or external-provider policy.
 Step 4 exposes this catalog at `GET /api/v2/commands`. A turn may carry an untrusted client command
 hint, but the server reparses the original content and rejects mismatches. Base commands return a
 command result without creating a business Run; explicit Skill commands create the same parent Run
-and use `selection_source=command`. `/compact` is recognized here but its summary Worker use case
-belongs to Step 5.
+and use `selection_source=command`. `/compact` creates an idempotent `context_compaction` parent
+Run and dispatches it through the existing Worker queue.
 
 ### Manifest v2 and progressive disclosure
 
@@ -76,11 +76,15 @@ and cannot invoke a Tool directly.
 
 ### Context, usage, and events
 
-Messages remain append-only facts. `ConversationContextService` creates a bounded snapshot from the
-current message, recent turns, active clarification/approval state, and versioned rolling summaries.
-Summaries record their message range, prompt/model version, digest, and sensitivity; they never
-replace source messages. Compression runs idempotently in the Worker and `/compact` invokes the
-same use case. The context snapshot is bounded untrusted data and cannot supersede a system prompt.
+Messages remain append-only facts. `ConversationContextService` creates one bounded snapshot from
+the current message, a recent-turn window, and versioned rolling summaries. Summaries record their
+covered message range, prompt/model version, digest, and sensitivity; they never replace source
+messages. Soft-watermark compression and `/compact` create idempotent `context_compaction` Runs on
+the existing Worker queue, with lease recovery and a failure fallback to the bounded recent window.
+Router input, direct answers, resource-reference handling, and Skill standalone requests use this
+same snapshot. The QA `ContextBuilder` remains evidence-isolated: it receives only the standalone
+task request and grounded evidence, never a copied full conversation. The context snapshot is
+bounded untrusted data and cannot supersede a system prompt.
 
 `RunBudget` and provider limits remain server-side safety mechanisms for timeout, cancellation,
 repeated-call detection, and recovery. Product UI may show actual input/output/total usage, model,

@@ -39,6 +39,12 @@ from .chunking import (
     compute_chunk_hash,
     compute_chunker_config_hash,
 )
+from .conversation_context import (
+    ConversationSensitivity,
+    ConversationSummary,
+    ConversationSummaryRepository,
+    most_restrictive_sensitivity,
+)
 from .conversation_run import (
     AssistantResult,
     AssistantResultKind,
@@ -223,6 +229,9 @@ __all__ = [
     "ClarificationKind",
     "ConflictNotice",
     "ConversationRecord",
+    "ConversationSensitivity",
+    "ConversationSummary",
+    "ConversationSummaryRepository",
     "ConversationRun",
     "ConversationRunKind",
     "ConversationRunRepository",
@@ -341,6 +350,7 @@ __all__ = [
     "ToolRegistry",
     "transition_run",
     "terminal_status_for_result",
+    "most_restrictive_sensitivity",
     "transition_qa_status",
     "validate_answer_citations",
     "validate_recovery",

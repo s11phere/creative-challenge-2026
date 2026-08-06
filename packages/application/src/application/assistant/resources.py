@@ -14,6 +14,8 @@ from domain.conversation_run import ResourceCandidate
 from domain.models import Document, DocumentStatus, DocumentVersion, Source
 from domain.qa_persistence import QARetrievalScope
 
+from .context import ConversationContextSnapshot
+
 
 class ResourceResolutionErrorCode(StrEnum):
     NOT_FOUND = "RESOURCE_NOT_FOUND"
@@ -52,7 +54,12 @@ class ResolvedResource:
 
 class ResourceResolutionPort(Protocol):
     async def resolve(
-        self, *, space_id: UUID, resource_type: str, reference: str
+        self,
+        *,
+        space_id: UUID,
+        resource_type: str,
+        reference: str,
+        context: ConversationContextSnapshot | None = None,
     ) -> ResolvedResource: ...
 
 
@@ -66,8 +73,14 @@ class NaturalLanguageResourceResolver(ResourceResolutionPort):
     versions: SpaceVersionReader
 
     async def resolve(
-        self, *, space_id: UUID, resource_type: str, reference: str
+        self,
+        *,
+        space_id: UUID,
+        resource_type: str,
+        reference: str,
+        context: ConversationContextSnapshot | None = None,
     ) -> ResolvedResource:
+        _ = context
         if resource_type not in {"source", "document"} or not reference.strip():
             raise ResourceResolutionError(
                 ResourceResolutionErrorCode.NOT_FOUND,

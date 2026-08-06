@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from application.assistant import NaturalLanguageResourceResolver, ResolvedResource
+from application.assistant import (
+    ConversationContextSnapshot,
+    NaturalLanguageResourceResolver,
+    ResolvedResource,
+)
 
 from .database import Database
 from .repositories import DocumentRepository, DocumentVersionRepository, SourceRepository
@@ -15,7 +19,12 @@ class PostgresAssistantResourceResolver(NaturalLanguageResourceResolver):
         self._database = database
 
     async def resolve(
-        self, *, space_id: UUID, resource_type: str, reference: str
+        self,
+        *,
+        space_id: UUID,
+        resource_type: str,
+        reference: str,
+        context: ConversationContextSnapshot | None = None,
     ) -> ResolvedResource:
         async with self._database.session() as session:
             resolver = NaturalLanguageResourceResolver(
@@ -27,6 +36,7 @@ class PostgresAssistantResourceResolver(NaturalLanguageResourceResolver):
                 space_id=space_id,
                 resource_type=resource_type,
                 reference=reference,
+                context=context,
             )
 
 

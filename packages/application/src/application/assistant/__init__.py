@@ -20,6 +20,13 @@ from .commands import (
     ParsedAssistantCommand,
     SkillCommandInvoker,
 )
+from .context import (
+    ConversationCompactionService,
+    ConversationContextDataPort,
+    ConversationContextMessage,
+    ConversationContextService,
+    ConversationContextSnapshot,
+)
 from .resources import (
     NaturalLanguageResourceResolver,
     ResolvedResource,
@@ -46,6 +53,11 @@ __all__ = [
     "AssistantCommandService",
     "AssistantMessageReader",
     "AssistantSkillInvoker",
+    "ConversationCompactionService",
+    "ConversationContextDataPort",
+    "ConversationContextMessage",
+    "ConversationContextService",
+    "ConversationContextSnapshot",
     "CommandCatalogError",
     "CommandDescriptor",
     "CommandExecutionResult",

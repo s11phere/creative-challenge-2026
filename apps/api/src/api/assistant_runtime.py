@@ -35,13 +35,19 @@ class AssistantWorkerDispatcher:
         return True
 
     async def recover(self) -> tuple[UUID, ...]:
-        run_ids = await self._repository.prepare_assistant_recovery()
+        run_ids = (
+            *await self._repository.prepare_assistant_recovery(),
+            *await self._repository.prepare_context_compaction_recovery(),
+        )
         for run_id in run_ids:
             self.start(run_id)
         return run_ids
 
     async def recover_one(self, run_id: UUID) -> bool:
-        run_ids = await self._repository.prepare_assistant_recovery()
+        run_ids = (
+            *await self._repository.prepare_assistant_recovery(),
+            *await self._repository.prepare_context_compaction_recovery(),
+        )
         if run_id not in run_ids:
             return False
         return self.start(run_id)

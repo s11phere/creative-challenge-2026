@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from domain.conversation_context import ConversationSensitivity, ConversationSummary
 from domain.conversation_run import (
     ConversationRunKind,
     ConversationRunSelectionSource,
@@ -52,6 +53,7 @@ from .database import Database
 from .orm import (
     ConversationModel,
     ConversationRunModel,
+    ConversationSummaryModel,
     QACitationModel,
     QAEventModel,
     QAEvidenceModel,
@@ -183,6 +185,65 @@ class PostgresGroundedQARepository:
             ).scalars()
             return tuple(_message(model) for model in models)
 
+    async def list_conversation_summaries(
+        self, conversation_id: UUID
+    ) -> tuple[ConversationSummary, ...]:
+        async with self._database.session() as session:
+            if await session.get(ConversationModel, conversation_id) is None:
+                raise QAContractError("Conversation does not exist")
+            models = (
+                await session.execute(
+                    select(ConversationSummaryModel)
+                    .where(ConversationSummaryModel.conversation_id == conversation_id)
+                    .order_by(ConversationSummaryModel.created_at, ConversationSummaryModel.id)
+                )
+            ).scalars()
+            return tuple(_conversation_summary(model) for model in models)
+
+    async def create_conversation_summary(
+        self, summary: ConversationSummary
+    ) -> ConversationSummary:
+        async with self._database.transaction() as session:
+            conversation = await session.get(ConversationModel, summary.conversation_id)
+            if conversation is None or conversation.space_id != summary.space_id:
+                raise QAContractError("Conversation summary crosses Space boundary")
+            existing = await session.get(ConversationSummaryModel, summary.run_id)
+            if existing is not None:
+                stored = _conversation_summary(existing)
+                if stored.content_sha256 == summary.content_sha256:
+                    return stored
+                raise QAContractError("Conversation summary Run conflicts with persisted content")
+            coverage = (
+                await session.execute(
+                    select(ConversationSummaryModel).where(
+                        ConversationSummaryModel.conversation_id == summary.conversation_id,
+                        ConversationSummaryModel.covered_end_message_id
+                        == summary.covered_end_message_id,
+                        ConversationSummaryModel.prompt_version == summary.prompt_version,
+                    )
+                )
+            ).scalar_one_or_none()
+            if coverage is not None:
+                return _conversation_summary(coverage)
+            session.add(
+                ConversationSummaryModel(
+                    id=summary.summary_id,
+                    conversation_id=summary.conversation_id,
+                    space_id=summary.space_id,
+                    run_id=summary.run_id,
+                    covered_start_message_id=summary.covered_start_message_id,
+                    covered_end_message_id=summary.covered_end_message_id,
+                    covered_message_count=summary.covered_message_count,
+                    content=summary.content,
+                    content_sha256=summary.content_sha256,
+                    prompt_version=summary.prompt_version,
+                    model_identity=summary.model_identity,
+                    sensitivity=summary.sensitivity.value,
+                    created_at=summary.created_at,
+                )
+            )
+        return summary
+
     async def create_run(self, run: QARunRecord) -> QARunRecord:
         if run.status is not QAStatus.CREATED or run.result is not None:
             raise QAContractError("New QA attempts must start without a result")
@@ -270,6 +331,8 @@ class PostgresGroundedQARepository:
                 error_code=None,
                 versions=_dump(_VERSIONS, run.versions),
                 retrieval_scope=_dump(_RETRIEVAL_SCOPE, run.retrieval_scope),
+                standalone_request=run.standalone_request,
+                context_sensitivity=run.context_sensitivity,
                 usage=_dump(_USAGE, run.usage),
                 result=None,
                 created_at=run.created_at,
@@ -814,6 +877,24 @@ def _message(model: QAMessageModel) -> MessageRecord:
     )
 
 
+def _conversation_summary(model: ConversationSummaryModel) -> ConversationSummary:
+    return ConversationSummary(
+        summary_id=model.id,
+        conversation_id=model.conversation_id,
+        space_id=model.space_id,
+        run_id=model.run_id,
+        covered_start_message_id=model.covered_start_message_id,
+        covered_end_message_id=model.covered_end_message_id,
+        covered_message_count=model.covered_message_count,
+        content=model.content,
+        content_sha256=model.content_sha256,
+        prompt_version=model.prompt_version,
+        model_identity=model.model_identity,
+        sensitivity=ConversationSensitivity(model.sensitivity),
+        created_at=model.created_at,
+    )
+
+
 def _message_model(message: MessageRecord) -> QAMessageModel:
     return QAMessageModel(
         id=message.message_id,
@@ -860,6 +941,8 @@ def _run(base: QARunModel, attempt: QARunAttemptModel) -> QARunRecord:
         idempotency_key=base.idempotency_key,
         versions=_VERSIONS.validate_python(base.versions),
         retrieval_scope=_RETRIEVAL_SCOPE.validate_python(base.retrieval_scope),
+        standalone_request=base.standalone_request,
+        context_sensitivity=base.context_sensitivity,
         status=QAStatus(attempt.status),
         cancellation_requested=attempt.cancellation_requested,
         error_code=attempt.error_code,

@@ -436,6 +436,10 @@ class QARunModel(Base):
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     versions: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     retrieval_scope: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    standalone_request: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_sensitivity: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="private_local"
+    )
     usage: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -475,6 +479,52 @@ class QAMessageModel(Base):
             unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
+    )
+
+
+class ConversationSummaryModel(Base):
+    """Append-only rolling summaries; source messages remain unchanged."""
+
+    __tablename__ = "conversation_summaries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversation_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    covered_start_message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="RESTRICT"), nullable=False
+    )
+    covered_end_message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="RESTRICT"), nullable=False
+    )
+    covered_message_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    model_identity: Mapped[str] = mapped_column(String(255), nullable=False)
+    sensitivity: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_conversation_summaries_run"),
+        UniqueConstraint(
+            "conversation_id",
+            "covered_end_message_id",
+            "prompt_version",
+            name="uq_conversation_summaries_coverage",
+        ),
+        CheckConstraint("covered_message_count >= 1", name="ck_conversation_summaries_count"),
+        CheckConstraint(
+            "sensitivity IN ('public_demo', 'private_local', 'restricted')",
+            name="ck_conversation_summaries_sensitivity",
+        ),
+        Index("idx_conversation_summaries_conversation", "conversation_id", "created_at"),
     )
 
 

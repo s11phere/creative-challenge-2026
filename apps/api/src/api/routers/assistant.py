@@ -134,6 +134,7 @@ async def submit_turn(
                 )
                 assert executed.run is not None
                 await _publish_command_events(executed.run, request)
+                await _schedule_context_compaction(executed.run, request)
                 return await _command_response(executed, request)
             if parsed.descriptor.name == "help":
                 return await _command_response(await commands.help(), request)
@@ -144,12 +145,14 @@ async def submit_turn(
                     await commands.new_conversation(conversation_id), request
                 )
             if parsed.descriptor.name == "compact":
-                return await _command_response(
-                    await commands.compact(
-                        conversation_id, content=body.content, idempotency_key=body.idempotency_key
-                    ),
-                    request,
+                executed = await commands.compact(
+                    conversation_id, content=body.content, idempotency_key=body.idempotency_key
                 )
+                assert executed.run is not None
+                await _publish_command_events(executed.run, request)
+                if request.app.state.qa_execution_enabled:
+                    request.app.state.assistant_runtime.start(executed.run.run_id)
+                return await _command_response(executed, request)
             if parsed.descriptor.name == "stop":
                 return await _command_response(await commands.stop(conversation_id), request)
             raise CommandParseError("RUN_COMMAND_UNKNOWN", "Unknown Assistant command.")
@@ -184,6 +187,7 @@ async def submit_turn(
     )
     if request.app.state.qa_execution_enabled:
         request.app.state.assistant_runtime.start(run.run_id)
+    await _schedule_context_compaction(run, request)
     return await _response(run, request)
 
 
@@ -360,3 +364,16 @@ async def _publish_command_events(run: ConversationRun, request: Request) -> Non
             AssistantEventType.CLARIFICATION,
             {"status": run.status.value, "action": "clarify"},
         )
+
+
+async def _schedule_context_compaction(run: ConversationRun, request: Request) -> None:
+    scheduled = await request.app.state.conversation_context_service.schedule_automatic(run)
+    if scheduled is None:
+        return
+    await request.app.state.assistant_event_log.append(
+        scheduled.run_id,
+        AssistantEventType.ACCEPTED,
+        {"status": scheduled.status.value, "selection_source": "none"},
+    )
+    if request.app.state.qa_execution_enabled:
+        request.app.state.assistant_runtime.start(scheduled.run_id)

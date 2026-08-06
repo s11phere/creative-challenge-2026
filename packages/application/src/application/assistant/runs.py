@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -60,7 +60,7 @@ class ConversationRunService:
         conversation = await self._conversations.get_conversation(submission.conversation_id)
         if conversation is None or conversation.archived_at is not None:
             raise ConversationRunApplicationError("Conversation not found")
-        now = datetime.now(UTC)
+        now = max(datetime.now(UTC), conversation.updated_at + timedelta(microseconds=1))
         message = MessageRecord(
             message_id=uuid4(),
             conversation_id=conversation.conversation_id,

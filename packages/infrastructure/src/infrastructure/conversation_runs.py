@@ -125,6 +125,48 @@ class PostgresConversationRunRepository:
                 conversation.updated_at = user_message.created_at
         return run
 
+    async def create_context_compaction_run(self, run: ConversationRun) -> ConversationRun:
+        if run.run_kind is not ConversationRunKind.CONTEXT_COMPACTION:
+            raise QAContractError("Context compaction Run kind is invalid")
+        async with self._database.transaction() as session:
+            conversation = await session.get(
+                ConversationModel, run.conversation_id, with_for_update=True
+            )
+            message = await session.get(QAMessageModel, run.user_message_id)
+            if (
+                conversation is None
+                or conversation.archived_at is not None
+                or conversation.space_id != run.space_id
+                or conversation.owner_id != run.caller_id
+                or message is None
+                or message.role != MessageRole.USER.value
+                or message.conversation_id != run.conversation_id
+                or message.space_id != run.space_id
+            ):
+                raise QAContractError("Context compaction Run ownership is invalid")
+            existing = (
+                await session.execute(
+                    select(ConversationRunModel)
+                    .where(
+                        ConversationRunModel.space_id == run.space_id,
+                        ConversationRunModel.caller_id == run.caller_id,
+                        ConversationRunModel.idempotency_key == run.idempotency_key,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                stored = _run(existing)
+                if (
+                    stored.run_kind is ConversationRunKind.CONTEXT_COMPACTION
+                    and stored.conversation_id == run.conversation_id
+                    and stored.user_message_id == run.user_message_id
+                ):
+                    return stored
+                raise QAContractError("Context compaction idempotency key has conflicting content")
+            session.add(_model(run))
+        return run
+
     async def get_conversation_run(self, run_id: UUID) -> ConversationRun | None:
         async with self._database.session() as session:
             model = await session.get(ConversationRunModel, run_id)
@@ -210,6 +252,39 @@ class PostgresConversationRunRepository:
                 recovered.append(model.id)
             return tuple(recovered)
 
+    async def prepare_context_compaction_recovery(self) -> tuple[UUID, ...]:
+        async with self._database.transaction() as session:
+            models = (
+                await session.execute(
+                    select(ConversationRunModel)
+                    .where(
+                        ConversationRunModel.run_kind
+                        == ConversationRunKind.CONTEXT_COMPACTION.value,
+                        ConversationRunModel.status.in_(
+                            (
+                                ConversationRunStatus.CREATED.value,
+                                ConversationRunStatus.QUEUED.value,
+                                ConversationRunStatus.RUNNING.value,
+                                ConversationRunStatus.CANCEL_REQUESTED.value,
+                            )
+                        ),
+                    )
+                    .order_by(ConversationRunModel.created_at, ConversationRunModel.id)
+                    .with_for_update()
+                )
+            ).scalars()
+            now = datetime.now(UTC)
+            recovered: list[UUID] = []
+            for model in models:
+                if _lease_is_active(model, now):
+                    continue
+                if model.status == ConversationRunStatus.RUNNING.value:
+                    model.status = ConversationRunStatus.QUEUED.value
+                    model.updated_at = now
+                _clear_lease(model)
+                recovered.append(model.id)
+            return tuple(recovered)
+
     async def claim_conversation_run(
         self, run_id: UUID, *, lease_owner: str, lease_seconds: int
     ) -> ConversationRun | None:
@@ -217,7 +292,10 @@ class PostgresConversationRunRepository:
             raise ValueError("ConversationRun lease owner and duration are required")
         async with self._database.transaction() as session:
             model = await session.get(ConversationRunModel, run_id, with_for_update=True)
-            if model is None or model.run_kind != ConversationRunKind.ASSISTANT_TURN.value:
+            if model is None or model.run_kind not in {
+                ConversationRunKind.ASSISTANT_TURN.value,
+                ConversationRunKind.CONTEXT_COMPACTION.value,
+            }:
                 return None
             current = _run(model)
             if (
@@ -385,7 +463,7 @@ class PostgresConversationRunRepository:
         if not error_code.strip():
             raise ValueError("ConversationRun failure requires an error code")
         async with self._database.transaction() as session:
-            model = await self._locked_assistant_run(session, run_id)
+            model = await self._locked_executable_run(session, run_id)
             current = _run(model)
             if current.status in _TERMINAL:
                 return current
@@ -401,17 +479,53 @@ class PostgresConversationRunRepository:
 
     async def cancel_conversation_run(self, run_id: UUID) -> ConversationRun:
         async with self._database.transaction() as session:
-            model = await self._locked_assistant_run(session, run_id)
+            model = await self._locked_executable_run(session, run_id)
             current = _run(model)
             if current.status in _TERMINAL:
                 return current
             return self._cancel_locked(model)
+
+    async def complete_context_compaction(
+        self,
+        run_id: UUID,
+        *,
+        usage: ConversationRunUsage,
+        model_identity: str,
+    ) -> ConversationRun:
+        async with self._database.transaction() as session:
+            model = await session.get(ConversationRunModel, run_id, with_for_update=True)
+            if model is None or model.run_kind != ConversationRunKind.CONTEXT_COMPACTION.value:
+                raise QAContractError("Context compaction Run does not exist")
+            current = _run(model)
+            if current.status in _TERMINAL:
+                return current
+            if current.cancellation_requested:
+                return self._cancel_locked(model)
+            model.status = ConversationRunStatus.COMPLETED.value
+            model.error_code = None
+            model.model_identity = model_identity
+            model.usage = _usage_value(usage)
+            model.result = None
+            model.updated_at = datetime.now(UTC)
+            _clear_lease(model)
+            await session.flush()
+            return _run(model)
 
     @staticmethod
     async def _locked_assistant_run(session: AsyncSession, run_id: UUID) -> ConversationRunModel:
         model = await session.get(ConversationRunModel, run_id, with_for_update=True)
         if model is None or model.run_kind != ConversationRunKind.ASSISTANT_TURN.value:
             raise QAContractError("Assistant ConversationRun does not exist")
+        return model
+
+    @staticmethod
+    async def _locked_executable_run(session: AsyncSession, run_id: UUID) -> ConversationRunModel:
+        model = await session.get(ConversationRunModel, run_id, with_for_update=True)
+        if model is None or model.run_kind not in {
+            ConversationRunKind.ASSISTANT_TURN.value,
+            ConversationRunKind.CONTEXT_COMPACTION.value,
+        }:
+            raise QAContractError("ConversationRun does not exist")
         return model
 
     @staticmethod

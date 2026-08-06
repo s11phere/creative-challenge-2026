@@ -20,6 +20,7 @@ from domain.conversation_run import (
 
 from application.skills import SkillCatalogPort, SkillInvocationView
 
+from .context import ConversationContextSnapshot
 from .resources import ResourceResolutionError, ResourceResolutionErrorCode, ResourceResolutionPort
 
 
@@ -69,6 +70,7 @@ class AssistantSkillInvocationService:
         skill: SkillInvocationView,
         arguments: Mapping[str, object],
         selection_source: ConversationRunSelectionSource = ConversationRunSelectionSource.AUTO,
+        context: ConversationContextSnapshot | None = None,
     ) -> ConversationRun:
         active_skill = next(
             (
@@ -89,8 +91,7 @@ class AssistantSkillInvocationService:
         if pin.content_sha256 != skill.content_sha256:
             raise ValueError("SKILL_NOT_ACTIVE")
         if skill.input_mode in {"question", "document", "sources"} and (
-            not isinstance(arguments.get("question"), str)
-            or not str(arguments["question"]).strip()
+            not isinstance(arguments.get("question"), str) or not str(arguments["question"]).strip()
         ):
             return await self._runs.publish_clarification(
                 run_id=run.run_id,
@@ -126,11 +127,19 @@ class AssistantSkillInvocationService:
             ):
                 raise ValueError(ResourceResolutionErrorCode.NOT_FOUND.value)
             try:
-                resolved = await self._resources.resolve(
-                    space_id=run.space_id,
-                    resource_type=resource_type,
-                    reference=reference,
-                )
+                if context is None:
+                    resolved = await self._resources.resolve(
+                        space_id=run.space_id,
+                        resource_type=resource_type,
+                        reference=reference,
+                    )
+                else:
+                    resolved = await self._resources.resolve(
+                        space_id=run.space_id,
+                        resource_type=resource_type,
+                        reference=reference,
+                        context=context,
+                    )
                 resource_scope = resolved.scope
             except ResourceResolutionError as exc:
                 kind = (
@@ -166,10 +175,14 @@ class AssistantSkillInvocationService:
             core_prompt_version="assistant-base-prompt-v2",
         )
         assert promoted.skill is not None
+        projection_arguments = dict(arguments)
+        if context is not None:
+            projection_arguments["standalone_request"] = context.standalone_request()
+            projection_arguments["context_sensitivity"] = context.sensitivity.value
         return await self._projection.create(
             promoted,
             skill=promoted.skill,
-            arguments=arguments,
+            arguments=projection_arguments,
             resource_scope=resource_scope,
         )
 

@@ -14,6 +14,12 @@ Assistant selections pin a v2 `(name, version, content_sha256)` and project the 
 `ConversationRun` into the existing QA Run/Worker/SSE path. Natural-language resource resolution is
 read-only and Space-scoped; only safe candidate labels cross the Assistant boundary.
 
+The Assistant Conversation Evolution Step 5 boundary adds `ConversationContextService` and the
+append-only `conversation_summaries` table. A bounded snapshot combines a rolling summary, recent
+messages, and the current request for routing and standalone Skill requests. `context_compaction`
+uses the existing `qa` Worker queue, shared run lease/recovery, and privacy-safe Assistant events.
+Grounded QA keeps its evidence-only `ContextBuilder`; it does not receive the full chat history.
+
 PR #4 corrected the online and evaluation retrieval path to `dense_rerank`: dense-exact candidates
 are reranked directly. `hybrid_rerank` remains an explicit compatibility mode, not the default for
 Search API or QA. The corrected GPU development runs are provisional evidence only; they do not
@@ -233,6 +239,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/models.py` | 核心实体：`Space`、`Source`、`Document`、`DocumentVersion`、`Chunk`、`IngestionTask` 及其枚举、`RetrievalProfile` 值对象 |
 | `src/domain/agent_runtime.py` | AgentRun 状态/步骤、预算、权限、调用记录、检查点、恢复校验及 Runtime/Registry/审批 Port |
 | `src/domain/conversation_run.py` | 通用 `ConversationRun` 父身份、运行种类/选择来源、澄清、通用结果、实际用量和持久化 Port；不含模型或数据库依赖 |
+| `src/domain/conversation_context.py` | Versioned rolling-summary identity, content digest, covered message range, and inherited sensitivity contracts |
 | `src/domain/assistant_sse.py` | `agent-run-sse-v2` 的内容安全事件、单调 sequence、唯一终态和 Event Store Port；payload 禁止用户/模型正文键 |
 | `src/domain/repositories.py` | 仓库接口定义（Protocol）：`SpaceRepository`、`SourceRepository`、`DocumentRepository`、`DocumentVersionRepository`、`ChunkRepository`、`IngestionTaskRepository` |
 | `src/domain/parsing.py` | `ParsedDocument` / `StructNode` / `ParseError` 纯类型、`Parser` Protocol、`compute_blob_hash` 辅助函数 |
@@ -278,6 +285,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/qa/persistence.py` | provisional 内存 Grounded QA Repository；验证 Space/owner、幂等、attempt、取消、usage、Evidence/Feedback 和原子终态发布 |
 | `src/application/assistant/runs.py` | v2 Assistant turn 创建、读取和取消用例；API 协程只持久化与投递，不执行模型 |
 | `src/application/assistant/agent.py` | Worker 内的 `AssistantAgentService`；加载冻结 prompt、严格校验 router JSON，并以原子消息/Run 发布完成 `respond` 或服务端澄清 |
+| `src/application/assistant/context.py` | Bounded shared context snapshots, automatic/manual compaction Run creation, and Worker-only summary generation |
 | `src/application/qa/service.py` | 唯一 provisional `GroundedQAApplicationPort`；编排幂等提交、阶段 3 SearchService、Evidence/上下文、结构化生成、原子发布、取消和稳定失败终态 |
 | `src/application/skills/knowledge_qa.py` | provisional Skill Adapter；Worker 模式执行同一既有 QA Run，仅将 Runtime 服务端上下文映射到唯一 QA Port 并投影其结构化结果 |
 | `src/application/skills/organization.py` | 校验知识整理 Skill 的 Space 归属和当前 published Source/Document/DocumentVersion，并生成固定检索范围 |
@@ -314,6 +322,7 @@ Application 层的 Skill Adapter 编排使用；通用 Runtime 不反向依赖�
 | `src/infrastructure/retrieval/postgres_store.py` | 当前发布集合上的 PostgreSQL FTS、pgvector exact/IVFFlat、上下文候选和诊断 |
 | `src/infrastructure/qa_persistence.py` | PostgreSQL Grounded QA Repository 与 SSE Event Store；事务式终态发布、append-only attempt 和 API 重启恢复 |
 | `src/infrastructure/conversation_runs.py` | PostgreSQL `ConversationRun` 父记录适配器；原子写入消息/Run、Assistant lease、恢复、直接回复/澄清/失败/取消终态 |
+| `src/infrastructure/qa_persistence.py` | Also persists append-only conversation summaries and the bounded Skill standalone request |
 | `src/infrastructure/assistant_events.py` | PostgreSQL `agent-run-sse-v2` Event Store；锁定父 Run 后写入内容安全、单调的 v2 事件 |
 
 **`config.py` 详解**：
@@ -621,6 +630,7 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | `versions/d4e5f6a7b8c9_add_chunk_fts.py` | **阶段 3 迁移**：增加持久生成的 Chunk FTS 文档列和 GIN 索引，并保留 pgvector 索引 |
 | `versions/8f9a0b1c2d3e_add_conversation_run_parents.py` | 通用 `conversation_runs` 父身份；回填既有 QA UUID，并将 QA 消息、Runtime、审批和派生知识外键改指向父 Run；降级拒绝丢弃非 QA turn |
 | `versions/9a0b1c2d3e4f_add_assistant_run_execution.py` | 为 Assistant 父 Run 增加 lease/heartbeat 和 `assistant_events`；降级拒绝静默删除已创建的 direct-conversation turn |
+| `versions/b1c2d3e4f5a6_add_conversation_context_summaries.py` | Adds rolling summaries plus standalone Skill request/sensitivity fields; downgrade removes only Step 5 schema |
 
 迁移链还包含 Grounded QA、attempt lease、Runtime checkpoint、审批、派生知识和生命周期 revision。
 `ConversationRun` 是新旧 Run 的共享父身份：`qa_runs` 仅保留 Grounded QA 投影及其 Evidence/Citation/
