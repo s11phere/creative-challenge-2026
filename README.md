@@ -141,6 +141,26 @@ API、Worker 和 Web 达到各自完成或健康条件。
 
 ## Smoke Test
 
+### One-command GPU startup
+
+When `.env` contains the approved Chat endpoint and key, the complete GPU stack can be started from
+PowerShell with:
+
+```powershell
+.\scripts\start-local.ps1
+```
+
+The script checks Docker GPU passthrough, starts the `embedding` and `reranker` profiles, forces the
+effective reranker configuration to `inherit` with `BAAI/bge-reranker-v2-m3`, and verifies Web, API,
+Embedding, and Reranker health. It does not modify `.env` or print secret values. The configured
+external Chat endpoint can receive questions and retrieved snippets; do not use it with private or
+restricted sources without the required policy approval.
+
+For a prewarmed local Reranker model cache, set `RERANKER_VOLUME_NAME` in `.env` to the existing
+Docker volume name. The startup script preserves this setting while forcing the real Reranker route.
+The first GPU model warm-up can take several minutes; Compose now allows an extended health window
+for both TEI services before reporting startup failure.
+
 ```bash
 curl --fail http://127.0.0.1:8000/api/v1/health/live
 curl --fail http://127.0.0.1:8000/api/v1/health/ready

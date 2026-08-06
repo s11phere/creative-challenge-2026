@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -488,6 +489,37 @@ class TestRegisterFile:
         assert second.existing_version is not None
         assert second.existing_version.file_path == "中文资料.txt"
         assert len(await version_repo.get_by_document(first.document.id)) == 1
+
+    async def test_reactivates_deleted_document_on_reupload(
+        self,
+        service: SourceRegistrationService,
+        source_repo: _FakeSourceRepo,
+        doc_repo: _FakeDocumentRepo,
+        blob_store: _FakeBlobStore,
+        space_id: UUID,
+    ) -> None:
+        source = await source_repo.create(Source(space_id=space_id, source_type=SourceType.UPLOAD))
+        deleted_document = await doc_repo.create(
+            Document(
+                source_id=source.id,
+                stable_key='deleted.md',
+                current_version_id=uuid4(),
+                deleted_at=datetime.now(UTC),
+            )
+        )
+
+        result = await service.register_file(
+            source,
+            b'restored content',
+            blob_store,
+            file_stable_key='deleted.md',
+        )
+
+        restored = await doc_repo.get(deleted_document.id)
+        assert restored is not None
+        assert result.document.id == deleted_document.id
+        assert restored.deleted_at is None
+        assert restored.current_version_id is None
 
     async def test_blob_hash_integrity(
         self,

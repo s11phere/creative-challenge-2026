@@ -391,6 +391,70 @@ describe('SourcesPanel task controls', () => {
     expect(screen.queryByText(/86386fb5317e…/)).not.toBeInTheDocument()
   })
 
+  it('refreshes document status after the ingestion task succeeds', async () => {
+    let taskReads = 0
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/sources')) {
+        return Promise.resolve(jsonResponse({
+          sources: [{
+            id: 'source-1', space_id: 'space-1', source_type: 'upload',
+            uri: 'fixture://test', created_at: '2026-01-01T00:00:00Z',
+          }],
+        }))
+      }
+      if (url.endsWith('/upload') && init?.method === 'POST') {
+        return Promise.resolve(jsonResponse({
+          source_id: 'source-1', document_id: 'doc-1', blob_hash: 'a'.repeat(64),
+          is_new_document: true, is_unchanged: false, task_id: 'task-1',
+        }))
+      }
+      if (url.endsWith('/detail')) {
+        return Promise.resolve(jsonResponse({
+          source: {
+            id: 'source-1', space_id: 'space-1', source_type: 'upload',
+            uri: 'fixture://test', created_at: '2026-01-01T00:00:00Z',
+          },
+          documents: [{
+            id: 'doc-1', stable_key: 'notes.md', display_name: 'notes.md',
+            current_version_id: taskReads >= 2 ? 'version-1' : null,
+            status: taskReads >= 2 ? 'available' : 'unavailable',
+            created_at: '2026-01-01T00:00:00Z',
+          }],
+        }))
+      }
+      if (url.endsWith('/tasks/task-1')) {
+        taskReads += 1
+        const succeeded = taskReads >= 2
+        return Promise.resolve(jsonResponse({
+          task_id: 'task-1', source_id: 'source-1', operation: 'ingest',
+          status: succeeded ? 'succeeded' : 'running',
+          stage: succeeded ? 'publish' : 'parse',
+          progress: succeeded ? 1 : 0.2,
+          retry_count: 0, max_retries: 3, error_code: null, error: null,
+          created_at: '2026-01-01T00:00:00Z',
+        }))
+      }
+      return Promise.resolve(jsonResponse({ sources: [] }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderPanel()
+    fireEvent.click(await screen.findByText('fixture://test'))
+    await waitFor(() => expect(document.querySelector('.doc-status.unavailable')).not.toBeNull())
+
+    const uploadForm = document.querySelector('.upload-form') as HTMLFormElement
+    const input = uploadForm.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['content'], 'notes.md')] } })
+    fireEvent.submit(uploadForm)
+
+    await waitFor(() => expect(document.querySelector('.task-row[data-status="running"]')).not.toBeNull())
+    fireEvent.click(document.querySelector('.task-refresh-button')!)
+
+    await waitFor(() => expect(document.querySelector('.task-row[data-status="succeeded"]')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('.doc-status.available')).not.toBeNull())
+  })
+
   it('deletes a document through the source detail action', async () => {
     let deleted = false
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -437,7 +501,7 @@ describe('SourcesPanel task controls', () => {
     fireEvent.click(deleteButton)
 
     await waitFor(() => expect(deleted).toBe(true))
-    expect(await screen.findByText('已删除')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '删除文档：notes.md' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('notes.md')).not.toBeInTheDocument())
+    expect(document.querySelector('.doc-list h4')).toHaveTextContent('0')
   })
 })

@@ -186,7 +186,6 @@ function App() {
   const qaHistoryQuery = useQuery({
     queryKey: ['qa-history'],
     queryFn: ({ signal }) => fetchConversationHistory(signal),
-    enabled: activeView === 'qa',
     retry: false,
   })
   const deleteConversationMutation = useMutation({

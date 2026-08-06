@@ -284,8 +284,8 @@ services:
       test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:80/health"]
       interval: 10s
       timeout: 5s
-      retries: 30
-      start_period: 30s
+      retries: 60
+      start_period: 60s
 
   tei-reranker:
     profiles:
@@ -310,8 +310,8 @@ services:
       test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:80/health"]
       interval: 10s
       timeout: 5s
-      retries: 30
-      start_period: 30s
+      retries: 60
+      start_period: 60s
 
 volumes:
   pgdata:
@@ -322,3 +322,4 @@ volumes:
   teidata:
     name: ${TEI_VOLUME_NAME:-deploy_teidata}
   rerankerdata:
+    name: ${RERANKER_VOLUME_NAME:-deploy_rerankerdata}

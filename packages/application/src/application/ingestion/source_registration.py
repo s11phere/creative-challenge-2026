@@ -234,6 +234,17 @@ class SourceRegistrationService:
             is_new_doc = True
         else:
             document = existing_doc
+            if document.deleted_at is not None:
+                # A new upload reactivates the logical document. Keep the
+                # current version unset until the new candidate is published.
+                document = await self._document_repo.update(
+                    replace(
+                        document,
+                        current_version_id=None,
+                        deleted_at=None,
+                        updated_at=datetime.now(UTC),
+                    )
+                )
 
         # --- Step 6: fingerprint — find or create version with same blob_hash ---
         existing_version = await self._find_version_by_blob_hash(document.id, blob_hash)

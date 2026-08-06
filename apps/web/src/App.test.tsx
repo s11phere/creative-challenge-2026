@@ -66,7 +66,7 @@ describe('system status workspace', () => {
     expect(screen.getByText('4 / 4 项当前可用')).toBeInTheDocument()
     expect(screen.getByText('测试替身')).toBeInTheDocument()
     expect(screen.getByText('trace-123')).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   it('shows degraded dependency state without treating the API as offline', async () => {
@@ -98,6 +98,47 @@ describe('system status workspace', () => {
     expect(screen.queryByText('无法连接本地 API')).not.toBeInTheDocument()
   })
 
+  it('loads conversation history while the initial workspace is open', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/conversations')) {
+        return Promise.resolve(jsonResponse({
+          conversations: [{
+            conversation_id: 'conversation-history',
+            space_id: 'space-1',
+            owner_id: 'local',
+            created_at: '2026-08-02T10:00:00Z',
+            updated_at: '2026-08-02T12:00:00Z',
+            messages: [{
+              message_id: 'message-history',
+              role: 'user',
+              content: 'previous question',
+              run_id: 'run-history',
+              created_at: '2026-08-02T12:00:00Z',
+            }],
+            runs: [],
+          }],
+        }))
+      }
+      if (url.endsWith('/health/live')) {
+        return Promise.resolve(jsonResponse({ status: 'alive' }))
+      }
+      return Promise.resolve(jsonResponse({
+        status: 'ready',
+        checks: {
+          postgresql: { healthy: true, code: 'POSTGRESQL_OK' },
+          redis: { healthy: true, code: 'REDIS_OK' },
+          model: { healthy: true, code: 'MODEL_FAKE_READY' },
+        },
+      }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp()
+
+    expect(await screen.findByText('previous question')).toBeInTheDocument()
+  })
+
   it('exits loading on API failure and supports manual retry', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError('network unavailable'))
     vi.stubGlobal('fetch', fetchMock)
@@ -108,7 +149,7 @@ describe('system status workspace', () => {
     expect(screen.getByText('API_UNREACHABLE')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '重新检查' }))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5))
   })
 
   it('replaces the loading state when the API response schema is invalid', async () => {

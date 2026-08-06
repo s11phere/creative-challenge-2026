@@ -29,6 +29,7 @@ import {
   triggerIngestion,
   uploadFile,
   type SourceInfo,
+  type SourceDetail,
   type TaskInfo,
 } from './sources'
 
@@ -68,8 +69,19 @@ function progressPercent(progress: number): string {
   return `${Math.round(progress * 100)}%`
 }
 
-function TaskRow({ taskId, onTaskChange }: { taskId: string; onTaskChange: (taskId: string) => void }) {
+const terminalTaskStatuses = new Set(['succeeded', 'failed', 'cancelled', 'dead_letter'])
+
+function TaskRow({
+  taskId,
+  onTaskChange,
+  onTaskSettled,
+}: {
+  taskId: string
+  onTaskChange: (taskId: string) => void
+  onTaskSettled?: () => void
+}) {
   const queryClient = useQueryClient()
+  const settledStatusRef = useRef<string | null>(null)
   const { data: task, isLoading, refetch } = useQuery<TaskInfo>({
     queryKey: ['task', taskId],
     queryFn: ({ signal }) => fetchTaskStatus(taskId, signal),
@@ -97,11 +109,19 @@ function TaskRow({ taskId, onTaskChange }: { taskId: string; onTaskChange: (task
   })
 
   useEffect(() => {
+    settledStatusRef.current = null
     cancelMut.reset()
     retryMut.reset()
     // Mutation state belongs to a task ID and must not leak into the next task.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId])
+
+  useEffect(() => {
+    const status = task?.status
+    if (!status || !terminalTaskStatuses.has(status) || settledStatusRef.current === status) return
+    settledStatusRef.current = status
+    onTaskSettled?.()
+  }, [onTaskSettled, task?.status])
 
   if (isLoading) {
     return (
@@ -120,7 +140,7 @@ function TaskRow({ taskId, onTaskChange }: { taskId: string; onTaskChange: (task
     Icon: LoaderCircle,
   }
 
-  const isTerminal = ['succeeded', 'failed', 'cancelled', 'dead_letter'].includes(task.status)
+  const isTerminal = terminalTaskStatuses.has(task.status)
   const retriesUsed = Math.min(task.retry_count, task.max_retries)
   const operationError = cancelMut.error ?? retryMut.error
 
@@ -203,6 +223,7 @@ function DirectUpload({ sources }: { sources: SourceInfo[] }) {
   const [file, setFile] = useState<File | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
+  const [activeSourceId, setActiveSourceId] = useState<string | null>(null)
 
   const limitsQuery = useQuery({
     queryKey: ['upload-limits'],
@@ -228,6 +249,7 @@ function DirectUpload({ sources }: { sources: SourceInfo[] }) {
     },
     onSuccess: ({ sourceId, result }) => {
       createdSourceRef.current = null
+      setActiveSourceId(sourceId)
       void queryClient.invalidateQueries({ queryKey: ['sources'] })
       void queryClient.invalidateQueries({ queryKey: ['source', sourceId] })
       setActiveTaskId(result.task_id)
@@ -316,7 +338,18 @@ function DirectUpload({ sources }: { sources: SourceInfo[] }) {
       {uploadMut.data && !uploadMut.data.result.task_id && (
         <div className="upload-result">文件内容未变化，无需重复摄入。</div>
       )}
-      {activeTaskId && <TaskRow taskId={activeTaskId} onTaskChange={setActiveTaskId} />}
+      {activeTaskId && (
+        <TaskRow
+          taskId={activeTaskId}
+          onTaskChange={setActiveTaskId}
+          onTaskSettled={() => {
+            void queryClient.invalidateQueries({ queryKey: ['sources'] })
+            if (activeSourceId) {
+              void queryClient.invalidateQueries({ queryKey: ['source', activeSourceId] })
+            }
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -345,8 +378,8 @@ function SourceCard({ source }: { source: SourceInfo }) {
 
   const uploadMut = useMutation({
     mutationFn: (file: File) => uploadFile(source.id, file),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['source', source.id] })
+    onSuccess: async (data) => {
+      await queryClient.invalidateQueries({ queryKey: ['source', source.id] })
       if (data.task_id) setActiveTaskId(data.task_id)
       setSelectedFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
@@ -363,7 +396,14 @@ function SourceCard({ source }: { source: SourceInfo }) {
 
   const deleteDocumentMut = useMutation({
     mutationFn: (documentId: string) => deleteDocument(source.id, documentId),
-    onSuccess: () => {
+    onSuccess: (_result, documentId) => {
+      queryClient.setQueryData<SourceDetail>(['source', source.id], (current) => {
+        if (!current) return current
+        return {
+          ...current,
+          documents: current.documents.filter((document) => document.id !== documentId),
+        }
+      })
       void queryClient.invalidateQueries({ queryKey: ['source', source.id] })
       void queryClient.invalidateQueries({ queryKey: ['sources'] })
     },
@@ -373,6 +413,8 @@ function SourceCard({ source }: { source: SourceInfo }) {
     e.preventDefault()
     if (selectedFile) uploadMut.mutate(selectedFile)
   }
+
+  const visibleDocuments = detailQuery.data?.documents.filter((doc) => doc.status !== 'deleted') ?? []
 
   return (
     <div className={`source-card ${isExpanded ? 'expanded' : ''}`}>
@@ -452,12 +494,20 @@ function SourceCard({ source }: { source: SourceInfo }) {
           )}
 
           {/* Task status */}
-          {activeTaskId && <TaskRow taskId={activeTaskId} onTaskChange={setActiveTaskId} />}
+          {activeTaskId && (
+            <TaskRow
+              taskId={activeTaskId}
+              onTaskChange={setActiveTaskId}
+              onTaskSettled={() => {
+                void queryClient.invalidateQueries({ queryKey: ['source', source.id] })
+              }}
+            />
+          )}
 
           {/* Documents */}
           {detailQuery.data && (
             <div className="doc-list">
-              <h4>文档（{detailQuery.data.documents.length}）</h4>
+              <h4>文档（{visibleDocuments.length}）</h4>
               {deleteDocumentMut.isError && (
                 <div className="upload-error" role="alert">
                   删除文档失败：{deleteDocumentMut.error instanceof SourcesApiError
@@ -465,7 +515,7 @@ function SourceCard({ source }: { source: SourceInfo }) {
                     : String(deleteDocumentMut.error)}
                 </div>
               )}
-              {detailQuery.data.documents.map((doc) => (
+              {visibleDocuments.map((doc) => (
                 <div className="doc-item" key={doc.id}>
                   <span className="doc-key" title={`稳定键：${doc.stable_key}`}>
                     {doc.display_name}
