@@ -11,3 +11,6 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["application*"]
+
+[tool.setuptools.package-data]
+application = ["assistant/contracts/*.json", "assistant/contracts/*.txt"]

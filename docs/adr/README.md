@@ -17,3 +17,6 @@ ADR-011 records the explicit provisional continuation gate that permits Stage 4/
  continue without treating the non-passing retrieval result as formal quality acceptance.
 ADR-012 records the feedback review lifecycle, Space-scoped metadata-only review API, and
 privacy-safe candidate export rules.
+ADR-013 records the product-level Assistant Agent, shared ConversationRun identity, safe automatic
+Skill routing, manifest v2 invocation metadata, context compression, and the versioned v2 event
+projection. It explicitly preserves the ADR-010/011 provisional-quality boundary.

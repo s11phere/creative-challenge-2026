@@ -16,6 +16,20 @@ single-agent, finite state machine with a tool allowlist, step/token/time budget
 audited structured I/O. A LangGraph adapter may implement the port after the grounded QA path is
 validated; no second agent framework is introduced.
 
+### Amendment: product-level Assistant Agent (2026-08-06)
+
+ADR-013 introduces `ConversationRun` as the shared durable parent identity for an Assistant turn,
+grounded-QA projection, Runtime execution, checkpoint, approval, cancellation, and retry. The
+product-level `AssistantAgentService` is an Application orchestrator, not a Skill or a second Runtime
+framework. It dispatches persisted `run_kind` work through the existing Worker boundary; API request
+handlers do not execute long model work and no second queue is added.
+
+The existing `AgentRun`/Runtime contract remains the bounded execution projection until migration.
+During migration, historical fixed-Skill runs and checkpoints retain their exact identity and pin.
+Router decisions are application intents, not direct Runtime Tool calls. `RunBudget`, provider
+limits, cancellation, loop detection, and emergency ceilings remain enforceable server-side safety
+controls even though the product interface no longer presents them as a user quota.
+
 ## Alternatives
 
 - Direct LangGraph use in application code was rejected because it leaks framework types across boundaries.

@@ -40,6 +40,8 @@ cases/evals/datasets/knowledge-qa-v0/*
 cases/evals/datasets/knowledge-qa-v1/*
 !cases/evals/datasets/knowledge-qa-v1/README.md
 !cases/evals/datasets/knowledge-qa-v1/schema.json
+!cases/evals/datasets/assistant-routing-v1/
+!cases/evals/datasets/assistant-routing-v1/**
 
 # Environment
 .env

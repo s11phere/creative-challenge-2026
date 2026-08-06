@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "assistant-clarification-v1.schema.json",
+  "title": "Assistant clarification v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "clarification_id", "kind", "message", "resource_candidates"],
+  "properties": {
+    "schema_version": {"const": "assistant-clarification-v1"},
+    "clarification_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,200}$"},
+    "kind": {"enum": ["input_required", "resource_ambiguous", "resource_missing"]},
+    "message": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "resource_candidates": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate_id", "resource_type", "label"],
+        "properties": {
+          "candidate_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,200}$"},
+          "resource_type": {"enum": ["source", "document", "document_version"]},
+          "label": {"type": "string", "minLength": 1, "maxLength": 280},
+          "source_label": {"type": "string", "minLength": 1, "maxLength": 280},
+          "version_label": {"type": "string", "minLength": 1, "maxLength": 120}
+        }
+      }
+    }
+  }
+}
+

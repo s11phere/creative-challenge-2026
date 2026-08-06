@@ -829,6 +829,13 @@ P0 未达到退出条件时，不应投入 P2。
 - [OpenTelemetry Documentation](https://opentelemetry.io/docs/)：跨组件 traces、metrics 和 logs 的统一可观测标准。
 - [OWASP Top 10 for LLM Applications](https://genai.owasp.org/llm-top-10/)：prompt injection、敏感信息泄漏和过度代理等风险分类。
 
+## 24. 通用 Agent 对话演进
+
+当前手动 Skill 模式选择、通用对话、自动 Skill 路由、`/` 指令、多轮上下文压缩和运行信息展示的
+后续实施细节，统一见
+[通用 Agent 对话、自动 Skill 路由与指令系统实施计划](agent-conversation-evolution-plan.md)。
+该计划属于 provisional 工程演进，不改变 ADR-010/ADR-011 的正式质量边界。
+
 ---
 
 本计划的核心取舍是：不把“Agent 数量”和“自研基础设施”当作先进性的证明，而以可追溯回答、稳定摄入、可量化评测和可替换边界作为工程质量的主要证据。
