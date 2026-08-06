@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 import dramatiq
 from application.assistant import (
     AssistantAgentService,
+    AssistantMetrics,
     AssistantSkillInvocationService,
     ConversationCompactionService,
     ConversationContextService,
@@ -122,6 +123,7 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
     registry = assistant_skill_registry()
     qa_repository = PostgresGroundedQARepository(database)
     context = ConversationContextService(data=qa_repository, runs=runs)
+    metrics = AssistantMetrics()
 
     async def _versions(skill_name: str) -> QARunVersions:
         return qa_execution_versions(registry, skill_name=skill_name)
@@ -147,12 +149,14 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
         skill_catalog=FileSystemSkillCatalog(registry, include_manifest_v2=True),
         skill_invoker=invoker,
         context=context,
+        metrics=metrics,
     )
     compaction = ConversationCompactionService(
         context=context,
         data=qa_repository,
         runs=runs,
         gateway=gateway,
+        metrics=metrics,
     )
     events = PostgresAssistantEventStore(database)
     if claimed.run_kind is ConversationRunKind.CONTEXT_COMPACTION:

@@ -13,6 +13,7 @@ from application.assistant import (
     AssistantCommandParser,
     AssistantCommandService,
     AssistantMessageReader,
+    AssistantMetrics,
     AssistantSkillInvocationService,
     ConversationContextDataPort,
     ConversationContextService,
@@ -165,6 +166,7 @@ def create_app(
         conversations=cast(ConversationReader, qa_repository),
         runs=conversation_run_repository,
     )
+    assistant_metrics = AssistantMetrics()
     skill_registry = knowledge_qa_registry()
     activation_store = skill_activation_store or PostgresSkillActivationStore(database)
     skill_lifecycle = SkillLifecycleService(
@@ -179,9 +181,7 @@ def create_app(
         },
     )
     skill_catalog = skill_catalog or FileSystemSkillCatalog(skill_registry)
-    assistant_catalog = FileSystemSkillCatalog(
-        assistant_skill_registry(), include_manifest_v2=True
-    )
+    assistant_catalog = FileSystemSkillCatalog(assistant_skill_registry(), include_manifest_v2=True)
     qa_event_log = qa_event_store or PostgresQAEventStore(database)
     if assistant_event_store is not None:
         assistant_event_log = assistant_event_store
@@ -229,6 +229,7 @@ def create_app(
         qa=qa_repository,
         skill_invoker=assistant_skill_invoker,
         context=conversation_context,
+        metrics=assistant_metrics,
     )
     assistant_agent_service = AssistantAgentService(
         runs=conversation_run_repository,
@@ -238,6 +239,7 @@ def create_app(
         skill_catalog=assistant_catalog,
         skill_invoker=assistant_skill_invoker,
         context=conversation_context,
+        metrics=assistant_metrics,
     )
     qa_citation_service = qa_citation_service or PublishedCitationService(
         runs=qa_repository,
@@ -286,6 +288,7 @@ def create_app(
     app.state.assistant_skill_invoker = assistant_skill_invoker
     app.state.conversation_context_service = conversation_context
     app.state.assistant_event_log = assistant_event_log
+    app.state.assistant_metrics = assistant_metrics
     app.state.assistant_runtime = assistant_runtime
     app.state.qa_event_log = qa_event_log
     app.state.qa_runtime = qa_runtime

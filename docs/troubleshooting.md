@@ -22,6 +22,21 @@ curl.exe http://127.0.0.1:8000/api/v1/health/ready
 `live` 只判断 API 进程能否响应；`ready` 会并发检查 PostgreSQL 和 Redis。模型状态单独报告，
 默认不是本地 API readiness 的硬依赖。
 
+## Assistant 路由开发报告被拒绝
+
+先只校验固定的 synthetic development 数据集：
+
+```powershell
+uv run --frozen python scripts/evaluate_assistant_routing.py --validate-only
+```
+
+`routing dataset cannot enable formal evaluation`、`routing dataset must remain synthetic only` 或
+SHA-256 mismatch 表示 manifest、schema 或 case 文件不符合安全协议。不要修改
+`formal_runs_enabled`、改用受控语料或把当前 development 报告当作正式质量结果；修复固定文件的
+摘要或从干净工作树恢复预期版本。无 `--predictions` 时退出码 `4` 是刻意的阻断，而不是模型错误。
+预测文件只可包含动作、允许的 Skill 名称、计数、用量、延迟和终止原因，不能包含消息、prompt、文档
+正文、Provider 响应或内部资源 ID。
+
 ## Compose 提示缺少变量
 
 现象：配置阶段提示 `APP_SECRET_KEY must be set` 或 `POSTGRES_PASSWORD must be set`。

@@ -275,6 +275,10 @@ async def select_clarification_resource(
             "skill": resumed.skill.name if resumed.skill else "unknown",
         },
     )
+    clarification = resumed.result.clarification if resumed.result is not None else None
+    request.app.state.assistant_metrics.record_clarification(
+        clarification.kind.value if clarification is not None else "resource", resolved=True
+    )
     return await _response(resumed, request)
 
 
@@ -444,6 +448,9 @@ async def _schedule_context_compaction(run: ConversationRun, request: Request) -
     scheduled = await request.app.state.conversation_context_service.schedule_automatic(run)
     if scheduled is None:
         return
+    request.app.state.assistant_metrics.record_compaction(
+        mode="automatic", status=scheduled.status.value
+    )
     await request.app.state.assistant_event_log.append(
         scheduled.run_id,
         AssistantEventType.ACCEPTED,

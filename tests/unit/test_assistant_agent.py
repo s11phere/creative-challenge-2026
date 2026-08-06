@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 from uuid import UUID
 
 import pytest
 from api.assistant_runtime import AssistantWorkerDispatcher
 from application.assistant import (
     AssistantAgentService,
+    AssistantMetrics,
     AssistantTurnSubmission,
     ConversationRunService,
 )
@@ -92,6 +94,46 @@ async def test_fake_respond_publishes_one_assistant_message_atomically() -> None
     serialized = json.dumps([event.as_dict() for event in await events.replay(run_id)])
     assert "Synthetic ordinary conversation." not in serialized
     assert "fake-response" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_agent_records_safe_route_usage_and_termination_metrics() -> None:
+    repository = InMemoryGroundedQARepository()
+    conversation = ConversationRecord(
+        conversation_id=UUID(int=411), space_id=UUID(int=412), owner_id="synthetic-user"
+    )
+    await repository.create_conversation(conversation)
+    submitted = await ConversationRunService(conversations=repository, runs=repository).submit(
+        AssistantTurnSubmission(
+            conversation_id=conversation.conversation_id,
+            content="Synthetic metric turn.",
+            idempotency_key="assistant-metrics-1",
+        )
+    )
+    await repository.claim_conversation_run(
+        submitted.run_id, lease_owner="test-worker", lease_seconds=60
+    )
+    metrics = AssistantMetrics()
+    agent = AssistantAgentService(
+        runs=repository,
+        messages=repository,
+        gateway=FakeModelGateway(),
+        events=AssistantEventLog(),
+        metrics=metrics,
+    )
+
+    completed = await agent.execute(submitted.run_id)
+
+    assert completed is not None
+    snapshot = metrics.snapshot()
+    counters = cast(dict[str, int], snapshot["counters"])
+    assert counters["assistant.routing.decisions|action=respond"] == 1
+    assert (
+        counters["assistant.terminations|reason=respond,run_kind=assistant_turn,status=completed"]
+        == 1
+    )
+    observations = cast(dict[str, dict[str, object]], snapshot["observations"])
+    assert observations["assistant.tokens.input|run_kind=assistant_turn"]["count"] == 1
 
 
 @pytest.mark.asyncio

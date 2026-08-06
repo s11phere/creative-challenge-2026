@@ -35,6 +35,7 @@ from model_gateway import (
 from application.skills import SkillCatalogPort, SkillInvocationView
 
 from .context import ConversationContextService, ConversationContextSnapshot
+from .metrics import AssistantMetrics
 
 _CONTRACT_ROOT = files("application.assistant").joinpath("contracts")
 _BASE_PROMPT = _CONTRACT_ROOT.joinpath("base-system-prompt-v1.txt").read_text(encoding="utf-8")
@@ -120,6 +121,7 @@ class AssistantAgentService:
         skill_catalog: SkillCatalogPort | None = None,
         skill_invoker: AssistantSkillInvoker | None = None,
         context: ConversationContextService | None = None,
+        metrics: AssistantMetrics | None = None,
     ) -> None:
         self._runs = runs
         self._messages = messages
@@ -129,6 +131,7 @@ class AssistantAgentService:
         self._skill_catalog = skill_catalog
         self._skill_invoker = skill_invoker
         self._context = context
+        self._metrics = metrics
 
     async def execute(self, run_id: UUID) -> ConversationRun | None:
         """Finish a Worker-claimed turn; API handlers only enqueue this work."""
@@ -155,6 +158,7 @@ class AssistantAgentService:
             return run
         if run.cancellation_requested:
             cancelled = await self._runs.cancel_conversation_run(run_id)
+            self._record_termination(cancelled, reason="cancel_requested")
             await self._emit_terminal(cancelled)
             return cancelled
 
@@ -201,12 +205,21 @@ class AssistantAgentService:
             AssistantEventType.ROUTING,
             {"status": ConversationRunStatus.RUNNING.value, "action": decision.action},
         )
+        if self._metrics is not None:
+            self._metrics.record_router_decision(decision.action)
         usage = ConversationRunUsage(
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
             model_latency_ms=response.latency_ms,
         )
         model_identity = self._gateway.status.provider.value
+        if self._metrics is not None:
+            self._metrics.record_usage(
+                run_kind=run.run_kind.value,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                latency_ms=usage.model_latency_ms,
+            )
 
         if decision.action == "respond":
             assert decision.assistant_message is not None
@@ -223,6 +236,7 @@ class AssistantAgentService:
                 usage=usage,
                 model_identity=model_identity,
             )
+            self._record_termination(published, reason="respond")
             await self._emit_terminal(published, action="respond")
             return published
         if decision.action == "clarify":
@@ -237,12 +251,17 @@ class AssistantAgentService:
                 model_identity=model_identity,
             )
             if clarified.status is ConversationRunStatus.WAITING_CLARIFICATION:
+                assert clarified.result is not None
+                assert clarified.result.clarification is not None
+                if self._metrics is not None:
+                    self._metrics.record_clarification(clarified.result.clarification.kind.value)
                 await self._events.append(
                     run_id,
                     AssistantEventType.CLARIFICATION,
                     {"status": clarified.status.value, "action": "clarify"},
                 )
             else:
+                self._record_termination(clarified, reason="clarify")
                 await self._emit_terminal(clarified, action="clarify")
             return clarified
         if decision.action == "invoke_skill":
@@ -280,7 +299,15 @@ class AssistantAgentService:
                 ConversationRunStatus.COMPLETED,
                 ConversationRunStatus.REFUSED,
             }:
+                self._record_termination(invoked, reason="invoke_skill")
                 await self._emit_terminal(invoked, action="invoke_skill")
+            elif (
+                invoked.status is ConversationRunStatus.WAITING_CLARIFICATION
+                and invoked.result is not None
+                and invoked.result.clarification is not None
+                and self._metrics is not None
+            ):
+                self._metrics.record_clarification(invoked.result.clarification.kind.value)
             return invoked
         return await self._fail(run_id, "RUN_AGENT_DECISION_INVALID")
 
@@ -312,8 +339,23 @@ class AssistantAgentService:
 
     async def _fail(self, run_id: UUID, error_code: str) -> ConversationRun:
         failed = await self._runs.fail_conversation_run(run_id, error_code=error_code)
+        self._record_termination(failed, reason=error_code)
         await self._emit_terminal(failed)
         return failed
+
+    def _record_termination(self, run: ConversationRun, *, reason: str) -> None:
+        if self._metrics is not None and run.status in {
+            ConversationRunStatus.COMPLETED,
+            ConversationRunStatus.FAILED,
+            ConversationRunStatus.CANCELLED,
+            ConversationRunStatus.REFUSED,
+            ConversationRunStatus.TIMED_OUT,
+        }:
+            self._metrics.record_termination(
+                run_kind=run.run_kind.value,
+                status=run.status.value,
+                reason=reason,
+            )
 
     async def _emit_terminal(self, run: ConversationRun, *, action: str | None = None) -> None:
         if run.status is ConversationRunStatus.COMPLETED:

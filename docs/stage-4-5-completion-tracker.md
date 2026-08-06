@@ -42,6 +42,31 @@ restores persisted v2 Runs and pending clarifications after a refresh. This is p
 work under ADR-010/ADR-011: no formal retrieval, answer, or Skill holdout was run, and browser
 Playwright desktop/mobile evidence remains unavailable in the current environment.
 
+## 2026-08-06 Assistant Conversation Evolution Step 7
+
+Step 7 adds `assistant-operational-metrics-v1` counters for router decisions, explicit commands,
+clarifications, compaction, actual token usage, latency, and terminal reasons. Counters use only
+safe labels and aggregate numeric values. The Agent, command API, clarification continuation, and
+compaction Worker emit these records through the existing structured logging path without recording
+conversation text, prompts, document content, Provider output, or internal IDs.
+
+`scripts/evaluate_assistant_routing.py` validates the hash-pinned `assistant-routing-v1` synthetic
+development dataset and aggregates body-free prediction metadata into `assistant-metrics-report-v1`.
+The manifest requires `content_policy=synthetic_only`, `formal_runs_enabled=false`, and a
+`development` split; reports remain `provisional` and cannot execute a formal holdout or call a
+Provider. Focused security and regression coverage covers command routing, policy/approval/cancel
+boundaries, Worker compaction and metric privacy. Browser Playwright desktop/mobile evidence remains
+unavailable in the current environment, so this engineering step does not close the existing formal
+quality or browser-E2E gaps.
+
+Step 7 verification used only fake/synthetic paths: `mypy apps packages` passed for 121 source files;
+the complete backend suite passed `735 passed, 52 skipped`; an isolated PostgreSQL/Redis environment
+completed `upgrade head -> downgrade base -> upgrade head` and `51` integration tests; Web lint,
+typecheck, Vitest (`26` tests), and production build passed. OpenAPI export had no diff and the
+synthetic evaluator reported eight development cases with `formal_run_eligible=false`. The full
+repository formatting check still reports 18 pre-existing, out-of-scope files; all Assistant
+Conversation Evolution files are formatted.
+
 ## 2026-08-06 Assistant Conversation Evolution Step 1
 
 按 `agent-conversation-evolution-plan.md` 的 Step 1，新增了共享 `ConversationRun` 父身份和 API v2

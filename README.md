@@ -73,6 +73,14 @@ Assistant Conversation Evolution Step 6 将原 QA 工作区演进为通用对话
 状态；引用侧栏只在已完成的 grounded Run 有 Citation 时出现。折叠运行信息只显示实际模型、token
 和耗时，不显示预算、剩余额度或 Tool 上限。
 
+Assistant Conversation Evolution Step 7 adds privacy-safe operational counters for routing,
+commands, clarifications, context compaction, actual token usage, latency, and terminal reasons.
+`scripts/evaluate_assistant_routing.py --validate-only` validates the pinned synthetic-only routing
+development dataset; prediction reports are explicitly `development`/`provisional`, never invoke a
+Provider, read the controlled corpus, or enable a formal holdout. Structured metric logs contain only
+metric names, safe labels, and aggregate values, never conversation content, prompts, document text,
+Provider responses, or internal resource IDs.
+
 QA；资源歧义只显示 server-authored 候选，不暴露内部 UUID。该自动路由和 Step 4 Command API
 均为 provisional；Step 5 才实现上下文压缩。
 真实本地组合使用外部 OpenAI-compatible `fast_chat`、

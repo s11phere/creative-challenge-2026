@@ -222,6 +222,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `scripts/export_openapi.py` | 从应用工厂确定性导出 `docs/openapi.json` |
 | `scripts/rebuild_embeddings.py` | 按固定 Embedding identity 创建受控重建任务，不绕过原子发布 |
 | `scripts/evaluate_retrieval.py` | 校验/执行版本化检索评测、formal/holdout 门禁和机器可读报告 |
+| `scripts/evaluate_assistant_routing.py` | 仅校验/汇总 pinned synthetic development 路由元数据；拒绝正式评测、受控语料和 Provider 调用 |
 
 ---
 
@@ -286,6 +287,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/assistant/runs.py` | v2 Assistant turn 创建、读取和取消用例；API 协程只持久化与投递，不执行模型 |
 | `src/application/assistant/agent.py` | Worker 内的 `AssistantAgentService`；加载冻结 prompt、严格校验 router JSON，并以原子消息/Run 发布完成 `respond` 或服务端澄清 |
 | `src/application/assistant/context.py` | Bounded shared context snapshots, automatic/manual compaction Run creation, and Worker-only summary generation |
+| `src/application/assistant/metrics.py` | 不含正文的 Assistant 路由/命令/澄清/压缩/用量/延迟/终止指标，以及 synthetic development 报告聚合 |
 | `src/application/qa/service.py` | 唯一 provisional `GroundedQAApplicationPort`；编排幂等提交、阶段 3 SearchService、Evidence/上下文、结构化生成、原子发布、取消和稳定失败终态 |
 | `src/application/skills/knowledge_qa.py` | provisional Skill Adapter；Worker 模式执行同一既有 QA Run，仅将 Runtime 服务端上下文映射到唯一 QA Port 并投影其结构化结果 |
 | `src/application/skills/organization.py` | 校验知识整理 Skill 的 Space 归属和当前 published Source/Document/DocumentVersion，并生成固定检索范围 |
@@ -467,7 +469,14 @@ Registry 在服务端重验
    - `GET /api/v1/skills`、`GET /api/v1/skills/{skill_name}/versions` — 只读查询受信 Registry
      已安装/active 版本、摘要、权限、能力和预算；不提供激活/回滚写操作
 4. **请求可观测性**：`observability.py` 校验或生成 trace/request ID，返回
-   `X-Trace-ID`、`X-Request-ID`，并创建 HTTP server span 与开始/完成 JSON 日志。
+    `X-Trace-ID`、`X-Request-ID`，并创建 HTTP server span 与开始/完成 JSON 日志。
+
+Assistant Conversation Evolution Step 7 uses process-local `AssistantMetrics` only for safe labels
+and aggregate numeric values. API, Worker, Assistant Agent, command handling, clarification resume,
+and context compaction record no user message, prompt, document content, Provider output, or internal
+resource identifier. The development evaluator accepts only the pinned `synthetic_only` dataset and
+body-free prediction metadata; its report is permanently labeled `provisional` and cannot run a
+formal holdout.
 
 **错误协议 (`errors.py`)**：
 

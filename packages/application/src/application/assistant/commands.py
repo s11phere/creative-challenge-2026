@@ -20,6 +20,7 @@ from domain.qa_persistence import ConversationRecord, GroundedQARepository
 from application.skills import SkillCatalogPort, SkillInvocationView
 
 from .context import ConversationContextService, ConversationContextSnapshot
+from .metrics import AssistantMetrics
 from .runs import AssistantTurnApplicationPort, AssistantTurnSubmission
 
 
@@ -284,6 +285,7 @@ class AssistantCommandService:
         qa: GroundedQARepository,
         skill_invoker: SkillCommandInvoker | None = None,
         context: ConversationContextService | None = None,
+        metrics: AssistantMetrics | None = None,
     ) -> None:
         self.catalog = catalog
         self.parser = parser
@@ -293,8 +295,10 @@ class AssistantCommandService:
         self._qa = qa
         self._skill_invoker = skill_invoker
         self._context = context
+        self._metrics = metrics
 
     async def help(self) -> CommandExecutionResult:
+        self._record_command("help")
         return CommandExecutionResult(
             command="help",
             status="completed",
@@ -303,6 +307,7 @@ class AssistantCommandService:
         )
 
     async def skills(self) -> CommandExecutionResult:
+        self._record_command("skills")
         commands = tuple(
             item for item in self.catalog.list() if item.kind is AssistantCommandKind.SKILL
         )
@@ -311,6 +316,7 @@ class AssistantCommandService:
         )
 
     async def new_conversation(self, conversation_id: UUID) -> CommandExecutionResult:
+        self._record_command("new")
         current = await self._conversations.get_conversation(conversation_id)
         if current is None or current.archived_at is not None:
             raise CommandParseError("CONVERSATION_NOT_FOUND", "Conversation not found.")
@@ -327,8 +333,7 @@ class AssistantCommandService:
     async def compact(
         self, conversation_id: UUID, *, content: str, idempotency_key: str
     ) -> CommandExecutionResult:
-        # Step 5 owns summary persistence and execution. Step 4 still emits an explicit,
-        # idempotent command intent without pretending a compaction worker exists.
+        self._record_command("compact")
         current = await self._conversations.get_conversation(conversation_id)
         if current is None or current.archived_at is not None:
             raise CommandParseError("CONVERSATION_NOT_FOUND", "Conversation not found.")
@@ -344,12 +349,13 @@ class AssistantCommandService:
         return CommandExecutionResult(
             command="compact",
             status=run.status.value,
-            content="上下文压缩将在 Step 5 的 Worker 用例中执行。",
+            content="上下文压缩将在共享 Worker 中执行。",
             conversation_id=conversation_id,
             run=run,
         )
 
     async def stop(self, conversation_id: UUID) -> CommandExecutionResult:
+        self._record_command("stop")
         runs = await self._runs.list_conversation_runs(conversation_id)
         active = tuple(
             run
@@ -392,6 +398,7 @@ class AssistantCommandService:
             raise CommandParseError(
                 "SKILL_NOT_ACTIVE", "The requested Skill command is not active."
             )
+        self._record_command(descriptor.name)
         run = await self._turns.submit(
             AssistantTurnSubmission(
                 conversation_id=conversation_id,
@@ -449,6 +456,10 @@ class AssistantCommandService:
             status=promoted.status.value,
             run=promoted,
         )
+
+    def _record_command(self, command: str) -> None:
+        if self._metrics is not None:
+            self._metrics.record_command(command, matched=True)
 
 
 class SkillCommandInvoker(Protocol):

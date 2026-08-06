@@ -34,6 +34,8 @@ from model_gateway import (
     ModelGatewayError,
 )
 
+from .metrics import AssistantMetrics
+
 _SUMMARY_PROMPT_VERSION = "conversation-summary-prompt-v1"
 _SUMMARY_PROMPT = (
     files("application.assistant")
@@ -253,12 +255,14 @@ class ConversationCompactionService:
         runs: ConversationRunRepository,
         gateway: ModelGateway,
         summary_input_limit: int = 24_000,
+        metrics: AssistantMetrics | None = None,
     ) -> None:
         self._context = context
         self._data = data
         self._runs = runs
         self._gateway = gateway
         self._summary_input_limit = summary_input_limit
+        self._metrics = metrics
 
     async def execute(self, run_id: UUID) -> ConversationRun | None:
         run = await self._runs.get_conversation_run(run_id)
@@ -269,20 +273,37 @@ class ConversationCompactionService:
         if run.status in _terminal_statuses():
             return run
         if run.cancellation_requested:
-            return await self._runs.cancel_conversation_run(run_id)
+            cancelled = await self._runs.cancel_conversation_run(run_id)
+            self._record_compaction(cancelled.status.value)
+            return cancelled
         try:
             summary, usage, model_identity = await self._summarize(run)
             if summary is not None:
                 await self._data.create_conversation_summary(summary)
-            return await self._runs.complete_context_compaction(
+            completed = await self._runs.complete_context_compaction(
                 run_id,
                 usage=usage,
                 model_identity=model_identity,
             )
+            self._record_compaction(completed.status.value)
+            if self._metrics is not None:
+                self._metrics.record_usage(
+                    run_kind=run.run_kind.value,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    latency_ms=usage.model_latency_ms,
+                )
+            return completed
         except (ModelGatewayError, QAContractError, ValueError):
-            return await self._runs.fail_conversation_run(
+            failed = await self._runs.fail_conversation_run(
                 run_id, error_code="RUN_CONTEXT_COMPACTION_FAILED"
             )
+            self._record_compaction(failed.status.value)
+            return failed
+
+    def _record_compaction(self, status: str) -> None:
+        if self._metrics is not None:
+            self._metrics.record_compaction(mode="worker", status=status)
 
     async def _summarize(
         self, run: ConversationRun
@@ -324,21 +345,25 @@ class ConversationCompactionService:
             model_latency_ms=response.latency_ms,
         )
         model_identity = self._gateway.status.provider.value
-        return ConversationSummary(
-            conversation_id=run.conversation_id,
-            space_id=run.space_id,
-            run_id=run.run_id,
-            covered_start_message_id=messages[0].message_id,
-            covered_end_message_id=pending[-1].message_id,
-            covered_message_count=target_index,
-            content=content,
-            prompt_version=_SUMMARY_PROMPT_VERSION,
-            model_identity=model_identity,
-            sensitivity=most_restrictive_sensitivity(
-                tuple(item.sensitivity for item in summaries)
-                or (ConversationSensitivity.PRIVATE_LOCAL,)
+        return (
+            ConversationSummary(
+                conversation_id=run.conversation_id,
+                space_id=run.space_id,
+                run_id=run.run_id,
+                covered_start_message_id=messages[0].message_id,
+                covered_end_message_id=pending[-1].message_id,
+                covered_message_count=target_index,
+                content=content,
+                prompt_version=_SUMMARY_PROMPT_VERSION,
+                model_identity=model_identity,
+                sensitivity=most_restrictive_sensitivity(
+                    tuple(item.sensitivity for item in summaries)
+                    or (ConversationSensitivity.PRIVATE_LOCAL,)
+                ),
             ),
-        ), usage, model_identity
+            usage,
+            model_identity,
+        )
 
 
 def _latest_usable_summary(

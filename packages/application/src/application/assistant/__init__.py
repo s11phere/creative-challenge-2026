@@ -27,6 +27,12 @@ from .context import (
     ConversationContextService,
     ConversationContextSnapshot,
 )
+from .metrics import (
+    AssistantAction,
+    AssistantMetrics,
+    AssistantRoutingObservation,
+    aggregate_assistant_metrics,
+)
 from .resources import (
     NaturalLanguageResourceResolver,
     ResolvedResource,
@@ -58,6 +64,10 @@ __all__ = [
     "ConversationContextMessage",
     "ConversationContextService",
     "ConversationContextSnapshot",
+    "AssistantAction",
+    "AssistantMetrics",
+    "AssistantRoutingObservation",
+    "aggregate_assistant_metrics",
     "CommandCatalogError",
     "CommandDescriptor",
     "CommandExecutionResult",

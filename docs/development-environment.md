@@ -140,6 +140,22 @@ rejected unless `MODEL_ALLOW_EXTERNAL=true` is also set. URL-embedded credential
 parameters are always rejected. Default tests use the fake or a synthetic local HTTP stub and never
 call a real or paid model.
 
+## Assistant Routing Development Metrics
+
+Validate the pinned Assistant routing dataset without executing a model or reading the controlled
+corpus:
+
+```powershell
+uv run --frozen python scripts/evaluate_assistant_routing.py --validate-only
+```
+
+The command accepts only `synthetic_only` development cases with hash-checked schema and case files.
+To aggregate predictions, provide body-free metadata containing actions, safe Skill names, counts,
+usage, latency, and termination reasons. Its JSON report is permanently marked
+`quality_status=provisional` and `dataset_split=development`; it is not a retrieval, answer, or Skill
+holdout and cannot be enabled as one. Do not write user text, prompts, document text, Provider
+responses, or internal resource IDs to prediction files or operational metric logs.
+
 ### Web QA provider split
 
 `text-embeddings-inference` is an embedding/reranking adapter, not a Chat adapter. Do not set it as
