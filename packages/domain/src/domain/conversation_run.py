@@ -226,6 +226,40 @@ class ConversationRunRepository(Protocol):
 
     async def prepare_conversation_recovery(self) -> tuple[UUID, ...]: ...
 
+    async def prepare_assistant_recovery(self) -> tuple[UUID, ...]: ...
+
+    async def claim_conversation_run(
+        self, run_id: UUID, *, lease_owner: str, lease_seconds: int
+    ) -> ConversationRun | None: ...
+
+    async def renew_conversation_run_lease(
+        self, run_id: UUID, *, lease_owner: str, lease_seconds: int
+    ) -> bool: ...
+
+    async def release_conversation_run_lease(self, run_id: UUID, *, lease_owner: str) -> None: ...
+
+    async def publish_direct_message(
+        self,
+        *,
+        run_id: UUID,
+        message: MessageRecord,
+        usage: ConversationRunUsage,
+        model_identity: str,
+    ) -> ConversationRun: ...
+
+    async def publish_clarification(
+        self,
+        *,
+        run_id: UUID,
+        clarification: Clarification,
+        usage: ConversationRunUsage,
+        model_identity: str,
+    ) -> ConversationRun: ...
+
+    async def fail_conversation_run(self, run_id: UUID, *, error_code: str) -> ConversationRun: ...
+
+    async def cancel_conversation_run(self, run_id: UUID) -> ConversationRun: ...
+
 
 __all__ = [
     "AssistantResult",

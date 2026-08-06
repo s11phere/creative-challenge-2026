@@ -24,6 +24,13 @@ from .agent_runtime import (
     transition_run,
     validate_recovery,
 )
+from .assistant_sse import (
+    ASSISTANT_TERMINAL_EVENT_TYPES,
+    AssistantEventLog,
+    AssistantEventStore,
+    AssistantEventType,
+    AssistantStreamEvent,
+)
 from .chunking import (
     Chunker,
     ChunkerConfig,
@@ -182,8 +189,13 @@ from .retrieval import (
 
 __all__ = [
     "AgentRun",
+    "ASSISTANT_TERMINAL_EVENT_TYPES",
+    "AssistantEventLog",
+    "AssistantEventStore",
+    "AssistantEventType",
     "AssistantResult",
     "AssistantResultKind",
+    "AssistantStreamEvent",
     "AgentRunContext",
     "AgentRuntime",
     "ApprovalPort",

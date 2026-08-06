@@ -30,12 +30,16 @@ def setup_worker() -> None:
     """Configure process-local observability when Dramatiq imports the broker."""
     configure_observability(settings, service_name="worker")
     import worker.ingestion_tasks  # noqa: F401 — register ingestion actors
-    from worker import qa_tasks
+    from worker import assistant_tasks, qa_tasks
 
     try:
         qa_tasks.recover_qa_runs_sync()
     except Exception:
         logger.exception("qa_run_startup_recovery_failed")
+    try:
+        assistant_tasks.recover_assistant_runs_sync()
+    except Exception:
+        logger.exception("assistant_run_startup_recovery_failed")
 
 
 class DiagnosticResult(TypedDict):

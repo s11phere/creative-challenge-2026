@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from domain.conversation_run import (
     AssistantResult,
     AssistantResultKind,
+    Clarification,
     ConversationRun,
     ConversationRunKind,
     ConversationRunSelectionSource,
@@ -60,6 +61,7 @@ class InMemoryGroundedQARepository:
         self._run_keys: dict[tuple[UUID, str, str], UUID] = {}
         self._conversation_runs: dict[UUID, ConversationRun] = {}
         self._conversation_run_keys: dict[tuple[UUID, str, str], UUID] = {}
+        self._conversation_run_leases: dict[UUID, tuple[str, datetime]] = {}
         self._evidence: dict[tuple[UUID, UUID], EvidenceRecord] = {}
         self._citations: dict[tuple[UUID, UUID], CitationRecord] = {}
         self._feedback: dict[UUID, FeedbackRecord] = {}
@@ -252,6 +254,249 @@ class InMemoryGroundedQARepository:
                     ConversationRunStatus.CANCEL_REQUESTED,
                 }
             )
+
+    async def prepare_assistant_recovery(self) -> tuple[UUID, ...]:
+        async with self._lock:
+            now = datetime.now(UTC)
+            recovered: list[UUID] = []
+            for run_id, run in self._conversation_runs.items():
+                if run.run_kind is not ConversationRunKind.ASSISTANT_TURN:
+                    continue
+                if run.status not in {
+                    ConversationRunStatus.CREATED,
+                    ConversationRunStatus.QUEUED,
+                    ConversationRunStatus.RUNNING,
+                    ConversationRunStatus.CANCEL_REQUESTED,
+                }:
+                    continue
+                lease = self._conversation_run_leases.get(run_id)
+                if lease is not None and lease[1] > now:
+                    continue
+                self._conversation_run_leases.pop(run_id, None)
+                if run.status is ConversationRunStatus.RUNNING:
+                    run = replace(
+                        run,
+                        status=ConversationRunStatus.QUEUED,
+                        updated_at=now,
+                    )
+                    self._conversation_runs[run_id] = run
+                recovered.append(run_id)
+            return tuple(recovered)
+
+    async def claim_conversation_run(
+        self, run_id: UUID, *, lease_owner: str, lease_seconds: int
+    ) -> ConversationRun | None:
+        if not lease_owner.strip() or lease_seconds < 1:
+            raise ValueError("ConversationRun lease owner and duration are required")
+        async with self._lock:
+            run = self._conversation_runs.get(run_id)
+            if run is None or run.run_kind is not ConversationRunKind.ASSISTANT_TURN:
+                return None
+            if run.status in {
+                ConversationRunStatus.COMPLETED,
+                ConversationRunStatus.REFUSED,
+                ConversationRunStatus.FAILED,
+                ConversationRunStatus.CANCELLED,
+                ConversationRunStatus.TIMED_OUT,
+                ConversationRunStatus.WAITING_CLARIFICATION,
+            }:
+                return run
+            now = datetime.now(UTC)
+            lease = self._conversation_run_leases.get(run_id)
+            if lease is not None and lease[0] != lease_owner and lease[1] > now:
+                return None
+            self._conversation_run_leases[run_id] = (
+                lease_owner,
+                now + timedelta(seconds=lease_seconds),
+            )
+            if run.status in {ConversationRunStatus.CREATED, ConversationRunStatus.QUEUED}:
+                run = replace(run, status=ConversationRunStatus.RUNNING, updated_at=now)
+                self._conversation_runs[run_id] = run
+            return run
+
+    async def renew_conversation_run_lease(
+        self, run_id: UUID, *, lease_owner: str, lease_seconds: int
+    ) -> bool:
+        if not lease_owner.strip() or lease_seconds < 1:
+            raise ValueError("ConversationRun lease owner and duration are required")
+        async with self._lock:
+            run = self._conversation_runs.get(run_id)
+            lease = self._conversation_run_leases.get(run_id)
+            if (
+                run is None
+                or lease is None
+                or lease[0] != lease_owner
+                or run.status
+                in {
+                    ConversationRunStatus.COMPLETED,
+                    ConversationRunStatus.REFUSED,
+                    ConversationRunStatus.FAILED,
+                    ConversationRunStatus.CANCELLED,
+                    ConversationRunStatus.TIMED_OUT,
+                    ConversationRunStatus.WAITING_CLARIFICATION,
+                }
+            ):
+                return False
+            self._conversation_run_leases[run_id] = (
+                lease_owner,
+                datetime.now(UTC) + timedelta(seconds=lease_seconds),
+            )
+            return True
+
+    async def release_conversation_run_lease(self, run_id: UUID, *, lease_owner: str) -> None:
+        async with self._lock:
+            lease = self._conversation_run_leases.get(run_id)
+            if lease is not None and lease[0] == lease_owner:
+                self._conversation_run_leases.pop(run_id, None)
+
+    async def publish_direct_message(
+        self,
+        *,
+        run_id: UUID,
+        message: MessageRecord,
+        usage: ConversationRunUsage,
+        model_identity: str,
+    ) -> ConversationRun:
+        async with self._lock:
+            run = self._require_assistant_conversation_run(run_id)
+            if run.status in {
+                ConversationRunStatus.COMPLETED,
+                ConversationRunStatus.REFUSED,
+                ConversationRunStatus.FAILED,
+                ConversationRunStatus.CANCELLED,
+                ConversationRunStatus.TIMED_OUT,
+            }:
+                return run
+            if run.cancellation_requested:
+                return self._cancel_assistant_conversation_run(run)
+            self._validate_direct_message(run, message)
+            if message.message_id in self._messages:
+                raise QAContractError("Assistant message identity already exists")
+            self._messages[message.message_id] = message
+            now = message.created_at
+            completed = replace(
+                run,
+                status=ConversationRunStatus.COMPLETED,
+                error_code=None,
+                model_identity=model_identity,
+                usage=usage,
+                result=AssistantResult(
+                    AssistantResultKind.DIRECT_MESSAGE, message_id=message.message_id
+                ),
+                updated_at=now,
+            )
+            self._conversation_runs[run_id] = completed
+            self._conversation_run_leases.pop(run_id, None)
+            conversation = self._conversations[run.conversation_id]
+            if now > conversation.updated_at:
+                self._conversations[run.conversation_id] = replace(conversation, updated_at=now)
+            return completed
+
+    async def publish_clarification(
+        self,
+        *,
+        run_id: UUID,
+        clarification: Clarification,
+        usage: ConversationRunUsage,
+        model_identity: str,
+    ) -> ConversationRun:
+        async with self._lock:
+            run = self._require_assistant_conversation_run(run_id)
+            if run.status in {
+                ConversationRunStatus.COMPLETED,
+                ConversationRunStatus.REFUSED,
+                ConversationRunStatus.FAILED,
+                ConversationRunStatus.CANCELLED,
+                ConversationRunStatus.TIMED_OUT,
+                ConversationRunStatus.WAITING_CLARIFICATION,
+            }:
+                return run
+            if run.cancellation_requested:
+                return self._cancel_assistant_conversation_run(run)
+            clarified = replace(
+                run,
+                status=ConversationRunStatus.WAITING_CLARIFICATION,
+                error_code=None,
+                model_identity=model_identity,
+                usage=usage,
+                result=AssistantResult(
+                    AssistantResultKind.CLARIFICATION,
+                    clarification=clarification,
+                ),
+                updated_at=datetime.now(UTC),
+            )
+            self._conversation_runs[run_id] = clarified
+            self._conversation_run_leases.pop(run_id, None)
+            return clarified
+
+    async def fail_conversation_run(self, run_id: UUID, *, error_code: str) -> ConversationRun:
+        if not error_code.strip():
+            raise ValueError("ConversationRun failure requires an error code")
+        async with self._lock:
+            run = self._require_assistant_conversation_run(run_id)
+            if run.status in {
+                ConversationRunStatus.COMPLETED,
+                ConversationRunStatus.REFUSED,
+                ConversationRunStatus.FAILED,
+                ConversationRunStatus.CANCELLED,
+                ConversationRunStatus.TIMED_OUT,
+            }:
+                return run
+            if run.cancellation_requested:
+                return self._cancel_assistant_conversation_run(run)
+            failed = replace(
+                run,
+                status=ConversationRunStatus.FAILED,
+                error_code=error_code,
+                result=None,
+                updated_at=datetime.now(UTC),
+            )
+            self._conversation_runs[run_id] = failed
+            self._conversation_run_leases.pop(run_id, None)
+            return failed
+
+    async def cancel_conversation_run(self, run_id: UUID) -> ConversationRun:
+        async with self._lock:
+            run = self._require_assistant_conversation_run(run_id)
+            if run.status in {
+                ConversationRunStatus.COMPLETED,
+                ConversationRunStatus.REFUSED,
+                ConversationRunStatus.FAILED,
+                ConversationRunStatus.CANCELLED,
+                ConversationRunStatus.TIMED_OUT,
+            }:
+                return run
+            return self._cancel_assistant_conversation_run(run)
+
+    def _require_assistant_conversation_run(self, run_id: UUID) -> ConversationRun:
+        run = self._conversation_runs.get(run_id)
+        if run is None or run.run_kind is not ConversationRunKind.ASSISTANT_TURN:
+            raise QAContractError("Assistant ConversationRun does not exist")
+        return run
+
+    @staticmethod
+    def _validate_direct_message(run: ConversationRun, message: MessageRecord) -> None:
+        if (
+            message.role is not MessageRole.ASSISTANT
+            or message.run_id != run.run_id
+            or message.conversation_id != run.conversation_id
+            or message.space_id != run.space_id
+            or message.idempotency_key is not None
+        ):
+            raise QAContractError("Assistant message does not belong to the ConversationRun")
+
+    def _cancel_assistant_conversation_run(self, run: ConversationRun) -> ConversationRun:
+        cancelled = replace(
+            run,
+            status=ConversationRunStatus.CANCELLED,
+            cancellation_requested=True,
+            error_code=None,
+            result=None,
+            updated_at=datetime.now(UTC),
+        )
+        self._conversation_runs[run.run_id] = cancelled
+        self._conversation_run_leases.pop(run.run_id, None)
+        return cancelled
 
     async def create_run(self, run: QARunRecord) -> QARunRecord:
         async with self._lock:

@@ -20,6 +20,24 @@ in the current environment.
 澄清续答或 v2 SSE。这是工程契约演进，不改变 ADR-010/ADR-011 的 provisional 边界，也不构成任何
 正式检索、回答或 Skill 质量验收。
 
+## 2026-08-06 Assistant Conversation Evolution Step 2
+
+按 `agent-conversation-evolution-plan.md` 的 Step 2，v2 已形成 ordinary direct-conversation 的
+provisional 纵向闭环：`AssistantAgentService` 以冻结的基础 prompt 和
+`assistant-router-decision-v1` 严格解析模型输出；本步只接受 `respond` 与 `clarify`，
+`invoke_skill` 或无效 JSON 都以稳定失败码结束，绝不伪造 assistant 终态。直接回复、父 Run
+终态和实际 usage 在同一事务中写入；澄清使用服务端生成的确定性 ID 与安全元数据。
+
+新增 `assistant_events` 和 `agent-run-sse-v2`，只持久化状态、动作和错误码，不写入用户原文、
+回复正文或模型原始输出。`assistant_run` 复用既有 `qa` Dramatiq 队列和 Worker lease/recovery
+机制；API 仅投递 `run_id`、`trace_id` 与事件版本。fake provider 对该冻结 router prompt 返回
+确定性 `respond` JSON，CI 不依赖外部模型。v2 公开了 `GET /api/v2/runs/{run_id}/events`。
+
+该步骤未开启 Skill catalog、自动 Skill 调用、slash command、资源解析或会话压缩，仍不改变
+ADR-010/ADR-011 的 provisional 边界，也不构成任何正式检索、回答或 Skill 质量验收。工程复核为
+`718 passed, 52 skipped`，Ruff、mypy、OpenAPI、单一 Alembic head 和 diff check 均通过；未运行
+formal holdout、未读取私有正文、未调用外部 Provider。
+
 最终工程复核（2026-08-04）：后端 `698 passed, 48 skipped`；Ruff format/check、mypy 通过；前端
 lint/typecheck/test/build 通过（28 tests）；隔离 PostgreSQL QA/Runtime/Skill 集成 `6 passed`；
 迁移 upgrade/downgrade/upgrade、单一 head 和 OpenAPI 一致性通过。Runtime 检查点摘要/Skill
@@ -47,11 +65,12 @@ lint/typecheck/test/build 通过（28 tests）；隔离 PostgreSQL QA/Runtime/Sk
 本看板不批准任何正式 holdout，不改变 `retrieval-v1.yaml`、`qa-v1.yaml` 或现有 Skill 的状态，
 也不改变阶段 0 的 `internal_team_only` 分发边界。
 
-### 1.1 Step 1 结果与继续策略
+### 1.1 Step 1/2 结果与继续策略
 
-Step 1 的正式质量前置门未通过，但当前 GPU development 结果满足 [ADR-011](adr/011-provisional-stage-4-5-continuation-gate.md)
-定义的 provisional continuation gate。因此可以进入 Step 2 的 provisional QA 工程工作；正式
-retrieval/answer holdout、正式质量结论和阶段退出仍被阻断。
+Step 1/2 的工程复核不改变正式质量前置门未通过的事实。当前 GPU development 结果仅满足
+[ADR-011](adr/011-provisional-stage-4-5-continuation-gate.md) 定义的 provisional continuation
+gate；确认后才可进入 Step 3 的 Skill catalog 与自动调用工程工作。正式 retrieval/answer holdout、
+正式质量结论和阶段退出仍被阻断。
 
 ### 1.2 Step 3 provisional E2E 结果
 
@@ -160,6 +179,7 @@ lint、typecheck、Vitest 27 项、production build，以及隔离 Web 首页、
 
 ## 6. 下一步进入条件
 
-Step 1 已完成 development 复核。确认本看板后可进入 Step 2 的 provisional QA 工程路径；不得
+Step 2 已完成 development 工程复核。确认本看板后可进入 Step 3 的 provisional Skill catalog
+工程路径；不得
 直接运行 `cases/evals/configs/retrieval-v1.yaml` 的当前 holdout，也不得仅通过修改
 `formal_runs_enabled` 开启正式评测。正式质量线仍需按 ADR-010/011 的后续触发条件重新建立。

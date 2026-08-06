@@ -1,5 +1,6 @@
 """Infrastructure: config, database, ORM, queue, logging, tracing, and parsers."""
 
+from .assistant_events import PostgresAssistantEventStore
 from .conversation_runs import PostgresConversationRunRepository
 from .orm import (
     Base,
@@ -58,6 +59,7 @@ __all__ = [
     "DerivedKnowledgeRecord",
     "ApprovalRecord",
     "PostgresApprovalPort",
+    "PostgresAssistantEventStore",
     "PostgresDerivedKnowledgeStore",
     "SourceModel",
     "SourceRepository",

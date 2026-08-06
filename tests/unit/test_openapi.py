@@ -22,6 +22,7 @@ async def test_openapi_includes_health_endpoints() -> None:
     assert "/api/v1/skills/{skill_name}/versions" in paths
     assert "/api/v2/conversations/{conversation_id}/turns" in paths
     assert "/api/v2/runs/{run_id}" in paths
+    assert "/api/v2/runs/{run_id}/events" in paths
     assert "/api/v2/runs/{run_id}/cancel" in paths
 
     schemas = schema["components"]["schemas"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -21,6 +22,7 @@ from domain.conversation_run import (
 from domain.grounded_qa import QAContractError
 from domain.qa_persistence import MessageRecord, MessageRole
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import Database
 from .orm import ConversationModel, ConversationRunModel, QAMessageModel
@@ -34,6 +36,18 @@ _TERMINAL = frozenset(
         ConversationRunStatus.TIMED_OUT,
     }
 )
+
+
+def _lease_is_active(model: ConversationRunModel, now: datetime) -> bool:
+    return model.lease_owner is not None and (
+        model.lease_expires_at is None or model.lease_expires_at > now
+    )
+
+
+def _clear_lease(model: ConversationRunModel) -> None:
+    model.lease_owner = None
+    model.lease_expires_at = None
+    model.heartbeat_at = None
 
 
 class PostgresConversationRunRepository:
@@ -104,6 +118,8 @@ class PostgresConversationRunRepository:
                     created_at=user_message.created_at,
                 )
             )
+            # The parent has a direct FK to this append-only user message.
+            await session.flush()
             session.add(_model(run))
             if user_message.created_at > conversation.updated_at:
                 conversation.updated_at = user_message.created_at
@@ -160,6 +176,234 @@ class PostgresConversationRunRepository:
                 )
             ).scalars()
             return tuple(models)
+
+    async def prepare_assistant_recovery(self) -> tuple[UUID, ...]:
+        """Return unleased Assistant work and reset expired direct executions."""
+        async with self._database.transaction() as session:
+            models = (
+                await session.execute(
+                    select(ConversationRunModel)
+                    .where(
+                        ConversationRunModel.run_kind == ConversationRunKind.ASSISTANT_TURN.value,
+                        ConversationRunModel.status.in_(
+                            (
+                                ConversationRunStatus.CREATED.value,
+                                ConversationRunStatus.QUEUED.value,
+                                ConversationRunStatus.RUNNING.value,
+                                ConversationRunStatus.CANCEL_REQUESTED.value,
+                            )
+                        ),
+                    )
+                    .order_by(ConversationRunModel.created_at, ConversationRunModel.id)
+                    .with_for_update()
+                )
+            ).scalars()
+            now = datetime.now(UTC)
+            recovered: list[UUID] = []
+            for model in models:
+                if _lease_is_active(model, now):
+                    continue
+                if model.status == ConversationRunStatus.RUNNING.value:
+                    model.status = ConversationRunStatus.QUEUED.value
+                    model.updated_at = now
+                _clear_lease(model)
+                recovered.append(model.id)
+            return tuple(recovered)
+
+    async def claim_conversation_run(
+        self, run_id: UUID, *, lease_owner: str, lease_seconds: int
+    ) -> ConversationRun | None:
+        if not lease_owner.strip() or lease_seconds < 1:
+            raise ValueError("ConversationRun lease owner and duration are required")
+        async with self._database.transaction() as session:
+            model = await session.get(ConversationRunModel, run_id, with_for_update=True)
+            if model is None or model.run_kind != ConversationRunKind.ASSISTANT_TURN.value:
+                return None
+            current = _run(model)
+            if (
+                current.status in _TERMINAL
+                or current.status is ConversationRunStatus.WAITING_CLARIFICATION
+            ):
+                return current
+            now = datetime.now(UTC)
+            if _lease_is_active(model, now) and model.lease_owner != lease_owner:
+                return None
+            model.lease_owner = lease_owner
+            model.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            model.heartbeat_at = now
+            if current.status in {ConversationRunStatus.CREATED, ConversationRunStatus.QUEUED}:
+                model.status = ConversationRunStatus.RUNNING.value
+            model.updated_at = now
+            await session.flush()
+            return _run(model)
+
+    async def renew_conversation_run_lease(
+        self, run_id: UUID, *, lease_owner: str, lease_seconds: int
+    ) -> bool:
+        if not lease_owner.strip() or lease_seconds < 1:
+            raise ValueError("ConversationRun lease owner and duration are required")
+        async with self._database.transaction() as session:
+            model = await session.get(ConversationRunModel, run_id, with_for_update=True)
+            if model is None or model.lease_owner != lease_owner:
+                return False
+            current = _run(model)
+            if (
+                current.status in _TERMINAL
+                or current.status is ConversationRunStatus.WAITING_CLARIFICATION
+            ):
+                return False
+            now = datetime.now(UTC)
+            model.heartbeat_at = now
+            model.lease_expires_at = now + timedelta(seconds=lease_seconds)
+            model.updated_at = now
+            return True
+
+    async def release_conversation_run_lease(self, run_id: UUID, *, lease_owner: str) -> None:
+        async with self._database.transaction() as session:
+            model = await session.get(ConversationRunModel, run_id, with_for_update=True)
+            if model is not None and model.lease_owner == lease_owner:
+                _clear_lease(model)
+
+    async def publish_direct_message(
+        self,
+        *,
+        run_id: UUID,
+        message: MessageRecord,
+        usage: ConversationRunUsage,
+        model_identity: str,
+    ) -> ConversationRun:
+        async with self._database.transaction() as session:
+            model = await self._locked_assistant_run(session, run_id)
+            current = _run(model)
+            if current.status in _TERMINAL:
+                return current
+            if current.cancellation_requested:
+                return self._cancel_locked(model)
+            self._validate_assistant_message(current, message)
+            existing = await session.get(QAMessageModel, message.message_id)
+            if existing is not None:
+                if (
+                    existing.conversation_id == message.conversation_id
+                    and existing.space_id == message.space_id
+                    and existing.role == MessageRole.ASSISTANT.value
+                    and existing.content == message.content
+                    and existing.run_id == message.run_id
+                ):
+                    return current
+                raise QAContractError("Assistant message identity already exists")
+            session.add(
+                QAMessageModel(
+                    id=message.message_id,
+                    conversation_id=message.conversation_id,
+                    run_id=message.run_id,
+                    space_id=message.space_id,
+                    role=message.role.value,
+                    content=message.content,
+                    idempotency_key=message.idempotency_key,
+                    created_at=message.created_at,
+                )
+            )
+            model.status = ConversationRunStatus.COMPLETED.value
+            model.error_code = None
+            model.model_identity = model_identity
+            model.usage = _usage_value(usage)
+            model.result = _result_value(
+                AssistantResult(AssistantResultKind.DIRECT_MESSAGE, message_id=message.message_id)
+            )
+            model.updated_at = message.created_at
+            _clear_lease(model)
+            conversation = await session.get(
+                ConversationModel, model.conversation_id, with_for_update=True
+            )
+            if conversation is not None and message.created_at > conversation.updated_at:
+                conversation.updated_at = message.created_at
+            await session.flush()
+            return _run(model)
+
+    async def publish_clarification(
+        self,
+        *,
+        run_id: UUID,
+        clarification: Clarification,
+        usage: ConversationRunUsage,
+        model_identity: str,
+    ) -> ConversationRun:
+        async with self._database.transaction() as session:
+            model = await self._locked_assistant_run(session, run_id)
+            current = _run(model)
+            if (
+                current.status in _TERMINAL
+                or current.status is ConversationRunStatus.WAITING_CLARIFICATION
+            ):
+                return current
+            if current.cancellation_requested:
+                return self._cancel_locked(model)
+            now = datetime.now(UTC)
+            model.status = ConversationRunStatus.WAITING_CLARIFICATION.value
+            model.error_code = None
+            model.model_identity = model_identity
+            model.usage = _usage_value(usage)
+            model.result = _result_value(
+                AssistantResult(AssistantResultKind.CLARIFICATION, clarification=clarification)
+            )
+            model.updated_at = now
+            _clear_lease(model)
+            await session.flush()
+            return _run(model)
+
+    async def fail_conversation_run(self, run_id: UUID, *, error_code: str) -> ConversationRun:
+        if not error_code.strip():
+            raise ValueError("ConversationRun failure requires an error code")
+        async with self._database.transaction() as session:
+            model = await self._locked_assistant_run(session, run_id)
+            current = _run(model)
+            if current.status in _TERMINAL:
+                return current
+            if current.cancellation_requested:
+                return self._cancel_locked(model)
+            model.status = ConversationRunStatus.FAILED.value
+            model.error_code = error_code
+            model.result = None
+            model.updated_at = datetime.now(UTC)
+            _clear_lease(model)
+            await session.flush()
+            return _run(model)
+
+    async def cancel_conversation_run(self, run_id: UUID) -> ConversationRun:
+        async with self._database.transaction() as session:
+            model = await self._locked_assistant_run(session, run_id)
+            current = _run(model)
+            if current.status in _TERMINAL:
+                return current
+            return self._cancel_locked(model)
+
+    @staticmethod
+    async def _locked_assistant_run(session: AsyncSession, run_id: UUID) -> ConversationRunModel:
+        model = await session.get(ConversationRunModel, run_id, with_for_update=True)
+        if model is None or model.run_kind != ConversationRunKind.ASSISTANT_TURN.value:
+            raise QAContractError("Assistant ConversationRun does not exist")
+        return model
+
+    @staticmethod
+    def _validate_assistant_message(run: ConversationRun, message: MessageRecord) -> None:
+        if (
+            message.role is not MessageRole.ASSISTANT
+            or message.run_id != run.run_id
+            or message.conversation_id != run.conversation_id
+            or message.space_id != run.space_id
+            or message.idempotency_key is not None
+        ):
+            raise QAContractError("Assistant message does not belong to the ConversationRun")
+
+    @staticmethod
+    def _cancel_locked(model: ConversationRunModel) -> ConversationRun:
+        model.status = ConversationRunStatus.CANCELLED.value
+        model.cancellation_requested = True
+        model.error_code = None
+        model.result = None
+        model.updated_at = datetime.now(UTC)
+        _clear_lease(model)
+        return _run(model)
 
 
 def _model(run: ConversationRun) -> ConversationRunModel:

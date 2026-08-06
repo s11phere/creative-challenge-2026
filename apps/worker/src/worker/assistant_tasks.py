@@ -1,0 +1,216 @@
+"""Dramatiq actor for durable product-level Assistant turns."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from contextlib import suppress
+from uuid import UUID, uuid4
+
+import dramatiq
+from application.assistant import AssistantAgentService
+from domain.conversation_run import ConversationRunStatus
+from infrastructure.assistant_events import PostgresAssistantEventStore
+from infrastructure.config import settings
+from infrastructure.conversation_runs import PostgresConversationRunRepository
+from infrastructure.database import Database
+from infrastructure.qa_persistence import PostgresGroundedQARepository
+from infrastructure.telemetry_context import (
+    bind_observability_context,
+    new_trace_id,
+    normalize_trace_id,
+    trace_parent_context,
+)
+from model_gateway import ModelGateway
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
+from sqlalchemy.pool import NullPool
+
+from worker.broker import broker
+from worker.qa_tasks import _create_gateway
+
+logger = logging.getLogger(__name__)
+tracer = trace.get_tracer("worker.assistant")
+database = Database(settings.database_url, poolclass=NullPool)
+_TERMINAL = frozenset(
+    {
+        ConversationRunStatus.COMPLETED,
+        ConversationRunStatus.REFUSED,
+        ConversationRunStatus.FAILED,
+        ConversationRunStatus.CANCELLED,
+        ConversationRunStatus.TIMED_OUT,
+        ConversationRunStatus.WAITING_CLARIFICATION,
+    }
+)
+
+
+@dramatiq.actor(
+    broker=broker,
+    actor_name="assistant_run",
+    queue_name="qa",
+    max_retries=settings.qa_task_max_retries,
+    time_limit=settings.qa_task_timeout_ms,
+    notify_shutdown=True,
+)
+def assistant_run(*, run_id: str, trace_id: str, event_version: int) -> None:
+    """Execute one persisted direct conversation turn using control metadata only."""
+    uid = UUID(run_id)
+    if event_version != 2:
+        raise ValueError("Unsupported Assistant task event version")
+    canonical_trace_id = normalize_trace_id(trace_id)
+    if canonical_trace_id is None:
+        raise ValueError("Invalid trace ID")
+    with (
+        tracer.start_as_current_span(
+            "assistant_run.process",
+            context=trace_parent_context(canonical_trace_id),
+            kind=SpanKind.CONSUMER,
+            attributes={
+                "messaging.system": "redis",
+                "messaging.operation.name": "process",
+                "assistant.run_id": run_id,
+            },
+        ),
+        bind_observability_context(trace_id=canonical_trace_id, task_id=run_id),
+    ):
+        if not _run_assistant_sync(uid):
+            raise dramatiq.Retry(
+                message="Assistant Run lease is active",
+                delay=settings.qa_task_retry_delay_ms,
+            )
+
+
+def _run_assistant_sync(run_id: UUID) -> bool:
+    loop = asyncio.new_event_loop()
+    gateway = _create_gateway()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(_run_assistant_async(run_id, gateway))
+    finally:
+        try:
+            loop.run_until_complete(gateway.aclose())
+        finally:
+            loop.close()
+
+
+async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
+    runs = PostgresConversationRunRepository(database)
+    lease_owner = str(uuid4())
+    claimed = await runs.claim_conversation_run(
+        run_id,
+        lease_owner=lease_owner,
+        lease_seconds=settings.qa_task_lease_seconds,
+    )
+    if claimed is None:
+        return False
+    service = AssistantAgentService(
+        runs=runs,
+        messages=PostgresGroundedQARepository(database),
+        gateway=gateway,
+        events=PostgresAssistantEventStore(database),
+    )
+    if claimed.status in _TERMINAL:
+        await service.execute(run_id)
+        return True
+
+    stop = asyncio.Event()
+    lease_lost = asyncio.Event()
+    heartbeat = asyncio.create_task(
+        _heartbeat(runs, run_id, lease_owner, stop, lease_lost),
+        name=f"assistant-heartbeat-{run_id}",
+    )
+    try:
+        execution = asyncio.create_task(
+            service.execute(run_id),
+            name=f"assistant-execution-{run_id}",
+        )
+        return await _wait_for_execution(execution, lease_lost, run_id=run_id)
+    finally:
+        stop.set()
+        await heartbeat
+        await runs.release_conversation_run_lease(run_id, lease_owner=lease_owner)
+
+
+async def _wait_for_execution(
+    execution: asyncio.Task[object], lease_lost: asyncio.Event, *, run_id: UUID
+) -> bool:
+    lease_guard = asyncio.create_task(
+        lease_lost.wait(),
+        name=f"assistant-lease-guard-{run_id}",
+    )
+    done, _pending = await asyncio.wait(
+        {execution, lease_guard}, return_when=asyncio.FIRST_COMPLETED
+    )
+    if lease_guard in done and lease_lost.is_set() and not execution.done():
+        execution.cancel()
+        with suppress(asyncio.CancelledError):
+            await execution
+        return False
+    lease_guard.cancel()
+    with suppress(asyncio.CancelledError):
+        await lease_guard
+    await execution
+    return True
+
+
+async def _heartbeat(
+    runs: PostgresConversationRunRepository,
+    run_id: UUID,
+    lease_owner: str,
+    stop: asyncio.Event,
+    lease_lost: asyncio.Event,
+) -> None:
+    interval = min(settings.qa_task_heartbeat_interval_s, settings.qa_task_lease_seconds / 2)
+    while True:
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+            return
+        except TimeoutError:
+            renewed = await runs.renew_conversation_run_lease(
+                run_id,
+                lease_owner=lease_owner,
+                lease_seconds=settings.qa_task_lease_seconds,
+            )
+            if not renewed:
+                lease_lost.set()
+                return
+
+
+def enqueue_assistant_run(
+    *, run_id: str, trace_id: str, event_version: int = 2
+) -> dramatiq.Message[None]:
+    UUID(run_id)
+    canonical_trace_id = normalize_trace_id(trace_id)
+    if canonical_trace_id is None:
+        raise ValueError("Invalid trace ID")
+    if event_version != 2:
+        raise ValueError("Unsupported Assistant task event version")
+    message = assistant_run.send(
+        run_id=run_id,
+        trace_id=canonical_trace_id,
+        event_version=event_version,
+    )
+    logger.info(
+        "assistant_run_enqueued",
+        extra={"message_id": message.message_id, "run_id": run_id, "trace_id": canonical_trace_id},
+    )
+    return message
+
+
+def recover_assistant_runs_sync() -> tuple[UUID, ...]:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        run_ids = loop.run_until_complete(
+            PostgresConversationRunRepository(database).prepare_assistant_recovery()
+        )
+    finally:
+        loop.close()
+    for run_id in run_ids:
+        enqueue_assistant_run(run_id=str(run_id), trace_id=new_trace_id(), event_version=2)
+    if run_ids:
+        logger.info("assistant_runs_recovered", extra={"run_count": len(run_ids)})
+    return run_ids
+
+
+__all__ = ["assistant_run", "enqueue_assistant_run", "recover_assistant_runs_sync"]

@@ -380,6 +380,11 @@ class ConversationRunModel(Base):
     skill_content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     usage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
@@ -400,6 +405,7 @@ class ConversationRunModel(Base):
         ),
         Index("idx_conversation_runs_conversation", "conversation_id", "created_at"),
         Index("idx_conversation_runs_status", "status", "updated_at"),
+        Index("idx_conversation_runs_recovery", "run_kind", "status", "lease_expires_at"),
     )
 
 
@@ -557,6 +563,23 @@ class QAEventModel(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_qa_events_run_sequence"),)
+
+
+class AssistantEventModel(Base):
+    """Privacy-safe product-level Assistant events, distinct from legacy QA SSE."""
+
+    __tablename__ = "assistant_events"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversation_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_assistant_events_run_sequence"),
+    )
 
 
 class QAFeedbackModel(Base):

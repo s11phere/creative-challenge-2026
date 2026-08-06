@@ -7,7 +7,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal, cast
 
-from application.assistant import ConversationReader, ConversationRunService
+from application.assistant import (
+    AssistantAgentService,
+    AssistantMessageReader,
+    ConversationReader,
+    ConversationRunService,
+)
 from application.qa import (
     CitationResolver,
     PublishedCitationApplicationPort,
@@ -20,11 +25,13 @@ from application.skills import (
     SkillLifecycleService,
 )
 from domain.agent_runtime import ApprovalPort
+from domain.assistant_sse import AssistantEventLog, AssistantEventStore
 from domain.conversation_run import ConversationRunRepository
 from domain.grounded_qa import CitationContentKind
 from domain.qa_persistence import GroundedQARepository
 from domain.qa_sse import QAEventStore
 from fastapi import FastAPI, Response
+from infrastructure.assistant_events import PostgresAssistantEventStore
 from infrastructure.blob_store import LocalFileBlobStore
 from infrastructure.config import settings
 from infrastructure.conversation_runs import PostgresConversationRunRepository
@@ -51,6 +58,7 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
 
+from .assistant_runtime import AssistantWorkerDispatcher
 from .errors import ErrorResponse, register_error_handlers
 from .observability import TraceMiddleware
 from .qa_runtime import QAWorkerDispatcher
@@ -102,6 +110,8 @@ def create_app(
     qa_repository: GroundedQARepository | None = None,
     conversation_run_repository: ConversationRunRepository | None = None,
     qa_event_store: QAEventStore | None = None,
+    assistant_event_store: AssistantEventStore | None = None,
+    assistant_runtime: AssistantWorkerDispatcher | None = None,
     qa_citation_service: PublishedCitationApplicationPort | None = None,
     skill_catalog: SkillCatalogPort | None = None,
     skill_activation_store: SkillActivationStore | None = None,
@@ -120,6 +130,14 @@ def create_app(
             "list_conversation_runs",
             "request_conversation_cancel",
             "prepare_conversation_recovery",
+            "prepare_assistant_recovery",
+            "claim_conversation_run",
+            "renew_conversation_run_lease",
+            "release_conversation_run_lease",
+            "publish_direct_message",
+            "publish_clarification",
+            "fail_conversation_run",
+            "cancel_conversation_run",
         )
         conversation_run_repository = (
             cast(ConversationRunRepository, qa_repository)
@@ -131,6 +149,21 @@ def create_app(
         runs=conversation_run_repository,
     )
     qa_event_log = qa_event_store or PostgresQAEventStore(database)
+    if assistant_event_store is not None:
+        assistant_event_log = assistant_event_store
+    elif id(conversation_run_repository) == id(qa_repository):
+        assistant_event_log = AssistantEventLog()
+    else:
+        assistant_event_log = PostgresAssistantEventStore(database)
+    assistant_agent_service = AssistantAgentService(
+        runs=conversation_run_repository,
+        messages=cast(AssistantMessageReader, qa_repository),
+        gateway=gateway,
+        events=assistant_event_log,
+    )
+    assistant_runtime = assistant_runtime or AssistantWorkerDispatcher(
+        repository=conversation_run_repository
+    )
     skill_registry = knowledge_qa_registry()
     activation_store = skill_activation_store or PostgresSkillActivationStore(database)
     skill_lifecycle = SkillLifecycleService(
@@ -171,6 +204,7 @@ def create_app(
             if enable_qa_execution:
                 await skill_lifecycle.current("knowledge_qa")
                 await qa_runtime.recover()
+                await assistant_runtime.recover()
             yield
         finally:
             await database.dispose()
@@ -190,6 +224,9 @@ def create_app(
     app.state.qa_repository = qa_repository
     app.state.conversation_run_repository = conversation_run_repository
     app.state.assistant_turn_service = assistant_turn_service
+    app.state.assistant_agent_service = assistant_agent_service
+    app.state.assistant_event_log = assistant_event_log
+    app.state.assistant_runtime = assistant_runtime
     app.state.qa_event_log = qa_event_log
     app.state.qa_runtime = qa_runtime
     app.state.qa_citation_service = qa_citation_service
