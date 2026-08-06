@@ -21,6 +21,7 @@ async def test_openapi_includes_health_endpoints() -> None:
     assert "/api/v1/skills" in paths
     assert "/api/v1/skills/{skill_name}/versions" in paths
     assert "/api/v2/conversations/{conversation_id}/turns" in paths
+    assert "/api/v2/commands" in paths
     assert "/api/v2/runs/{run_id}" in paths
     assert "/api/v2/runs/{run_id}/events" in paths
     assert "/api/v2/runs/{run_id}/cancel" in paths
@@ -34,6 +35,8 @@ async def test_openapi_includes_health_endpoints() -> None:
     assert "SearchApiResponse" in schemas
     assert "AssistantTurnRequest" in schemas
     assert "ConversationRunResponse" in schemas
+    assert "CommandCatalogResponse" in schemas
+    assert "CommandExecutionResponse" in schemas
     assert "model" in schemas["ReadinessChecks"]["properties"]
     assert "model" in schemas["ReadinessChecks"]["required"]
 
@@ -69,6 +72,8 @@ async def test_openapi_includes_health_endpoints() -> None:
     assert turn_operation["requestBody"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/AssistantTurnRequest"
     }
-    assert turn_operation["responses"]["202"]["content"]["application/json"]["schema"] == {
-        "$ref": "#/components/schemas/ConversationRunResponse"
+    turn_schema = turn_operation["responses"]["202"]["content"]["application/json"]["schema"]
+    assert {item["$ref"] for item in turn_schema["anyOf"]} == {
+        "#/components/schemas/ConversationRunResponse",
+        "#/components/schemas/CommandExecutionResponse",
     }

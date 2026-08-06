@@ -9,11 +9,16 @@ from typing import Any
 from uuid import UUID
 
 from application.assistant import (
+    AssistantCommandKind,
     AssistantTurnSubmission,
+    CommandCatalogError,
+    CommandDescriptor,
+    CommandExecutionResult,
+    CommandParseError,
     ConversationRunApplicationError,
 )
 from domain.assistant_sse import AssistantEventStore, AssistantEventType
-from domain.conversation_run import ConversationRun
+from domain.conversation_run import ConversationRun, ConversationRunKind, ConversationRunStatus
 from domain.grounded_qa import QAContractError
 from domain.qa_persistence import MessageRole
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -28,6 +33,21 @@ router = APIRouter(prefix="/api/v2")
 class AssistantTurnRequest(BaseModel):
     content: str = Field(min_length=1, max_length=12000)
     idempotency_key: str = Field(min_length=1, max_length=200)
+    command: str | None = Field(default=None, min_length=1, max_length=32)
+
+
+class AssistantCommandResponse(BaseModel):
+    name: str
+    aliases: list[str]
+    kind: str
+    description: str
+    argument_hint: str
+    input_mode: str
+
+
+class CommandCatalogResponse(BaseModel):
+    schema_version: str = "assistant-command-catalog-v1"
+    commands: list[AssistantCommandResponse]
 
 
 class SkillIdentityResponse(BaseModel):
@@ -78,7 +98,17 @@ class ConversationRunResponse(BaseModel):
     usage: UsageResponse
 
 
+class CommandExecutionResponse(BaseModel):
+    command: str
+    status: str
+    content: str | None = None
+    conversation_id: UUID | None = None
+    run: ConversationRunResponse | None = None
+    commands: list[AssistantCommandResponse] = Field(default_factory=list)
+
+
 _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    400: {"model": ErrorResponse, "description": "Command could not be parsed"},
     404: {"model": ErrorResponse, "description": "Conversation or Run was not found"},
     409: {"model": ErrorResponse, "description": "Idempotency or Run state conflict"},
 }
@@ -86,22 +116,61 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 
 @router.post(
     "/conversations/{conversation_id}/turns",
-    response_model=ConversationRunResponse,
+    response_model=ConversationRunResponse | CommandExecutionResponse,
     status_code=202,
     responses=_ERROR_RESPONSES,
 )
 async def submit_turn(
     conversation_id: UUID, body: AssistantTurnRequest, request: Request
-) -> ConversationRunResponse:
+) -> ConversationRunResponse | CommandExecutionResponse:
     """Durably accept a user turn without synchronously selecting or calling a model."""
+    commands = request.app.state.assistant_command_service
     try:
+        parsed = commands.parser.parse(body.content, declared_command=body.command)
+        if parsed.descriptor is not None:
+            if parsed.descriptor.kind is AssistantCommandKind.SKILL:
+                executed = await commands.invoke_skill(
+                    conversation_id, parsed, idempotency_key=body.idempotency_key
+                )
+                assert executed.run is not None
+                await _publish_command_events(executed.run, request)
+                return await _command_response(executed, request)
+            if parsed.descriptor.name == "help":
+                return await _command_response(await commands.help(), request)
+            if parsed.descriptor.name == "skills":
+                return await _command_response(await commands.skills(), request)
+            if parsed.descriptor.name == "new":
+                return await _command_response(
+                    await commands.new_conversation(conversation_id), request
+                )
+            if parsed.descriptor.name == "compact":
+                return await _command_response(
+                    await commands.compact(
+                        conversation_id, content=body.content, idempotency_key=body.idempotency_key
+                    ),
+                    request,
+                )
+            if parsed.descriptor.name == "stop":
+                return await _command_response(await commands.stop(conversation_id), request)
+            raise CommandParseError("RUN_COMMAND_UNKNOWN", "Unknown Assistant command.")
         run = await request.app.state.assistant_turn_service.submit(
             AssistantTurnSubmission(
                 conversation_id=conversation_id,
-                content=body.content,
+                content=parsed.content,
                 idempotency_key=body.idempotency_key,
             )
         )
+    except CommandParseError as exc:
+        raise AppError(
+            exc.code,
+            "Command could not be completed.",
+            400,
+            details={"candidates": [candidate.public_dict() for candidate in exc.candidates]},
+        ) from exc
+    except CommandCatalogError as exc:
+        raise AppError(
+            "RUN_AGENT_DECISION_INVALID", "Command catalog is unavailable.", 409
+        ) from exc
     except ConversationRunApplicationError as exc:
         raise AppError("CONVERSATION_NOT_FOUND", "Conversation not found", 404) from exc
     except QAContractError as exc:
@@ -116,6 +185,14 @@ async def submit_turn(
     if request.app.state.qa_execution_enabled:
         request.app.state.assistant_runtime.start(run.run_id)
     return await _response(run, request)
+
+
+@router.get("/commands", response_model=CommandCatalogResponse)
+async def list_commands(request: Request) -> CommandCatalogResponse:
+    commands = request.app.state.assistant_command_service.catalog.list()
+    return CommandCatalogResponse(
+        commands=[_command_descriptor_response(item) for item in commands]
+    )
 
 
 @router.get("/runs/{run_id}", response_model=ConversationRunResponse, responses=_ERROR_RESPONSES)
@@ -229,3 +306,57 @@ async def _response(run: ConversationRun, request: Request) -> ConversationRunRe
             model_latency_ms=run.usage.model_latency_ms,
         ),
     )
+
+
+async def _command_response(
+    result: CommandExecutionResult, request: Request
+) -> CommandExecutionResponse:
+    return CommandExecutionResponse(
+        command=result.command,
+        status=result.status,
+        content=result.content,
+        conversation_id=result.conversation_id,
+        run=await _response(result.run, request) if result.run is not None else None,
+        commands=[_command_descriptor_response(item) for item in result.commands],
+    )
+
+
+def _command_descriptor_response(item: CommandDescriptor) -> AssistantCommandResponse:
+    return AssistantCommandResponse(
+        name=item.name,
+        aliases=list(item.aliases),
+        kind=item.kind.value,
+        description=item.description,
+        argument_hint=item.argument_hint,
+        input_mode=item.input_mode,
+    )
+
+
+async def _publish_command_events(run: ConversationRun, request: Request) -> None:
+    events: AssistantEventStore = request.app.state.assistant_event_log
+    published = {event.event_type for event in await events.replay(run.run_id)}
+    if AssistantEventType.ACCEPTED not in published:
+        await events.append(
+            run.run_id,
+            AssistantEventType.ACCEPTED,
+            {"status": run.status.value, "selection_source": "command"},
+        )
+    if (
+        run.run_kind in {ConversationRunKind.GROUNDED_QA, ConversationRunKind.SKILL}
+        and run.status is not ConversationRunStatus.WAITING_CLARIFICATION
+        and AssistantEventType.SKILL_STARTED not in published
+    ):
+        await events.append(
+            run.run_id,
+            AssistantEventType.SKILL_STARTED,
+            {"status": run.status.value, "skill": run.skill.name if run.skill else "unknown"},
+        )
+    if (
+        run.status is ConversationRunStatus.WAITING_CLARIFICATION
+        and AssistantEventType.CLARIFICATION not in published
+    ):
+        await events.append(
+            run.run_id,
+            AssistantEventType.CLARIFICATION,
+            {"status": run.status.value, "action": "clarify"},
+        )

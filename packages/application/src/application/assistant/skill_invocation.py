@@ -58,14 +58,27 @@ class AssistantSkillInvocationService:
         self._projection = projection
         self._resources = resources
 
+    @property
+    def catalog(self) -> SkillCatalogPort:
+        return self._catalog
+
     async def invoke(
         self,
         run: ConversationRun,
         *,
         skill: SkillInvocationView,
         arguments: Mapping[str, object],
+        selection_source: ConversationRunSelectionSource = ConversationRunSelectionSource.AUTO,
     ) -> ConversationRun:
-        if skill.name not in {entry.name for entry in self._catalog.list_active_invocations()}:
+        active_skill = next(
+            (
+                entry
+                for entry in self._catalog.list_active_invocations()
+                if entry.name == skill.name
+            ),
+            None,
+        )
+        if active_skill is None or active_skill != skill:
             raise ValueError("SKILL_NOT_ACTIVE")
         if not _safe_arguments(arguments):
             raise ValueError("RUN_AGENT_DECISION_INVALID")
@@ -75,6 +88,20 @@ class AssistantSkillInvocationService:
             raise ValueError("SKILL_NOT_ACTIVE") from exc
         if pin.content_sha256 != skill.content_sha256:
             raise ValueError("SKILL_NOT_ACTIVE")
+        if skill.input_mode in {"question", "document", "sources"} and (
+            not isinstance(arguments.get("question"), str)
+            or not str(arguments["question"]).strip()
+        ):
+            return await self._runs.publish_clarification(
+                run_id=run.run_id,
+                clarification=Clarification(
+                    clarification_id=f"clarify:{run.run_id.hex}:question",
+                    kind=ClarificationKind.INPUT_REQUIRED,
+                    message="Please provide the question or task for this Skill.",
+                ),
+                usage=ConversationRunUsage(),
+                model_identity="router",
+            )
         resource_scope = None
         resource_type = arguments.get("resource_type")
         reference = arguments.get("resource_reference")
@@ -134,7 +161,7 @@ class AssistantSkillInvocationService:
         promoted = await self._runs.promote_to_skill(
             run.run_id,
             run_kind=run_kind,
-            selection_source=ConversationRunSelectionSource.AUTO,
+            selection_source=selection_source,
             skill=FixedSkillIdentity(skill.name, skill.version, skill.content_sha256),
             core_prompt_version="assistant-base-prompt-v2",
         )

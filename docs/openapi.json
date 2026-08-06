@@ -245,6 +245,47 @@
         "title": "ApprovalResponse",
         "type": "object"
       },
+      "AssistantCommandResponse": {
+        "properties": {
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
+          "argument_hint": {
+            "title": "Argument Hint",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "input_mode": {
+            "title": "Input Mode",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "aliases",
+          "kind",
+          "description",
+          "argument_hint",
+          "input_mode"
+        ],
+        "title": "AssistantCommandResponse",
+        "type": "object"
+      },
       "AssistantMessageResponse": {
         "properties": {
           "content": {
@@ -266,6 +307,19 @@
       },
       "AssistantTurnRequest": {
         "properties": {
+          "command": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
           "content": {
             "maxLength": 12000,
             "minLength": 1,
@@ -497,6 +551,85 @@
           "resource_candidates"
         ],
         "title": "ClarificationResponse",
+        "type": "object"
+      },
+      "CommandCatalogResponse": {
+        "properties": {
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantCommandResponse"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "schema_version": {
+            "default": "assistant-command-catalog-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "commands"
+        ],
+        "title": "CommandCatalogResponse",
+        "type": "object"
+      },
+      "CommandExecutionResponse": {
+        "properties": {
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantCommandResponse"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationRunResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "status"
+        ],
+        "title": "CommandExecutionResponse",
         "type": "object"
       },
       "CompareSourcesRequest": {
@@ -5938,6 +6071,24 @@
         "summary": "Retry Task Endpoint"
       }
     },
+    "/api/v2/commands": {
+      "get": {
+        "operationId": "list_commands_api_v2_commands_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandCatalogResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Commands"
+      }
+    },
     "/api/v2/conversations/{conversation_id}/turns": {
       "post": {
         "description": "Durably accept a user turn without synchronously selecting or calling a model.",
@@ -5969,11 +6120,29 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConversationRunResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ConversationRunResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CommandExecutionResponse"
+                    }
+                  ],
+                  "title": "Response Submit Turn Api V2 Conversations  Conversation Id  Turns Post"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Command could not be parsed"
           },
           "404": {
             "content": {
@@ -6035,6 +6204,16 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Command could not be parsed"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -6094,6 +6273,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Command could not be parsed"
           },
           "404": {
             "content": {

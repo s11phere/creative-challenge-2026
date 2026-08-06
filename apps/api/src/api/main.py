@@ -9,6 +9,9 @@ from typing import Any, Literal, cast
 
 from application.assistant import (
     AssistantAgentService,
+    AssistantCommandCatalog,
+    AssistantCommandParser,
+    AssistantCommandService,
     AssistantMessageReader,
     AssistantSkillInvocationService,
     ConversationReader,
@@ -197,7 +200,24 @@ def create_app(
         repository=qa_repository,
         parent_runs=conversation_run_repository,
         versions=_assistant_versions,
-        start=qa_runtime.start,
+        start=qa_runtime.start if enable_qa_execution else lambda _run_id: False,
+    )
+    assistant_skill_invoker = AssistantSkillInvocationService(
+        runs=conversation_run_repository,
+        catalog=assistant_catalog,
+        registry=assistant_registry,
+        projection=projection,
+        resources=PostgresAssistantResourceResolver(database),
+    )
+    assistant_command_catalog = AssistantCommandCatalog(assistant_catalog)
+    assistant_command_service = AssistantCommandService(
+        catalog=assistant_command_catalog,
+        parser=AssistantCommandParser(assistant_command_catalog),
+        turns=assistant_turn_service,
+        runs=conversation_run_repository,
+        conversations=qa_repository,
+        qa=qa_repository,
+        skill_invoker=assistant_skill_invoker,
     )
     assistant_agent_service = AssistantAgentService(
         runs=conversation_run_repository,
@@ -205,13 +225,7 @@ def create_app(
         gateway=gateway,
         events=assistant_event_log,
         skill_catalog=assistant_catalog,
-        skill_invoker=AssistantSkillInvocationService(
-            runs=conversation_run_repository,
-            catalog=assistant_catalog,
-            registry=assistant_registry,
-            projection=projection,
-            resources=PostgresAssistantResourceResolver(database),
-        ),
+        skill_invoker=assistant_skill_invoker,
     )
     qa_citation_service = qa_citation_service or PublishedCitationService(
         runs=qa_repository,
@@ -255,6 +269,7 @@ def create_app(
     app.state.qa_repository = qa_repository
     app.state.conversation_run_repository = conversation_run_repository
     app.state.assistant_turn_service = assistant_turn_service
+    app.state.assistant_command_service = assistant_command_service
     app.state.assistant_agent_service = assistant_agent_service
     app.state.assistant_event_log = assistant_event_log
     app.state.assistant_runtime = assistant_runtime

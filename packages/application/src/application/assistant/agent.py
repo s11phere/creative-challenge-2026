@@ -16,6 +16,7 @@ from domain.conversation_run import (
     ConversationRun,
     ConversationRunKind,
     ConversationRunRepository,
+    ConversationRunSelectionSource,
     ConversationRunStatus,
     ConversationRunUsage,
 )
@@ -53,6 +54,7 @@ class AssistantSkillInvoker(Protocol):
         *,
         skill: SkillInvocationView,
         arguments: Mapping[str, object],
+        selection_source: ConversationRunSelectionSource = ConversationRunSelectionSource.AUTO,
     ) -> ConversationRun: ...
 
 

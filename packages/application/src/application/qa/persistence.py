@@ -984,16 +984,16 @@ def _same_conversation_turn(
         existing_run.space_id,
         existing_run.caller_id,
         existing_run.idempotency_key,
-        existing_run.run_kind,
         existing_run.selection_source,
+        _idempotent_turn_kind(existing_run),
         existing_message.content,
     ) == (
         requested_run.conversation_id,
         requested_run.space_id,
         requested_run.caller_id,
         requested_run.idempotency_key,
-        requested_run.run_kind,
         requested_run.selection_source,
+        _idempotent_turn_kind(requested_run),
         requested_message.content,
     )
 
@@ -1028,6 +1028,16 @@ def _same_legacy_conversation_run_identity(
     )
 
 
+def _idempotent_turn_kind(run: ConversationRun) -> str:
+    if run.run_kind in {
+        ConversationRunKind.ASSISTANT_TURN,
+        ConversationRunKind.GROUNDED_QA,
+        ConversationRunKind.SKILL,
+    }:
+        return "assistant-or-promoted"
+    return run.run_kind.value
+
+
 def _same_qa_parent_identity(existing: ConversationRun, run: QARunRecord) -> bool:
     if (
         existing.conversation_id != run.conversation_id
@@ -1054,7 +1064,11 @@ def _same_qa_parent_identity(existing: ConversationRun, run: QARunRecord) -> boo
             if run.versions.skill_name == "knowledge_qa"
             else ConversationRunKind.SKILL
         )
-        and existing.selection_source is ConversationRunSelectionSource.AUTO
+        and existing.selection_source
+        in {
+            ConversationRunSelectionSource.AUTO,
+            ConversationRunSelectionSource.COMMAND,
+        }
         and existing.core_prompt_version == "assistant-base-prompt-v2"
     )
 

@@ -60,8 +60,8 @@ OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。写 Tool �
 Assistant v2 使用独立的 active invocation catalog，包含 `/ask`、`/summarize`、`/compare`、`/cards`
 对应的 v2 Skill 元数据；模型只能返回 Skill 意图，服务端负责当前 Space 资源解析、版本 pin、
 权限和 QA Worker 投影。legacy v1 Skill pointer 和 API 仍可恢复历史 Run。普通聊天不会强制进入
-QA；资源歧义只显示 server-authored 候选，不暴露内部 UUID。该自动路由为 provisional，Step 4
-才实现 Command API，Step 5 才实现上下文压缩。
+QA；资源歧义只显示 server-authored 候选，不暴露内部 UUID。该自动路由和 Step 4 Command API
+均为 provisional；Step 5 才实现上下文压缩。
 真实本地组合使用外部 OpenAI-compatible `fast_chat`、
 `EMBEDDING_PROVIDER=text-embeddings-inference`、本地 Qwen3 TEI Embedding 和本地
 BGE reranker；完整 GPU 路径使用 `RERANKER_PROVIDER=inherit`。`RERANKER_PROVIDER=fake`
@@ -230,7 +230,7 @@ git diff --exit-code -- docs/openapi.json
 | 服务 | 默认地址/端口 | 说明 |
 | --- | --- | --- |
 | Web | `http://127.0.0.1:5173` | nginx 静态托管并代理同源 `/api` |
-| API | `http://127.0.0.1:8000` | 兼容接口为 `/api/v1`；`/api/v2` 提供 provisional Assistant 直接对话、自动 Skill 路由、取消和无正文 SSE；slash Command API 尚待 Step 4 |
+| API | `http://127.0.0.1:8000` | 兼容接口为 `/api/v1`；`/api/v2` 提供 provisional Assistant 对话、`/commands`、显式/自动 Skill 路由、取消和无正文 SSE |
 | PostgreSQL | `127.0.0.1:5432` | PostgreSQL 16 + pgvector |
 | Redis | `127.0.0.1:6379` | Dramatiq broker，启用 AOF |
 | OTel Collector | `4317`、`4318` | 仅 `--profile otel` 启动 |

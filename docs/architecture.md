@@ -446,7 +446,8 @@ Registry 在服务端重验
    - `POST /api/v2/conversations/{conversation_id}/turns`、`GET /api/v2/runs/{run_id}`、
      `GET /api/v2/runs/{run_id}/events`、`POST /api/v2/runs/{run_id}/cancel` — 普通 Assistant
      direct-conversation 的 provisional Worker 路径；v1 QA Run 作为同一 UUID 的 `grounded_qa`
-     投影继续兼容。Step 3 已接入自动 Skill 调用、资源解析和 QA 投影；slash command API 仍留待 Step 4
+     投影继续兼容。Step 3 已接入自动 Skill 调用，Step 4 增加 `GET /api/v2/commands` 和显式命令 turn
+     映射；资源解析和 QA 投影仍复用同一 Application/Worker 路径
    - `GET /api/v1/qa/runs/{run_id}`、`POST /api/v1/qa/runs/{run_id}/cancel`、
      `GET /api/v1/qa/runs/{run_id}/events`、`POST /api/v1/qa/runs/{run_id}/feedback` — provisional
      Run 查询/取消、SSE 重放和反馈契约；终态响应包含结构化回答/拒答及已校验 Citation 身份

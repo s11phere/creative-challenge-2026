@@ -55,6 +55,12 @@ case-insensitive command; `//` is ordinary text; unknown commands return candida
 being guessed. Explicit commands bypass model selection but never bypass pinning, authorization,
 Space, schema, approval, or external-provider policy.
 
+Step 4 exposes this catalog at `GET /api/v2/commands`. A turn may carry an untrusted client command
+hint, but the server reparses the original content and rejects mismatches. Base commands return a
+command result without creating a business Run; explicit Skill commands create the same parent Run
+and use `selection_source=command`. `/compact` is recognized here but its summary Worker use case
+belongs to Step 5.
+
 ### Manifest v2 and progressive disclosure
 
 Skill manifest v2 adds `invocation.command`, aliases, argument hint, bounded trigger summary,
@@ -127,4 +133,3 @@ Reassess this decision if shared parent identity cannot preserve legacy QA recov
 compaction cannot retain safety and explicit references under provider limits, if a new Skill class
 needs a different trust or approval model, if event compatibility cannot be maintained, or if a
 reviewed data-policy change authorizes a different external-provider boundary.
-

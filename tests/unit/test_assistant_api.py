@@ -140,3 +140,137 @@ async def test_v2_ordinary_multi_turns_complete_without_retrieval_and_sse_is_con
         AssistantEventType.ROUTING.value,
         AssistantEventType.COMPLETED.value,
     ]
+
+
+@pytest.mark.asyncio
+async def test_v2_command_catalog_and_base_commands_do_not_create_business_runs() -> None:
+    repository = InMemoryGroundedQARepository()
+    app = create_app(
+        model_gateway=FakeModelGateway(),
+        enable_qa_execution=False,
+        qa_repository=repository,
+        qa_event_store=QAEventLog(),
+        assistant_event_store=AssistantEventLog(),
+        skill_activation_store=InMemorySkillActivationStore(),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        conversation = await client.post(
+            f"/api/v1/spaces/{UUID(int=221)}/conversations", json={"owner_id": "local-user"}
+        )
+        conversation_id = conversation.json()["conversation_id"]
+        catalog = await client.get("/api/v2/commands")
+        help_result = await client.post(
+            f"/api/v2/conversations/{conversation_id}/turns",
+            json={"content": "/help", "idempotency_key": "help-1", "command": "help"},
+        )
+        new_result = await client.post(
+            f"/api/v2/conversations/{conversation_id}/turns",
+            json={"content": "/new", "idempotency_key": "new-1"},
+        )
+        mismatch = await client.post(
+            f"/api/v2/conversations/{conversation_id}/turns",
+            json={"content": "/help", "idempotency_key": "bad-command", "command": "ask"},
+        )
+
+    assert catalog.status_code == 200
+    names = {item["name"] for item in catalog.json()["commands"]}
+    assert {
+        "help",
+        "skills",
+        "new",
+        "compact",
+        "stop",
+        "ask",
+        "summarize",
+        "compare",
+        "cards",
+    } <= names
+    assert all(
+        "content_sha256" not in item and "budget" not in item
+        for item in catalog.json()["commands"]
+    )
+    assert help_result.status_code == 202
+    assert help_result.json()["command"] == "help"
+    assert help_result.json()["run"] is None
+    assert new_result.status_code == 202
+    assert new_result.json()["conversation_id"] != conversation_id
+    assert mismatch.status_code == 400
+    assert mismatch.json()["code"] == "RUN_COMMAND_UNKNOWN"
+    assert await repository.list_conversation_runs(UUID(conversation_id)) == ()
+
+
+@pytest.mark.asyncio
+async def test_v2_stop_and_escaped_slash_reuse_the_existing_turn_lifecycle() -> None:
+    repository = InMemoryGroundedQARepository()
+    app = create_app(
+        model_gateway=FakeModelGateway(),
+        enable_qa_execution=False,
+        qa_repository=repository,
+        qa_event_store=QAEventLog(),
+        assistant_event_store=AssistantEventLog(),
+        skill_activation_store=InMemorySkillActivationStore(),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        conversation = await client.post(
+            f"/api/v1/spaces/{UUID(int=231)}/conversations", json={"owner_id": "local-user"}
+        )
+        conversation_id = conversation.json()["conversation_id"]
+        escaped = await client.post(
+            f"/api/v2/conversations/{conversation_id}/turns",
+            json={"content": "//ask literal", "idempotency_key": "escaped-1"},
+        )
+        stopped = await client.post(
+            f"/api/v2/conversations/{conversation_id}/turns",
+            json={"content": "/stop", "idempotency_key": "stop-1"},
+        )
+
+    assert escaped.status_code == 202
+    assert escaped.json()["run_kind"] == "assistant_turn"
+    assert escaped.json()["selection"]["source"] == "none"
+    assert stopped.status_code == 202
+    assert stopped.json()["command"] == "stop"
+    assert stopped.json()["run"]["run_id"] == escaped.json()["run_id"]
+    assert stopped.json()["run"]["status"] == ConversationRunStatus.CANCEL_REQUESTED.value
+
+
+@pytest.mark.asyncio
+async def test_v2_explicit_skill_command_bypasses_model_and_is_idempotent() -> None:
+    class NoChatGateway(FakeModelGateway):
+        async def chat(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("Explicit command must not use the Assistant router model")
+
+    repository = InMemoryGroundedQARepository()
+    events = AssistantEventLog()
+    app = create_app(
+        model_gateway=NoChatGateway(),
+        enable_qa_execution=False,
+        qa_repository=repository,
+        qa_event_store=QAEventLog(),
+        assistant_event_store=events,
+        skill_activation_store=InMemorySkillActivationStore(),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        conversation = await client.post(
+            f"/api/v1/spaces/{UUID(int=241)}/conversations", json={"owner_id": "local-user"}
+        )
+        conversation_id = conversation.json()["conversation_id"]
+        first = await client.post(
+            f"/api/v2/conversations/{conversation_id}/turns",
+            json={"content": "/ask Synthetic question.", "idempotency_key": "ask-1"},
+        )
+        second = await client.post(
+            f"/api/v2/conversations/{conversation_id}/turns",
+            json={"content": "/ask Synthetic question.", "idempotency_key": "ask-1"},
+        )
+
+    assert first.status_code == 202
+    assert first.json()["command"] == "ask"
+    assert first.json()["run"]["run_kind"] == "grounded_qa"
+    assert first.json()["run"]["selection"]["source"] == "command"
+    assert first.json()["run"]["selection"]["skill"]["version"] == "0.2.0"
+    assert second.json()["run"]["run_id"] == first.json()["run"]["run_id"]
+    replayed = await events.replay(UUID(first.json()["run"]["run_id"]))
+    assert [event.event_type for event in replayed] == [
+        AssistantEventType.ACCEPTED,
+        AssistantEventType.SKILL_STARTED,
+    ]

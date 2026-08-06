@@ -60,6 +60,19 @@ Step 3 工程复核：后端 `718 passed, 52 skipped`，Ruff 全量检查通过�
 `apps/worker/src/worker/ingestion_tasks.py`）。Step 3 的 v2/legacy catalog、资源解析、Skill pin
 和 parent Run promotion smoke 验证通过；未运行 formal holdout，也未读取私有正文或调用外部 Provider。
 
+## 2026-08-06 Assistant Conversation Evolution Step 4
+
+按 `agent-conversation-evolution-plan.md` 的 Step 4，新增版本化 `GET /api/v2/commands` 和服务端权威
+parser。目录合并基础指令与 active Skill 指令，支持大小写不敏感、别名、未知命令候选和 `//` 转义；
+turn 请求中的可选 `command` 仅作为不可信提示，服务端始终重新解析原始内容。
+
+`/help`、`/skills`、`/new`、`/stop` 返回无业务 Run 的命令结果；显式 `/ask`、`/summarize`、
+`/compare`、`/cards` 直接复用 Skill pin、资源校验、parent Run 和 QA Worker/SSE 路径，并固定
+`selection_source=command`。命令重放复用原 idempotency identity；模型不会参与显式 Skill 选择。
+`/compact` 目前只确认请求并明确延后到 Step 5 的上下文摘要 Worker。
+
+Step 4 验证为 provisional，未运行 formal retrieval/answer/Skill holdout，不改变 ADR-010/ADR-011 边界。
+
 > 对应收尾计划：[`post-stage-3-stage-4-5-completion-plan.md`](post-stage-3-stage-4-5-completion-plan.md)
 >
 > 看板版本：v1

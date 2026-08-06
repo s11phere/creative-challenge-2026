@@ -510,7 +510,7 @@ def _same_turn(
         stored.space_id,
         stored.caller_id,
         stored.idempotency_key,
-        stored.run_kind,
+        _idempotent_run_kind(stored.run_kind),
         stored.selection_source,
         stored_message.content,
     ) == (
@@ -518,10 +518,20 @@ def _same_turn(
         requested_run.space_id,
         requested_run.caller_id,
         requested_run.idempotency_key,
-        requested_run.run_kind.value,
+        _idempotent_run_kind(requested_run.run_kind.value),
         requested_run.selection_source.value,
         requested_message.content,
     )
+
+
+def _idempotent_run_kind(value: str) -> str:
+    if value in {
+        ConversationRunKind.ASSISTANT_TURN.value,
+        ConversationRunKind.GROUNDED_QA.value,
+        ConversationRunKind.SKILL.value,
+    }:
+        return "assistant-or-promoted"
+    return value
 
 
 def _usage_value(value: ConversationRunUsage) -> dict[str, Any]:

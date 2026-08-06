@@ -29,6 +29,7 @@ class AssistantTurnSubmission:
     conversation_id: UUID
     content: str
     idempotency_key: str
+    selection_source: ConversationRunSelectionSource = ConversationRunSelectionSource.NONE
 
     def __post_init__(self) -> None:
         if not self.content.strip() or not self.idempotency_key.strip():
@@ -76,8 +77,8 @@ class ConversationRunService:
             caller_id=conversation.owner_id,
             user_message_id=message.message_id,
             idempotency_key=submission.idempotency_key,
+            selection_source=submission.selection_source,
             run_kind=ConversationRunKind.ASSISTANT_TURN,
-            selection_source=ConversationRunSelectionSource.NONE,
             core_prompt_version="assistant-base-prompt-v2",
             created_at=now,
             updated_at=now,
