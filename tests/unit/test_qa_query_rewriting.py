@@ -11,7 +11,6 @@ from application.qa.query_rewriting import LlmQueryRewriter
 from domain.grounded_qa import QAContractError, QuestionInput
 from model_gateway import (
     CapabilityAlias,
-    ChatMessage,
     ChatResponse,
     ChatRole,
     ModelUsage,

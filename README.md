@@ -217,6 +217,17 @@ uv run python scripts/export_openapi.py
 git diff --exit-code -- docs/openapi.json
 ```
 
+提交前质量门禁（每克隆执行一次）：
+
+```bash
+git config core.hooksPath .githooks
+```
+
+启用后，`git commit` 前自动复现 CI 的快速门禁：`ruff format --check .`、`ruff check .`、
+`mypy apps packages`、OpenAPI 导出无差异；改动 `apps/web/` 时另跑 `pnpm lint` 与 `pnpm typecheck`。
+完整 pytest、集成与 Compose smoke 仍由 CI 执行。临时跳过可用 `git commit --no-verify`
+（不推荐，跳过前需说明理由）。
+
 真实依赖集成测试由 CI 在隔离 PostgreSQL/Redis 中运行。手动运行前必须配置隔离依赖并设置
 `RUN_INTEGRATION=1`，不要指向包含业务数据的数据库。
 

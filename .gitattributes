@@ -1,0 +1,3 @@
+# Keep the pre-commit hook executable on Windows checkouts (core.autocrlf would
+# otherwise convert it to CRLF and break sh).
+.githooks/pre-commit text eol=lf

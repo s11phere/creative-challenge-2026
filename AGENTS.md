@@ -57,6 +57,10 @@
 - 新增业务表必须有新的 Alembic revision，并验证 upgrade、downgrade 和单一 head；真实依赖测试只能使用
   隔离的 PostgreSQL/Redis，且显式设置 `RUN_INTEGRATION=1`。
 - Compose 默认保留命名卷；除非用户明确要求永久删除，禁止使用 `docker compose down --volumes`。
+- 提交前必须通过本地质量门禁（`.githooks/pre-commit`，启用方式见 README）：改动 Python/API/脚本时
+  通过 `ruff format --check .`、`ruff check .`、`mypy apps packages` 和 OpenAPI 一致性检查；改动
+  `apps/web/` 时另通过 `pnpm lint` 与 `pnpm typecheck`。完整 pytest、集成与 Compose smoke 由 CI 负责；
+  `git commit --no-verify` 仅限有明确理由的例外，且不得替代 CI 门禁。
 - 按风险运行 README 规定的受影响格式化、lint、类型检查、测试和契约检查，并在交付时如实列出实际运行的命令。
 
 ## ADR
