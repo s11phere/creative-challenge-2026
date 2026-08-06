@@ -8,6 +8,12 @@ exporter consumes repository ports and manifest policy metadata; it does not exp
 content. The architecture remains a modular monolith with the existing Worker and QA Application Port.
 Formal quality gates remain governed by ADR-010 and ADR-011.
 
+The Assistant Conversation Evolution Step 3 boundary adds manifest v2 invocation metadata and a
+separate active routing catalog. Legacy v1 Skill pointers remain available for historical QA recovery;
+Assistant selections pin a v2 `(name, version, content_sha256)` and project the same parent
+`ConversationRun` into the existing QA Run/Worker/SSE path. Natural-language resource resolution is
+read-only and Space-scoped; only safe candidate labels cross the Assistant boundary.
+
 PR #4 corrected the online and evaluation retrieval path to `dense_rerank`: dense-exact candidates
 are reranked directly. `hybrid_rerank` remains an explicit compatibility mode, not the default for
 Search API or QA. The corrected GPU development runs are provisional evidence only; they do not
@@ -440,7 +446,7 @@ Registry 在服务端重验
    - `POST /api/v2/conversations/{conversation_id}/turns`、`GET /api/v2/runs/{run_id}`、
      `GET /api/v2/runs/{run_id}/events`、`POST /api/v2/runs/{run_id}/cancel` — 普通 Assistant
      direct-conversation 的 provisional Worker 路径；v1 QA Run 作为同一 UUID 的 `grounded_qa`
-     投影继续兼容。v2 只发布无正文状态事件；本步尚不调用 Skill 或处理命令
+     投影继续兼容。Step 3 已接入自动 Skill 调用、资源解析和 QA 投影；slash command API 仍留待 Step 4
    - `GET /api/v1/qa/runs/{run_id}`、`POST /api/v1/qa/runs/{run_id}/cancel`、
      `GET /api/v1/qa/runs/{run_id}/events`、`POST /api/v1/qa/runs/{run_id}/feedback` — provisional
      Run 查询/取消、SSE 重放和反馈契约；终态响应包含结构化回答/拒答及已校验 Citation 身份

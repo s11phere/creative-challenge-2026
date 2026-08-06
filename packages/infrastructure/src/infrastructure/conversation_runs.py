@@ -264,6 +264,36 @@ class PostgresConversationRunRepository:
             if model is not None and model.lease_owner == lease_owner:
                 _clear_lease(model)
 
+    async def promote_to_skill(
+        self,
+        run_id: UUID,
+        *,
+        run_kind: ConversationRunKind,
+        selection_source: ConversationRunSelectionSource,
+        skill: FixedSkillIdentity,
+        core_prompt_version: str,
+    ) -> ConversationRun:
+        async with self._database.transaction() as session:
+            model = await session.get(ConversationRunModel, run_id, with_for_update=True)
+            if model is None:
+                raise QAContractError("Assistant ConversationRun cannot be promoted")
+            current = _run(model)
+            if current.run_kind is not ConversationRunKind.ASSISTANT_TURN:
+                if current.skill == skill and current.run_kind is run_kind:
+                    return current
+                raise QAContractError("ConversationRun already has another execution identity")
+            if current.status in _TERMINAL:
+                return current
+            model.run_kind = run_kind.value
+            model.selection_source = selection_source.value
+            model.skill_name = skill.name
+            model.skill_version = skill.version
+            model.skill_content_sha256 = skill.content_sha256
+            model.core_prompt_version = core_prompt_version
+            model.updated_at = datetime.now(UTC)
+            await session.flush()
+            return _run(model)
+
     async def publish_direct_message(
         self,
         *,

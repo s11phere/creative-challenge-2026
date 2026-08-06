@@ -238,6 +238,16 @@ class ConversationRunRepository(Protocol):
 
     async def release_conversation_run_lease(self, run_id: UUID, *, lease_owner: str) -> None: ...
 
+    async def promote_to_skill(
+        self,
+        run_id: UUID,
+        *,
+        run_kind: ConversationRunKind,
+        selection_source: ConversationRunSelectionSource,
+        skill: FixedSkillIdentity,
+        core_prompt_version: str,
+    ) -> ConversationRun: ...
+
     async def publish_direct_message(
         self,
         *,

@@ -8,13 +8,18 @@ from contextlib import suppress
 from uuid import UUID, uuid4
 
 import dramatiq
-from application.assistant import AssistantAgentService
+from application.assistant import AssistantAgentService, AssistantSkillInvocationService
 from domain.conversation_run import ConversationRunStatus
+from domain.qa_persistence import QARunVersions
 from infrastructure.assistant_events import PostgresAssistantEventStore
+from infrastructure.assistant_resources import PostgresAssistantResourceResolver
+from infrastructure.assistant_skill_projection import AssistantQASkillProjection
 from infrastructure.config import settings
 from infrastructure.conversation_runs import PostgresConversationRunRepository
 from infrastructure.database import Database
+from infrastructure.qa_execution import assistant_skill_registry, qa_execution_versions
 from infrastructure.qa_persistence import PostgresGroundedQARepository
+from infrastructure.skill_catalog import FileSystemSkillCatalog
 from infrastructure.telemetry_context import (
     bind_observability_context,
     new_trace_id,
@@ -27,7 +32,7 @@ from opentelemetry.trace import SpanKind
 from sqlalchemy.pool import NullPool
 
 from worker.broker import broker
-from worker.qa_tasks import _create_gateway
+from worker.qa_tasks import _create_gateway, enqueue_qa_run
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("worker.assistant")
@@ -93,6 +98,11 @@ def _run_assistant_sync(run_id: UUID) -> bool:
             loop.close()
 
 
+def _start_qa(run_id: UUID) -> bool:
+    enqueue_qa_run(run_id=str(run_id), trace_id=new_trace_id(), event_version=1)
+    return True
+
+
 async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
     runs = PostgresConversationRunRepository(database)
     lease_owner = str(uuid4())
@@ -103,11 +113,32 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
     )
     if claimed is None:
         return False
+    registry = assistant_skill_registry()
+    qa_repository = PostgresGroundedQARepository(database)
+
+    async def _versions(skill_name: str) -> QARunVersions:
+        return qa_execution_versions(registry, skill_name=skill_name)
+
+    projection = AssistantQASkillProjection(
+        repository=qa_repository,
+        parent_runs=runs,
+        versions=_versions,
+        start=lambda uid: _start_qa(uid),
+    )
+    invoker = AssistantSkillInvocationService(
+        runs=runs,
+        catalog=FileSystemSkillCatalog(registry, include_manifest_v2=True),
+        registry=registry,
+        projection=projection,
+        resources=PostgresAssistantResourceResolver(database),
+    )
     service = AssistantAgentService(
         runs=runs,
-        messages=PostgresGroundedQARepository(database),
+        messages=qa_repository,
         gateway=gateway,
         events=PostgresAssistantEventStore(database),
+        skill_catalog=FileSystemSkillCatalog(registry, include_manifest_v2=True),
+        skill_invoker=invoker,
     )
     if claimed.status in _TERMINAL:
         await service.execute(run_id)

@@ -205,7 +205,7 @@ class PostgresGroundedQARepository:
             if base is not None:
                 if parent is None:
                     raise QAContractError("QA run is missing its ConversationRun parent")
-                _validate_legacy_parent(parent, run, check_idempotency=False)
+                _validate_parent(parent, run, check_idempotency=False)
                 latest = await self._latest_attempt(session, run.run_id, for_update=True)
                 assert latest is not None
                 existing = _run(base, latest)
@@ -256,7 +256,7 @@ class PostgresGroundedQARepository:
                 session.add(parent)
                 await session.flush()
             else:
-                _validate_legacy_parent(parent, run)
+                _validate_parent(parent, run)
             base = QARunModel(
                 id=run.run_id,
                 conversation_id=run.conversation_id,
@@ -949,8 +949,35 @@ def _validate_legacy_parent(
         raise QAContractError("QA Run conflicts with its ConversationRun parent")
 
 
+def _validate_parent(
+    model: ConversationRunModel, run: QARunRecord, *, check_idempotency: bool = False
+) -> None:
+    if model.router_version == "assistant-router-decision-v1":
+        expected_kind = (
+            ConversationRunKind.GROUNDED_QA.value
+            if run.versions.skill_name == "knowledge_qa"
+            else ConversationRunKind.SKILL.value
+        )
+        if (
+            model.conversation_id != run.conversation_id
+            or model.space_id != run.space_id
+            or model.caller_id != run.caller_id
+            or model.user_message_id != run.question_message_id
+            or (check_idempotency and model.idempotency_key != run.idempotency_key)
+            or model.run_kind != expected_kind
+            or model.selection_source != ConversationRunSelectionSource.AUTO.value
+            or model.skill_name != run.versions.skill_name
+            or model.skill_version != run.versions.skill_version
+            or model.skill_content_sha256 != run.versions.skill_content_sha256
+            or model.core_prompt_version != "assistant-base-prompt-v2"
+        ):
+            raise QAContractError("QA Run conflicts with its Assistant ConversationRun parent")
+        return
+    _validate_legacy_parent(model, run, check_idempotency=check_idempotency)
+
+
 def _project_conversation_run(model: ConversationRunModel, run: QARunRecord) -> None:
-    _validate_legacy_parent(model, run, check_idempotency=False)
+    _validate_parent(model, run, check_idempotency=False)
     model.status = _conversation_run_status(run.status).value
     model.cancellation_requested = run.cancellation_requested
     model.error_code = run.error_code

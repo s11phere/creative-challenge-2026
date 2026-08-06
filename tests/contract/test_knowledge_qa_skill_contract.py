@@ -541,7 +541,7 @@ def test_provisional_package_is_bulk_installed_but_activation_is_explicit() -> N
         "knowledge_qa",
         "summarize_document",
     )
-    assert registry.versions("knowledge_qa") == ("0.1.0",)
+    assert registry.versions("knowledge_qa") == ("0.1.0", "0.2.0")
     with pytest.raises(SkillRegistryError, match="active version"):
         registry.active_version("knowledge_qa")
     registry.activate("knowledge_qa", "0.1.0")

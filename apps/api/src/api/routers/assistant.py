@@ -131,11 +131,21 @@ async def get_run(run_id: UUID, request: Request) -> ConversationRunResponse:
 )
 async def cancel_run(run_id: UUID, request: Request) -> ConversationRunResponse:
     try:
-        run = await request.app.state.assistant_turn_service.cancel(run_id)
+        existing = await request.app.state.assistant_turn_service.get(run_id)
+        if existing is not None and existing.run_kind.value in {"skill", "grounded_qa"}:
+            await request.app.state.qa_repository.request_cancel(run_id)
+            run = await request.app.state.assistant_turn_service.get(run_id)
+            if run is None:
+                raise QAContractError("ConversationRun does not exist")
+        else:
+            run = await request.app.state.assistant_turn_service.cancel(run_id)
     except QAContractError as exc:
         raise AppError("RUN_NOT_FOUND", "Run not found", 404) from exc
     if request.app.state.qa_execution_enabled and run.status.value == "cancel_requested":
-        request.app.state.assistant_runtime.start(run.run_id)
+        if run.run_kind.value in {"skill", "grounded_qa"}:
+            request.app.state.qa_runtime.start(run.run_id)
+        else:
+            request.app.state.assistant_runtime.start(run.run_id)
     return await _response(run, request)
 
 

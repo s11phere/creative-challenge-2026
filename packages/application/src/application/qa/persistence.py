@@ -349,6 +349,38 @@ class InMemoryGroundedQARepository:
             if lease is not None and lease[0] == lease_owner:
                 self._conversation_run_leases.pop(run_id, None)
 
+    async def promote_to_skill(
+        self,
+        run_id: UUID,
+        *,
+        run_kind: ConversationRunKind,
+        selection_source: ConversationRunSelectionSource,
+        skill: FixedSkillIdentity,
+        core_prompt_version: str,
+    ) -> ConversationRun:
+        async with self._lock:
+            run = self._conversation_runs.get(run_id)
+            if run is None or run.run_kind is not ConversationRunKind.ASSISTANT_TURN:
+                raise QAContractError("Assistant ConversationRun cannot be promoted")
+            if run.status in {
+                ConversationRunStatus.COMPLETED,
+                ConversationRunStatus.REFUSED,
+                ConversationRunStatus.FAILED,
+                ConversationRunStatus.CANCELLED,
+                ConversationRunStatus.TIMED_OUT,
+            }:
+                return run
+            promoted = replace(
+                run,
+                run_kind=run_kind,
+                selection_source=selection_source,
+                skill=skill,
+                core_prompt_version=core_prompt_version,
+                updated_at=datetime.now(UTC),
+            )
+            self._conversation_runs[run_id] = promoted
+            return promoted
+
     async def publish_direct_message(
         self,
         *,
@@ -896,7 +928,7 @@ class InMemoryGroundedQARepository:
         existing = self._conversation_runs.get(run.run_id)
         parent = _conversation_run_from_qa(run)
         if existing is not None:
-            if not _same_legacy_conversation_run_identity(existing, parent):
+            if not _same_qa_parent_identity(existing, run):
                 raise QAContractError("QA Run conflicts with its ConversationRun parent")
             self._conversation_runs[run.run_id] = _conversation_run_from_qa(run, existing=existing)
             return
@@ -996,6 +1028,37 @@ def _same_legacy_conversation_run_identity(
     )
 
 
+def _same_qa_parent_identity(existing: ConversationRun, run: QARunRecord) -> bool:
+    if (
+        existing.conversation_id != run.conversation_id
+        or existing.space_id != run.space_id
+        or existing.caller_id != run.caller_id
+        or existing.user_message_id != run.question_message_id
+    ):
+        return False
+    if existing.skill is not None:
+        if run.versions.skill_content_sha256 is None:
+            return False
+        if existing.skill != FixedSkillIdentity(
+            name=run.versions.skill_name,
+            version=run.versions.skill_version,
+            content_sha256=run.versions.skill_content_sha256,
+        ):
+            return False
+    if existing.router_version == "legacy-v1":
+        return _same_legacy_conversation_run_identity(existing, _conversation_run_from_qa(run))
+    return (
+        existing.run_kind
+        == (
+            ConversationRunKind.GROUNDED_QA
+            if run.versions.skill_name == "knowledge_qa"
+            else ConversationRunKind.SKILL
+        )
+        and existing.selection_source is ConversationRunSelectionSource.AUTO
+        and existing.core_prompt_version == "assistant-base-prompt-v2"
+    )
+
+
 def _conversation_run_from_qa(
     run: QARunRecord, *, existing: ConversationRun | None = None
 ) -> ConversationRun:
@@ -1033,18 +1096,26 @@ def _conversation_run_from_qa(
         user_message_id=run.question_message_id,
         idempotency_key=existing.idempotency_key if existing is not None else run.idempotency_key,
         run_kind=(
-            ConversationRunKind.GROUNDED_QA
-            if run.versions.skill_name == "knowledge_qa"
-            else ConversationRunKind.SKILL
+            existing.run_kind
+            if existing is not None
+            else (
+                ConversationRunKind.GROUNDED_QA
+                if run.versions.skill_name == "knowledge_qa"
+                else ConversationRunKind.SKILL
+            )
         ),
-        selection_source=ConversationRunSelectionSource.NONE,
+        selection_source=(
+            existing.selection_source
+            if existing is not None
+            else ConversationRunSelectionSource.NONE
+        ),
         status=status,
         cancellation_requested=run.cancellation_requested,
         error_code=run.error_code,
-        router_version="legacy-v1",
-        core_prompt_version="legacy-v1",
+        router_version=existing.router_version if existing is not None else "legacy-v1",
+        core_prompt_version=existing.core_prompt_version if existing is not None else "legacy-v1",
         model_identity=run.versions.model_identity,
-        skill=skill,
+        skill=existing.skill if existing is not None and existing.skill is not None else skill,
         usage=ConversationRunUsage(
             input_tokens=run.usage.input_tokens,
             output_tokens=run.usage.output_tokens,

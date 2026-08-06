@@ -38,11 +38,27 @@ ADR-010/ADR-011 的 provisional 边界，也不构成任何正式检索、回答
 `718 passed, 52 skipped`，Ruff、mypy、OpenAPI、单一 Alembic head 和 diff check 均通过；未运行
 formal holdout、未读取私有正文、未调用外部 Provider。
 
-最终工程复核（2026-08-04）：后端 `698 passed, 48 skipped`；Ruff format/check、mypy 通过；前端
-lint/typecheck/test/build 通过（28 tests）；隔离 PostgreSQL QA/Runtime/Skill 集成 `6 passed`；
-迁移 upgrade/downgrade/upgrade、单一 head 和 OpenAPI 一致性通过。Runtime 检查点摘要/Skill
-绑定、审批 Tool 绑定、派生知识 Space/citation 绑定、五 Skill 统一 `/api/v1/runs` 入口均已纳入
-回归。Playwright 未安装，只能记录为环境证据缺失，不能写成失败或伪造通过。
+## 2026-08-06 Assistant Conversation Evolution Step 3
+
+按 `agent-conversation-evolution-plan.md` 的 Step 3，新增 manifest v2 `invocation` 元数据、active
+command/alias 冲突校验和仅包含触发摘要的 Assistant catalog。四个业务 Skill 各发布 `0.2.0` v2
+包，原 `0.1.0` 包保持可读、可固定和可恢复；legacy `/api/v1/skills` 与 QA pointer 继续保持 v1
+兼容，Assistant 使用独立 v2 路由目录。
+
+`invoke_skill` 只能选择 active catalog 条目，服务端重新 pin `(name, version, content_sha256)`，
+拒绝 hidden/inactive/未授权 Skill 和模型提供的资源/Space/版本 ID。成功选择后复用同一
+`ConversationRun` parent ID 建立 QA projection，并沿既有 Grounded QA Application Port、QA Worker、
+`qa-sse-v1` 与 `agent-run-sse-v2` 生命周期执行。自然语言资源解析只读当前 Space 的已发布版本；唯一
+匹配固定范围，歧义返回无 ID 的安全候选，缺失/冲突使用 `RESOURCE_NOT_FOUND`/
+`RESOURCE_CONFLICT` 或 server-authored clarification。
+
+本步未实现 slash command API 或上下文压缩；未运行 formal retrieval/answer/Skill holdout。实现和
+验证均为 provisional，不改变 ADR-010/ADR-011 边界。
+
+Step 3 工程复核：后端 `718 passed, 52 skipped`，Ruff 全量检查通过；Mypy 仅保留两个既有的
+`Any` 返回告警（`packages/application/src/application/retrieval/dense.py`、
+`apps/worker/src/worker/ingestion_tasks.py`）。Step 3 的 v2/legacy catalog、资源解析、Skill pin
+和 parent Run promotion smoke 验证通过；未运行 formal holdout，也未读取私有正文或调用外部 Provider。
 
 > 对应收尾计划：[`post-stage-3-stage-4-5-completion-plan.md`](post-stage-3-stage-4-5-completion-plan.md)
 >

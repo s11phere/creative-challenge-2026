@@ -25,7 +25,7 @@ Stage 3 termination record or claim formal retrieval, answer, or Skill holdout a
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
 | 阶段 3 ⏹️ 已终止（工程完成，质量门禁未通过） | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；API/QA 默认 `dense_rerank`，PR #4 GPU development 在 v0/v1 Claim Recall@10 为 82.37%/78.75%，但评测集代表性仍不足，正式 holdout 未执行，配置保持 provisional |
 | 阶段 4 🟡 provisional Step 0-10 | 在 ADR-011 continuation gate 下继续；ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测 validate-only 已完成；默认配置与正式 holdout 未完成 |
-| 阶段 5 🟡 provisional Skills | Step 0-10 工程功能已完成；当前 active 为 `knowledge_agent 0.2.0`（保留 `0.1.0` 回滚包）、`knowledge_qa 0.1.0` 与三个知识整理 Skill `0.1.0`，统一复用持久 QA Run/Worker/SSE；正式质量仍 provisional |
+| 阶段 5 🟡 provisional Skills | 既有 QA/Runtime/Skill 链路保持 v1 兼容；Assistant Conversation Evolution Step 3 新增四个业务 Skill 的 v2 invocation catalog、自动调用、资源解析和 parent Run 投影；正式质量仍 provisional |
 
 当前 Web 展示系统健康、数据来源和 provisional 知识问答工作区；HTTP API 可创建持久会话、提交
 问题，由 API 仅向 Redis 投递 Run ID，再由独立 Worker 调用唯一 `GroundedQAApplicationPort`、
@@ -57,6 +57,11 @@ profile 封顶，Space/版本边界不能由模型扩大；规划失败会降级
 把 Run 变成基础设施失败。Tool 仅向外层模型返回状态和覆盖计数，不返回回答或原文。旧
 `0.1.0` 保留用于固定 Run 恢复和回滚。默认 fake 可跑通流程，配置允许的
 OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。写 Tool 仍被明确拒绝。
+Assistant v2 使用独立的 active invocation catalog，包含 `/ask`、`/summarize`、`/compare`、`/cards`
+对应的 v2 Skill 元数据；模型只能返回 Skill 意图，服务端负责当前 Space 资源解析、版本 pin、
+权限和 QA Worker 投影。legacy v1 Skill pointer 和 API 仍可恢复历史 Run。普通聊天不会强制进入
+QA；资源歧义只显示 server-authored 候选，不暴露内部 UUID。该自动路由为 provisional，Step 4
+才实现 Command API，Step 5 才实现上下文压缩。
 真实本地组合使用外部 OpenAI-compatible `fast_chat`、
 `EMBEDDING_PROVIDER=text-embeddings-inference`、本地 Qwen3 TEI Embedding 和本地
 BGE reranker；完整 GPU 路径使用 `RERANKER_PROVIDER=inherit`。`RERANKER_PROVIDER=fake`
@@ -225,7 +230,7 @@ git diff --exit-code -- docs/openapi.json
 | 服务 | 默认地址/端口 | 说明 |
 | --- | --- | --- |
 | Web | `http://127.0.0.1:5173` | nginx 静态托管并代理同源 `/api` |
-| API | `http://127.0.0.1:8000` | 兼容接口为 `/api/v1`；`/api/v2` 提供 provisional Assistant 直接对话、取消和无正文 SSE，尚不包含自动 Skill/命令 |
+| API | `http://127.0.0.1:8000` | 兼容接口为 `/api/v1`；`/api/v2` 提供 provisional Assistant 直接对话、自动 Skill 路由、取消和无正文 SSE；slash Command API 尚待 Step 4 |
 | PostgreSQL | `127.0.0.1:5432` | PostgreSQL 16 + pgvector |
 | Redis | `127.0.0.1:6379` | Dramatiq broker，启用 AOF |
 | OTel Collector | `4317`、`4318` | 仅 `--profile otel` 启动 |

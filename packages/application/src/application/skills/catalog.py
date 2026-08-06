@@ -35,10 +35,29 @@ class SkillView:
     versions: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class SkillInvocationView:
+    """The only Skill metadata that may enter Assistant routing context."""
+
+    name: str
+    version: str
+    content_sha256: str
+    command: str
+    aliases: tuple[str, ...]
+    description: str
+    argument_hint: str
+    input_mode: str
+    trigger_when: tuple[str, ...] = ()
+    trigger_avoid_when: tuple[str, ...] = ()
+    trigger_examples: tuple[str, ...] = ()
+
+
 class SkillCatalogPort(Protocol):
     def list_skills(self) -> tuple[SkillView, ...]: ...
 
     def list_versions(self, name: str) -> tuple[SkillVersionView, ...]: ...
+
+    def list_active_invocations(self) -> tuple[SkillInvocationView, ...]: ...
 
 
 @dataclass(frozen=True)
@@ -64,6 +83,7 @@ __all__ = [
     "SkillActivationStore",
     "SkillBudgetView",
     "SkillCatalogPort",
+    "SkillInvocationView",
     "SkillVersionView",
     "SkillView",
 ]

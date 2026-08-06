@@ -240,6 +240,20 @@ def knowledge_qa_registry() -> FileSystemSkillRegistry:
     return registry
 
 
+def assistant_skill_registry() -> FileSystemSkillRegistry:
+    """Build the v2 invocation catalog without changing the legacy QA pointer."""
+    registry = FileSystemSkillRegistry(Path(settings.skill_root_path))
+    registry.reload()
+    for name in (
+        "knowledge_qa",
+        "summarize_document",
+        "compare_sources",
+        "create_review_cards",
+    ):
+        registry.activate(name, "0.2.0")
+    return registry
+
+
 def active_knowledge_qa_pin(
     skill_registry: FileSystemSkillRegistry | None = None,
 ) -> PinnedSkill:
@@ -550,6 +564,7 @@ __all__ = [
     "GroundedQAExecutor",
     "StructuredFakeGateway",
     "active_knowledge_qa_pin",
+    "assistant_skill_registry",
     "knowledge_qa_registry",
     "qa_execution_versions",
 ]

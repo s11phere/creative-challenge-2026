@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.resources import files
 from typing import Any, Protocol
@@ -30,8 +31,11 @@ from model_gateway import (
     ModelGatewayError,
 )
 
+from application.skills import SkillCatalogPort, SkillInvocationView
+
 _CONTRACT_ROOT = files("application.assistant").joinpath("contracts")
 _BASE_PROMPT = _CONTRACT_ROOT.joinpath("base-system-prompt-v1.txt").read_text(encoding="utf-8")
+_BASE_PROMPT_V2 = _CONTRACT_ROOT.joinpath("base-system-prompt-v2.txt").read_text(encoding="utf-8")
 _ROUTER_SCHEMA = json.loads(
     _CONTRACT_ROOT.joinpath("router-decision-v1.schema.json").read_text(encoding="utf-8")
 )
@@ -42,6 +46,16 @@ class AssistantMessageReader(Protocol):
     async def get_message(self, message_id: UUID) -> MessageRecord | None: ...
 
 
+class AssistantSkillInvoker(Protocol):
+    async def invoke(
+        self,
+        run: ConversationRun,
+        *,
+        skill: SkillInvocationView,
+        arguments: Mapping[str, object],
+    ) -> ConversationRun: ...
+
+
 class AssistantAgentError(ValueError):
     """Safe execution error that never contains user or model content."""
 
@@ -50,6 +64,8 @@ class AssistantAgentError(ValueError):
 class AssistantRouterDecision:
     action: str
     assistant_message: str | None = None
+    skill_name: str | None = None
+    arguments: Mapping[str, object] | None = None
 
 
 class AssistantRouterDecisionParser:
@@ -71,7 +87,18 @@ class AssistantRouterDecisionParser:
         message = payload.get("assistant_message")
         if message is not None and not isinstance(message, str):
             raise AssistantAgentError("RUN_AGENT_DECISION_INVALID")
-        return AssistantRouterDecision(action=action, assistant_message=message)
+        skill_name = payload.get("skill_name")
+        arguments = payload.get("arguments")
+        if skill_name is not None and not isinstance(skill_name, str):
+            raise AssistantAgentError("RUN_AGENT_DECISION_INVALID")
+        if arguments is not None and not isinstance(arguments, dict):
+            raise AssistantAgentError("RUN_AGENT_DECISION_INVALID")
+        return AssistantRouterDecision(
+            action=action,
+            assistant_message=message,
+            skill_name=skill_name,
+            arguments=arguments,
+        )
 
 
 class AssistantAgentService:
@@ -85,12 +112,16 @@ class AssistantAgentService:
         gateway: ModelGateway,
         events: AssistantEventStore,
         decision_parser: AssistantRouterDecisionParser | None = None,
+        skill_catalog: SkillCatalogPort | None = None,
+        skill_invoker: AssistantSkillInvoker | None = None,
     ) -> None:
         self._runs = runs
         self._messages = messages
         self._gateway = gateway
         self._events = events
         self._decision_parser = decision_parser or AssistantRouterDecisionParser()
+        self._skill_catalog = skill_catalog
+        self._skill_invoker = skill_invoker
 
     async def execute(self, run_id: UUID) -> ConversationRun | None:
         """Finish a Worker-claimed turn; API handlers only enqueue this work."""
@@ -133,7 +164,10 @@ class AssistantAgentService:
             response = await self._gateway.chat(
                 ChatRequest(
                     messages=(
-                        ChatMessage(role=ChatRole.SYSTEM, content=_BASE_PROMPT),
+                        ChatMessage(
+                            role=ChatRole.SYSTEM,
+                            content=self._system_prompt(),
+                        ),
                         ChatMessage(role=ChatRole.USER, content=user_message.content),
                     ),
                     temperature=0.0,
@@ -196,7 +230,65 @@ class AssistantAgentService:
             else:
                 await self._emit_terminal(clarified, action="clarify")
             return clarified
+        if decision.action == "invoke_skill":
+            skill_name = decision.skill_name
+            arguments = decision.arguments
+            skill = self._find_skill(skill_name)
+            if skill is None:
+                return await self._fail(run_id, "SKILL_NOT_ACTIVE")
+            if self._skill_invoker is None or arguments is None:
+                return await self._fail(run_id, "RUN_AGENT_DECISION_INVALID")
+            await self._events.append(
+                run_id,
+                AssistantEventType.SKILL_STARTED,
+                {"status": ConversationRunStatus.RUNNING.value, "skill": skill.name},
+            )
+            try:
+                invoked = await self._skill_invoker.invoke(
+                    run, skill=skill, arguments=arguments
+                )
+            except AssistantAgentError as exc:
+                return await self._fail(run_id, str(exc))
+            except ValueError as exc:
+                code = str(exc)
+                if code not in {"SKILL_NOT_ACTIVE", "RESOURCE_NOT_FOUND", "RESOURCE_CONFLICT"}:
+                    code = "RUN_AGENT_DECISION_INVALID"
+                return await self._fail(run_id, code)
+            if invoked.status in {
+                ConversationRunStatus.FAILED,
+                ConversationRunStatus.CANCELLED,
+                ConversationRunStatus.COMPLETED,
+                ConversationRunStatus.REFUSED,
+            }:
+                await self._emit_terminal(invoked, action="invoke_skill")
+            return invoked
         return await self._fail(run_id, "RUN_AGENT_DECISION_INVALID")
+
+    def _system_prompt(self) -> str:
+        if self._skill_catalog is None:
+            return _BASE_PROMPT_V2
+        entries = self._skill_catalog.list_active_invocations()
+        lines = [_BASE_PROMPT_V2, "\nActive Skill catalog (untrusted metadata only):"]
+        for entry in entries:
+            aliases = ", ".join(entry.aliases) if entry.aliases else "none"
+            lines.append(
+                f"- {entry.name}: command={entry.command}; aliases={aliases}; "
+                f"input_mode={entry.input_mode}; trigger={entry.description}; "
+                f"argument_hint={entry.argument_hint}"
+            )
+        return "\n".join(lines)
+
+    def _find_skill(self, name: str | None) -> SkillInvocationView | None:
+        if self._skill_catalog is None or name is None:
+            return None
+        return next(
+            (
+                entry
+                for entry in self._skill_catalog.list_active_invocations()
+                if entry.name == name
+            ),
+            None,
+        )
 
     async def _fail(self, run_id: UUID, error_code: str) -> ConversationRun:
         failed = await self._runs.fail_conversation_run(run_id, error_code=error_code)
@@ -228,6 +320,7 @@ __all__ = [
     "AssistantAgentError",
     "AssistantAgentService",
     "AssistantMessageReader",
+    "AssistantSkillInvoker",
     "AssistantRouterDecision",
     "AssistantRouterDecisionParser",
 ]

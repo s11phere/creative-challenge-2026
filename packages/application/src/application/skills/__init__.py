@@ -1,10 +1,12 @@
 """Provisional Skill adapters that invoke authoritative Application ports."""
 
+from .active_catalog import ActiveSkillCatalogService
 from .catalog import (
     SkillActivation,
     SkillActivationStore,
     SkillBudgetView,
     SkillCatalogPort,
+    SkillInvocationView,
     SkillVersionView,
     SkillView,
 )
@@ -20,6 +22,7 @@ from .organization import (
 __all__ = [
     "KnowledgeQASkillAdapter",
     "KnowledgeQASkillConfig",
+    "ActiveSkillCatalogService",
     "DerivedKnowledgeWriter",
     "KnowledgeAgentSkillAdapter",
     "KnowledgeAgentSkillConfig",
@@ -30,6 +33,7 @@ __all__ = [
     "SkillActivationStore",
     "SkillBudgetView",
     "SkillCatalogPort",
+    "SkillInvocationView",
     "SkillLifecycleError",
     "SkillLifecycleErrorCode",
     "SkillLifecycleService",

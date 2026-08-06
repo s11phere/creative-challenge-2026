@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 from application.assistant import (
     AssistantAgentService,
     AssistantMessageReader,
+    AssistantSkillInvocationService,
     ConversationReader,
     ConversationRunService,
 )
@@ -28,10 +29,12 @@ from domain.agent_runtime import ApprovalPort
 from domain.assistant_sse import AssistantEventLog, AssistantEventStore
 from domain.conversation_run import ConversationRunRepository
 from domain.grounded_qa import CitationContentKind
-from domain.qa_persistence import GroundedQARepository
+from domain.qa_persistence import GroundedQARepository, QARunVersions
 from domain.qa_sse import QAEventStore
 from fastapi import FastAPI, Response
 from infrastructure.assistant_events import PostgresAssistantEventStore
+from infrastructure.assistant_resources import PostgresAssistantResourceResolver
+from infrastructure.assistant_skill_projection import AssistantQASkillProjection
 from infrastructure.blob_store import LocalFileBlobStore
 from infrastructure.config import settings
 from infrastructure.conversation_runs import PostgresConversationRunRepository
@@ -39,7 +42,11 @@ from infrastructure.database import Database
 from infrastructure.organization import PostgresKnowledgeOrganizationScope
 from infrastructure.parsers import MarkdownParser, PdfParser
 from infrastructure.qa import PostgresCitationTargetPort
-from infrastructure.qa_execution import knowledge_qa_registry
+from infrastructure.qa_execution import (
+    assistant_skill_registry,
+    knowledge_qa_registry,
+    qa_execution_versions,
+)
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
 from infrastructure.runtime_approval import PostgresApprovalPort, PostgresDerivedKnowledgeStore
 from infrastructure.skill_catalog import FileSystemSkillCatalog
@@ -134,6 +141,7 @@ def create_app(
             "claim_conversation_run",
             "renew_conversation_run_lease",
             "release_conversation_run_lease",
+            "promote_to_skill",
             "publish_direct_message",
             "publish_clarification",
             "fail_conversation_run",
@@ -148,22 +156,6 @@ def create_app(
         conversations=cast(ConversationReader, qa_repository),
         runs=conversation_run_repository,
     )
-    qa_event_log = qa_event_store or PostgresQAEventStore(database)
-    if assistant_event_store is not None:
-        assistant_event_log = assistant_event_store
-    elif id(conversation_run_repository) == id(qa_repository):
-        assistant_event_log = AssistantEventLog()
-    else:
-        assistant_event_log = PostgresAssistantEventStore(database)
-    assistant_agent_service = AssistantAgentService(
-        runs=conversation_run_repository,
-        messages=cast(AssistantMessageReader, qa_repository),
-        gateway=gateway,
-        events=assistant_event_log,
-    )
-    assistant_runtime = assistant_runtime or AssistantWorkerDispatcher(
-        repository=conversation_run_repository
-    )
     skill_registry = knowledge_qa_registry()
     activation_store = skill_activation_store or PostgresSkillActivationStore(database)
     skill_lifecycle = SkillLifecycleService(
@@ -177,12 +169,50 @@ def create_app(
             "knowledge_agent": settings.knowledge_agent_skill_version,
         },
     )
+    skill_catalog = skill_catalog or FileSystemSkillCatalog(skill_registry)
+    assistant_catalog = FileSystemSkillCatalog(
+        assistant_skill_registry(), include_manifest_v2=True
+    )
+    qa_event_log = qa_event_store or PostgresQAEventStore(database)
+    if assistant_event_store is not None:
+        assistant_event_log = assistant_event_store
+    elif id(conversation_run_repository) == id(qa_repository):
+        assistant_event_log = AssistantEventLog()
+    else:
+        assistant_event_log = PostgresAssistantEventStore(database)
+    assistant_runtime = assistant_runtime or AssistantWorkerDispatcher(
+        repository=conversation_run_repository
+    )
     qa_runtime = QAWorkerDispatcher(
         repository=qa_repository,
         skill_registry=skill_registry,
         skill_lifecycle=skill_lifecycle,
     )
-    skill_catalog = skill_catalog or FileSystemSkillCatalog(skill_registry)
+    assistant_registry = assistant_skill_registry()
+
+    async def _assistant_versions(skill_name: str) -> QARunVersions:
+        return qa_execution_versions(assistant_registry, skill_name=skill_name)
+
+    projection = AssistantQASkillProjection(
+        repository=qa_repository,
+        parent_runs=conversation_run_repository,
+        versions=_assistant_versions,
+        start=qa_runtime.start,
+    )
+    assistant_agent_service = AssistantAgentService(
+        runs=conversation_run_repository,
+        messages=cast(AssistantMessageReader, qa_repository),
+        gateway=gateway,
+        events=assistant_event_log,
+        skill_catalog=assistant_catalog,
+        skill_invoker=AssistantSkillInvocationService(
+            runs=conversation_run_repository,
+            catalog=assistant_catalog,
+            registry=assistant_registry,
+            projection=projection,
+            resources=PostgresAssistantResourceResolver(database),
+        ),
+    )
     qa_citation_service = qa_citation_service or PublishedCitationService(
         runs=qa_repository,
         resolver=CitationResolver(
@@ -202,7 +232,8 @@ def create_app(
         database.instrument()
         try:
             if enable_qa_execution:
-                await skill_lifecycle.current("knowledge_qa")
+                for installed_skill in skill_registry.names():
+                    await skill_lifecycle.current(installed_skill)
                 await qa_runtime.recover()
                 await assistant_runtime.recover()
             yield
