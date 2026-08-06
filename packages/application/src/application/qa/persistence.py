@@ -7,6 +7,16 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
+from domain.conversation_run import (
+    AssistantResult,
+    AssistantResultKind,
+    ConversationRun,
+    ConversationRunKind,
+    ConversationRunSelectionSource,
+    ConversationRunStatus,
+    ConversationRunUsage,
+    FixedSkillIdentity,
+)
 from domain.grounded_qa import (
     Citation,
     CitationStatus,
@@ -48,6 +58,8 @@ class InMemoryGroundedQARepository:
         self._attempts: dict[UUID, QARunRecord] = {}
         self._latest_attempts: dict[UUID, UUID] = {}
         self._run_keys: dict[tuple[UUID, str, str], UUID] = {}
+        self._conversation_runs: dict[UUID, ConversationRun] = {}
+        self._conversation_run_keys: dict[tuple[UUID, str, str], UUID] = {}
         self._evidence: dict[tuple[UUID, UUID], EvidenceRecord] = {}
         self._citations: dict[tuple[UUID, UUID], CitationRecord] = {}
         self._feedback: dict[UUID, FeedbackRecord] = {}
@@ -147,6 +159,100 @@ class InMemoryGroundedQARepository:
                 )
             )
 
+    async def create_turn(
+        self, run: ConversationRun, user_message: MessageRecord
+    ) -> ConversationRun:
+        """Persist a user message and parent Run in the same in-memory critical section."""
+        async with self._lock:
+            conversation = self._require_conversation(run.conversation_id)
+            if (
+                conversation.archived_at is not None
+                or conversation.space_id != run.space_id
+                or conversation.owner_id != run.caller_id
+                or user_message.role is not MessageRole.USER
+                or user_message.run_id is not None
+                or user_message.message_id != run.user_message_id
+                or user_message.conversation_id != run.conversation_id
+                or user_message.space_id != run.space_id
+            ):
+                raise QAContractError("Conversation turn ownership is invalid")
+            key = (run.space_id, run.caller_id, run.idempotency_key)
+            existing_id = self._conversation_run_keys.get(key)
+            if existing_id is not None:
+                existing = self._conversation_runs[existing_id]
+                existing_message = self._messages[existing.user_message_id]
+                if _same_conversation_turn(existing, existing_message, run, user_message):
+                    return existing
+                raise QAContractError("ConversationRun idempotency key has conflicting content")
+            if run.run_id in self._conversation_runs or run.user_message_id in self._messages:
+                raise QAContractError("Conversation turn identity already exists")
+            self._messages[user_message.message_id] = user_message
+            self._message_keys[(user_message.conversation_id, run.idempotency_key)] = (
+                user_message.message_id
+            )
+            self._conversation_runs[run.run_id] = run
+            self._conversation_run_keys[key] = run.run_id
+            if user_message.created_at > conversation.updated_at:
+                self._conversations[conversation.conversation_id] = replace(
+                    conversation, updated_at=user_message.created_at
+                )
+            return run
+
+    async def get_conversation_run(self, run_id: UUID) -> ConversationRun | None:
+        async with self._lock:
+            return self._conversation_runs.get(run_id)
+
+    async def list_conversation_runs(self, conversation_id: UUID) -> tuple[ConversationRun, ...]:
+        async with self._lock:
+            self._require_conversation(conversation_id)
+            return tuple(
+                sorted(
+                    (
+                        run
+                        for run in self._conversation_runs.values()
+                        if run.conversation_id == conversation_id
+                    ),
+                    key=lambda run: (run.created_at, str(run.run_id)),
+                )
+            )
+
+    async def request_conversation_cancel(self, run_id: UUID) -> ConversationRun:
+        async with self._lock:
+            run = self._conversation_runs.get(run_id)
+            if run is None:
+                raise QAContractError("ConversationRun does not exist")
+            if run.status in {
+                ConversationRunStatus.CANCEL_REQUESTED,
+                ConversationRunStatus.COMPLETED,
+                ConversationRunStatus.REFUSED,
+                ConversationRunStatus.FAILED,
+                ConversationRunStatus.CANCELLED,
+                ConversationRunStatus.TIMED_OUT,
+            }:
+                return run
+            updated = replace(
+                run,
+                status=ConversationRunStatus.CANCEL_REQUESTED,
+                cancellation_requested=True,
+                updated_at=datetime.now(UTC),
+            )
+            self._conversation_runs[run_id] = updated
+            return updated
+
+    async def prepare_conversation_recovery(self) -> tuple[UUID, ...]:
+        async with self._lock:
+            return tuple(
+                run.run_id
+                for run in self._conversation_runs.values()
+                if run.status
+                in {
+                    ConversationRunStatus.CREATED,
+                    ConversationRunStatus.QUEUED,
+                    ConversationRunStatus.RUNNING,
+                    ConversationRunStatus.CANCEL_REQUESTED,
+                }
+            )
+
     async def create_run(self, run: QARunRecord) -> QARunRecord:
         async with self._lock:
             conversation = self._require_conversation(run.conversation_id)
@@ -174,6 +280,7 @@ class InMemoryGroundedQARepository:
             self._attempts[run.attempt.attempt_id] = run
             self._latest_attempts[run.run_id] = run.attempt.attempt_id
             self._run_keys[key] = run.attempt.attempt_id
+            self._create_legacy_conversation_run(run)
             return run
 
     async def get_run(self, run_id: UUID) -> QARunRecord | None:
@@ -220,6 +327,7 @@ class InMemoryGroundedQARepository:
                 updated_at=datetime.now(UTC),
             )
             self._attempts[run.attempt.attempt_id] = updated
+            self._project_conversation_run(updated)
             return updated
 
     async def request_cancel(self, run_id: UUID) -> QARunRecord:
@@ -236,6 +344,7 @@ class InMemoryGroundedQARepository:
                 updated_at=datetime.now(UTC),
             )
             self._attempts[run.attempt.attempt_id] = updated
+            self._project_conversation_run(updated)
             return updated
 
     async def save_usage(self, run_id: UUID, usage: QARunUsage) -> QARunRecord:
@@ -249,6 +358,7 @@ class InMemoryGroundedQARepository:
                 raise QAContractError("QA usage updates must be monotonic")
             updated = replace(run, usage=usage, updated_at=datetime.now(UTC))
             self._attempts[run.attempt.attempt_id] = updated
+            self._project_conversation_run(updated)
             return updated
 
     async def save_evidence(self, evidence: EvidenceRecord) -> EvidenceRecord:
@@ -338,6 +448,7 @@ class InMemoryGroundedQARepository:
             for citation in citations:
                 self._citations[(citation.attempt_id, citation.citation.evidence_id)] = citation
             self._attempts[run.attempt.attempt_id] = updated
+            self._project_conversation_run(updated)
             return updated
 
     async def list_citations(self, attempt_id: UUID) -> tuple[CitationRecord, ...]:
@@ -536,6 +647,28 @@ class InMemoryGroundedQARepository:
             raise QAContractError("QA run does not exist")
         return self._attempts[attempt_id]
 
+    def _create_legacy_conversation_run(self, run: QARunRecord) -> None:
+        existing = self._conversation_runs.get(run.run_id)
+        parent = _conversation_run_from_qa(run)
+        if existing is not None:
+            if not _same_legacy_conversation_run_identity(existing, parent):
+                raise QAContractError("QA Run conflicts with its ConversationRun parent")
+            self._conversation_runs[run.run_id] = _conversation_run_from_qa(run, existing=existing)
+            return
+        key = (run.space_id, run.caller_id, run.idempotency_key)
+        conflicting_id = self._conversation_run_keys.get(key)
+        if conflicting_id is not None and conflicting_id != run.run_id:
+            raise QAContractError("QA Run idempotency key conflicts with a ConversationRun")
+        self._conversation_runs[run.run_id] = parent
+        self._conversation_run_keys[key] = run.run_id
+
+    def _project_conversation_run(self, run: QARunRecord) -> None:
+        parent = self._conversation_runs.get(run.run_id)
+        if parent is None:
+            self._create_legacy_conversation_run(run)
+            return
+        self._conversation_runs[run.run_id] = _conversation_run_from_qa(run, existing=parent)
+
 
 def _result_content(result: QAResult) -> str:
     if result.answer is not None:
@@ -560,6 +693,121 @@ def _same_message_command(existing: MessageRecord, requested: MessageRecord) -> 
         requested.role,
         requested.content,
         requested.run_id,
+    )
+
+
+def _same_conversation_turn(
+    existing_run: ConversationRun,
+    existing_message: MessageRecord,
+    requested_run: ConversationRun,
+    requested_message: MessageRecord,
+) -> bool:
+    return (
+        existing_run.conversation_id,
+        existing_run.space_id,
+        existing_run.caller_id,
+        existing_run.idempotency_key,
+        existing_run.run_kind,
+        existing_run.selection_source,
+        existing_message.content,
+    ) == (
+        requested_run.conversation_id,
+        requested_run.space_id,
+        requested_run.caller_id,
+        requested_run.idempotency_key,
+        requested_run.run_kind,
+        requested_run.selection_source,
+        requested_message.content,
+    )
+
+
+def _same_legacy_conversation_run_identity(
+    existing: ConversationRun, requested: ConversationRun
+) -> bool:
+    return (
+        existing.run_id,
+        existing.conversation_id,
+        existing.space_id,
+        existing.caller_id,
+        existing.user_message_id,
+        existing.run_kind,
+        existing.selection_source,
+        existing.router_version,
+        existing.core_prompt_version,
+        existing.model_identity,
+        existing.skill,
+    ) == (
+        requested.run_id,
+        requested.conversation_id,
+        requested.space_id,
+        requested.caller_id,
+        requested.user_message_id,
+        requested.run_kind,
+        requested.selection_source,
+        requested.router_version,
+        requested.core_prompt_version,
+        requested.model_identity,
+        requested.skill,
+    )
+
+
+def _conversation_run_from_qa(
+    run: QARunRecord, *, existing: ConversationRun | None = None
+) -> ConversationRun:
+    status = {
+        QAStatus.CREATED: ConversationRunStatus.CREATED,
+        QAStatus.QUEUED: ConversationRunStatus.QUEUED,
+        QAStatus.RUNNING: ConversationRunStatus.RUNNING,
+        QAStatus.VERIFYING: ConversationRunStatus.RUNNING,
+        QAStatus.COMPLETED: ConversationRunStatus.COMPLETED,
+        QAStatus.REFUSED: ConversationRunStatus.REFUSED,
+        QAStatus.FAILED: ConversationRunStatus.FAILED,
+        QAStatus.CANCEL_REQUESTED: ConversationRunStatus.CANCEL_REQUESTED,
+        QAStatus.CANCELLED: ConversationRunStatus.CANCELLED,
+        QAStatus.TIMED_OUT: ConversationRunStatus.TIMED_OUT,
+    }[run.status]
+    skill = (
+        FixedSkillIdentity(
+            name=run.versions.skill_name,
+            version=run.versions.skill_version,
+            content_sha256=run.versions.skill_content_sha256,
+        )
+        if run.versions.skill_content_sha256 is not None
+        else None
+    )
+    result = (
+        AssistantResult(AssistantResultKind.SKILL_RESULT, message_id=run.answer_message_id)
+        if run.answer_message_id is not None
+        else None
+    )
+    return ConversationRun(
+        run_id=run.run_id,
+        conversation_id=run.conversation_id,
+        space_id=run.space_id,
+        caller_id=run.caller_id,
+        user_message_id=run.question_message_id,
+        idempotency_key=existing.idempotency_key if existing is not None else run.idempotency_key,
+        run_kind=(
+            ConversationRunKind.GROUNDED_QA
+            if run.versions.skill_name == "knowledge_qa"
+            else ConversationRunKind.SKILL
+        ),
+        selection_source=ConversationRunSelectionSource.NONE,
+        status=status,
+        cancellation_requested=run.cancellation_requested,
+        error_code=run.error_code,
+        router_version="legacy-v1",
+        core_prompt_version="legacy-v1",
+        model_identity=run.versions.model_identity,
+        skill=skill,
+        usage=ConversationRunUsage(
+            input_tokens=run.usage.input_tokens,
+            output_tokens=run.usage.output_tokens,
+            model_latency_ms=run.usage.model_latency_ms,
+        ),
+        result=result,
+        created_at=existing.created_at if existing is not None else run.created_at,
+        updated_at=run.updated_at,
     )
 
 

@@ -50,10 +50,11 @@ class FakeOrganizationScope:
 
 @pytest.mark.asyncio
 async def test_provisional_qa_api_creates_run_cancels_and_replays_events() -> None:
+    repository = InMemoryGroundedQARepository()
     app = create_app(
         model_gateway=FakeModelGateway(),
         enable_qa_execution=False,
-        qa_repository=InMemoryGroundedQARepository(),
+        qa_repository=repository,
         qa_event_store=QAEventLog(),
         skill_activation_store=InMemorySkillActivationStore(),
     )
@@ -75,6 +76,10 @@ async def test_provisional_qa_api_creates_run_cancels_and_replays_events() -> No
         assert submitted.json()["skill"]["name"] == "knowledge_qa"
         assert submitted.json()["skill"]["version"] == "0.1.0"
         assert len(submitted.json()["skill"]["content_sha256"]) == 64
+        parent = await repository.get_conversation_run(run_id)
+        assert parent is not None
+        assert parent.run_id == run_id
+        assert parent.run_kind.value == "grounded_qa"
 
         history = await client.get(
             "/api/v1/spaces/00000000-0000-0000-0000-000000000001/conversations",

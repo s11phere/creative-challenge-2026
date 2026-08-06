@@ -1,5 +1,6 @@
 """Infrastructure: config, database, ORM, queue, logging, tracing, and parsers."""
 
+from .conversation_runs import PostgresConversationRunRepository
 from .orm import (
     Base,
     ChunkModel,
@@ -50,6 +51,7 @@ __all__ = [
     "ParserFactory",
     "PdfParser",
     "PostgresRetrievalStore",
+    "PostgresConversationRunRepository",
     "PostgresRuntimeStateStore",
     "PostgresSkillReferenceChecker",
     "SkillReferenceReport",

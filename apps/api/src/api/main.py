@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
+from application.assistant import ConversationReader, ConversationRunService
 from application.qa import (
     CitationResolver,
     PublishedCitationApplicationPort,
@@ -19,12 +20,14 @@ from application.skills import (
     SkillLifecycleService,
 )
 from domain.agent_runtime import ApprovalPort
+from domain.conversation_run import ConversationRunRepository
 from domain.grounded_qa import CitationContentKind
 from domain.qa_persistence import GroundedQARepository
 from domain.qa_sse import QAEventStore
 from fastapi import FastAPI, Response
 from infrastructure.blob_store import LocalFileBlobStore
 from infrastructure.config import settings
+from infrastructure.conversation_runs import PostgresConversationRunRepository
 from infrastructure.database import Database
 from infrastructure.organization import PostgresKnowledgeOrganizationScope
 from infrastructure.parsers import MarkdownParser, PdfParser
@@ -51,7 +54,7 @@ from pydantic import BaseModel
 from .errors import ErrorResponse, register_error_handlers
 from .observability import TraceMiddleware
 from .qa_runtime import QAWorkerDispatcher
-from .routers import qa, search, skills, sources
+from .routers import assistant, qa, search, skills, sources
 
 
 class LiveResponse(BaseModel):
@@ -97,6 +100,7 @@ def create_app(
     database: Database | None = None,
     enable_qa_execution: bool = True,
     qa_repository: GroundedQARepository | None = None,
+    conversation_run_repository: ConversationRunRepository | None = None,
     qa_event_store: QAEventStore | None = None,
     qa_citation_service: PublishedCitationApplicationPort | None = None,
     skill_catalog: SkillCatalogPort | None = None,
@@ -109,6 +113,23 @@ def create_app(
     database = database or Database(settings.database_url)
     gateway = model_gateway or _create_configured_model_gateway()
     qa_repository = qa_repository or PostgresGroundedQARepository(database)
+    if conversation_run_repository is None:
+        parent_methods = (
+            "create_turn",
+            "get_conversation_run",
+            "list_conversation_runs",
+            "request_conversation_cancel",
+            "prepare_conversation_recovery",
+        )
+        conversation_run_repository = (
+            cast(ConversationRunRepository, qa_repository)
+            if all(hasattr(qa_repository, method) for method in parent_methods)
+            else PostgresConversationRunRepository(database)
+        )
+    assistant_turn_service = ConversationRunService(
+        conversations=cast(ConversationReader, qa_repository),
+        runs=conversation_run_repository,
+    )
     qa_event_log = qa_event_store or PostgresQAEventStore(database)
     skill_registry = knowledge_qa_registry()
     activation_store = skill_activation_store or PostgresSkillActivationStore(database)
@@ -167,6 +188,8 @@ def create_app(
     app.state.database = database
     app.state.model_gateway = gateway
     app.state.qa_repository = qa_repository
+    app.state.conversation_run_repository = conversation_run_repository
+    app.state.assistant_turn_service = assistant_turn_service
     app.state.qa_event_log = qa_event_log
     app.state.qa_runtime = qa_runtime
     app.state.qa_citation_service = qa_citation_service
@@ -191,6 +214,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(sources.router)
     app.include_router(search.router)
     app.include_router(qa.router)
+    app.include_router(assistant.router)
     app.include_router(skills.router)
 
     @app.get(

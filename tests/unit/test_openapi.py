@@ -20,6 +20,9 @@ async def test_openapi_includes_health_endpoints() -> None:
     assert "/api/v1/spaces/{space_id}/search" in paths
     assert "/api/v1/skills" in paths
     assert "/api/v1/skills/{skill_name}/versions" in paths
+    assert "/api/v2/conversations/{conversation_id}/turns" in paths
+    assert "/api/v2/runs/{run_id}" in paths
+    assert "/api/v2/runs/{run_id}/cancel" in paths
 
     schemas = schema["components"]["schemas"]
     assert "LiveResponse" in schemas
@@ -28,6 +31,8 @@ async def test_openapi_includes_health_endpoints() -> None:
     assert "ErrorResponse" in schemas
     assert "SearchApiRequest" in schemas
     assert "SearchApiResponse" in schemas
+    assert "AssistantTurnRequest" in schemas
+    assert "ConversationRunResponse" in schemas
     assert "model" in schemas["ReadinessChecks"]["properties"]
     assert "model" in schemas["ReadinessChecks"]["required"]
 
@@ -57,4 +62,12 @@ async def test_openapi_includes_health_endpoints() -> None:
     }
     assert search_operation["responses"]["422"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/ErrorResponse"
+    }
+
+    turn_operation = paths["/api/v2/conversations/{conversation_id}/turns"]["post"]
+    assert turn_operation["requestBody"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/AssistantTurnRequest"
+    }
+    assert turn_operation["responses"]["202"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ConversationRunResponse"
     }

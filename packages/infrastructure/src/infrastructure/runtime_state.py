@@ -30,7 +30,7 @@ from .orm import RuntimeCheckpointModel, RuntimeRunModel
 class PostgresRuntimeStateStore:
     """Atomically store one Runtime transition and its verified checkpoint.
 
-    The Runtime row is keyed by the existing QA run ID. Checkpoints are
+    The Runtime row is keyed by the shared ConversationRun ID. Checkpoints are
     append-only by sequence, so a retry can safely replay an already committed
     checkpoint without creating a second side effect.
     """

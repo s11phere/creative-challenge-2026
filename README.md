@@ -225,7 +225,7 @@ git diff --exit-code -- docs/openapi.json
 | 服务 | 默认地址/端口 | 说明 |
 | --- | --- | --- |
 | Web | `http://127.0.0.1:5173` | nginx 静态托管并代理同源 `/api` |
-| API | `http://127.0.0.1:8000` | 公开接口前缀为 `/api/v1` |
+| API | `http://127.0.0.1:8000` | 兼容接口为 `/api/v1`；Assistant 持久化骨架为 `/api/v2`（不执行模型） |
 | PostgreSQL | `127.0.0.1:5432` | PostgreSQL 16 + pgvector |
 | Redis | `127.0.0.1:6379` | Dramatiq broker，启用 AOF |
 | OTel Collector | `4317`、`4318` | 仅 `--profile otel` 启动 |

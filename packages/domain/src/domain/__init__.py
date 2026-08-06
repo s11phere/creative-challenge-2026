@@ -32,6 +32,20 @@ from .chunking import (
     compute_chunk_hash,
     compute_chunker_config_hash,
 )
+from .conversation_run import (
+    AssistantResult,
+    AssistantResultKind,
+    Clarification,
+    ClarificationKind,
+    ConversationRun,
+    ConversationRunKind,
+    ConversationRunRepository,
+    ConversationRunSelectionSource,
+    ConversationRunStatus,
+    ConversationRunUsage,
+    FixedSkillIdentity,
+    ResourceCandidate,
+)
 from .embedding import EmbeddingIdentity, compute_processing_config_hash
 from .grounded_qa import (
     MAX_QUESTION_CHARS,
@@ -168,6 +182,8 @@ from .retrieval import (
 
 __all__ = [
     "AgentRun",
+    "AssistantResult",
+    "AssistantResultKind",
     "AgentRunContext",
     "AgentRuntime",
     "ApprovalPort",
@@ -191,8 +207,16 @@ __all__ = [
     "ChunkerConfig",
     "ChunkingResult",
     "Claim",
+    "Clarification",
+    "ClarificationKind",
     "ConflictNotice",
     "ConversationRecord",
+    "ConversationRun",
+    "ConversationRunKind",
+    "ConversationRunRepository",
+    "ConversationRunSelectionSource",
+    "ConversationRunStatus",
+    "ConversationRunUsage",
     "ChunkOutput",
     "Document",
     "DocumentRepository",
@@ -207,6 +231,7 @@ __all__ = [
     "FeedbackRecord",
     "FeedbackReviewRecord",
     "FeedbackReviewStatus",
+    "FixedSkillIdentity",
     "GroundedAnswer",
     "GroundedQAExecutionRepository",
     "GroundedQARepository",
@@ -261,6 +286,7 @@ __all__ = [
     "RerankResponse",
     "RerankScore",
     "RetrievalCandidate",
+    "ResourceCandidate",
     "RetrievalError",
     "RetrievalErrorCode",
     "RetrievalMode",

@@ -226,6 +226,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/__init__.py` | 稳定公开导出 |
 | `src/domain/models.py` | 核心实体：`Space`、`Source`、`Document`、`DocumentVersion`、`Chunk`、`IngestionTask` 及其枚举、`RetrievalProfile` 值对象 |
 | `src/domain/agent_runtime.py` | AgentRun 状态/步骤、预算、权限、调用记录、检查点、恢复校验及 Runtime/Registry/审批 Port |
+| `src/domain/conversation_run.py` | 通用 `ConversationRun` 父身份、运行种类/选择来源、澄清、通用结果、实际用量和持久化 Port；不含模型或数据库依赖 |
 | `src/domain/repositories.py` | 仓库接口定义（Protocol）：`SpaceRepository`、`SourceRepository`、`DocumentRepository`、`DocumentVersionRepository`、`ChunkRepository`、`IngestionTaskRepository` |
 | `src/domain/parsing.py` | `ParsedDocument` / `StructNode` / `ParseError` 纯类型、`Parser` Protocol、`compute_blob_hash` 辅助函数 |
 | `src/domain/fingerprinting.py` | 内容指纹：`normalize_stable_key`、`compute_content_hash`（含版本分隔符）、`compute_storage_key` |
@@ -268,6 +269,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/qa/context_builder.py` | 系统/问题/历史/不可信 Evidence 隔离、配额裁剪和稳定上下文摘要 |
 | `src/application/qa/generation.py` | `fast_chat` 非流式结构化生成、JSON schema 解析、一次修复、空证据拒答、显式取消、细分模型故障、冲突/发布竞态校验和安全版本/用量结果 |
 | `src/application/qa/persistence.py` | provisional 内存 Grounded QA Repository；验证 Space/owner、幂等、attempt、取消、usage、Evidence/Feedback 和原子终态发布 |
+| `src/application/assistant/runs.py` | v2 Assistant turn 创建、读取和取消用例；本阶段仅持久化用户消息和父 Run，不在 API 协程中选择 Skill 或调用模型 |
 | `src/application/qa/service.py` | 唯一 provisional `GroundedQAApplicationPort`；编排幂等提交、阶段 3 SearchService、Evidence/上下文、结构化生成、原子发布、取消和稳定失败终态 |
 | `src/application/skills/knowledge_qa.py` | provisional Skill Adapter；Worker 模式执行同一既有 QA Run，仅将 Runtime 服务端上下文映射到唯一 QA Port 并投影其结构化结果 |
 | `src/application/skills/organization.py` | 校验知识整理 Skill 的 Space 归属和当前 published Source/Document/DocumentVersion，并生成固定检索范围 |
@@ -303,6 +305,7 @@ Application 层的 Skill Adapter 编排使用；通用 Runtime 不反向依赖�
 | `src/infrastructure/chunkers/structure_chunker.py` | 结构感知分块、标题路径传播、父/邻接 metadata 和 locator 保留 |
 | `src/infrastructure/retrieval/postgres_store.py` | 当前发布集合上的 PostgreSQL FTS、pgvector exact/IVFFlat、上下文候选和诊断 |
 | `src/infrastructure/qa_persistence.py` | PostgreSQL Grounded QA Repository 与 SSE Event Store；事务式终态发布、append-only attempt 和 API 重启恢复 |
+| `src/infrastructure/conversation_runs.py` | PostgreSQL `ConversationRun` 父记录适配器；原子写入用户消息/Run、幂等读取、取消和恢复扫描 |
 
 **`config.py` 详解**：
 
@@ -379,10 +382,10 @@ Stage 3 模型组合。
 prompt 摘要在运行开始时固定。
 
 **当前边界**：通用 Runtime 通过 PostgreSQL `runtime_runs`/`runtime_checkpoints` 保存不可变
-Skill 身份、规范化状态摘要、连续序号和预算用量，并与 QA Run 共享运行身份；Worker 可从最近
+Skill 身份、规范化状态摘要、连续序号和预算用量，并与 `ConversationRun` 共享运行身份；Worker 可从最近
 Checkpoint 恢复，重复提交按序号幂等，租约丢失会取消未提交执行。PostgreSQL `skill_activations`
 保存 active pointer，Catalog 暴露安装版本、manifest 预算和 pointer revision；受控
-activate/rollback API 使用 revision CAS，引用检查器保护 QA Run、Runtime Run 和 Checkpoint
+activate/rollback API 使用 revision CAS，引用检查器保护 QA 投影、Runtime Run 和 Checkpoint
 仍在使用的版本，清理只移除进程 Registry，不删除受信磁盘包。新 QA Run 在提交时固定 Skill
 名称、版本和内容摘要，Worker 按该身份执行唯一 QA Application Port。
 
@@ -431,6 +434,9 @@ Registry 在服务端重验
      — provisional PostgreSQL 会话与 Run 创建；API 只投递 Run ID，由独立 Worker 执行唯一 Grounded QA 用例
    - `POST /api/v1/conversations/{conversation_id}/skills/knowledge_agent/runs` — 在同一 QA Run/Worker/SSE
      协议中启动固定版本的只读 LLM Agent，不接受客户端指定 Tool、prompt、权限或版本
+   - `POST /api/v2/conversations/{conversation_id}/turns`、`GET /api/v2/runs/{run_id}`、
+     `POST /api/v2/runs/{run_id}/cancel` — 通用 Assistant Run 骨架；v1 QA Run 作为同一 UUID 的
+     `grounded_qa` 投影继续兼容。本阶段只提供可恢复的无模型持久化，不启动直接回答或 v2 SSE
    - `GET /api/v1/qa/runs/{run_id}`、`POST /api/v1/qa/runs/{run_id}/cancel`、
      `GET /api/v1/qa/runs/{run_id}/events`、`POST /api/v1/qa/runs/{run_id}/feedback` — provisional
      Run 查询/取消、SSE 重放和反馈契约；终态响应包含结构化回答/拒答及已校验 Citation 身份
@@ -461,7 +467,7 @@ Registry 在服务端重验
 ```
 
 **OpenAPI**：端点声明 `response_model`；`docs/openapi.json` 由运行时应用确定性导出，当前覆盖
-健康、来源/摄入任务、检索、provisional QA 和 Skill Catalog/lifecycle schema。QA 执行复用真实 PostgreSQL SearchService；
+健康、来源/摄入任务、检索、provisional QA、Assistant v2 骨架和 Skill Catalog/lifecycle schema。QA 执行复用真实 PostgreSQL SearchService；
 状态、结果、引用和事件由 PostgreSQL 保存，服务启动时恢复安全的非终态 attempt；
 新增或修改公开端点后必须重新导出并运行一致性检查。
 
@@ -602,12 +608,11 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | `versions/b2c3d4e5f6a7_complete_ingestion_identity.py` | **阶段 2 修正迁移**：补齐双哈希、处理版本、tombstone、Chunk/Task 幂等与恢复字段、外键和约束，并兼容回填旧数据 |
 | `versions/c3d4e5f6a7b8_seed_default_space.py` | **阶段 2 数据迁移**：幂等创建开发/API 使用的默认 Space |
 | `versions/d4e5f6a7b8c9_add_chunk_fts.py` | **阶段 3 迁移**：增加持久生成的 Chunk FTS 文档列和 GIN 索引，并保留 pgvector 索引 |
+| `versions/8f9a0b1c2d3e_add_conversation_run_parents.py` | 通用 `conversation_runs` 父身份；回填既有 QA UUID，并将 QA 消息、Runtime、审批和派生知识外键改指向父 Run；降级拒绝丢弃非 QA turn |
 
-当前只有上述 6 张业务表，没有 Conversation、Message、AgentRun、Evidence、Citation、Feedback
-或 Checkpoint 表。阶段 0 数据门禁已按 `docs/stage-0-acceptance.md` 满足；阶段 4/5 新表仍必须
-等待 ADR-007 约束、对应阶段计划和新的 Alembic revision；禁止
-修改既有 revision 伪造历史。`docs/stage-4-persistence-design.md` 仅记录门禁后的候选表、约束、
-索引和事务评审，不代表迁移已创建或数据库能力可用。
+迁移链还包含 Grounded QA、attempt lease、Runtime checkpoint、审批、派生知识和生命周期 revision。
+`ConversationRun` 是新旧 Run 的共享父身份：`qa_runs` 仅保留 Grounded QA 投影及其 Evidence/Citation/
+attempt 历史。禁止修改既有 revision 伪造历史；降级不得静默删除已创建的非 QA Assistant turn。
 
 ---
 

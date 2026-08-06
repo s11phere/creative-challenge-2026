@@ -12,6 +12,14 @@ The remaining labels are evidence labels, not implementation deferrals: formal r
 holdouts remain unrun or non-passing under ADR-010/011, and browser Playwright coverage is unavailable
 in the current environment.
 
+## 2026-08-06 Assistant Conversation Evolution Step 1
+
+按 `agent-conversation-evolution-plan.md` 的 Step 1，新增了共享 `ConversationRun` 父身份和 API v2
+骨架。旧 `qa_runs.id` 保持不变并成为 `grounded_qa` 投影；QA 消息、Runtime、审批和派生知识改为
+引用该父 ID。v2 目前只能原子持久化/读取/取消无模型 turn，尚未执行自动路由、直接模型回答、命令、
+澄清续答或 v2 SSE。这是工程契约演进，不改变 ADR-010/ADR-011 的 provisional 边界，也不构成任何
+正式检索、回答或 Skill 质量验收。
+
 最终工程复核（2026-08-04）：后端 `698 passed, 48 skipped`；Ruff format/check、mypy 通过；前端
 lint/typecheck/test/build 通过（28 tests）；隔离 PostgreSQL QA/Runtime/Skill 集成 `6 passed`；
 迁移 upgrade/downgrade/upgrade、单一 head 和 OpenAPI 一致性通过。Runtime 检查点摘要/Skill
