@@ -24,6 +24,13 @@ from .agent_runtime import (
     transition_run,
     validate_recovery,
 )
+from .assistant_sse import (
+    ASSISTANT_TERMINAL_EVENT_TYPES,
+    AssistantEventLog,
+    AssistantEventStore,
+    AssistantEventType,
+    AssistantStreamEvent,
+)
 from .chunking import (
     Chunker,
     ChunkerConfig,
@@ -31,6 +38,27 @@ from .chunking import (
     ChunkOutput,
     compute_chunk_hash,
     compute_chunker_config_hash,
+)
+from .conversation_context import (
+    ConversationSensitivity,
+    ConversationSummary,
+    ConversationSummaryRepository,
+    most_restrictive_sensitivity,
+)
+from .conversation_run import (
+    AssistantResult,
+    AssistantResultKind,
+    Clarification,
+    ClarificationContinuation,
+    ClarificationKind,
+    ConversationRun,
+    ConversationRunKind,
+    ConversationRunRepository,
+    ConversationRunSelectionSource,
+    ConversationRunStatus,
+    ConversationRunUsage,
+    FixedSkillIdentity,
+    ResourceCandidate,
 )
 from .embedding import EmbeddingIdentity, compute_processing_config_hash
 from .grounded_qa import (
@@ -168,6 +196,13 @@ from .retrieval import (
 
 __all__ = [
     "AgentRun",
+    "ASSISTANT_TERMINAL_EVENT_TYPES",
+    "AssistantEventLog",
+    "AssistantEventStore",
+    "AssistantEventType",
+    "AssistantResult",
+    "AssistantResultKind",
+    "AssistantStreamEvent",
     "AgentRunContext",
     "AgentRuntime",
     "ApprovalPort",
@@ -191,8 +226,20 @@ __all__ = [
     "ChunkerConfig",
     "ChunkingResult",
     "Claim",
+    "Clarification",
+    "ClarificationContinuation",
+    "ClarificationKind",
     "ConflictNotice",
     "ConversationRecord",
+    "ConversationSensitivity",
+    "ConversationSummary",
+    "ConversationSummaryRepository",
+    "ConversationRun",
+    "ConversationRunKind",
+    "ConversationRunRepository",
+    "ConversationRunSelectionSource",
+    "ConversationRunStatus",
+    "ConversationRunUsage",
     "ChunkOutput",
     "Document",
     "DocumentRepository",
@@ -207,6 +254,7 @@ __all__ = [
     "FeedbackRecord",
     "FeedbackReviewRecord",
     "FeedbackReviewStatus",
+    "FixedSkillIdentity",
     "GroundedAnswer",
     "GroundedQAExecutionRepository",
     "GroundedQARepository",
@@ -261,6 +309,7 @@ __all__ = [
     "RerankResponse",
     "RerankScore",
     "RetrievalCandidate",
+    "ResourceCandidate",
     "RetrievalError",
     "RetrievalErrorCode",
     "RetrievalMode",
@@ -303,6 +352,7 @@ __all__ = [
     "ToolRegistry",
     "transition_run",
     "terminal_status_for_result",
+    "most_restrictive_sensitivity",
     "transition_qa_status",
     "validate_answer_citations",
     "validate_recovery",

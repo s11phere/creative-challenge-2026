@@ -1,0 +1,17 @@
+{
+  "schema_version": "assistant-error-codes-v1",
+  "codes": [
+    {"code": "RUN_AGENT_DECISION_INVALID", "retryable": false},
+    {"code": "RUN_COMMAND_UNKNOWN", "retryable": false},
+    {"code": "RUN_COMMAND_ARGUMENT_REQUIRED", "retryable": false},
+    {"code": "SKILL_NOT_ACTIVE", "retryable": false},
+    {"code": "RESOURCE_NOT_FOUND", "retryable": false},
+    {"code": "RESOURCE_CONFLICT", "retryable": false},
+    {"code": "RUN_CONTEXT_LIMIT", "retryable": true},
+    {"code": "RUN_CONTEXT_COMPACTION_FAILED", "retryable": true},
+    {"code": "RUN_CLARIFICATION_EXPIRED", "retryable": false},
+    {"code": "AUTH_PROVIDER_POLICY_DENIED", "retryable": false},
+    {"code": "RUN_IDEMPOTENCY_CONFLICT", "retryable": false}
+  ]
+}
+

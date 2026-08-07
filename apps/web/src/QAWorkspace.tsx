@@ -3,51 +3,53 @@ import {
   AlertCircle,
   Bot,
   BookOpenText,
+  Check,
+  ChevronDown,
+  CircleHelp,
   FileText,
   LoaderCircle,
   MessageSquareText,
   Quote,
   RotateCcw,
   Send,
-  Search,
-  ShieldCheck,
   Square,
-  ThumbsDown,
-  ThumbsUp,
-  Workflow,
   X,
 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import rehypeKatex from 'rehype-katex'
+import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import 'katex/dist/katex.min.css'
 import {
   cancelRun,
-  createReviewCards,
-  decideApproval,
+  cancelAssistantRun,
   createConversation,
+  fetchAssistantConversationRuns,
+  fetchAssistantCommands,
+  fetchAssistantRunEvents,
   fetchCitationExcerpt,
   fetchConversationHistory,
   fetchRun,
-  fetchSkills,
-  requestApproval,
-  resumeRun,
+  isAssistantRun,
+  legacyQARunToAssistantRun,
+  selectClarificationResource,
   submitQuestion,
-  submitOrganizationSkill,
-  submitFeedback,
-  type FeedbackDecision,
-  type QASkillName,
-  type QARun,
+  submitAssistantTurn,
+  type AssistantCommand,
+  type AssistantCommandResult,
+  type AssistantRun,
+  type AssistantRunEvent,
   type ConversationHistoryItem,
+  type QARun,
 } from './qa'
-import { fetchSourceDetail, fetchSources, type SourceDetail } from './sources'
+import { assistantDefaultApiMode, type AssistantApiMode } from './assistantRelease'
+import { fetchSourceDetail } from './sources'
 
 export type QAWorkspaceProps = {
   selectedConversationId?: string | null
   onConversationSelected?: (conversationId: string | null) => void
-}
-
-type LocalQuestion = {
-  id: string
-  text: string
-  run: QARun
+  apiMode?: AssistantApiMode
 }
 
 type CitationMetadata = {
@@ -55,199 +57,336 @@ type CitationMetadata = {
   uri: string | null
 }
 
-const resumableStatuses = new Set(['created', 'queued', 'running', 'verifying', 'cancel_requested'])
-const activeStatuses = new Set(['created', 'queued', 'running', 'verifying', 'cancel_requested'])
+type CommandNotice = Pick<AssistantCommandResult, 'command' | 'content' | 'commands'>
+
+const activeStatuses = new Set(['created', 'queued', 'running', 'cancel_requested'])
 
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
     created: '已创建',
     queued: '等待执行',
-    running: '正在检索与生成',
-    verifying: '正在校验证据',
+    running: '正在处理',
+    waiting_clarification: '等待选择',
+    waiting_approval: '等待审批',
     cancel_requested: '正在取消',
     cancelled: '已取消',
     completed: '已完成',
-    refused: '证据不足',
+    refused: '已拒绝',
     failed: '运行失败',
     timed_out: '运行超时',
   }
   return labels[status] ?? status
 }
 
-function citationStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    source_updated: '来源已更新，显示的是回答时固定版本的原文',
-    withdrawn: '来源已撤回，原文不可再访问',
-    deleted: '文档已删除，原文不可再访问',
-    retention_expired: '固定版本已超出保留期限',
-    unavailable: '固定版本或分块当前不可用',
-    invalid: '引用内容与固定版本校验不一致',
-  }
-  return labels[status] ?? `原文当前不可用（${status}）`
-}
-
-function questionsFromConversation(conversation: ConversationHistoryItem): LocalQuestion[] {
-  return conversation.messages.flatMap((message) => {
-    if (message.role !== 'user') return []
-    const run = conversation.runs.find((candidate) => candidate.question_message_id === message.message_id)
-    return run ? [{ id: message.message_id, text: message.content, run }] : []
-  })
-}
-
 function citationKey(sourceId: string, documentId: string): string {
   return `${sourceId}:${documentId}`
+}
+
+function isGroundedRun(run: AssistantRun): boolean {
+  return run.run_kind === 'grounded_qa' || run.run_kind === 'skill'
+}
+
+function isSkillInvocation(run: AssistantRun): boolean {
+  return run.selection.skill !== null
+}
+
+function selectionSourceLabel(source: AssistantRun['selection']['source']): string {
+  const labels: Record<AssistantRun['selection']['source'], string> = {
+    auto: 'Agent 自动路由',
+    command: '显式指令',
+    none: '兼容入口',
+  }
+  return labels[source]
+}
+
+function eventLabel(event: AssistantRunEvent, skillName: string): string {
+  const action = typeof event.payload.action === 'string' ? event.payload.action : null
+  const phase = typeof event.payload.phase === 'string' ? event.payload.phase : null
+  switch (event.type) {
+    case 'accepted':
+      return '已接收调用请求'
+    case 'routing':
+      return action === 'invoke_skill' ? 'Agent 已选择调用此 Skill' : 'Agent 已完成路由'
+    case 'skill_started':
+      return `开始执行 ${skillName}`
+    case 'phase':
+      if (phase === 'final_answer') return '已完成最终回答'
+      return phase ? `正在执行 ${phase}` : '正在执行任务阶段'
+    case 'clarification':
+      return '等待补充资源信息'
+    case 'completed':
+      return '调用已完成'
+    case 'failed':
+      return '调用失败'
+    case 'cancelled':
+      return '调用已取消'
+  }
+}
+
+type SkillRunCardProps = {
+  run: AssistantRun
+  result: QARun['result']
+  clarificationPending: boolean
+  onSelectClarification: (candidateId: string) => void
+  onOpenEvidence: (runId: string) => void
+}
+
+function SkillRunCard({
+  run,
+  result,
+  clarificationPending,
+  onSelectClarification,
+  onOpenEvidence,
+}: SkillRunCardProps) {
+  const skill = run.selection.skill
+  const activityQuery = useQuery({
+    queryKey: ['assistant-run-events', run.run_id],
+    queryFn: ({ signal }) => fetchAssistantRunEvents(run.run_id, signal),
+    retry: false,
+    enabled: skill !== null,
+    refetchInterval: activeStatuses.has(run.status) ? 2_000 : false,
+  })
+  if (!skill) return null
+  const activity = activityQuery.data ?? []
+
+  return (
+    <details className="chat-skill-run" data-status={run.status}>
+      <summary>
+        <span className="chat-skill-run-title">
+          <Bot size={17} aria-hidden="true" />
+          <span><strong>Skill 调用 · {skill.name}</strong><small>{selectionSourceLabel(run.selection.source)} · {statusLabel(run.status)}</small></span>
+        </span>
+        <ChevronDown size={16} aria-hidden="true" />
+      </summary>
+      <div className="chat-skill-run-content">
+        <section>
+          <h3>调用链</h3>
+          <ol className="chat-skill-activity">
+            <li><span>发起方式</span><strong>{selectionSourceLabel(run.selection.source)}</strong></li>
+            <li><span>固定版本</span><code>{skill.name} {skill.version}</code></li>
+            {activity.map((event) => <li key={event.event_id}><span>步骤 {event.sequence}</span><strong>{eventLabel(event, skill.name)}</strong></li>)}
+            {activity.length === 0 && <li><span>执行状态</span><strong>{statusLabel(run.status)}</strong></li>}
+          </ol>
+        </section>
+        <section>
+          <h3>执行信息</h3>
+          <dl className="chat-skill-run-metadata">
+            <div><dt>状态</dt><dd>{statusLabel(run.status)}</dd></div>
+            <div><dt>模型</dt><dd>{run.model_identity}</dd></div>
+            <div><dt>输入 Token</dt><dd>{run.usage.input_tokens.toLocaleString('zh-CN')}</dd></div>
+            <div><dt>输出 Token</dt><dd>{run.usage.output_tokens.toLocaleString('zh-CN')}</dd></div>
+            <div><dt>模型耗时</dt><dd>{Math.round(run.usage.model_latency_ms).toLocaleString('zh-CN')} ms</dd></div>
+          </dl>
+        </section>
+        {result && skill.name !== 'knowledge_qa' && (result.text || result.message) && (
+          <section>
+            <h3>Skill 结果</h3>
+            <div className="qa-answer">
+              <RenderedAssistantAnswer
+                content={result.text ?? result.message ?? ''}
+                limitations={result.limitations}
+              />
+            </div>
+          </section>
+        )}
+        {isGroundedRun(run) && (
+          <button
+            className="chat-evidence-button"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation()
+              onOpenEvidence(run.run_id)
+            }}
+          >
+            <Quote size={15} aria-hidden="true" />
+            查看引用证据
+          </button>
+        )}
+        {run.clarification && (
+          <section className="chat-clarification">
+            <h3>需要选择</h3>
+            <p>{run.clarification.message}</p>
+            {run.clarification.resource_candidates.length > 0 && (
+              <div role="group" aria-label="资源选择">
+                {run.clarification.resource_candidates.map((candidate) => (
+                  <button
+                    key={candidate.candidate_id}
+                    type="button"
+                    disabled={clarificationPending}
+                    onClick={() => onSelectClarification(candidate.candidate_id)}
+                  >
+                    <FileText size={16} aria-hidden="true" />
+                    <span><strong>{candidate.label}</strong>{candidate.source_label && <small>{candidate.source_label}</small>}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+        {run.error_code && <code className="chat-skill-run-error">{run.error_code}</code>}
+      </div>
+    </details>
+  )
+}
+
+function commandNameMatches(command: AssistantCommand, needle: string): boolean {
+  const normalized = needle.trim().toLocaleLowerCase()
+  if (!normalized) return true
+  return [command.name, ...command.aliases]
+    .some((value) => value.toLocaleLowerCase().startsWith(normalized))
+}
+
+function commandDescriptionMatches(command: AssistantCommand, needle: string): boolean {
+  const normalized = needle.trim().toLocaleLowerCase()
+  return Boolean(normalized) && command.description.toLocaleLowerCase().includes(normalized)
+}
+
+type CommandPrefix = {
+  leading: string
+  command: string
+  trailing: string
+}
+
+function validCommandPrefix(value: string, commands: AssistantCommand[]): CommandPrefix | null {
+  const match = /^(\s*)(\/[^\s/]+)([\s\S]*)$/.exec(value)
+  if (!match) return null
+  const token = match[2].slice(1).toLocaleLowerCase()
+  const descriptor = commands.find((command) =>
+    [command.name, ...command.aliases].some((name) => name.toLocaleLowerCase() === token),
+  )
+  return descriptor
+    ? { leading: match[1], command: match[2], trailing: match[3] }
+    : null
+}
+
+function CommandText({ value, commands }: { value: string; commands: AssistantCommand[] }) {
+  const prefix = validCommandPrefix(value, commands)
+  if (!prefix) return <>{value}</>
+  return (
+    <>
+      <span>{prefix.leading}</span>
+      <span className="chat-command-token">{prefix.command}</span>
+      <span>{prefix.trailing}</span>
+    </>
+  )
+}
+
+function RenderedAssistantAnswer({
+  content,
+  limitations = [],
+}: {
+  content: string
+  limitations?: string[]
+}) {
+  return (
+    <div className="qa-markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        skipHtml
+      >
+        {content}
+      </ReactMarkdown>
+      {limitations.map((limitation) => <small key={limitation}>{limitation}</small>)}
+    </div>
+  )
 }
 
 export function QAWorkspace({
   selectedConversationId,
   onConversationSelected,
+  apiMode = assistantDefaultApiMode,
 }: QAWorkspaceProps = {}) {
   const [draft, setDraft] = useState('')
   const [conversationId, setConversationId] = useState<string | null>(null)
-  const [selectedQuestionId, setSelectedQuestionId] = useState<string | null>(null)
-  const [localQuestions, setLocalQuestions] = useState<LocalQuestion[]>([])
-  const [recoveredQuestionId, setRecoveredQuestionId] = useState<string | null>(null)
+  const [localMessages, setLocalMessages] = useState<ConversationHistoryItem['messages']>([])
+  const [localRuns, setLocalRuns] = useState<AssistantRun[]>([])
+  const [activeRunId, setActiveRunId] = useState<string | null>(null)
+  const [evidenceRunId, setEvidenceRunId] = useState<string | null>(null)
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null)
-  const [selectedSkill, setSelectedSkill] = useState<QASkillName>('knowledge_agent')
-  const [selectedSourceId, setSelectedSourceId] = useState('')
-  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([])
-  const [selectedDocumentId, setSelectedDocumentId] = useState('')
-  const [focus, setFocus] = useState('')
-  const [approval, setApproval] = useState<Awaited<ReturnType<typeof requestApproval>> | null>(null)
-  const [feedbackDecision, setFeedbackDecision] = useState<FeedbackDecision | null>(null)
-  const [feedbackNote, setFeedbackNote] = useState('')
+  const [commandIndex, setCommandIndex] = useState(0)
+  const [commandMenuDismissed, setCommandMenuDismissed] = useState(false)
+  const [commandNotice, setCommandNotice] = useState<CommandNotice | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const commandHighlightRef = useRef<HTMLDivElement>(null)
+  const isComposingRef = useRef(false)
   const excerptRef = useRef<HTMLDivElement>(null)
   const historyInitializedRef = useRef(false)
+  const evidenceUserClosedRef = useRef(false)
   const queryClient = useQueryClient()
-
-
-  const skillsQuery = useQuery({
-    queryKey: ['skills'],
-    queryFn: ({ signal }) => fetchSkills(signal),
-    staleTime: 60_000,
-    retry: false,
-  })
+  const usingLegacyV1 = apiMode === 'v1'
 
   const historyQuery = useQuery({
     queryKey: ['qa-history'],
     queryFn: ({ signal }) => fetchConversationHistory(signal),
     retry: false,
-    enabled: selectedConversationId !== null,
+    enabled: Boolean(conversationId) || selectedConversationId !== null,
+  })
+  const commandsQuery = useQuery({
+    queryKey: ['assistant-commands'],
+    queryFn: ({ signal }) => fetchAssistantCommands(signal),
+    staleTime: 60_000,
+    retry: false,
+    enabled: !usingLegacyV1,
+  })
+  const assistantRunsQuery = useQuery({
+    queryKey: ['assistant-runs', conversationId],
+    queryFn: ({ signal }) => fetchAssistantConversationRuns(conversationId!, signal),
+    enabled: Boolean(conversationId) && !usingLegacyV1,
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.data?.some((run) => activeStatuses.has(run.status)) ? 2_000 : false,
   })
 
-  const conversations = Array.isArray(historyQuery.data?.conversations)
-    ? historyQuery.data.conversations
-    : []
+  const conversations = historyQuery.data?.conversations ?? []
   const selectedConversation = conversations.find(
     (conversation) => conversation.conversation_id === conversationId,
   )
-  const storedQuestions = useMemo(
-    () => (selectedConversation ? questionsFromConversation(selectedConversation) : []),
+  const runs = useMemo(() => {
+    const apiRuns = usingLegacyV1
+      ? (selectedConversation?.runs ?? []).map(legacyQARunToAssistantRun)
+      : (assistantRunsQuery.data ?? [])
+    // The submission response is only an optimistic snapshot. A refreshed API Run is authoritative.
+    const values = new Map(localRuns.map((run) => [run.run_id, run]))
+    for (const run of apiRuns) values.set(run.run_id, run)
+    return [...values.values()]
+  }, [assistantRunsQuery.data, localRuns, selectedConversation?.runs, usingLegacyV1])
+  const runsByMessage = useMemo(
+    () => new Map(runs.map((run) => [run.user_message_id, run])),
+    [runs],
+  )
+  const legacyRunsById = useMemo(
+    () => new Map((selectedConversation?.runs ?? []).map((run) => [run.run_id, run])),
     [selectedConversation],
   )
-  const visibleQuestions = useMemo(() => {
-    const byId = new Map(storedQuestions.map((question) => [question.id, question]))
-    for (const question of localQuestions) byId.set(question.id, question)
-    return [...byId.values()]
-  }, [localQuestions, storedQuestions])
-  const currentQuestion =
-    visibleQuestions.find((question) => question.id === selectedQuestionId) ??
-    visibleQuestions.at(-1)
-
-  useEffect(() => {
-    if (selectedConversationId === undefined) {
-      if (historyInitializedRef.current || !historyQuery.data) return
-      historyInitializedRef.current = true
-      const newestConversation = historyQuery.data.conversations?.[0]
-      if (!newestConversation) return
-      const newestQuestion = questionsFromConversation(newestConversation).at(-1)
-      setConversationId(newestConversation.conversation_id)
-      setSelectedQuestionId(newestQuestion?.id ?? null)
-      setRecoveredQuestionId(newestQuestion?.id ?? null)
-      onConversationSelected?.(newestConversation.conversation_id)
-      return
-    }
-
-    if (conversationId !== selectedConversationId) {
-      setConversationId(selectedConversationId)
-      setSelectedQuestionId(null)
-      setLocalQuestions([])
-      setRecoveredQuestionId(null)
-      setApproval(null)
-      setFeedbackDecision(null)
-      setFeedbackNote('')
-      setSelectedEvidenceId(null)
-      return
-    }
-
-    if (selectedQuestionId === null && selectedConversation) {
-      const newestQuestion = questionsFromConversation(selectedConversation).at(-1)
-      setSelectedQuestionId(newestQuestion?.id ?? null)
-      setRecoveredQuestionId(newestQuestion?.id ?? null)
-    }
-  }, [
-    conversationId,
-    historyQuery.data,
-    onConversationSelected,
-    selectedConversation,
-    selectedConversationId,
-    selectedQuestionId,
-  ])
-
-  const runQuery = useQuery({
-    queryKey: ['qa-run', currentQuestion?.run.run_id],
-    queryFn: ({ signal }) => fetchRun(currentQuestion!.run.run_id, signal),
-    enabled: currentQuestion !== undefined,
-    initialData: currentQuestion?.run,
-    refetchInterval: (query) =>
-      activeStatuses.has(query.state.data?.status ?? '') ? 2_000 : false,
+  const currentRun = runs.find((run) => run.run_id === activeRunId) ?? runs.at(-1)
+  const currentLegacyRun = currentRun ? legacyRunsById.get(currentRun.run_id) : undefined
+  const currentQARunQuery = useQuery({
+    queryKey: ['qa-run', currentRun?.run_id],
+    queryFn: ({ signal }) => fetchRun(currentRun!.run_id, signal),
+    enabled: Boolean(currentRun && isGroundedRun(currentRun)),
+    initialData: currentLegacyRun,
+    retry: false,
+    refetchInterval: (query) => activeStatuses.has(query.state.data?.status ?? '') ? 2_000 : false,
   })
-
-  const currentRun = runQuery.data ?? currentQuestion?.run
-  useEffect(() => {
-    const skillName = currentRun?.skill?.name
-    if (
-      skillName === 'knowledge_agent' ||
-      skillName === 'knowledge_qa' ||
-      skillName === 'summarize_document' ||
-      skillName === 'compare_sources' ||
-      skillName === 'create_review_cards'
-    ) {
-      setSelectedSkill(skillName)
-    }
-  }, [currentRun?.skill?.name])
-
-  const activeSkill = skillsQuery.data?.find((skill) => skill.name === selectedSkill)
-  const isDocumentSkill = selectedSkill === 'summarize_document' || selectedSkill === 'create_review_cards'
-  const isOrganizationSkill = isDocumentSkill || selectedSkill === 'compare_sources'
-  const sourcesQuery = useQuery({
-    queryKey: ['sources'],
-    queryFn: ({ signal }) => fetchSources(signal),
-    enabled: isOrganizationSkill,
+  const evidenceLegacyRun = evidenceRunId ? legacyRunsById.get(evidenceRunId) : undefined
+  const evidenceRunQuery = useQuery<QARun>({
+    queryKey: ['qa-evidence-run', evidenceRunId],
+    queryFn: ({ signal }) => fetchRun(evidenceRunId!, signal),
+    enabled: Boolean(evidenceRunId),
+    initialData: evidenceLegacyRun,
     retry: false,
   })
-  const sourceDetailQuery = useQuery<SourceDetail>({
-    queryKey: ['source', selectedSourceId],
-    queryFn: ({ signal }) => fetchSourceDetail(selectedSourceId, signal),
-    enabled: isDocumentSkill && Boolean(selectedSourceId),
-    retry: false,
-  })
-  const displayedSkill = currentRun?.skill ?? {
-    name: selectedSkill,
-    version: activeSkill?.active_version ?? null,
-  }
-  const isActive = currentRun ? activeStatuses.has(currentRun.status) : false
+  const evidenceRun = evidenceRunQuery.data ?? evidenceLegacyRun
   const citationSourceIds = useMemo(
-    () => [...new Set(currentRun?.citations?.map((citation) => citation.source_id) ?? [])],
-    [currentRun?.citations],
+    () => [...new Set(evidenceRun?.citations?.map((citation) => citation.source_id) ?? [])],
+    [evidenceRun?.citations],
   )
   const citationMetadataQuery = useQuery<Record<string, CitationMetadata>>({
     queryKey: ['qa-citation-source-details', citationSourceIds],
     queryFn: async ({ signal }) => {
       const details = await Promise.all(
-        citationSourceIds.map((sourceId) =>
-          fetchSourceDetail(sourceId, signal).catch(() => null),
-        ),
+        citationSourceIds.map((sourceId) => fetchSourceDetail(sourceId, signal).catch(() => null)),
       )
       const metadata: Record<string, CitationMetadata> = {}
       details.forEach((detail, index) => {
@@ -266,387 +405,453 @@ export function QAWorkspace({
     retry: false,
   })
   const citationQuery = useQuery({
-    queryKey: ['qa-citation', currentRun?.run_id, selectedEvidenceId],
-    queryFn: ({ signal }) =>
-      fetchCitationExcerpt(currentRun!.run_id, selectedEvidenceId!, signal),
-    enabled: Boolean(currentRun?.run_id && selectedEvidenceId),
+    queryKey: ['qa-citation', evidenceRun?.run_id, selectedEvidenceId],
+    queryFn: ({ signal }) => fetchCitationExcerpt(evidenceRun!.run_id, selectedEvidenceId!, signal),
+    enabled: Boolean(evidenceRun?.run_id && selectedEvidenceId),
     retry: false,
   })
 
+  const trimmed = draft.trimStart()
+  const commandToken = trimmed.startsWith('/') && !trimmed.startsWith('//')
+    ? trimmed.slice(1).split(/\s/, 1)[0]
+    : ''
+  const commandOptions = useMemo(() => {
+    const commands = commandsQuery.data ?? []
+    if (!commandToken.trim()) return commands
+    const nameMatches = commands.filter((command) => commandNameMatches(command, commandToken))
+    return nameMatches.length > 0
+      ? nameMatches
+      : commands.filter((command) => commandDescriptionMatches(command, commandToken))
+  }, [commandToken, commandsQuery.data])
+  const commandHasArguments = /\s/.test(trimmed.slice(1))
+  const commandMenuOpen = !usingLegacyV1
+    && trimmed.startsWith('/')
+    && !trimmed.startsWith('//')
+    && !commandHasArguments
+    && !commandMenuDismissed
+  const activeCommand = commandOptions[commandIndex]
+  const commandPrefix = useMemo(
+    () => validCommandPrefix(draft, commandsQuery.data ?? []),
+    [commandsQuery.data, draft],
+  )
+
   useEffect(() => {
-    if (selectedEvidenceId && (citationQuery.data || citationQuery.error)) {
-      excerptRef.current?.focus()
+    if (!commandHighlightRef.current || !textareaRef.current) return
+    commandHighlightRef.current.scrollTop = textareaRef.current.scrollTop
+    commandHighlightRef.current.scrollLeft = textareaRef.current.scrollLeft
+  }, [commandPrefix, draft])
+
+  useEffect(() => {
+    if (commandIndex >= commandOptions.length) setCommandIndex(0)
+  }, [commandIndex, commandOptions.length])
+
+  useEffect(() => {
+    if (selectedConversationId === undefined) {
+      if (historyInitializedRef.current || !historyQuery.data) return
+      historyInitializedRef.current = true
+      const newest = historyQuery.data.conversations?.[0]
+      if (newest) {
+        setConversationId(newest.conversation_id)
+        onConversationSelected?.(newest.conversation_id)
+      }
+      return
     }
+    if (conversationId !== selectedConversationId) {
+      setConversationId(selectedConversationId)
+      setLocalMessages([])
+      setLocalRuns([])
+      setActiveRunId(null)
+      evidenceUserClosedRef.current = false
+      setEvidenceRunId(null)
+      setSelectedEvidenceId(null)
+      setCommandNotice(null)
+    }
+  }, [conversationId, historyQuery.data, onConversationSelected, selectedConversationId])
+
+  useEffect(() => {
+    setLocalMessages([])
+    setLocalRuns([])
+    setActiveRunId(null)
+    evidenceUserClosedRef.current = false
+    setEvidenceRunId(null)
+    setSelectedEvidenceId(null)
+    setCommandNotice(null)
+    setCommandMenuDismissed(false)
+  }, [apiMode])
+
+  useEffect(() => {
+    if (currentRun && !activeStatuses.has(currentRun.status)) {
+      void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
+    }
+  }, [currentRun, queryClient])
+
+  useEffect(() => {
+    if (selectedEvidenceId && (citationQuery.data || citationQuery.error)) excerptRef.current?.focus()
   }, [citationQuery.data, citationQuery.error, selectedEvidenceId])
 
+  useEffect(() => {
+    const citations = currentQARunQuery.data?.citations ?? currentLegacyRun?.citations ?? []
+    if (!evidenceRunId && !evidenceUserClosedRef.current && currentRun?.run_id && citations.length > 0) {
+      setEvidenceRunId(currentRun.run_id)
+    }
+  }, [currentQARunQuery.data?.citations, currentLegacyRun?.citations, currentRun?.run_id, evidenceRunId])
+
   const submitMutation = useMutation({
-    mutationFn: async (text: string) => {
-      let currentConversationId = conversationId
-      if (!currentConversationId) {
-        const conversation = await createConversation()
-        currentConversationId = conversation.conversation_id
-        setConversationId(currentConversationId)
+    mutationFn: async (content: string) => {
+      let targetConversationId = conversationId
+      if (!targetConversationId) {
+        const created = await createConversation()
+        targetConversationId = created.conversation_id
       }
-      const idempotencyKey = crypto.randomUUID()
-      const run = selectedSkill === 'create_review_cards'
-        ? await createReviewCards(
-            currentConversationId,
-            selectedDocumentId,
-            sourceDetailQuery.data?.documents.find((doc) => doc.id === selectedDocumentId)?.current_version_id ?? '',
-            focus.trim() || undefined,
-            idempotencyKey,
-          )
-        : selectedSkill === 'summarize_document'
-          ? await submitOrganizationSkill(currentConversationId, selectedSkill, {
-              documentId: selectedDocumentId,
-              versionId: sourceDetailQuery.data?.documents.find((doc) => doc.id === selectedDocumentId)?.current_version_id ?? undefined,
-              focus: focus.trim() || undefined,
-              idempotencyKey,
-            })
-          : selectedSkill === 'compare_sources'
-            ? await submitOrganizationSkill(currentConversationId, selectedSkill, {
-                sourceIds: selectedSourceIds,
-                focus: focus.trim() || undefined,
-                idempotencyKey,
-              })
-        : await submitQuestion(currentConversationId, text, idempotencyKey, selectedSkill)
-      return { text, run }
+      const result = usingLegacyV1
+        ? legacyQARunToAssistantRun(
+          await submitQuestion(targetConversationId, content, crypto.randomUUID(), true),
+        )
+        : await submitAssistantTurn(targetConversationId, content, crypto.randomUUID())
+      return { content, result, targetConversationId }
     },
-    onSuccess: ({ text, run }) => {
-      const nextQuestion = { id: run.question_message_id, text, run }
-      setLocalQuestions((current) => [
-        ...current.filter((question) => question.id !== nextQuestion.id),
-        nextQuestion,
-      ])
-      setConversationId(run.conversation_id)
-      onConversationSelected?.(run.conversation_id)
-      setSelectedQuestionId(run.question_message_id)
-      setRecoveredQuestionId(null)
-      setApproval(null)
-      setFeedbackDecision(null)
-      setFeedbackNote('')
+    onSuccess: ({ content, result, targetConversationId }) => {
+      if (isAssistantRun(result)) {
+        setLocalRuns((current) => [...current.filter((run) => run.run_id !== result.run_id), result])
+        setActiveRunId(result.run_id)
+        setLocalMessages((current) => [
+          ...current.filter((message) => message.message_id !== result.user_message_id),
+          {
+            message_id: result.user_message_id,
+            role: 'user',
+            content,
+            run_id: null,
+            created_at: new Date().toISOString(),
+          },
+        ])
+        setConversationId(targetConversationId)
+        onConversationSelected?.(targetConversationId)
+      } else {
+        // Skill commands already have a durable Run card; base-command notices are
+        // useful for commands such as /help and /skills, but would duplicate a Skill turn.
+        setCommandNotice(result.run ? null : { command: result.command, content: result.content, commands: result.commands })
+        const nextConversationId = result.conversation_id ?? targetConversationId
+        if (result.run) {
+          const run = result.run
+          setLocalRuns((current) => [
+            ...current.filter((item) => item.run_id !== run.run_id),
+            run,
+          ])
+          setLocalMessages((current) => [
+            ...current.filter((message) => message.message_id !== run.user_message_id),
+            {
+              message_id: run.user_message_id,
+              role: 'user',
+              content,
+              run_id: null,
+              created_at: new Date().toISOString(),
+            },
+          ])
+          setActiveRunId(run.run_id)
+        } else {
+          setLocalRuns([])
+          setActiveRunId(null)
+        }
+        setConversationId(nextConversationId)
+        onConversationSelected?.(nextConversationId)
+      }
+      evidenceUserClosedRef.current = false
       setSelectedEvidenceId(null)
       setDraft('')
+      setCommandMenuDismissed(false)
       void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
+      void queryClient.invalidateQueries({ queryKey: ['assistant-runs'] })
     },
   })
-
-  const resumeMutation = useMutation({
-    mutationFn: () => resumeRun(currentRun!.run_id),
-    onSuccess: (run) => {
-      setLocalQuestions((current) => current.map((question) =>
-        question.id === run.question_message_id ? { ...question, run } : question,
-      ))
-      queryClient.setQueryData(['qa-run', run.run_id], run)
-    },
-  })
-
-  const approvalMutation = useMutation({
-    mutationFn: () => requestApproval(currentRun!.run_id, crypto.randomUUID()),
-    onSuccess: setApproval,
-  })
-  const decisionMutation = useMutation({
-    mutationFn: (approved: boolean) => decideApproval(currentRun!.run_id, approval!.approval_id, approved),
-    onSuccess: setApproval,
-  })
-
-  const feedbackMutation = useMutation({
-    mutationFn: ({ decision, note }: { decision: FeedbackDecision; note: string }) =>
-      submitFeedback(currentRun!.run_id, decision, crypto.randomUUID(), note),
-    onError: () => {
-      setFeedbackDecision(null)
-    },
-  })
-
-  const submitFeedbackDecision = (decision: FeedbackDecision) => {
-    setFeedbackDecision(decision)
-    feedbackMutation.mutate({ decision, note: feedbackNote })
-  }
-
-  const chooseSkill = (skill: QASkillName) => {
-    if (isActive || submitMutation.isPending) return
-    setSelectedSkill(skill)
-    setSelectedSourceId('')
-    setSelectedSourceIds([])
-    setConversationId(null)
-    setSelectedQuestionId(null)
-    setLocalQuestions([])
-    setRecoveredQuestionId(null)
-    setApproval(null)
-    setFeedbackDecision(null)
-    setFeedbackNote('')
-    setSelectedEvidenceId(null)
-  }
-
-  const chooseQuestion = (question: LocalQuestion) => {
-    setSelectedQuestionId(question.id)
-    setRecoveredQuestionId(question.id)
-    setApproval(null)
-    setFeedbackDecision(null)
-    setFeedbackNote('')
-    setSelectedEvidenceId(null)
-  }
-
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-
   const cancelMutation = useMutation({
-    mutationFn: async () => cancelRun(currentRun!.run_id),
+    mutationFn: async () => {
+      if (usingLegacyV1) {
+        return legacyQARunToAssistantRun(await cancelRun(currentRun!.run_id))
+      }
+      return cancelAssistantRun(currentRun!.run_id)
+    },
     onSuccess: (run) => {
-      setLocalQuestions((current) => current.map((question) =>
-        question.id === run.question_message_id ? { ...question, run } : question,
-      ))
-      queryClient.setQueryData(['qa-run', run.run_id], run)
+      setLocalRuns((current) => [...current.filter((item) => item.run_id !== run.run_id), run])
+      queryClient.setQueryData<AssistantRun[]>(['assistant-runs', conversationId], (current = []) =>
+        [...current.filter((item) => item.run_id !== run.run_id), run],
+      )
+    },
+  })
+  const clarificationMutation = useMutation({
+    mutationFn: ({ run, candidateId }: { run: AssistantRun; candidateId: string }) =>
+      selectClarificationResource(run.run_id, run.clarification!.clarification_id, candidateId),
+    onSuccess: (run) => {
+      setLocalRuns((current) => [...current.filter((item) => item.run_id !== run.run_id), run])
+      setActiveRunId(run.run_id)
+      queryClient.setQueryData<AssistantRun[]>(['assistant-runs', conversationId], (current = []) =>
+        [...current.filter((item) => item.run_id !== run.run_id), run],
+      )
     },
   })
 
-  const errorMessage = useMemo(() => {
-    const error = submitMutation.error ?? runQuery.error ?? cancelMutation.error ?? resumeMutation.error ?? approvalMutation.error ?? decisionMutation.error ?? feedbackMutation.error
-    return error instanceof Error ? error.message : null
-  }, [approvalMutation.error, cancelMutation.error, decisionMutation.error, feedbackMutation.error, resumeMutation.error, runQuery.error, submitMutation.error])
+  const chooseCommand = (command: AssistantCommand) => {
+    setDraft(`/${command.name} `)
+    setCommandMenuDismissed(true)
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus()
+      textareaRef.current?.setSelectionRange(command.name.length + 2, command.name.length + 2)
+    })
+  }
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const text = draft.trim()
-    if ((!text && !isOrganizationSkill) || submitMutation.isPending || isActive) return
-    if (isDocumentSkill && (!selectedDocumentId || !sourceDetailQuery.data?.documents.find((doc) => doc.id === selectedDocumentId)?.current_version_id)) return
-    if (selectedSkill === 'compare_sources' && selectedSourceIds.length < 2) return
-    const submissionText = text || focus.trim() || (selectedSkill === 'compare_sources' ? '比较所选来源' : '生成文档摘要')
-    submitMutation.mutate(submissionText)
+    const content = draft.trim()
+    if (!content || submitMutation.isPending) return
+    submitMutation.mutate(content)
   }
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== 'Enter') return
-    if (event.ctrlKey) {
+    if (isComposingRef.current) return
+    if (event.key === 'Enter' && event.ctrlKey) {
       event.preventDefault()
       const textarea = event.currentTarget
       const start = textarea.selectionStart ?? draft.length
       const end = textarea.selectionEnd ?? start
-      const nextDraft = `${draft.slice(0, start)}\n${draft.slice(end)}`
-      setDraft(nextDraft)
-      requestAnimationFrame(() => {
-        textareaRef.current?.focus()
-        textareaRef.current?.setSelectionRange(start + 1, start + 1)
-      })
+      setDraft(`${draft.slice(0, start)}\n${draft.slice(end)}`)
+      requestAnimationFrame(() => textareaRef.current?.setSelectionRange(start + 1, start + 1))
       return
     }
-    event.preventDefault()
-    event.currentTarget.form?.requestSubmit()
+    if (commandMenuOpen && commandOptions.length) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        const delta = event.key === 'ArrowDown' ? 1 : -1
+        setCommandIndex((index) => (index + delta + commandOptions.length) % commandOptions.length)
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setCommandMenuDismissed(true)
+        return
+      }
+      if (event.key === 'Enter' && activeCommand) {
+        event.preventDefault()
+        chooseCommand(activeCommand)
+        return
+      }
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      event.currentTarget.form?.requestSubmit()
+    }
+  }
+
+  const error = submitMutation.error ?? cancelMutation.error ?? clarificationMutation.error
+  const messages = useMemo(() => {
+    const values = new Map((selectedConversation?.messages ?? []).map((message) => [message.message_id, message]))
+    for (const message of localMessages) values.set(message.message_id, message)
+    // QA results belong to the Run below their originating user message. Rendering their
+    // persisted assistant message separately would show the same answer twice.
+    return [...values.values()]
+      .filter((message) => message.role !== 'assistant' || message.run_id === null)
+      .sort((left, right) => left.created_at.localeCompare(right.created_at))
+  }, [localMessages, selectedConversation?.messages])
+  const currentRunIsActive = currentRun ? activeStatuses.has(currentRun.status) : false
+  const visibleCitations = evidenceRun?.citations ?? []
+  const openEvidence = (runId: string) => {
+    evidenceUserClosedRef.current = false
+    setEvidenceRunId(runId)
+    setSelectedEvidenceId(null)
+  }
+  const closeEvidence = () => {
+    evidenceUserClosedRef.current = true
+    setEvidenceRunId(null)
+    setSelectedEvidenceId(null)
   }
 
   return (
-    <section className="qa-layout" aria-label="知识问答工作区">
-      <div className="qa-conversation">
-        <div className="qa-thread" data-empty={!currentQuestion} aria-live="polite">
-          <div className="qa-skill-context">
-            <Workflow size={16} aria-hidden="true" />
-            <strong>{displayedSkill.name}</strong>
-            <code>{displayedSkill.version ? `v${displayedSkill.version}` : '版本不可用'}</code>
-            {currentRun?.skill && <span>已固定</span>}
-          </div>
-          <div className="qa-mode-selector" role="group" aria-label="问答模式">
-            <button type="button" aria-pressed={selectedSkill === 'knowledge_agent'} onClick={() => chooseSkill('knowledge_agent')} disabled={submitMutation.isPending || isActive}>
-              <Bot size={16} aria-hidden="true" />LLM Agent
-            </button>
-            <button type="button" aria-pressed={selectedSkill === 'knowledge_qa'} onClick={() => chooseSkill('knowledge_qa')} disabled={submitMutation.isPending || isActive}>
-              <Search size={16} aria-hidden="true" />直接问答
-            </button>
-            <button type="button" aria-pressed={selectedSkill === 'summarize_document'} onClick={() => chooseSkill('summarize_document')} disabled={submitMutation.isPending || isActive}>
-              <FileText size={16} aria-hidden="true" />摘要文档
-            </button>
-            <button type="button" aria-pressed={selectedSkill === 'compare_sources'} onClick={() => chooseSkill('compare_sources')} disabled={submitMutation.isPending || isActive}>
-              <BookOpenText size={16} aria-hidden="true" />比较来源
-            </button>
-            <button type="button" aria-pressed={selectedSkill === 'create_review_cards'} onClick={() => chooseSkill('create_review_cards')} disabled={submitMutation.isPending || isActive}>
-              <Workflow size={16} aria-hidden="true" />复习卡
-            </button>
-          </div>
-          {isDocumentSkill && !currentQuestion && (
-            <div className="qa-skill-config">
-              <label htmlFor="document-source">来源</label>
-              <select id="document-source" value={selectedSourceId} onChange={(event) => { setSelectedSourceId(event.target.value); setSelectedDocumentId('') }}>
-                <option value="">选择来源</option>
-                {sourcesQuery.data?.sources.map((source) => <option key={source.id} value={source.id}>{source.uri}</option>)}
-              </select>
-              <label htmlFor="document-version">固定文档版本</label>
-              <select id="document-version" value={selectedDocumentId} onChange={(event) => setSelectedDocumentId(event.target.value)} disabled={!sourceDetailQuery.data}>
-                <option value="">选择文档</option>
-                {sourceDetailQuery.data?.documents.filter((doc) => doc.current_version_id).map((doc) => <option key={doc.id} value={doc.id}>{doc.display_name}</option>)}
-              </select>
-              <label htmlFor="document-focus">重点（可选）</label>
-              <input id="document-focus" value={focus} onChange={(event) => setFocus(event.target.value)} maxLength={1000} />
-            </div>
-          )}
-          {selectedSkill === 'compare_sources' && !currentQuestion && (
-            <div className="qa-skill-config">
-              <label htmlFor="compare-sources">选择至少两个来源</label>
-              <div id="compare-sources" className="qa-source-checks" role="group" aria-label="来源列表">
-                {sourcesQuery.data?.sources.map((source) => (
-                  <label key={source.id}>
-                    <input
-                      type="checkbox"
-                      checked={selectedSourceIds.includes(source.id)}
-                      onChange={(event) => setSelectedSourceIds((current) => event.target.checked
-                        ? [...current, source.id]
-                        : current.filter((id) => id !== source.id))}
-                    />
-                    <span>{source.uri}</span>
-                  </label>
-                ))}
-              </div>
-              <label htmlFor="compare-focus">重点（可选）</label>
-              <input id="compare-focus" value={focus} onChange={(event) => setFocus(event.target.value)} maxLength={1000} />
-            </div>
-          )}
-          {!currentQuestion ? (
-            <div className="qa-empty">
-              <MessageSquareText size={28} aria-hidden="true" />
-              <strong>开始一次知识检索</strong>
-              <span>回答将依据当前 Space 中已发布的文档。</span>
-            </div>
-          ) : (
-            visibleQuestions.map((item) => {
-              const itemRun = item.id === currentQuestion.id ? currentRun ?? item.run : item.run
-              return (
-                <div key={item.id} className="qa-question-group" data-selected={item.id === currentQuestion.id}>
-                  <button type="button" className="qa-message qa-message-user qa-question-button" onClick={() => chooseQuestion(item)}>
-                    <span className="qa-message-label">你的问题</span>
-                    <p>{item.text}</p>
-                  </button>
-                  <article className="qa-message qa-message-system" data-status={itemRun?.status}>
-                    <div className="qa-run-heading">
-                      {activeStatuses.has(itemRun?.status ?? '') ? <LoaderCircle className="spin" size={18} aria-hidden="true" /> : itemRun?.status === 'failed' || itemRun?.status === 'timed_out' ? <AlertCircle size={18} aria-hidden="true" /> : <MessageSquareText size={18} aria-hidden="true" />}
-                      <strong>{statusLabel(itemRun?.status ?? 'created')}</strong>
-                    </div>
-                    {itemRun?.error_code && <code>{itemRun.error_code}</code>}
-                    {itemRun?.result && (
-                      <div className="qa-answer">
-                        <p>{itemRun.result.text ?? itemRun.result.message}</p>
-                        {itemRun.result.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}
-                      </div>
-                    )}
-                    {item.id === currentQuestion.id && itemRun?.status === 'completed' && itemRun.result?.type === 'answer' && (
-                      <div className="qa-feedback" aria-label="回答反馈">
-                        <span>回答反馈</span>
-                        <div className="qa-feedback-actions">
-                          <button
-                            type="button"
-                            className="icon-button"
-                            aria-label="回答有帮助"
-                            title="回答有帮助"
-                            aria-pressed={feedbackDecision === 'positive'}
-                            onClick={() => submitFeedbackDecision('positive')}
-                            disabled={feedbackMutation.isPending || feedbackDecision !== null}
-                          >
-                            <ThumbsUp size={16} aria-hidden="true" />
-                          </button>
-                          <button
-                            type="button"
-                            className="icon-button"
-                            aria-label="回答需要改进"
-                            title="回答需要改进"
-                            aria-pressed={feedbackDecision === 'negative'}
-                            onClick={() => submitFeedbackDecision('negative')}
-                            disabled={feedbackMutation.isPending || feedbackDecision !== null}
-                          >
-                            <ThumbsDown size={16} aria-hidden="true" />
-                          </button>
+    <section className={`qa-layout chat-layout${evidenceRunId ? ' chat-layout-with-evidence' : ''}`} aria-label="对话工作区">
+      <div className="qa-conversation chat-conversation">
+        <div className="qa-thread chat-thread" data-empty={messages.length === 0 && !commandNotice} aria-live="polite">
+          {commandNotice && (
+            <article className="chat-command-notice" role="status">
+              <CircleHelp size={17} aria-hidden="true" />
+              <div>
+                <strong>/{commandNotice.command}</strong>
+                {commandNotice.content && <p>{commandNotice.content}</p>}
+                {commandNotice.commands.length > 0 && (
+                  <ul className="chat-command-results" aria-label="可用指令">
+                    {commandNotice.commands.map((command) => (
+                      <li key={command.name}>
+                        <div className="chat-command-result-heading">
+                          <code>/{command.name}</code>
+                          {command.aliases.map((alias) => <code key={alias}>/{alias}</code>)}
                         </div>
-                        <textarea
-                          aria-label="反馈说明（可选）"
-                          value={feedbackNote}
-                          onChange={(event) => setFeedbackNote(event.target.value)}
-                          maxLength={2000}
-                          rows={2}
-                          placeholder="补充说明（可选）"
-                          disabled={feedbackMutation.isPending || feedbackDecision !== null}
-                        />
-                        {feedbackDecision && <span className="qa-feedback-status" role="status">反馈已提交，等待审核</span>}
-                      </div>
-                    )}
-                  </article>
+                        <span>{command.description}</span>
+                        {command.argument_hint && <small>{command.argument_hint}</small>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </article>
+          )}
+          {messages.length === 0 && !commandNotice ? (
+            <div className="qa-empty"><MessageSquareText size={28} aria-hidden="true" /><strong>开始对话</strong></div>
+          ) : messages.map((message) => {
+            const run = message.role === 'user' ? runsByMessage.get(message.message_id) : undefined
+            const legacyRun = run ? legacyRunsById.get(run.run_id) : undefined
+            const qaRun = run?.run_id === currentRun?.run_id ? currentQARunQuery.data ?? legacyRun : legacyRun
+            // New Skills expose only the parent finalizer message. The legacy
+            // knowledge_qa projection remains readable for historical v1 Runs.
+            const answer = run?.assistant_message?.content ?? (qaRun?.skill?.name === 'knowledge_qa' && qaRun?.result
+              ? qaRun.result.text ?? qaRun.result.message ?? null
+              : null)
+            const limitations = qaRun?.result?.limitations ?? []
+            return (
+              <div key={message.message_id} className={`chat-message-group chat-message-group-${message.role}`}>
+                <div
+                  className={`qa-message chat-message ${message.role === 'user' ? 'qa-message-user' : 'chat-message-assistant'}`}
+                >
+                  {message.role === 'user'
+                    ? <p><CommandText value={message.content} commands={commandsQuery.data ?? []} /></p>
+                    : <RenderedAssistantAnswer content={message.content} />}
                 </div>
-              )
-            })
-          )}
-          {currentRun && recoveredQuestionId === currentQuestion?.id && resumableStatuses.has(currentRun.status) && (
-            <button type="button" className="panel-action-button qa-resume-button" onClick={() => resumeMutation.mutate()} disabled={resumeMutation.isPending}>
-              <RotateCcw size={15} />{resumeMutation.isPending ? '恢复中…' : '恢复执行'}
-            </button>
-          )}
-          {currentRun?.skill?.name === 'create_review_cards' && currentRun.result && currentRun.citations?.length && !approval && (
-            <button type="button" className="panel-action-button qa-approval-button" onClick={() => approvalMutation.mutate()} disabled={approvalMutation.isPending}>
-              <ShieldCheck size={15} />申请写入审批
-            </button>
-          )}
-          {approval && approval.status === 'pending' && (
-            <div className="qa-approval-actions">
-              <span>复习卡写入审批待决策</span>
-              <button type="button" className="panel-action-button" onClick={() => decisionMutation.mutate(true)} disabled={decisionMutation.isPending}>批准写入</button>
-              <button type="button" className="panel-action-button" onClick={() => decisionMutation.mutate(false)} disabled={decisionMutation.isPending}>拒绝</button>
-            </div>
-          )}
-          {approval && approval.status !== 'pending' && (
-            <div className="qa-approval-status" role="status">审批{approval.status === 'approved' ? '已批准' : '已拒绝'}{approval.side_effects ? '，已写入派生知识' : ''}</div>
-          )}
-          {errorMessage && (
-            <div className="qa-error" role="alert">
-              <AlertCircle size={18} aria-hidden="true" />
-              <span>{errorMessage}</span>
-            </div>
-          )}
+                {run && (
+                  isSkillInvocation(run) ? (
+                    <>
+                      <SkillRunCard
+                        run={run}
+                        result={qaRun?.result ?? null}
+                        clarificationPending={clarificationMutation.isPending}
+                        onSelectClarification={(candidateId) => clarificationMutation.mutate({ run, candidateId })}
+                        onOpenEvidence={openEvidence}
+                      />
+                      {answer && (
+                        <article className="chat-final-answer" data-status={run.status}>
+                          <div className="qa-run-heading"><Check size={17} aria-hidden="true" /><strong>最终回答</strong></div>
+                          <div className="qa-answer"><RenderedAssistantAnswer content={answer} limitations={limitations} /></div>
+                          {isGroundedRun(run) && (
+                            <button className="chat-evidence-button" type="button" onClick={() => openEvidence(run.run_id)}>
+                              <Quote size={15} aria-hidden="true" />查看引用证据
+                            </button>
+                          )}
+                        </article>
+                      )}
+                    </>
+                  ) : (
+                    <article className="chat-run" data-status={run.status}>
+                      <div className="qa-run-heading">
+                        {activeStatuses.has(run.status) ? <LoaderCircle className="spin" size={17} aria-hidden="true" /> : run.status === 'failed' || run.status === 'timed_out' ? <AlertCircle size={17} aria-hidden="true" /> : <Check size={17} aria-hidden="true" />}
+                        <strong>{statusLabel(run.status)}</strong>
+                      </div>
+                      {answer && <div className="qa-answer"><RenderedAssistantAnswer content={answer} limitations={limitations} /></div>}
+                      {isGroundedRun(run) && <button className="chat-evidence-button" type="button" onClick={() => openEvidence(run.run_id)}><Quote size={15} aria-hidden="true" />查看引用证据</button>}
+                      {run.clarification && (
+                        <div className="chat-clarification">
+                          <p>{run.clarification.message}</p>
+                          {run.clarification.resource_candidates.length > 0 && (
+                            <div role="group" aria-label="资源选择">
+                              {run.clarification.resource_candidates.map((candidate) => (
+                                <button
+                                  key={candidate.candidate_id}
+                                  type="button"
+                                  disabled={clarificationMutation.isPending}
+                                  onClick={() => clarificationMutation.mutate({ run, candidateId: candidate.candidate_id })}
+                                >
+                                  <FileText size={16} aria-hidden="true" />
+                                  <span><strong>{candidate.label}</strong>{candidate.source_label && <small>{candidate.source_label}</small>}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {run.error_code && <code>{run.error_code}</code>}
+                    </article>
+                  )
+                )}
+              </div>
+            )
+          })}
+          {error && <div className="qa-error" role="alert"><AlertCircle size={18} aria-hidden="true" /><span>{error instanceof Error ? error.message : '操作失败'}</span></div>}
         </div>
 
-        <form className="qa-composer" onSubmit={onSubmit}>
-          <label htmlFor="qa-question">问题</label>
-          <textarea
+        <form className="qa-composer chat-composer" onSubmit={onSubmit}>
+          <label htmlFor="qa-question">消息</label>
+          <div className="chat-composer-editor">
+            {commandPrefix && (
+              <div ref={commandHighlightRef} className="chat-composer-highlight" aria-hidden="true">
+                <span>{commandPrefix.leading}</span>
+                <span className="chat-command-token">{commandPrefix.command}</span>
+                <span>{commandPrefix.trailing}</span>
+              </div>
+            )}
+            <textarea
             id="qa-question"
             ref={textareaRef}
+            className={commandPrefix ? 'chat-composer-textarea-highlighted' : undefined}
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            role={usingLegacyV1 ? undefined : 'combobox'}
+            aria-autocomplete={usingLegacyV1 ? undefined : 'list'}
+            aria-expanded={usingLegacyV1 ? undefined : commandMenuOpen}
+            aria-controls={usingLegacyV1 ? undefined : 'assistant-command-listbox'}
+            aria-activedescendant={usingLegacyV1 || !activeCommand ? undefined : `assistant-command-${activeCommand.name}`}
+            onChange={(event) => { setDraft(event.target.value); setCommandMenuDismissed(false) }}
+            onCompositionStart={() => { isComposingRef.current = true }}
+            onCompositionEnd={() => { isComposingRef.current = false }}
+            onScroll={(event) => {
+              if (!commandHighlightRef.current) return
+              commandHighlightRef.current.scrollTop = event.currentTarget.scrollTop
+              commandHighlightRef.current.scrollLeft = event.currentTarget.scrollLeft
+            }}
             onKeyDown={onComposerKeyDown}
-            placeholder="输入要在知识库中查找的问题"
+            placeholder="输入消息"
             rows={3}
             maxLength={12_000}
-            disabled={submitMutation.isPending || isActive}
-          />
+            disabled={submitMutation.isPending}
+            />
+          </div>
+          {commandMenuOpen && commandOptions.length > 0 && (
+            <div className="chat-command-menu" id="assistant-command-listbox" role="listbox" aria-label="可用指令">
+              {commandOptions.map((command, index) => (
+                <button
+                  id={`assistant-command-${command.name}`}
+                  key={command.name}
+                  type="button"
+                  role="option"
+                  aria-selected={index === commandIndex}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => chooseCommand(command)}
+                >
+                  <span>/{command.name}</span><small>{command.description}</small>
+                </button>
+              ))}
+            </div>
+          )}
           <div className="qa-composer-actions">
             <span>{draft.length.toLocaleString('zh-CN')} / 12,000</span>
-            {isActive ? (
-              <button className="qa-cancel-button" type="button" onClick={() => cancelMutation.mutate()} disabled={cancelMutation.isPending || currentRun?.status === 'cancel_requested'}>
-                <Square size={15} fill="currentColor" />取消
+            <div>
+              {currentRunIsActive && (
+                <button className="qa-cancel-button icon-button" type="button" onClick={() => cancelMutation.mutate()} disabled={cancelMutation.isPending} aria-label="取消当前运行" title="取消当前运行">
+                  <Square size={15} fill="currentColor" aria-hidden="true" />
+                </button>
+              )}
+              <button className="qa-send-button" type="submit" disabled={!draft.trim() || submitMutation.isPending}>
+                {submitMutation.isPending ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}发送
               </button>
-            ) : (
-      <button className="qa-send-button" type="submit" disabled={(!draft.trim() && !isOrganizationSkill) || submitMutation.isPending || (isDocumentSkill && !selectedDocumentId) || (selectedSkill === 'compare_sources' && selectedSourceIds.length < 2)}>
-                {submitMutation.isPending ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}提问
-              </button>
-            )}
+            </div>
           </div>
         </form>
       </div>
 
-      <aside className="qa-evidence" aria-labelledby="qa-evidence-title">
-        <div className="qa-evidence-heading">
-          <Quote size={18} aria-hidden="true" />
-          <h2 id="qa-evidence-title">引用证据</h2>
-          <span className="qa-evidence-count">{currentRun?.citations?.length ?? 0}</span>
-        </div>
-        {currentRun?.citations?.length ? (
+      {evidenceRunId && (
+        <aside className="qa-evidence" aria-labelledby="qa-evidence-title">
+          <div className="qa-evidence-heading"><Quote size={18} aria-hidden="true" /><h2 id="qa-evidence-title">引用证据</h2><span className="qa-evidence-count">{visibleCitations.length}</span><button className="qa-evidence-close" type="button" onClick={closeEvidence} aria-label="关闭证据栏" title="关闭证据栏"><X size={16} aria-hidden="true" /></button></div>
           <div className="qa-evidence-content">
             <div className="qa-citation-list">
-              {currentRun.citations.map((citation) => {
+              {evidenceRunQuery.isPending && <div className="qa-evidence-empty"><LoaderCircle className="spin" size={22} aria-hidden="true" /><span>正在加载引用证据</span></div>}
+              {evidenceRunQuery.error && <div className="qa-evidence-empty" role="alert"><AlertCircle size={22} aria-hidden="true" /><span>引用证据暂不可用</span></div>}
+              {visibleCitations.map((citation) => {
                 const metadata = citationMetadataQuery.data?.[citationKey(citation.source_id, citation.document_id)]
                 const documentName = metadata?.displayName ?? `文档 ${citation.document_id.slice(0, 8)}`
                 return (
                   <button className="qa-citation" data-selected={selectedEvidenceId === citation.evidence_id} key={citation.evidence_id} type="button" aria-pressed={selectedEvidenceId === citation.evidence_id} onClick={() => setSelectedEvidenceId((current) => current === citation.evidence_id ? null : citation.evidence_id)}>
-                    <FileText size={17} aria-hidden="true" />
-                    <span className="qa-citation-copy">
-                      <strong>{documentName}</strong>
-                      <span>{metadata?.uri ?? `来源 ${citation.source_id.slice(0, 8)}`}</span>
-                      <span>{citation.locator.kind} {citation.locator.start}-{citation.locator.end}</span>
-                      <code>版本 {citation.version_id.slice(0, 8)}</code>
-                    </span>
-                    <BookOpenText size={16} aria-hidden="true" />
-                    <span className="sr-only">查看原文：{documentName}</span>
+                    <FileText size={17} aria-hidden="true" /><span className="qa-citation-copy"><strong>{documentName}</strong><span>{metadata?.uri ?? `来源 ${citation.source_id.slice(0, 8)}`}</span><span>{citation.locator.kind} {citation.locator.start}-{citation.locator.end}</span><code>版本 {citation.version_id.slice(0, 8)}</code></span><BookOpenText size={16} aria-hidden="true" /><span className="sr-only">查看原文：{documentName}</span>
                   </button>
                 )
               })}
@@ -654,27 +859,12 @@ export function QAWorkspace({
             {selectedEvidenceId && (
               <div className="qa-excerpt" ref={excerptRef} tabIndex={-1} aria-live="polite">
                 <button className="qa-excerpt-close" type="button" onClick={() => setSelectedEvidenceId(null)} aria-label="关闭原文" title="关闭原文"><X size={16} aria-hidden="true" /></button>
-                {citationQuery.isPending ? <LoaderCircle className="spin" size={18} aria-label="正在加载原文" /> : citationQuery.error ? (
-                  <div className="qa-excerpt-status" role="alert">
-                    <AlertCircle size={18} aria-hidden="true" />
-                    <span>{citationQuery.error instanceof Error ? citationQuery.error.message : '原文加载失败'}</span>
-                    <button type="button" onClick={() => void citationQuery.refetch()}><RotateCcw size={14} aria-hidden="true" />重试</button>
-                  </div>
-                ) : citationQuery.data?.excerpt ? (
-                  <>
-                    <div className="qa-excerpt-heading"><strong>原文</strong><span>{citationQuery.data.locator.kind} {citationQuery.data.locator.start}-{citationQuery.data.locator.end}</span></div>
-                    <pre><mark>{citationQuery.data.excerpt}</mark></pre>
-                  </>
-                ) : (
-                  <div className="qa-excerpt-status"><AlertCircle size={18} aria-hidden="true" /><span>{citationStatusLabel(citationQuery.data?.status ?? 'unavailable')}</span></div>
-                )}
+                {citationQuery.isPending ? <LoaderCircle className="spin" size={18} aria-label="正在加载原文" /> : citationQuery.error ? <div className="qa-excerpt-status" role="alert"><AlertCircle size={18} aria-hidden="true" /><span>{citationQuery.error instanceof Error ? citationQuery.error.message : '原文加载失败'}</span><button type="button" onClick={() => void citationQuery.refetch()}><RotateCcw size={14} aria-hidden="true" />重试</button></div> : citationQuery.data?.excerpt ? <><div className="qa-excerpt-heading"><strong>原文</strong><span>{citationQuery.data.locator.kind} {citationQuery.data.locator.start}-{citationQuery.data.locator.end}</span></div><pre><mark>{citationQuery.data.excerpt}</mark></pre></> : <div className="qa-excerpt-status"><AlertCircle size={18} aria-hidden="true" /><span>固定版本当前不可用</span></div>}
               </div>
             )}
           </div>
-        ) : (
-          <div className="qa-evidence-empty"><FileText size={25} aria-hidden="true" /><span>{isActive ? '等待证据校验' : '当前回答没有可显示的引用'}</span></div>
-        )}
-      </aside>
+        </aside>
+      )}
     </section>
   )
 }

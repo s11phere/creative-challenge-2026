@@ -22,6 +22,21 @@ curl.exe http://127.0.0.1:8000/api/v1/health/ready
 `live` 只判断 API 进程能否响应；`ready` 会并发检查 PostgreSQL 和 Redis。模型状态单独报告，
 默认不是本地 API readiness 的硬依赖。
 
+## Assistant 路由开发报告被拒绝
+
+先只校验固定的 synthetic development 数据集：
+
+```powershell
+uv run --frozen python scripts/evaluate_assistant_routing.py --validate-only
+```
+
+`routing dataset cannot enable formal evaluation`、`routing dataset must remain synthetic only` 或
+SHA-256 mismatch 表示 manifest、schema 或 case 文件不符合安全协议。不要修改
+`formal_runs_enabled`、改用受控语料或把当前 development 报告当作正式质量结果；修复固定文件的
+摘要或从干净工作树恢复预期版本。无 `--predictions` 时退出码 `4` 是刻意的阻断，而不是模型错误。
+预测文件只可包含动作、允许的 Skill 名称、计数、用量、延迟和终止原因，不能包含消息、prompt、文档
+正文、Provider 响应或内部资源 ID。
+
 ## Compose 提示缺少变量
 
 现象：配置阶段提示 `APP_SECRET_KEY must be set` 或 `POSTGRES_PASSWORD must be set`。
@@ -270,15 +285,15 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 - 需要检索时先确认 Space 存在、Document 有当前 published version，且查询模式所需的 Embedding/Reranker 能力已配置；无命中是成功的空列表，不是系统故障。
 - 模型服务不可用不会阻断 PostgreSQL/Redis 管理面 ready；Dense 会返回明确 Provider 错误，Hybrid 只有 profile 明确允许时才可降级为 Keyword。
 - 已有 Agent Runtime、Tool/Skill Registry、声明式执行器、内存与 PostgreSQL 检查点恢复和 Skill 模板；
-  `knowledge_qa 0.1.0` 首次由配置初始化，随后以 PostgreSQL active pointer 为准，现有 QA HTTP/Web 入口创建的每个 Run 都固定包摘要，
-  Worker 校验后才调用唯一 QA Application Port。可用 `GET /api/v1/skills` 和
-  `GET /api/v1/skills/knowledge_qa/versions` 检查安装摘要、active 版本和 manifest 预算。
-- `knowledge_agent 0.2.0` 通过 `fast_chat` 执行受约束 LLM 决策，可在同一持久 QA Run 中调用
-  `inspect_retrieval` 后调用一次 `grounded_qa`；`0.1.0` 保留用于固定 Run 恢复和回滚。外层模型只看到
+  新建 QA HTTP/Web Run 首次由 `knowledge_agent 0.3.0` 初始化，随后以 PostgreSQL active pointer 为准，
+  每个 Run 都固定包摘要，Worker 校验后才调用唯一 QA Application Port。可用 `GET /api/v1/skills` 和
+  `GET /api/v1/skills/knowledge_agent/versions` 检查安装摘要、active 版本和 manifest 预算。
+- `knowledge_agent 0.3.0` 通过 `fast_chat` 执行受约束 LLM 决策，可在同一持久 QA Run 中调用
+  `inspect_retrieval` 后调用一次 `grounded_qa`；旧 Agent 与 `knowledge_qa` 包仅保留用于固定 Run 恢复。外层模型只看到
   Tool 状态/计数，不看到回答或引用原文；Runtime checkpoint 快照与 append-only checkpoint 已持久化，
   当前恢复和最终结果仍以 QA PostgreSQL 状态为准。
 - 若 Run 以 `QA_SKILL_INVALID` 失败，检查 API 与 Worker 的 `SKILL_ROOT_PATH`、
-  `KNOWLEDGE_QA_SKILL_VERSION` 和镜像内 `skills/knowledge_qa` 内容是否一致。不要就地修改已被 Run
+  `KNOWLEDGE_AGENT_SKILL_VERSION` 和镜像内 `skills/knowledge_agent_v3` 内容是否一致。不要就地修改已被 Run
   引用的同名版本；发布新 semver 并保留旧包供排队/恢复 Run 校验。
 - Registry active pointer 已持久化到 `skill_activations`；激活或回滚出现
   `SKILL_ACTIVATION_CONFLICT` 时，应刷新 Catalog 的 `active_revision` 后重试，不能绕过 CAS。
@@ -319,3 +334,28 @@ missing runs or incomplete review records. It does not run a formal evaluation.
 The older provisional notes above describe the pre-completion baseline; the current Runtime
 checkpoint, approval, derived-knowledge, Skill cleanup, and feedback review implementations are
 covered by the Stage 4/5 completion tracker and their regression tests.
+
+## Assistant Web release rollback
+
+The normal Web entry is API v2. During the compatibility window, the header's `兼容问答` selector
+uses the existing `/api/v1` conversation and QA Run endpoints. If a v2 regression is observed, set
+`VITE_ASSISTANT_DEFAULT_API_MODE=v1` in the ignored `.env` and rebuild/recreate only `web`:
+
+```powershell
+docker compose -f deploy/compose.yaml --env-file .env build web
+docker compose -f deploy/compose.yaml --env-file .env up --detach --no-deps web
+```
+
+This rollback preserves v2 records, historical Runs, active Skill pointers, and installed packages.
+It does not bypass external-provider policy. Keep `MODEL_ALLOW_EXTERNAL`, source policy, deployment
+policy, and user consent unchanged. If the compatibility deadline has passed, v1 is intentionally
+fail-closed in the Web and requires a separately reviewed release decision; do not delete data to
+force a rollback. For rollout diagnosis, use the Step 7 aggregate counters and inspect only safe
+labels for routing misfires, clarification loops, cancellation, recovery, token usage, and latency.
+
+## `start-local.ps1` Count error
+
+If PowerShell reports that the `Count` property is missing, use the current
+`scripts/start-local.ps1`. The script normalizes Skill files and managed Compose projects to arrays
+before checking `.Count`, so both a single result and an empty result are supported. This check runs
+before Docker startup and does not remove volumes or application data.

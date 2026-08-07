@@ -8,6 +8,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from domain.conversation_context import ConversationSensitivity, ConversationSummary
+from domain.conversation_run import (
+    ConversationRunKind,
+    ConversationRunSelectionSource,
+    ConversationRunStatus,
+)
 from domain.grounded_qa import (
     Citation,
     CitationStatus,
@@ -46,6 +52,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import Database
 from .orm import (
     ConversationModel,
+    ConversationRunModel,
+    ConversationSummaryModel,
     QACitationModel,
     QAEventModel,
     QAEvidenceModel,
@@ -177,6 +185,65 @@ class PostgresGroundedQARepository:
             ).scalars()
             return tuple(_message(model) for model in models)
 
+    async def list_conversation_summaries(
+        self, conversation_id: UUID
+    ) -> tuple[ConversationSummary, ...]:
+        async with self._database.session() as session:
+            if await session.get(ConversationModel, conversation_id) is None:
+                raise QAContractError("Conversation does not exist")
+            models = (
+                await session.execute(
+                    select(ConversationSummaryModel)
+                    .where(ConversationSummaryModel.conversation_id == conversation_id)
+                    .order_by(ConversationSummaryModel.created_at, ConversationSummaryModel.id)
+                )
+            ).scalars()
+            return tuple(_conversation_summary(model) for model in models)
+
+    async def create_conversation_summary(
+        self, summary: ConversationSummary
+    ) -> ConversationSummary:
+        async with self._database.transaction() as session:
+            conversation = await session.get(ConversationModel, summary.conversation_id)
+            if conversation is None or conversation.space_id != summary.space_id:
+                raise QAContractError("Conversation summary crosses Space boundary")
+            existing = await session.get(ConversationSummaryModel, summary.run_id)
+            if existing is not None:
+                stored = _conversation_summary(existing)
+                if stored.content_sha256 == summary.content_sha256:
+                    return stored
+                raise QAContractError("Conversation summary Run conflicts with persisted content")
+            coverage = (
+                await session.execute(
+                    select(ConversationSummaryModel).where(
+                        ConversationSummaryModel.conversation_id == summary.conversation_id,
+                        ConversationSummaryModel.covered_end_message_id
+                        == summary.covered_end_message_id,
+                        ConversationSummaryModel.prompt_version == summary.prompt_version,
+                    )
+                )
+            ).scalar_one_or_none()
+            if coverage is not None:
+                return _conversation_summary(coverage)
+            session.add(
+                ConversationSummaryModel(
+                    id=summary.summary_id,
+                    conversation_id=summary.conversation_id,
+                    space_id=summary.space_id,
+                    run_id=summary.run_id,
+                    covered_start_message_id=summary.covered_start_message_id,
+                    covered_end_message_id=summary.covered_end_message_id,
+                    covered_message_count=summary.covered_message_count,
+                    content=summary.content,
+                    content_sha256=summary.content_sha256,
+                    prompt_version=summary.prompt_version,
+                    model_identity=summary.model_identity,
+                    sensitivity=summary.sensitivity.value,
+                    created_at=summary.created_at,
+                )
+            )
+        return summary
+
     async def create_run(self, run: QARunRecord) -> QARunRecord:
         if run.status is not QAStatus.CREATED or run.result is not None:
             raise QAContractError("New QA attempts must start without a result")
@@ -194,8 +261,12 @@ class PostgresGroundedQARepository:
             ):
                 raise QAContractError("QA run ownership or question is invalid")
 
+            parent = await session.get(ConversationRunModel, run.run_id, with_for_update=True)
             base = await session.get(QARunModel, run.run_id, with_for_update=True)
             if base is not None:
+                if parent is None:
+                    raise QAContractError("QA run is missing its ConversationRun parent")
+                _validate_parent(parent, run, check_idempotency=False)
                 latest = await self._latest_attempt(session, run.run_id, for_update=True)
                 assert latest is not None
                 existing = _run(base, latest)
@@ -207,6 +278,7 @@ class PostgresGroundedQARepository:
                 attempt = _attempt_model(run)
                 session.add(attempt)
                 _project_run(base, run)
+                _project_conversation_run(parent, run)
                 return run
 
             idempotent = (
@@ -227,6 +299,25 @@ class PostgresGroundedQARepository:
                 raise QAContractError("QA run idempotency key has conflicting ownership")
             if run.attempt.number != 1:
                 raise QAContractError("First persisted QA attempt must be number one")
+            if parent is None:
+                conflicting_parent = (
+                    await session.execute(
+                        select(ConversationRunModel)
+                        .where(
+                            ConversationRunModel.space_id == run.space_id,
+                            ConversationRunModel.caller_id == run.caller_id,
+                            ConversationRunModel.idempotency_key == run.idempotency_key,
+                        )
+                        .with_for_update()
+                    )
+                ).scalar_one_or_none()
+                if conflicting_parent is not None:
+                    raise QAContractError("QA run idempotency key conflicts with a ConversationRun")
+                parent = _legacy_conversation_run_model(run)
+                session.add(parent)
+                await session.flush()
+            else:
+                _validate_parent(parent, run)
             base = QARunModel(
                 id=run.run_id,
                 conversation_id=run.conversation_id,
@@ -240,6 +331,8 @@ class PostgresGroundedQARepository:
                 error_code=None,
                 versions=_dump(_VERSIONS, run.versions),
                 retrieval_scope=_dump(_RETRIEVAL_SCOPE, run.retrieval_scope),
+                standalone_request=run.standalone_request,
+                context_sensitivity=run.context_sensitivity,
                 usage=_dump(_USAGE, run.usage),
                 result=None,
                 created_at=run.created_at,
@@ -301,6 +394,7 @@ class PostgresGroundedQARepository:
             )
             _project_attempt(attempt, updated)
             _project_run(base, updated)
+            await self._project_parent(session, updated)
             if updated.status in _TERMINAL:
                 _clear_lease(attempt)
             return updated
@@ -318,6 +412,7 @@ class PostgresGroundedQARepository:
             )
             _project_attempt(attempt, updated)
             _project_run(base, updated)
+            await self._project_parent(session, updated)
             return updated
 
     async def save_usage(self, run_id: UUID, usage: QARunUsage) -> QARunRecord:
@@ -330,6 +425,7 @@ class PostgresGroundedQARepository:
             updated = replace(current, usage=usage, updated_at=datetime.now(UTC))
             _project_attempt(attempt, updated)
             _project_run(base, updated)
+            await self._project_parent(session, updated)
             return updated
 
     async def save_evidence(self, evidence: EvidenceRecord) -> EvidenceRecord:
@@ -412,6 +508,7 @@ class PostgresGroundedQARepository:
             )
             _project_attempt(attempt, updated)
             _project_run(base, updated)
+            await self._project_parent(session, updated)
             _clear_lease(attempt)
             return updated
 
@@ -622,8 +719,19 @@ class PostgresGroundedQARepository:
         )
         _project_attempt(attempt, recovered)
         _project_run(base, recovered)
+        parent = await session.get(ConversationRunModel, recovered.run_id, with_for_update=True)
+        if parent is None:
+            raise QAContractError("QA run is missing its ConversationRun parent")
+        _project_conversation_run(parent, recovered)
         _clear_lease(attempt)
         return recovered
+
+    @staticmethod
+    async def _project_parent(session: AsyncSession, run: QARunRecord) -> None:
+        parent = await session.get(ConversationRunModel, run.run_id, with_for_update=True)
+        if parent is None:
+            raise QAContractError("QA run is missing its ConversationRun parent")
+        _project_conversation_run(parent, run)
 
     async def _latest_attempt(
         self, session: AsyncSession, run_id: UUID, *, for_update: bool = False
@@ -769,6 +877,24 @@ def _message(model: QAMessageModel) -> MessageRecord:
     )
 
 
+def _conversation_summary(model: ConversationSummaryModel) -> ConversationSummary:
+    return ConversationSummary(
+        summary_id=model.id,
+        conversation_id=model.conversation_id,
+        space_id=model.space_id,
+        run_id=model.run_id,
+        covered_start_message_id=model.covered_start_message_id,
+        covered_end_message_id=model.covered_end_message_id,
+        covered_message_count=model.covered_message_count,
+        content=model.content,
+        content_sha256=model.content_sha256,
+        prompt_version=model.prompt_version,
+        model_identity=model.model_identity,
+        sensitivity=ConversationSensitivity(model.sensitivity),
+        created_at=model.created_at,
+    )
+
+
 def _message_model(message: MessageRecord) -> QAMessageModel:
     return QAMessageModel(
         id=message.message_id,
@@ -815,6 +941,8 @@ def _run(base: QARunModel, attempt: QARunAttemptModel) -> QARunRecord:
         idempotency_key=base.idempotency_key,
         versions=_VERSIONS.validate_python(base.versions),
         retrieval_scope=_RETRIEVAL_SCOPE.validate_python(base.retrieval_scope),
+        standalone_request=base.standalone_request,
+        context_sensitivity=base.context_sensitivity,
         status=QAStatus(attempt.status),
         cancellation_requested=attempt.cancellation_requested,
         error_code=attempt.error_code,
@@ -844,6 +972,153 @@ def _project_run(model: QARunModel, run: QARunRecord) -> None:
     model.result = _dump(_RESULT, run.result) if run.result is not None else None
     model.answer_message_id = run.answer_message_id
     model.updated_at = run.updated_at
+
+
+def _legacy_conversation_run_model(run: QARunRecord) -> ConversationRunModel:
+    model = ConversationRunModel(
+        id=run.run_id,
+        conversation_id=run.conversation_id,
+        space_id=run.space_id,
+        caller_id=run.caller_id,
+        user_message_id=run.question_message_id,
+        idempotency_key=run.idempotency_key,
+        run_kind=(
+            ConversationRunKind.GROUNDED_QA.value
+            if run.versions.skill_name == "knowledge_qa"
+            else ConversationRunKind.SKILL.value
+        ),
+        selection_source=ConversationRunSelectionSource.NONE.value,
+        status=_conversation_run_status(run.status).value,
+        cancellation_requested=run.cancellation_requested,
+        error_code=run.error_code,
+        router_version="legacy-v1",
+        core_prompt_version="legacy-v1",
+        model_identity=run.versions.model_identity,
+        skill_name=(
+            run.versions.skill_name if run.versions.skill_content_sha256 is not None else None
+        ),
+        skill_version=(
+            run.versions.skill_version if run.versions.skill_content_sha256 is not None else None
+        ),
+        skill_content_sha256=run.versions.skill_content_sha256,
+        usage=_conversation_run_usage(run),
+        result=_conversation_run_result(run),
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+    )
+    return model
+
+
+def _validate_legacy_parent(
+    model: ConversationRunModel, run: QARunRecord, *, check_idempotency: bool = False
+) -> None:
+    expected_kind = (
+        ConversationRunKind.GROUNDED_QA.value
+        if run.versions.skill_name == "knowledge_qa"
+        else ConversationRunKind.SKILL.value
+    )
+    if (
+        model.conversation_id != run.conversation_id
+        or model.space_id != run.space_id
+        or model.caller_id != run.caller_id
+        or model.user_message_id != run.question_message_id
+        or (check_idempotency and model.idempotency_key != run.idempotency_key)
+        or model.run_kind != expected_kind
+        or model.selection_source != ConversationRunSelectionSource.NONE.value
+        or model.router_version != "legacy-v1"
+        or model.core_prompt_version != "legacy-v1"
+        or model.model_identity != run.versions.model_identity
+    ):
+        raise QAContractError("QA Run conflicts with its ConversationRun parent")
+
+
+def _validate_parent(
+    model: ConversationRunModel, run: QARunRecord, *, check_idempotency: bool = False
+) -> None:
+    if model.router_version == "assistant-router-decision-v1":
+        expected_kind = (
+            ConversationRunKind.GROUNDED_QA.value
+            if run.versions.skill_name == "knowledge_qa"
+            else ConversationRunKind.SKILL.value
+        )
+        if (
+            model.conversation_id != run.conversation_id
+            or model.space_id != run.space_id
+            or model.caller_id != run.caller_id
+            or model.user_message_id != run.question_message_id
+            or (check_idempotency and model.idempotency_key != run.idempotency_key)
+            or model.run_kind != expected_kind
+            or model.selection_source
+            not in {
+                ConversationRunSelectionSource.AUTO.value,
+                ConversationRunSelectionSource.COMMAND.value,
+            }
+            or model.skill_name != run.versions.skill_name
+            or model.skill_version != run.versions.skill_version
+            or model.skill_content_sha256 != run.versions.skill_content_sha256
+            or model.core_prompt_version
+            not in {"assistant-base-prompt-v2", "assistant-base-prompt-v3"}
+        ):
+            raise QAContractError("QA Run conflicts with its Assistant ConversationRun parent")
+        return
+    _validate_legacy_parent(model, run, check_idempotency=check_idempotency)
+
+
+def _project_conversation_run(model: ConversationRunModel, run: QARunRecord) -> None:
+    _validate_parent(model, run, check_idempotency=False)
+    hold_for_finalizer = (
+        model.run_kind
+        in {
+            ConversationRunKind.SKILL.value,
+            ConversationRunKind.GROUNDED_QA.value,
+        }
+        and model.core_prompt_version in {"assistant-base-prompt-v2", "assistant-base-prompt-v3"}
+        and model.result is None
+        and run.status in _BUSINESS_TERMINAL
+    )
+    model.status = (
+        ConversationRunStatus.RUNNING.value
+        if hold_for_finalizer
+        else _conversation_run_status(run.status).value
+    )
+    model.cancellation_requested = run.cancellation_requested
+    model.error_code = run.error_code
+    model.usage = _conversation_run_usage(run)
+    model.result = None if hold_for_finalizer else _conversation_run_result(run)
+    model.updated_at = run.updated_at
+
+
+def _conversation_run_status(status: QAStatus) -> ConversationRunStatus:
+    return {
+        QAStatus.CREATED: ConversationRunStatus.CREATED,
+        QAStatus.QUEUED: ConversationRunStatus.QUEUED,
+        QAStatus.RUNNING: ConversationRunStatus.RUNNING,
+        QAStatus.VERIFYING: ConversationRunStatus.RUNNING,
+        QAStatus.COMPLETED: ConversationRunStatus.COMPLETED,
+        QAStatus.REFUSED: ConversationRunStatus.REFUSED,
+        QAStatus.FAILED: ConversationRunStatus.FAILED,
+        QAStatus.CANCEL_REQUESTED: ConversationRunStatus.CANCEL_REQUESTED,
+        QAStatus.CANCELLED: ConversationRunStatus.CANCELLED,
+        QAStatus.TIMED_OUT: ConversationRunStatus.TIMED_OUT,
+    }[status]
+
+
+def _conversation_run_usage(run: QARunRecord) -> dict[str, object]:
+    return {
+        "input_tokens": run.usage.input_tokens,
+        "output_tokens": run.usage.output_tokens,
+        "model_latency_ms": run.usage.model_latency_ms,
+    }
+
+
+def _conversation_run_result(run: QARunRecord) -> dict[str, object] | None:
+    if run.status not in _BUSINESS_TERMINAL:
+        return None
+    return {
+        "kind": "skill_result",
+        "message_id": str(run.answer_message_id) if run.answer_message_id is not None else None,
+        "clarification": None,
+    }
 
 
 def _lease_is_active(model: QARunAttemptModel, now: datetime) -> bool:

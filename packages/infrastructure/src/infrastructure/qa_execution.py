@@ -11,7 +11,6 @@ from uuid import UUID
 from agent_runtime import (
     DeterministicWorkflowExecutor,
     FileSystemSkillRegistry,
-    PinnedSkill,
     SkillRegistryError,
     SkillRegistryErrorCode,
 )
@@ -214,10 +213,10 @@ class StructuredAgentGateway:
 def qa_execution_versions(
     skill_registry: FileSystemSkillRegistry | None = None,
     *,
-    skill_name: str = "knowledge_qa",
+    skill_name: str = "knowledge_agent",
 ) -> QARunVersions:
     planning, retrieval, generation = _profiles()
-    registry = skill_registry or knowledge_qa_registry()
+    registry = skill_registry or qa_skill_registry()
     pin = registry.pin(skill_name)
     return QARunVersions(
         skill_name=pin.name,
@@ -233,19 +232,27 @@ def qa_execution_versions(
     )
 
 
-def knowledge_qa_registry() -> FileSystemSkillRegistry:
-    """Load the configured trusted root and rebuild its active QA pointer."""
+def qa_skill_registry() -> FileSystemSkillRegistry:
+    """Load all trusted Skills and activate the sole new knowledge entry point."""
     registry = FileSystemSkillRegistry(Path(settings.skill_root_path))
     registry.reload()
-    registry.activate("knowledge_qa", settings.knowledge_qa_skill_version)
+    registry.activate("knowledge_agent", settings.knowledge_agent_skill_version)
     return registry
 
 
-def active_knowledge_qa_pin(
-    skill_registry: FileSystemSkillRegistry | None = None,
-) -> PinnedSkill:
-    registry = skill_registry or knowledge_qa_registry()
-    return registry.pin("knowledge_qa")
+def assistant_skill_registry() -> FileSystemSkillRegistry:
+    """Build the v2 invocation catalog with knowledge_agent as the sole QA entry."""
+    registry = qa_skill_registry()
+    for name in (
+        "knowledge_agent",
+        "summarize_document",
+        "compare_sources",
+        "create_review_cards",
+    ):
+        if name == "knowledge_agent":
+            continue
+        registry.activate(name, "0.2.0")
+    return registry
 
 
 class GroundedQAExecutor:
@@ -368,7 +375,7 @@ class GroundedQAExecutor:
     async def _execute_skill(
         self, run: QARunRecord, *, trace_id: str, trace: QADebugTrace
     ) -> QARunRecord:
-        registry = self._skill_registry or knowledge_qa_registry()
+        registry = self._skill_registry or qa_skill_registry()
         pin = registry.pin(run.versions.skill_name, run.versions.skill_version)
         if (
             run.versions.skill_content_sha256 is None
@@ -520,6 +527,7 @@ def _profiles() -> tuple[QAPlanningProfileV1, RetrievalProfileV1, QAGenerationPr
     generation = QAGenerationProfileV1(
         retrieval_profile_reference=retrieval.profile_version,
         model_identity=(settings.fast_chat_model or "fake-fast-chat-v1"),
+        prompt_template_id="grounded-qa-v1-provisional",
     )
     return planning, retrieval, generation
 
@@ -553,7 +561,7 @@ def _safe_error(error: BaseException) -> dict[str, str]:
 __all__ = [
     "GroundedQAExecutor",
     "StructuredFakeGateway",
-    "active_knowledge_qa_pin",
-    "knowledge_qa_registry",
+    "assistant_skill_registry",
+    "qa_skill_registry",
     "qa_execution_versions",
 ]

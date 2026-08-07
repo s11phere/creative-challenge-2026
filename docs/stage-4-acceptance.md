@@ -1,6 +1,6 @@
 # 阶段 4 Provisional 工程移交记录
 
-## 2026-08-04 Engineering Completion Update
+## 2026-08-07 Engineering Completion Update
 
 The Stage 4 engineering surface is complete for the implemented contract: QA Domain/Application,
 PostgreSQL persistence, Worker recovery, SSE replay/cancel, Citation resolution, HTTP API, Web answer
@@ -12,14 +12,21 @@ Current closure supersedes the older dated notes below: the final migration head
 QA/Runtime/Skill integration is green (`6 passed`). Runtime checkpoint tamper checks, approval-to-
 tool binding and derived-knowledge Space/citation checks are included in this final run.
 
-Backend unit tests passed (`698 passed, 48 skipped`), Runtime/Skill persistence regression passed (`6 passed`),
-and the Web QA workspace tests passed (`28 passed`). Playwright/browser screenshot coverage is not
-installed in this environment and is not reported as passed. Stage 3 retrieval and Stage 4 answer
-formal holdout gates remain open and are not represented as quality acceptance.
+The 2026-08-07 repository verification passed: full backend pytest (`744 passed, 52 skipped`),
+Ruff format/check, and mypy (`122` source files). Web lint, typecheck, Vitest (`38 passed`), and
+production build also passed. Playwright/browser screenshot coverage is not installed in this
+environment and is not reported as passed. Stage 3 retrieval and Stage 4 answer formal holdout
+gates remain open and are not represented as quality acceptance.
 
 Alembic reports a single head at `7e8f9a0b1c2d`. The isolated PostgreSQL service on port `55440`
 accepted the explicit test credentials and all six selected integration tests passed. Playwright/
 browser execution remains unclaimed because the environment does not provide that dependency.
+
+The v2 Assistant Web closeout is included as a presentation-layer addition over the existing QA
+contracts: new knowledge requests use `knowledge_agent 0.3.0`, Skill results remain separate from
+the exactly-once finalizer message, and invocation/final-answer surfaces share one closable
+evidence panel. Command submission/highlighting and Markdown/GFM/LaTeX rendering are covered by
+the Web checks. This does not change the Stage 4 formal answer-quality boundary.
 
 > 记录日期：2026-07-31
 >

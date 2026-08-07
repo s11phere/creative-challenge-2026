@@ -21,7 +21,7 @@ question-only 改写为搜索子查询，严格 JSON 解析，TDD 9 测试）。
 （`QASearchCoordinator._merged_hit_key`，score-merge 相对 q0-priority 在 limit=32 下多兑现 +2.9pp，
 0 回退）。回退机制：`rewrite_enabled` 总开关 + rewriter 失败自动回退原问题。
 
-## 2026-08-04 Implementation Status Update
+## 2026-08-07 Implementation Status Update
 
 All requested Stage 4/5 engineering functions are implemented, including Web entry points for all
 five registered Skills, Web feedback controls,
@@ -33,11 +33,177 @@ The remaining labels are evidence labels, not implementation deferrals: formal r
 holdouts remain unrun or non-passing under ADR-010/011, and browser Playwright coverage is unavailable
 in the current environment.
 
-最终工程复核（2026-08-04）：后端 `698 passed, 48 skipped`；Ruff format/check、mypy 通过；前端
-lint/typecheck/test/build 通过（28 tests）；隔离 PostgreSQL QA/Runtime/Skill 集成 `6 passed`；
-迁移 upgrade/downgrade/upgrade、单一 head 和 OpenAPI 一致性通过。Runtime 检查点摘要/Skill
-绑定、审批 Tool 绑定、派生知识 Space/citation 绑定、五 Skill 统一 `/api/v1/runs` 入口均已纳入
-回归。Playwright 未安装，只能记录为环境证据缺失，不能写成失败或伪造通过。
+## 2026-08-06 Assistant Conversation Evolution Step 5
+
+Step 5 adds `ConversationContextService`, append-only versioned rolling summaries, and the
+`context_compaction` Worker use case. A summary records one conversation/Space, its covered message
+range, digest, prompt/model version, and inherited `private_local` sensitivity. Original messages
+remain queryable and are never rewritten or deleted.
+
+Routing, direct response, resource-reference handling, and the Skill standalone request now share
+the same bounded snapshot: rolling summary, recent window, and current request. QA keeps its
+separate evidence `ContextBuilder`; standalone Skill requests do not cause full-chat history to be
+copied into QA/Skill execution. `/compact` creates an idempotent durable Run, automatic compaction
+uses the same Worker queue after a soft watermark, and lease recovery/cancellation/failure retain a
+bounded recent-window fallback. The implementation remains provisional under ADR-010/ADR-011; no
+formal retrieval, answer, or Skill holdout was run.
+
+## 2026-08-06 Assistant Conversation Evolution Step 6
+
+Step 6 replaces the fixed QA Skill-mode entry with a general conversation workspace. `/` opens a
+searchable ARIA combobox/listbox with keyboard, pointer, and IME-safe selection. Direct replies,
+Skill runs, clarifications, approvals, failures, and grounded citations each use their own rendered
+state; the citation panel appears only for a grounded result with citations. Collapsed Run details
+show actual model identity, input/output token usage, and latency only.
+
+Resource clarifications render safe inline candidates. The server keeps the continuation state
+private, revalidates a selected candidate in the original Run's Space, and resumes the same parent
+Run rather than creating another conversation. `GET /api/v2/conversations/{conversation_id}/runs`
+restores persisted v2 Runs and pending clarifications after a refresh. This is provisional engineering
+work under ADR-010/ADR-011: no formal retrieval, answer, or Skill holdout was run, and browser
+Playwright desktop/mobile evidence remains unavailable in the current environment.
+
+## 2026-08-06 Assistant Conversation Evolution Step 7
+
+Step 7 adds `assistant-operational-metrics-v1` counters for router decisions, explicit commands,
+clarifications, compaction, actual token usage, latency, and terminal reasons. Counters use only
+safe labels and aggregate numeric values. The Agent, command API, clarification continuation, and
+compaction Worker emit these records through the existing structured logging path without recording
+conversation text, prompts, document content, Provider output, or internal IDs.
+
+`scripts/evaluate_assistant_routing.py` validates the hash-pinned `assistant-routing-v1` synthetic
+development dataset and aggregates body-free prediction metadata into `assistant-metrics-report-v1`.
+The manifest requires `content_policy=synthetic_only`, `formal_runs_enabled=false`, and a
+`development` split; reports remain `provisional` and cannot execute a formal holdout or call a
+Provider. Focused security and regression coverage covers command routing, policy/approval/cancel
+boundaries, Worker compaction and metric privacy. Browser Playwright desktop/mobile evidence remains
+unavailable in the current environment, so this engineering step does not close the existing formal
+quality or browser-E2E gaps.
+
+Step 7 verification used only fake/synthetic paths: `mypy apps packages` passed for 121 source files;
+the complete backend suite passed `735 passed, 52 skipped`; an isolated PostgreSQL/Redis environment
+completed `upgrade head -> downgrade base -> upgrade head` and `51` integration tests; Web lint,
+typecheck, Vitest (`26` tests), and production build passed. OpenAPI export had no diff and the
+synthetic evaluator reported eight development cases with `formal_run_eligible=false`. The full
+repository formatting check still reports 18 pre-existing, out-of-scope files; all Assistant
+Conversation Evolution files are formatted.
+
+## 2026-08-07 Assistant Conversation Evolution Step 8
+
+Step 8 changes the Web default entry to the API v2 Assistant conversation workspace. The old QA
+surface remains available through an explicit `兼容问答` selector until the Vite-configured UTC
+deadline (`2026-09-30T23:59:59Z` by default); invalid or expired values fail closed to v2. The
+compatibility path reuses the existing v1 conversation, question, Run, cancellation, and citation
+ports, so no parallel QA workflow or persistence protocol is introduced.
+
+The Web image receives `VITE_ASSISTANT_DEFAULT_API_MODE` and
+`VITE_ASSISTANT_V1_COMPATIBILITY_UNTIL` as build arguments. Release verification is limited to
+fake/local Provider paths; external Chat remains governed by `MODEL_ALLOW_EXTERNAL`, source and
+deployment policy, and visible consent. Rollback is configuration-only and preserves v2 data,
+historical Runs, active pointers, and Skill packages. Monitoring requirements are recorded for
+routing misfires, clarification loops, cancellation, recovery, token usage, and latency. This step
+remains provisional under ADR-010/ADR-011; no formal retrieval, answer, or Skill holdout was run.
+
+Step 8 verification: Web lint, typecheck, Vitest (`31` tests), and production build passed. The
+focused v1 compatibility tests cover explicit submit/cancel behavior and the v2 default-entry test
+covers empty-hash startup. OpenAPI has no endpoint change and remains unchanged; browser Playwright
+desktop/mobile evidence is still unavailable in the current environment.
+
+## 2026-08-07 Skill Invocation Trace Cards
+
+The v2 Web conversation now keeps one collapsible, default-closed card for every persisted Skill Run.
+The card remains in the conversation after completion, failure, cancellation, or clarification and
+is reconstructed from the same `ConversationRun` after refresh. Expanded details show the safe
+`agent-run-sse-v2` activity chain, pinned Skill identity, execution status/model/actual usage, and
+the final answer or server-authored clarification. Raw prompts, Tool payloads, document excerpts,
+and internal budgets remain excluded. This is a Web presentation change only; the existing Run,
+Worker, QA Application Port, and SSE persistence contracts are reused.
+
+## 2026-08-07 Assistant Finalization, Evidence, and Rendering
+
+The final conversation closeout is implemented. After a grounded Skill reaches a business-terminal
+state, the Worker emits one `phase=final_answer` event and invokes `ConversationFinalizer` once.
+The finalizer receives the original question and the Skill result as separate reference inputs and
+publishes a separate Assistant message. The Skill result is therefore not copied into the final
+answer frame, and recovery cannot create a second final answer.
+
+The invocation card and final-answer frame each expose a citation button when the Run has evidence.
+Both use one shared, Run-scoped evidence panel; opening another component replaces the current
+panel, and the panel has an explicit close action. The Web preserves the original `/command`
+message, highlights only a valid command prefix with a metric-neutral accent, submits commands on
+Enter, and renders assistant GFM Markdown and LaTeX. These changes reuse the existing v2 Run,
+`agent-run-sse-v2`, QA citation, and recovery contracts.
+
+## 2026-08-07 Verification Closeout
+
+The repository checks for this closeout passed: `uv run --frozen ruff format --check .`,
+`uv run --frozen ruff check .`, `uv run --frozen mypy apps packages` (122 source files), and the
+full backend suite (`744 passed, 52 skipped`). Web lint, typecheck, Vitest (`38 passed`), and
+production build passed; OpenAPI regeneration produced no diff and its consistency test passed.
+Routing and answer `--validate-only` commands reported `formal_run_eligible=false` and
+`provisional`. The only test warning was the existing Windows inability to write `.pytest_cache`;
+no Playwright/browser evidence or formal retrieval/answer/Skill holdout is claimed.
+
+## 2026-08-06 Assistant Conversation Evolution Step 1
+
+按 `agent-conversation-evolution-plan.md` 的 Step 1，新增了共享 `ConversationRun` 父身份和 API v2
+骨架。旧 `qa_runs.id` 保持不变并成为 `grounded_qa` 投影；QA 消息、Runtime、审批和派生知识改为
+引用该父 ID。v2 目前只能原子持久化/读取/取消无模型 turn，尚未执行自动路由、直接模型回答、命令、
+澄清续答或 v2 SSE。这是工程契约演进，不改变 ADR-010/ADR-011 的 provisional 边界，也不构成任何
+正式检索、回答或 Skill 质量验收。
+
+## 2026-08-06 Assistant Conversation Evolution Step 2
+
+按 `agent-conversation-evolution-plan.md` 的 Step 2，v2 已形成 ordinary direct-conversation 的
+provisional 纵向闭环：`AssistantAgentService` 以冻结的基础 prompt 和
+`assistant-router-decision-v1` 严格解析模型输出；本步只接受 `respond` 与 `clarify`，
+`invoke_skill` 或无效 JSON 都以稳定失败码结束，绝不伪造 assistant 终态。直接回复、父 Run
+终态和实际 usage 在同一事务中写入；澄清使用服务端生成的确定性 ID 与安全元数据。
+
+新增 `assistant_events` 和 `agent-run-sse-v2`，只持久化状态、动作和错误码，不写入用户原文、
+回复正文或模型原始输出。`assistant_run` 复用既有 `qa` Dramatiq 队列和 Worker lease/recovery
+机制；API 仅投递 `run_id`、`trace_id` 与事件版本。fake provider 对该冻结 router prompt 返回
+确定性 `respond` JSON，CI 不依赖外部模型。v2 公开了 `GET /api/v2/runs/{run_id}/events`。
+
+该步骤未开启 Skill catalog、自动 Skill 调用、slash command、资源解析或会话压缩，仍不改变
+ADR-010/ADR-011 的 provisional 边界，也不构成任何正式检索、回答或 Skill 质量验收。工程复核为
+`718 passed, 52 skipped`，Ruff、mypy、OpenAPI、单一 Alembic head 和 diff check 均通过；未运行
+formal holdout、未读取私有正文、未调用外部 Provider。
+
+## 2026-08-06 Assistant Conversation Evolution Step 3
+
+按 `agent-conversation-evolution-plan.md` 的 Step 3，新增 manifest v2 `invocation` 元数据、active
+command/alias 冲突校验和仅包含触发摘要的 Assistant catalog。四个业务 Skill 各发布 `0.2.0` v2
+包，原 `0.1.0` 包保持可读、可固定和可恢复；legacy `/api/v1/skills` 与 QA pointer 继续保持 v1
+兼容，Assistant 使用独立 v2 路由目录。
+
+`invoke_skill` 只能选择 active catalog 条目，服务端重新 pin `(name, version, content_sha256)`，
+拒绝 hidden/inactive/未授权 Skill 和模型提供的资源/Space/版本 ID。成功选择后复用同一
+`ConversationRun` parent ID 建立 QA projection，并沿既有 Grounded QA Application Port、QA Worker、
+`qa-sse-v1` 与 `agent-run-sse-v2` 生命周期执行。自然语言资源解析只读当前 Space 的已发布版本；唯一
+匹配固定范围，歧义返回无 ID 的安全候选，缺失/冲突使用 `RESOURCE_NOT_FOUND`/
+`RESOURCE_CONFLICT` 或 server-authored clarification。
+
+本步未实现 slash command API 或上下文压缩；未运行 formal retrieval/answer/Skill holdout。实现和
+验证均为 provisional，不改变 ADR-010/ADR-011 边界。
+
+Step 3 工程复核：后端 `718 passed, 52 skipped`，Ruff 全量检查通过；Mypy 仅保留两个既有的
+`Any` 返回告警（`packages/application/src/application/retrieval/dense.py`、
+`apps/worker/src/worker/ingestion_tasks.py`）。Step 3 的 v2/legacy catalog、资源解析、Skill pin
+和 parent Run promotion smoke 验证通过；未运行 formal holdout，也未读取私有正文或调用外部 Provider。
+
+## 2026-08-06 Assistant Conversation Evolution Step 4
+
+按 `agent-conversation-evolution-plan.md` 的 Step 4，新增版本化 `GET /api/v2/commands` 和服务端权威
+parser。目录合并基础指令与 active Skill 指令，支持大小写不敏感、别名、未知命令候选和 `//` 转义；
+turn 请求中的可选 `command` 仅作为不可信提示，服务端始终重新解析原始内容。
+
+`/help`、`/skills`、`/new`、`/stop` 返回无业务 Run 的命令结果；显式 `/ask`、`/summarize`、
+`/compare`、`/cards` 直接复用 Skill pin、资源校验、parent Run 和 QA Worker/SSE 路径，并固定
+`selection_source=command`。命令重放复用原 idempotency identity；模型不会参与显式 Skill 选择。
+`/compact` 目前只确认请求并明确延后到 Step 5 的上下文摘要 Worker。
+
+Step 4 验证为 provisional，未运行 formal retrieval/answer/Skill holdout，不改变 ADR-010/ADR-011 边界。
 
 > 对应收尾计划：[`post-stage-3-stage-4-5-completion-plan.md`](post-stage-3-stage-4-5-completion-plan.md)
 >
@@ -55,16 +221,17 @@ lint/typecheck/test/build 通过（28 tests）；隔离 PostgreSQL QA/Runtime/Sk
 | --- | --- | --- | --- |
 | 阶段 3 | 工程 Step 0-10 已完成；v1 development 复核已执行 | 仍未通过，未冻结，未运行 holdout | [ADR-010](adr/010-stage-3-termination-and-evaluation-boundary.md)；[v1 development 记录](stage-3-reopen-development-v1.md)：v1 修复标注但未 materially improve coverage/representativeness |
 | 阶段 4 | QA Domain/Application、PostgreSQL、Worker、SSE、API、Web、Citation、反馈提交与反馈审核生命周期已实现 | 工程实现完成，质量 provisional | [stage-4-acceptance.md](stage-4-acceptance.md)：Playwright、真实回答质量、正式默认配置冻结和 answer holdout 未完成 |
-| 阶段 5 | Runtime/Registry、active pointer、`knowledge_qa`、知识整理 Skill、审批/派生知识和 Skill 清理已实现 | 工程实现完成，质量 provisional | [stage-5-acceptance.md](stage-5-acceptance.md)：正式 Eval 和浏览器门禁未完成 |
+| 阶段 5 | Runtime/Registry、active pointer、`knowledge_agent`、知识整理 Skill、审批/派生知识和 Skill 清理已实现 | 工程实现完成，质量 provisional | [stage-5-acceptance.md](stage-5-acceptance.md)：正式 Eval 和浏览器门禁未完成 |
 
 本看板不批准任何正式 holdout，不改变 `retrieval-v1.yaml`、`qa-v1.yaml` 或现有 Skill 的状态，
 也不改变阶段 0 的 `internal_team_only` 分发边界。
 
-### 1.1 Step 1 结果与继续策略
+### 1.1 Step 1/2 结果与继续策略
 
-Step 1 的正式质量前置门未通过，但当前 GPU development 结果满足 [ADR-011](adr/011-provisional-stage-4-5-continuation-gate.md)
-定义的 provisional continuation gate。因此可以进入 Step 2 的 provisional QA 工程工作；正式
-retrieval/answer holdout、正式质量结论和阶段退出仍被阻断。
+Step 1/2 的工程复核不改变正式质量前置门未通过的事实。当前 GPU development 结果仅满足
+[ADR-011](adr/011-provisional-stage-4-5-continuation-gate.md) 定义的 provisional continuation
+gate；确认后才可进入 Step 3 的 Skill catalog 与自动调用工程工作。正式 retrieval/answer holdout、
+正式质量结论和阶段退出仍被阻断。
 
 ### 1.2 Step 3 provisional E2E 结果
 
@@ -100,7 +267,7 @@ lint、typecheck、Vitest 27 项、production build，以及隔离 Web 首页、
 | --- | --- | --- | --- | --- | --- |
 | 阶段 3 检索 | `retrieval-v1.yaml` + dataset `knowledge-qa-v0`；另有 `retrieval-v1-knowledge-qa-v1.yaml` + dataset `knowledge-qa-v1` | v1 schema/locator/hash 校验和 GPU development 消融已通过；两者仍 `provisional`，formal runs disabled；正式门未通过但满足 ADR-011 continuation gate | 可在 v1 上继续阶段 4/5 provisional 工程；正式线仍需新 dataset/config、代表性覆盖、claim-aware evaluator、development 达标、配置 hash 冻结后才可一次性运行 retrieval holdout | 仅使用 manifest 允许来源；默认本地；私有语料不得外发 | 待认领 |
 | 阶段 4 QA 评测 | `qa-continuation-v1.yaml` + `qa-profile-continuation-v1.yaml`；dataset `knowledge-qa-v0`；prompt `grounded-qa-v1-provisional` | provisional continuation 配置已 pin `retrieval-v1-knowledge-qa-v1`，validate-only 和受影响单测通过；正式配置未冻结 | 在 continuation gate 下继续 QA/E2E 工程；正式线仍需代表性 QA dataset、真实模型 development、answer config hash 和一次性 holdout | 题目、回答、引用原文和 Provider 响应不得写日志/报告；外部 Chat 需显式策略和同意 | 待认领 |
-| 阶段 5 Skill 评测 | active `knowledge_qa 0.1.0`；`knowledge_agent 0.2.0`（保留 `0.1.0` 旧包）；`summarize_document 0.1.0`、`compare_sources 0.1.0`、`create_review_cards 0.1.0` | 工程实现完成、质量 provisional；整理 Skill 已支持预览/审批/派生写入，正式 Eval 未关闭 | 为每个 Skill 固定 workflow/manifest/prompt/schema/eval 版本和摘要；现有 Runtime 恢复、审批、派生写入、回滚/清理引用检查已实现，之后再做正式 Skill Eval | 受信根加载；运行固定 Skill identity；派生写入前必须持久审批，所有输入继承来源敏感度 | 待认领 |
+| 阶段 5 Skill 评测 | 新知识入口 `knowledge_agent 0.3.0`（保留 0.1/0.2 旧包）；`knowledge_qa` 仅历史 Run 恢复；`summarize_document 0.1.0`、`compare_sources 0.1.0`、`create_review_cards 0.1.0` | 工程实现完成、质量 provisional；整理 Skill 已支持预览/审批/派生写入，正式 Eval 未关闭 | 为每个 Skill 固定 workflow/manifest/prompt/schema/eval 版本和摘要；现有 Runtime 恢复、审批、派生写入、回滚/清理引用检查已实现，之后再做正式 Skill Eval | 受信根加载；运行固定 Skill identity；派生写入前必须持久审批，所有输入继承来源敏感度 | 待认领 |
 
 ### 2.1 版本冻结顺序
 
@@ -173,6 +340,7 @@ lint、typecheck、Vitest 27 项、production build，以及隔离 Web 首页、
 
 ## 6. 下一步进入条件
 
-Step 1 已完成 development 复核。确认本看板后可进入 Step 2 的 provisional QA 工程路径；不得
+Step 2 已完成 development 工程复核。确认本看板后可进入 Step 3 的 provisional Skill catalog
+工程路径；不得
 直接运行 `cases/evals/configs/retrieval-v1.yaml` 的当前 holdout，也不得仅通过修改
 `formal_runs_enabled` 开启正式评测。正式质量线仍需按 ADR-010/011 的后续触发条件重新建立。

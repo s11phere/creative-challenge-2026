@@ -49,6 +49,21 @@ Evidence identity from the same run.
 - Feedback belongs to a message and run, uses an idempotency key, and enters a review queue. It never
   mutates a frozen evaluation dataset directly.
 
+### Assistant parent run and SSE v2 amendment (2026-08-06)
+
+ADR-013 makes `ConversationRun` the durable parent identity for a product-level Assistant turn.
+Grounded QA is its fixed-scope projection rather than a parallel run system. The migration backfills
+legacy QA records before Runtime execution, checkpoints, approvals, and QA projections reference the
+shared parent ID. Existing run, attempt, citation, message, and Skill-pin identities remain stable
+for v1 reads, recovery, and rollback.
+
+`agent-run-sse-v2` is a separately versioned projection of the persisted parent state. Its lifecycle
+types are `accepted`, `routing`, `clarification`, `skill_started`, `phase`, `completed`, `failed`,
+and `cancelled`; events preserve the existing monotonic per-run sequence, replay cursor, safe payload
+rules, and one-terminal-event rule. A grounded-QA run projects its lifecycle to this vocabulary.
+`qa-sse-v1` remains available and unchanged for v1 clients. Unknown event versions are rejected or
+safely ignored according to their own transport contract; they are never silently reinterpreted.
+
 Database constraints prove same-Space ownership where ordinary foreign keys can express it;
 Application checks repeat cross-aggregate ownership and current-publication checks. PostgreSQL is
 the state and idempotency authority. Queue messages contain only IDs and control metadata.

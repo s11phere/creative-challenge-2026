@@ -225,6 +225,8 @@ class QARunRecord:
     idempotency_key: str
     versions: QARunVersions
     retrieval_scope: QARetrievalScope = QARetrievalScope()
+    standalone_request: str | None = None
+    context_sensitivity: str = "private_local"
     status: QAStatus = QAStatus.CREATED
     cancellation_requested: bool = False
     error_code: str | None = None

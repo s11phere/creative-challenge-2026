@@ -1,6 +1,6 @@
 # 项目架构概览
 
-## Current completion boundary (2026-08-04)
+## Current completion boundary (2026-08-07)
 
 The implemented Stage 4/5 boundary now includes feedback review persistence in `qa_feedback`,
 Space-scoped metadata-only review endpoints, and a separate privacy-safe candidate exporter. The
@@ -8,14 +8,41 @@ exporter consumes repository ports and manifest policy metadata; it does not exp
 content. The architecture remains a modular monolith with the existing Worker and QA Application Port.
 Formal quality gates remain governed by ADR-010 and ADR-011.
 
+The Assistant Conversation Evolution Step 3 boundary adds manifest v2 invocation metadata and a
+separate active routing catalog. Legacy v1 Skill pointers remain available for historical QA recovery;
+Assistant selections pin a v2 `(name, version, content_sha256)` and project the same parent
+`ConversationRun` into the existing QA Run/Worker/SSE path. Natural-language resource resolution is
+read-only and Space-scoped; only safe candidate labels cross the Assistant boundary.
+
+The Assistant Conversation Evolution Step 5 boundary adds `ConversationContextService` and the
+append-only `conversation_summaries` table. A bounded snapshot combines a rolling summary, recent
+messages, and the current request for routing and standalone Skill requests. `context_compaction`
+uses the existing `qa` Worker queue, shared run lease/recovery, and privacy-safe Assistant events.
+Grounded QA keeps its evidence-only `ContextBuilder`; it does not receive the full chat history.
+
 PR #4 corrected the online and evaluation retrieval path to `dense_rerank`: dense-exact candidates
 are reranked directly. `hybrid_rerank` remains an explicit compatibility mode, not the default for
 Search API or QA. The corrected GPU development runs are provisional evidence only; they do not
 reopen Stage 3 or authorize the existing holdout.
 
+The current Assistant v2 boundary is also closed for this development phase. New turns enter
+`AssistantAgentService`; the active catalog uses `knowledge_agent 0.3.0` for every new knowledge
+request, while `knowledge_qa` remains a legacy adapter for fixed historical Runs only. After a
+grounded Skill reaches a business-terminal state, the Worker invokes `ConversationFinalizer` once.
+Its independently persisted Assistant message is the user-facing answer; the grounded Skill
+result remains an internal reference with its own trace and evidence projection.
+
+The Web reconstructs one durable, collapsible card per Skill invocation from `ConversationRun` and
+`agent-run-sse-v2`. Cards expose safe activity, pinned identity, status, model usage, finalizer or
+clarification output, and a citation action when evidence exists. The shared evidence panel has an
+explicit close action and is mutually exclusive across cards and final answers. The composer and
+user messages preserve explicit slash commands, render valid prefixes with a metric-neutral accent,
+and render assistant Markdown/GFM and LaTeX. No second persistence, QA, or Worker protocol is
+introduced.
+
 > 本文档描述 "Agent 驱动的个人知识仓库" 项目的整体架构、各组件职责与协作关系。
 > 更新于阶段 3 终止决策、阶段 4 provisional Step 0～10 和阶段 5 通用 Runtime/Registry
-> 审查完成时（2026-08-04）。
+> Assistant v2 收口与 Web 渲染检查完成时（2026-08-07）。
 
 ---
 
@@ -127,9 +154,10 @@ Agent Runtime → Domain + ModelGateway
 │
 ├── skills/
 │   ├── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
-│   ├── knowledge_qa/               # active provisional Grounded QA Skill
-│   ├── knowledge_agent/            # active bounded LLM Agent Skill
-│   ├── knowledge_agent_v0_1/       # compatibility/rollback package
+│   ├── knowledge_agent_v3/         # active knowledge invocation (0.3.0)
+│   ├── knowledge_agent/            # immutable 0.2.0 recovery package
+│   ├── knowledge_agent_v0_1/       # immutable 0.1.0 recovery package
+│   ├── knowledge_qa/               # legacy recovery-only Grounded QA packages
 │   ├── summarize_document/         # 固定单文档版本的引用摘要
 │   ├── compare_sources/            # 固定多来源的引用比较
 │   └── create_review_cards/        # 带引用预览与审批后的派生知识写入
@@ -210,6 +238,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `scripts/export_openapi.py` | 从应用工厂确定性导出 `docs/openapi.json` |
 | `scripts/rebuild_embeddings.py` | 按固定 Embedding identity 创建受控重建任务，不绕过原子发布 |
 | `scripts/evaluate_retrieval.py` | 校验/执行版本化检索评测、formal/holdout 门禁和机器可读报告 |
+| `scripts/evaluate_assistant_routing.py` | 仅校验/汇总 pinned synthetic development 路由元数据；拒绝正式评测、受控语料和 Provider 调用 |
 
 ---
 
@@ -226,6 +255,9 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/__init__.py` | 稳定公开导出 |
 | `src/domain/models.py` | 核心实体：`Space`、`Source`、`Document`、`DocumentVersion`、`Chunk`、`IngestionTask` 及其枚举、`RetrievalProfile` 值对象 |
 | `src/domain/agent_runtime.py` | AgentRun 状态/步骤、预算、权限、调用记录、检查点、恢复校验及 Runtime/Registry/审批 Port |
+| `src/domain/conversation_run.py` | 通用 `ConversationRun` 父身份、运行种类/选择来源、澄清、通用结果、实际用量和持久化 Port；不含模型或数据库依赖 |
+| `src/domain/conversation_context.py` | Versioned rolling-summary identity, content digest, covered message range, and inherited sensitivity contracts |
+| `src/domain/assistant_sse.py` | `agent-run-sse-v2` 的内容安全事件、单调 sequence、唯一终态和 Event Store Port；payload 禁止用户/模型正文键 |
 | `src/domain/repositories.py` | 仓库接口定义（Protocol）：`SpaceRepository`、`SourceRepository`、`DocumentRepository`、`DocumentVersionRepository`、`ChunkRepository`、`IngestionTaskRepository` |
 | `src/domain/parsing.py` | `ParsedDocument` / `StructNode` / `ParseError` 纯类型、`Parser` Protocol、`compute_blob_hash` 辅助函数 |
 | `src/domain/fingerprinting.py` | 内容指纹：`normalize_stable_key`、`compute_content_hash`（含版本分隔符）、`compute_storage_key` |
@@ -269,8 +301,12 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/qa/context_builder.py` | 系统/问题/历史/不可信 Evidence 隔离、配额裁剪和稳定上下文摘要 |
 | `src/application/qa/generation.py` | `fast_chat` 非流式结构化生成、JSON schema 解析、一次修复、空证据拒答、显式取消、细分模型故障、冲突/发布竞态校验和安全版本/用量结果 |
 | `src/application/qa/persistence.py` | provisional 内存 Grounded QA Repository；验证 Space/owner、幂等、attempt、取消、usage、Evidence/Feedback 和原子终态发布 |
+| `src/application/assistant/runs.py` | v2 Assistant turn 创建、读取和取消用例；API 协程只持久化与投递，不执行模型 |
+| `src/application/assistant/agent.py` | Worker 内的 `AssistantAgentService`；加载冻结 prompt、严格校验 router JSON，并以原子消息/Run 发布完成 `respond` 或服务端澄清 |
+| `src/application/assistant/context.py` | Bounded shared context snapshots, automatic/manual compaction Run creation, and Worker-only summary generation |
+| `src/application/assistant/metrics.py` | 不含正文的 Assistant 路由/命令/澄清/压缩/用量/延迟/终止指标，以及 synthetic development 报告聚合 |
 | `src/application/qa/service.py` | 唯一 provisional `GroundedQAApplicationPort`；编排幂等提交、阶段 3 SearchService、Evidence/上下文、结构化生成、原子发布、取消和稳定失败终态 |
-| `src/application/skills/knowledge_qa.py` | provisional Skill Adapter；Worker 模式执行同一既有 QA Run，仅将 Runtime 服务端上下文映射到唯一 QA Port 并投影其结构化结果 |
+| `src/application/skills/knowledge_qa.py` | legacy Skill Adapter；仅为固定历史 Run 将 Runtime 服务端上下文映射到唯一 QA Port 并投影其结构化结果 |
 | `src/application/skills/organization.py` | 校验知识整理 Skill 的 Space 归属和当前 published Source/Document/DocumentVersion，并生成固定检索范围 |
 | `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
 | `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
@@ -304,6 +340,9 @@ Application 层的 Skill Adapter 编排使用；通用 Runtime 不反向依赖�
 | `src/infrastructure/chunkers/structure_chunker.py` | 结构感知分块、标题路径传播、父/邻接 metadata 和 locator 保留 |
 | `src/infrastructure/retrieval/postgres_store.py` | 当前发布集合上的 PostgreSQL FTS、pgvector exact/IVFFlat、上下文候选和诊断 |
 | `src/infrastructure/qa_persistence.py` | PostgreSQL Grounded QA Repository 与 SSE Event Store；事务式终态发布、append-only attempt 和 API 重启恢复 |
+| `src/infrastructure/conversation_runs.py` | PostgreSQL `ConversationRun` 父记录适配器；原子写入消息/Run、Assistant lease、恢复、直接回复/澄清/失败/取消终态 |
+| `src/infrastructure/qa_persistence.py` | Also persists append-only conversation summaries and the bounded Skill standalone request |
+| `src/infrastructure/assistant_events.py` | PostgreSQL `agent-run-sse-v2` Event Store；锁定父 Run 后写入内容安全、单调的 v2 事件 |
 
 **`config.py` 详解**：
 
@@ -380,10 +419,10 @@ Stage 3 模型组合。
 prompt 摘要在运行开始时固定。
 
 **当前边界**：通用 Runtime 通过 PostgreSQL `runtime_runs`/`runtime_checkpoints` 保存不可变
-Skill 身份、规范化状态摘要、连续序号和预算用量，并与 QA Run 共享运行身份；Worker 可从最近
+Skill 身份、规范化状态摘要、连续序号和预算用量，并与 `ConversationRun` 共享运行身份；Worker 可从最近
 Checkpoint 恢复，重复提交按序号幂等，租约丢失会取消未提交执行。PostgreSQL `skill_activations`
 保存 active pointer，Catalog 暴露安装版本、manifest 预算和 pointer revision；受控
-activate/rollback API 使用 revision CAS，引用检查器保护 QA Run、Runtime Run 和 Checkpoint
+activate/rollback API 使用 revision CAS，引用检查器保护 QA 投影、Runtime Run 和 Checkpoint
 仍在使用的版本，清理只移除进程 Registry，不删除受信磁盘包。新 QA Run 在提交时固定 Skill
 名称、版本和内容摘要，Worker 按该身份执行唯一 QA Application Port。
 
@@ -394,7 +433,7 @@ published version，避免排队期间跟随新版本或扩大范围。比较结
 则拒答；复习卡在审批前只返回预览并报告 `side_effects=0`，批准后才通过派生知识 Port 写入。
 
 `knowledge_agent` 是当前 LLM Agent 业务入口。它通过现有 `fast_chat` 能力产生严格的
-`call_tool/complete/refuse` 决策。`knowledge_agent 0.2.0` 最多三次调用
+`call_tool/complete/refuse` 决策。`knowledge_agent 0.3.0` 最多三次调用
 `inspect_retrieval 1.0.0` 调整多查询和上下文预算，最后调用一次 `grounded_qa 1.0.0`；Tool
 Registry 在服务端重验
 版本、权限、Space、预算和输入/输出 schema。`grounded_qa` 仍是回答、引用、终态发布和恢复的唯一
@@ -432,6 +471,13 @@ Registry 在服务端重验
      — provisional PostgreSQL 会话与 Run 创建；API 只投递 Run ID，由独立 Worker 执行唯一 Grounded QA 用例
    - `POST /api/v1/conversations/{conversation_id}/skills/knowledge_agent/runs` — 在同一 QA Run/Worker/SSE
      协议中启动固定版本的只读 LLM Agent，不接受客户端指定 Tool、prompt、权限或版本
+   - `POST /api/v2/conversations/{conversation_id}/turns`、`GET /api/v2/conversations/{conversation_id}/runs`、
+     `GET /api/v2/runs/{run_id}`、`GET /api/v2/runs/{run_id}/events`、
+     `POST /api/v2/runs/{run_id}/clarifications/{clarification_id}`、`POST /api/v2/runs/{run_id}/cancel` — 普通 Assistant
+     direct-conversation 的 provisional Worker 路径；v1 QA Run 作为同一 UUID 的 `grounded_qa`
+     投影继续兼容。Step 3 已接入自动 Skill 调用，Step 4 增加 `GET /api/v2/commands` 和显式命令 turn
+     映射。会话 Run 列表支持刷新恢复；资源候选选择只接受安全候选 ID，服务端在原 Run 的 Space
+     内重新解析后继续同一 Run。资源解析和 QA 投影仍复用同一 Application/Worker 路径
    - `GET /api/v1/qa/runs/{run_id}`、`POST /api/v1/qa/runs/{run_id}/cancel`、
      `GET /api/v1/qa/runs/{run_id}/events`、`POST /api/v1/qa/runs/{run_id}/feedback` — provisional
      Run 查询/取消、SSE 重放和反馈契约；终态响应包含结构化回答/拒答及已校验 Citation 身份
@@ -440,7 +486,24 @@ Registry 在服务端重验
    - `GET /api/v1/skills`、`GET /api/v1/skills/{skill_name}/versions` — 只读查询受信 Registry
      已安装/active 版本、摘要、权限、能力和预算；不提供激活/回滚写操作
 4. **请求可观测性**：`observability.py` 校验或生成 trace/request ID，返回
-   `X-Trace-ID`、`X-Request-ID`，并创建 HTTP server span 与开始/完成 JSON 日志。
+    `X-Trace-ID`、`X-Request-ID`，并创建 HTTP server span 与开始/完成 JSON 日志。
+
+Assistant Conversation Evolution Step 7 uses process-local `AssistantMetrics` only for safe labels
+and aggregate numeric values. API, Worker, Assistant Agent, command handling, clarification resume,
+and context compaction record no user message, prompt, document content, Provider output, or internal
+resource identifier. The development evaluator accepts only the pinned `synthetic_only` dataset and
+body-free prediction metadata; its report is permanently labeled `provisional` and cannot run a
+formal holdout.
+
+Assistant Conversation Evolution Step 8 makes the Web v2 workspace the default entry while retaining
+an explicit, time-bounded v1 compatibility selector. The release controls are Vite build arguments
+(`VITE_ASSISTANT_DEFAULT_API_MODE` and `VITE_ASSISTANT_V1_COMPATIBILITY_UNTIL`); an expired or invalid
+window fails closed to v2. The v1 API, historical Run projections, and installed Skill packages are
+not removed. Rollback is a Web rebuild with `VITE_ASSISTANT_DEFAULT_API_MODE=v1`, so it does not
+delete data or mutate Skill pointers. Fake/local Provider rollout precedes any external Chat rollout;
+the existing `MODEL_ALLOW_EXTERNAL`, source-policy, deployment-policy, and consent checks remain
+authoritative. Operational monitoring uses the Step 7 privacy-safe counters and covers routing
+misfires, clarification loops, cancellation, recovery, token usage, and latency.
 
 **错误协议 (`errors.py`)**：
 
@@ -462,7 +525,7 @@ Registry 在服务端重验
 ```
 
 **OpenAPI**：端点声明 `response_model`；`docs/openapi.json` 由运行时应用确定性导出，当前覆盖
-健康、来源/摄入任务、检索、provisional QA 和 Skill Catalog/lifecycle schema。QA 执行复用真实 PostgreSQL SearchService；
+健康、来源/摄入任务、检索、provisional QA、Assistant v2 骨架和 Skill Catalog/lifecycle schema。QA 执行复用真实 PostgreSQL SearchService；
 状态、结果、引用和事件由 PostgreSQL 保存，服务启动时恢复安全的非终态 attempt；
 新增或修改公开端点后必须重新导出并运行一致性检查。
 
@@ -535,6 +598,11 @@ Web 已包含系统健康、数据来源和 provisional 知识问答工作区。
 版本、Chunk 和 locator 身份。点击 Citation 会按需加载固定版本的最小原文片段并高亮 locator；
 伪造 Evidence 返回 404，失效历史引用返回状态而不重定向到新版本。用户重试仍待实现。
 
+每个 v2 Skill Run 在对应用户消息下保留一个默认收起的调用卡片；展开后从同一 Run 与
+`agent-run-sse-v2` 事件序列展示安全的路由/执行链、固定 Skill 版本、状态、实际模型用量和
+最终回答或澄清。该卡片不读取或展示原始 prompt、Tool payload、文档正文、预算上限或内部
+调试 trace，刷新后通过会话 Run 列表恢复。
+
 **规范命令**：
 ```bash
 corepack pnpm@10.20.0 --dir apps/web install --frozen-lockfile
@@ -603,12 +671,13 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | `versions/b2c3d4e5f6a7_complete_ingestion_identity.py` | **阶段 2 修正迁移**：补齐双哈希、处理版本、tombstone、Chunk/Task 幂等与恢复字段、外键和约束，并兼容回填旧数据 |
 | `versions/c3d4e5f6a7b8_seed_default_space.py` | **阶段 2 数据迁移**：幂等创建开发/API 使用的默认 Space |
 | `versions/d4e5f6a7b8c9_add_chunk_fts.py` | **阶段 3 迁移**：增加持久生成的 Chunk FTS 文档列和 GIN 索引，并保留 pgvector 索引 |
+| `versions/8f9a0b1c2d3e_add_conversation_run_parents.py` | 通用 `conversation_runs` 父身份；回填既有 QA UUID，并将 QA 消息、Runtime、审批和派生知识外键改指向父 Run；降级拒绝丢弃非 QA turn |
+| `versions/9a0b1c2d3e4f_add_assistant_run_execution.py` | 为 Assistant 父 Run 增加 lease/heartbeat 和 `assistant_events`；降级拒绝静默删除已创建的 direct-conversation turn |
+| `versions/b1c2d3e4f5a6_add_conversation_context_summaries.py` | Adds rolling summaries plus standalone Skill request/sensitivity fields; downgrade removes only Step 5 schema |
 
-当前只有上述 6 张业务表，没有 Conversation、Message、AgentRun、Evidence、Citation、Feedback
-或 Checkpoint 表。阶段 0 数据门禁已按 `docs/stage-0-acceptance.md` 满足；阶段 4/5 新表仍必须
-等待 ADR-007 约束、对应阶段计划和新的 Alembic revision；禁止
-修改既有 revision 伪造历史。`docs/stage-4-persistence-design.md` 仅记录门禁后的候选表、约束、
-索引和事务评审，不代表迁移已创建或数据库能力可用。
+迁移链还包含 Grounded QA、attempt lease、Runtime checkpoint、审批、派生知识和生命周期 revision。
+`ConversationRun` 是新旧 Run 的共享父身份：`qa_runs` 仅保留 Grounded QA 投影及其 Evidence/Citation/
+attempt 历史。禁止修改既有 revision 伪造历史；降级不得静默删除已创建的非 QA Assistant turn。
 
 ---
 
@@ -802,7 +871,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 2** | **✅ 正式完成** | **Step 0～9 完成；冻结 manifest 的 74 个 P0 来源成功率 100%，退出记录见 `docs/stage-2-acceptance.md`** |
 | **阶段 3** | **⏹️ 已终止** | **工程 Step 0～10 已完成；正式质量门禁未通过，因当前评测集代表性局限终止，未运行正式 holdout，配置保持 provisional（ADR-010）** |
 | 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、PostgreSQL QA 持久化、SSE/API/Web、Worker lease/重启恢复、原文解析和回答评测门禁已落地；默认配置和 holdout 未落地 |
-| **阶段 5** | **🟡 provisional Skills** | **Step 0～10 工程功能已实现；当前 active 为 `knowledge_agent 0.2.0`（保留 `0.1.0` 回滚包）、`knowledge_qa 0.1.0` 和三个知识整理 `0.1.0` Skill，质量状态仍受 Stage 3/4 正式 Eval 门禁约束** |
+| **阶段 5** | **🟡 provisional Skills** | **Step 0～10 工程功能已实现；新知识入口为 `knowledge_agent 0.3.0`（保留 0.1/0.2 回滚包），`knowledge_qa` 仅用于历史 Run 恢复，另有三个知识整理 `0.1.0` Skill，质量状态仍受 Stage 3/4 正式 Eval 门禁约束** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 

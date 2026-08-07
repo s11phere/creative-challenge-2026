@@ -20,6 +20,7 @@ from domain.grounded_qa import (
     QuestionType,
     Refusal,
     RefusalReason,
+    normalize_question,
 )
 from domain.qa_persistence import (
     CitationRecord,
@@ -307,17 +308,35 @@ class GroundedQAService:
         effective = (
             agent_plan.apply(profile.planning) if agent_plan is not None else profile.planning
         )
-        planning = await self._planner.plan(question, effective)
+        planner_profile = effective
+        if agent_plan is not None and agent_plan.additional_queries:
+            planner_profile = replace(
+                effective,
+                max_subqueries=max(
+                    1, effective.max_subqueries - len(agent_plan.additional_queries)
+                ),
+            )
+        planning = await self._planner.plan(question, planner_profile)
         if agent_plan is None or not agent_plan.additional_queries:
             return planning, effective
-        queries = (question.question, *agent_plan.additional_queries)
+        queries = _merge_queries(
+            planning.plan.queries,
+            agent_plan.additional_queries,
+            max_queries=effective.max_subqueries,
+        )
         plan = replace(
             planning.plan,
             queries=queries,
             rewrite_applied=len(queries) > 1,
             fallback_reason=None,
         )
-        return replace(planning, plan=plan), effective
+        diagnostic = replace(
+            planning.diagnostic,
+            rewrite_applied=len(queries) > 1,
+            fallback_reason=None,
+            query_count=len(queries),
+        )
+        return replace(planning, plan=plan, diagnostic=diagnostic), effective
 
     async def _search_for(
         self,
@@ -350,7 +369,7 @@ class GroundedQAService:
         if message is None or message.role is not MessageRole.USER:
             raise QAContractError("QA run question is unavailable")
         return QuestionInput(
-            question=message.content,
+            question=run.standalone_request or message.content,
             space_id=run.space_id,
             caller_id=run.caller_id,
             conversation_id=run.conversation_id,
@@ -358,6 +377,10 @@ class GroundedQAService:
         )
 
     async def _history_for_run(self, run: QARunRecord) -> tuple[ConversationTurn, ...]:
+        if run.standalone_request is not None:
+            # Assistant context is already bounded into the standalone request. QA receives
+            # only evidence and the task-specific request, never a second full chat history.
+            return ()
         messages = await self._repository.list_messages(run.conversation_id)
         turns: list[ConversationTurn] = []
         for message in messages:
@@ -457,6 +480,22 @@ def _clamp(value: int | None, lower: int, upper: int) -> int:
     if value is None:
         return upper
     return min(max(value, lower), upper)
+
+
+def _merge_queries(
+    planned: tuple[str, ...], additional: tuple[str, ...], *, max_queries: int
+) -> tuple[str, ...]:
+    queries = list(planned)
+    seen = {normalize_question(query) for query in queries}
+    for query in additional:
+        normalized = normalize_question(query)
+        if normalized in seen:
+            continue
+        if len(queries) >= max_queries:
+            break
+        queries.append(normalized)
+        seen.add(normalized)
+    return tuple(queries)
 
 
 def _citation_records(

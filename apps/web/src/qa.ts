@@ -1,13 +1,6 @@
 import { apiBaseUrl } from './health'
 
 export const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
-export type QASkillName =
-  | 'knowledge_agent'
-  | 'knowledge_qa'
-  | 'summarize_document'
-  | 'compare_sources'
-  | 'create_review_cards'
-
 export type Conversation = {
   conversation_id: string
   space_id: string
@@ -125,6 +118,92 @@ export type CitationExcerpt = NonNullable<QARun['citations']>[number] & {
   excerpt: string | null
 }
 
+export type AssistantCommand = {
+  name: string
+  aliases: string[]
+  kind: 'base' | 'skill'
+  description: string
+  argument_hint: string
+  input_mode: string
+}
+
+export type AssistantRun = {
+  run_id: string
+  user_message_id: string
+  status: string
+  run_kind: 'assistant_turn' | 'grounded_qa' | 'skill' | 'context_compaction'
+  error_code: string | null
+  selection: {
+    source: 'auto' | 'command' | 'none'
+    skill: { name: string; version: string; content_sha256: string } | null
+  }
+  model_identity: string
+  assistant_message: { message_id: string; content: string } | null
+  clarification: {
+    clarification_id: string
+    kind: string
+    message: string
+    resource_candidates: Array<{
+      candidate_id: string
+      resource_type: string
+      label: string
+      source_label: string | null
+      version_label: string | null
+    }>
+  } | null
+  usage: {
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+    model_latency_ms: number
+  }
+}
+
+export type AssistantRunEvent = {
+  schema_version: 'agent-run-sse-v2'
+  event_id: string
+  run_id: string
+  sequence: number
+  occurred_at: string
+  type: 'accepted' | 'routing' | 'clarification' | 'skill_started' | 'phase' | 'completed' | 'failed' | 'cancelled'
+  payload: Record<string, unknown>
+}
+
+export type AssistantCommandResult = {
+  command: string
+  status: string
+  content: string | null
+  conversation_id: string | null
+  run: AssistantRun | null
+  commands: AssistantCommand[]
+}
+
+export type AssistantTurnResult = AssistantRun | AssistantCommandResult
+
+export function legacyQARunToAssistantRun(run: QARun): AssistantRun {
+  return {
+    run_id: run.run_id,
+    user_message_id: run.question_message_id,
+    status: run.status,
+    run_kind: 'grounded_qa',
+    error_code: run.error_code,
+    selection: { source: 'none', skill: null },
+    model_identity: 'legacy-v1',
+    assistant_message: null,
+    clarification: null,
+    usage: {
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+      model_latency_ms: 0,
+    },
+  }
+}
+
+function isAssistantRun(value: AssistantTurnResult): value is AssistantRun {
+  return 'run_id' in value
+}
+
 export class QAApiError extends Error {
   status: number
 
@@ -158,12 +237,11 @@ export function submitQuestion(
   conversationId: string,
   question: string,
   idempotencyKey: string,
-  skillName: QASkillName = 'knowledge_qa',
+  legacyRoute = false,
 ): Promise<QARun> {
-  const path =
-    skillName === 'knowledge_agent'
-      ? `/api/v1/conversations/${conversationId}/skills/knowledge_agent/runs`
-      : `/api/v1/conversations/${conversationId}/questions`
+  const path = legacyRoute
+    ? `/api/v1/conversations/${conversationId}/questions`
+    : `/api/v1/conversations/${conversationId}/skills/knowledge_agent/runs`
   return request(path, {
     method: 'POST',
     body: JSON.stringify({ question, idempotency_key: idempotencyKey }),
@@ -313,3 +391,81 @@ export function submitFeedback(
     body: JSON.stringify({ decision, idempotency_key: idempotencyKey, note: note?.trim() || undefined }),
   })
 }
+
+export function fetchAssistantCommands(signal?: AbortSignal): Promise<AssistantCommand[]> {
+  return request<{ commands: AssistantCommand[] }>('/api/v2/commands', { signal }).then(
+    (response) => response.commands ?? [],
+  )
+}
+
+export function submitAssistantTurn(
+  conversationId: string,
+  content: string,
+  idempotencyKey: string,
+): Promise<AssistantTurnResult> {
+  return request(`/api/v2/conversations/${conversationId}/turns`, {
+    method: 'POST',
+    body: JSON.stringify({ content, idempotency_key: idempotencyKey }),
+  })
+}
+
+export function fetchAssistantRun(runId: string, signal?: AbortSignal): Promise<AssistantRun> {
+  return request(`/api/v2/runs/${runId}`, { signal })
+}
+
+export async function fetchAssistantRunEvents(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<AssistantRunEvent[]> {
+  const response = await fetch(`${apiBaseUrl}/api/v2/runs/${runId}/events`, {
+    headers: { Accept: 'text/event-stream' },
+    signal,
+  })
+  if (!response.ok) throw new QAApiError(response.statusText, response.status)
+  return parseAssistantRunEvents(await response.text())
+}
+
+export function fetchAssistantConversationRuns(
+  conversationId: string,
+  signal?: AbortSignal,
+): Promise<AssistantRun[]> {
+  return request<{ runs: AssistantRun[] }>(`/api/v2/conversations/${conversationId}/runs`, {
+    signal,
+  }).then((response) => response.runs ?? [])
+}
+
+export function cancelAssistantRun(runId: string): Promise<AssistantRun> {
+  return request(`/api/v2/runs/${runId}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
+}
+
+export function selectClarificationResource(
+  runId: string,
+  clarificationId: string,
+  candidateId: string,
+): Promise<AssistantRun> {
+  return request(`/api/v2/runs/${runId}/clarifications/${clarificationId}`, {
+    method: 'POST',
+    body: JSON.stringify({ candidate_id: candidateId }),
+  })
+}
+
+function parseAssistantRunEvents(stream: string): AssistantRunEvent[] {
+  const events: AssistantRunEvent[] = []
+  for (const line of stream.split(/\r?\n/)) {
+    if (!line.startsWith('data: ')) continue
+    try {
+      const event = JSON.parse(line.slice('data: '.length)) as AssistantRunEvent
+      if (event.schema_version === 'agent-run-sse-v2' && typeof event.sequence === 'number') {
+        events.push(event)
+      }
+    } catch {
+      // A malformed event cannot replace the persisted Run state used by the workspace.
+    }
+  }
+  return events
+}
+
+export { isAssistantRun }

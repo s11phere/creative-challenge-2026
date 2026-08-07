@@ -481,6 +481,25 @@ async def test_resume_continues_after_last_committed_node(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_completed_run_replaces_the_recovery_snapshot_with_its_terminal_state(
+    tmp_path: Path,
+) -> None:
+    registry, pin, run = registry_and_pin(tmp_path)
+    store = InMemoryRuntimeStateStore()
+
+    completed = await executor(registry, state_store=store, clock_ms=lambda: 0).execute(
+        run, pin, {"question": "fixture"}
+    )
+
+    stored = await store.get_run(run.context.run_id)
+    assert completed.run.status is RunStatus.COMPLETED
+    assert stored is not None
+    assert stored.status is RunStatus.COMPLETED
+    assert stored.current_step is None
+    assert stored.checkpoint_sequence == completed.run.checkpoint_sequence
+
+
+@pytest.mark.asyncio
 async def test_resume_rejects_cross_space_and_tampered_state(tmp_path: Path) -> None:
     registry, pin, run = registry_and_pin(tmp_path)
     store = InMemoryRuntimeStateStore()

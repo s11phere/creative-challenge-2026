@@ -1,21 +1,29 @@
 # Agent 驱动的个人知识仓库
 
-## 2026-08-04 Implementation Status
+## 2026-08-07 实现状态
 
-Stages 0-5 engineering capabilities are implemented under the current contracts. Stage 3 now
-defaults to `dense_rerank`: dense candidates are reranked directly, while `hybrid_rerank` remains
-an explicit compatibility mode. Stage 4 includes
-the complete QA/Citation/API/Web/Worker path and a Space-scoped feedback review queue. Stage 5
-includes durable Runtime/approval/derived-knowledge/Skill lifecycle behavior and the controlled
-`scripts/export_feedback_candidates.py` command. These implementation results do not change the
-Stage 3 termination record or claim formal retrieval, answer, or Skill holdout acceptance.
+当前 Assistant 对话版本已完成临时工程契约。新的知识请求统一使用 `knowledge_agent 0.3.0`；
+`knowledge_qa` 仅保留用于历史 Run 的校验和恢复。Grounded Skill 结果只是参考材料，由一次独立的
+`ConversationFinalizer` 生成面向用户的 Assistant 消息，并且只发布一次。
+
+Web 会为每次 Skill 调用保留一个默认折叠的调用记录卡，即使调用完成、失败、取消或进入澄清状态也不会
+隐藏。调用记录卡和最终回答框在存在证据时均提供引用操作，并共享一个可关闭、相互排他的证据栏。
+显式斜杠指令支持按 Enter 提交，在用户消息中保留原始指令，并使用不改变文字尺寸的强调色突出合法前缀。
+Assistant 输出支持 GFM Markdown 和 LaTeX 渲染。这些改动不改变阶段 3 的终止记录，也不改变阶段 4/5
+的临时质量边界。
+
+阶段 0-5 的工程能力均已在当前契约下实现。阶段 3 当前默认使用 `dense_rerank`，直接对 dense 候选
+进行精排，`hybrid_rerank` 仅作为显式兼容模式保留。阶段 4 包含完整的 QA/Citation/API/Web/Worker
+链路和按 Space 隔离的反馈审核队列。阶段 5 包含持久化 Runtime、审批、派生知识和 Skill 生命周期能力，
+以及受控的 `scripts/export_feedback_candidates.py` 命令。这些实现结果不改变阶段 3 的终止记录，
+也不代表正式检索、回答或 Skill 留出集验收通过。
 
 本项目面向个人学习、科研和开发资料，目标是构建一个本地优先、来源可追溯的知识工作台。
 规划中的完整闭环包括文档摄入、增量索引、混合检索、带引用问答和可版本化 Agent Skill。
 
 ## 当前状态
 
-**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，但正式质量门禁未通过。PR #4 已修正复现与在线默认路径为 `dense_rerank`（纯 dense 候选直接精排）；其 GPU development 结果在 v0/v1 上的 Claim Recall@10 分别为 82.37%/78.75%，高于 `hybrid_rerank`，但仍仅为 provisional 工程证据。因当前评测集代表性局限，阶段 3 已按 [ADR-010](docs/adr/010-stage-3-termination-and-evaluation-boundary.md) 保持正式未通过；正式 holdout 未执行，配置仍未冻结。根据 [ADR-011](docs/adr/011-provisional-stage-4-5-continuation-gate.md)，当前结果只允许阶段 4/5 继续 provisional 工程，不构成正式质量接受；阶段 4/5 正式质量门禁仍未关闭。**
+**阶段 0、阶段 1 和阶段 2 已正式完成；阶段 3 Step 0-10 的工程实现已完成，但正式质量门禁未通过。PR #4 已修正复现与在线默认路径为 `dense_rerank`（纯 dense 候选直接精排）；其 GPU 开发集结果在 v0/v1 上的 Claim Recall@10 分别为 82.37%/78.75%，高于 `hybrid_rerank`，但仍仅是临时工程证据。因当前评测集代表性局限，阶段 3 已按 [ADR-010](docs/adr/010-stage-3-termination-and-evaluation-boundary.md) 保持正式未通过；正式留出集尚未执行，配置仍未冻结。根据 [ADR-011](docs/adr/011-provisional-stage-4-5-continuation-gate.md)，当前结果只允许阶段 4/5 继续临时工程，不构成正式质量接受；阶段 4/5 正式质量门禁仍未关闭。**
 
 已交付的核心能力：
 
@@ -23,50 +31,81 @@ Stage 3 termination record or claim formal retrieval, answer, or Skill holdout a
 |------|------|
 | 阶段 1 ✅ | 工程骨架：FastAPI、Worker、Web 工作台、PostgreSQL/pgvector、Redis、Alembic、模型网关、结构化日志、OpenTelemetry、Compose、CI |
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
-| 阶段 3 ⏹️ 已终止（工程完成，质量门禁未通过） | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；API/QA 默认 `dense_rerank`，PR #4 GPU development 在 v0/v1 Claim Recall@10 为 82.37%/78.75%，但评测集代表性仍不足，正式 holdout 未执行，配置保持 provisional |
-| 阶段 4 🟡 provisional Step 0-10 | 在 ADR-011 continuation gate 下继续；ADR-007、唯一 provisional QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测 validate-only 已完成；默认配置与正式 holdout 未完成 |
-| 阶段 5 🟡 provisional Skills | Step 0-10 工程功能已完成；当前 active 为 `knowledge_agent 0.2.0`（保留 `0.1.0` 回滚包）、`knowledge_qa 0.1.0` 与三个知识整理 Skill `0.1.0`，统一复用持久 QA Run/Worker/SSE；正式质量仍 provisional |
+| 阶段 3 ⏹️ 已终止（工程完成，质量门禁未通过） | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；API/QA 默认 `dense_rerank`，PR #4 GPU 开发集在 v0/v1 Claim Recall@10 为 82.37%/78.75%，但评测集代表性仍不足，正式留出集尚未执行，配置保持临时状态 |
+| 阶段 4 🟡 临时 Step 0-10 | 在 ADR-011 继续门禁下继续；ADR-007、唯一临时 QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测仅校验流程均已完成；默认配置与正式留出集尚未完成 |
+| 阶段 5 🟡 临时 Skills | Assistant 对话演进 Step 3-8 的 v2 调用目录、自动/显式路由、上下文、指标、最终回答生成器、调用记录卡和 Web 展示已完成；新知识请求统一 `knowledge_agent 0.3.0`，`knowledge_qa` 仅历史恢复；正式质量仍为临时状态 |
 
-当前 Web 展示系统健康、数据来源和 provisional 知识问答工作区；HTTP API 可创建持久会话、提交
+当前 Web 展示系统健康、数据来源和临时知识问答工作区；HTTP API 可创建持久会话、提交
 问题，由 API 仅向 Redis 投递 Run ID，再由独立 Worker 调用唯一 `GroundedQAApplicationPort`、
 真实 PostgreSQL `SearchService` 和
-Citation target adapter 生成回答或拒答。默认 fake 模型提供确定性抽取式回答；配置允许的外部
+Citation 目标适配器生成回答或拒答。默认 fake 模型提供确定性抽取式回答；配置允许的外部
 Chat Provider 仍走相同结构化生成与引用校验路径。Web 会展示终态回答、限制和文档版本/locator
 引用身份；点击 Citation 后按 `run_id + evidence_id` 解析固定版本的最小原文片段并高亮。
 
-该链路是可真实使用的 provisional 版本，不是阶段 4/5 正式完成：QA 会话、Message、Run/Attempt、
+该链路是可真实使用的临时版本，不是阶段 4/5 正式完成：QA 会话、Message、Run/Attempt、
 Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL；API/Worker 重启可恢复
 未完成运行，重复投递不会重复发布终态；Citation 原文解析不会接受客户端伪造的版本、locator 或 Blob 路径；
 阶段 3 默认检索配置和质量门禁也尚未冻结。
-阶段 5 的 `knowledge_qa 0.1.0` 已从本地受信根显式激活：API 在新 QA Run 中固定 Skill 名称、
-版本和内容摘要，Worker 恢复时按该固定身份校验声明式 workflow，再调用唯一 QA Application Port。
-现有 QA Web/API 因此已是该 provisional Skill 的真实入口；统一 `/api/v1/runs` facade、PostgreSQL
-Runtime Checkpoint、Skill 管理 Web 和受控旧版本清理均已提供。`/api/v1/skills` 可查询 active/已安装版本、
-摘要、预算和 pointer revision，并通过受控 CAS 接口激活或回滚到受信根中已安装的版本；pointer
-保存在 PostgreSQL，API 重启后恢复。阶段 5 工程功能已完成；正式 Skill Eval 和阶段退出仍受
-Stage 3/4 质量门禁约束，不能把 provisional 结果写成正式质量通过。
-`summarize_document`、`compare_sources` 和 `create_review_cards` 也已提供 provisional HTTP
+新建知识问答统一固定为 `knowledge_agent 0.3.0`：v1 提问入口、`/api/v1/runs` 默认值、Web
+兼容入口和 Assistant v2 的 `/ask`/`/qa` 都只会创建该 Skill 的 Run。API 在提交时固定名称、版本和
+内容摘要，Worker 恢复时按该固定身份校验声明式 workflow，再经唯一 QA Application Port 执行。
+`knowledge_qa` 包仅保留给已固定的历史 Run 校验和恢复，不在任何新调用目录或 Skill 管理 catalog 中
+暴露。统一 `/api/v1/runs` 门面、PostgreSQL Runtime Checkpoint、Skill 管理和受控旧版本清理均已提供。
+阶段 5 工程功能已完成；正式 Skill 评测和阶段退出仍受阶段 3/4 质量门禁约束，不能把临时
+结果写成正式质量通过。
+`summarize_document`、`compare_sources` 和 `create_review_cards` 也已提供临时 HTTP
 入口并固定提交时的 Source/Document/DocumentVersion 范围；版本变更、撤下或跨 Space 选择不会
 扩大检索范围。比较结果必须引用至少两个来源，否则按证据不足拒答。复习卡当前只返回带引用预览，
 并以 `SKILL_WRITE_REQUIRES_APPROVAL` 明确报告审批前 `side_effects=0`；批准后通过持久化
 Derived Knowledge Port 幂等写入，并可查询或撤销。
-`knowledge_agent 0.2.0` 提供真实的受约束 LLM/Tool 循环：模型可先调用只读
+`knowledge_agent 0.3.0` 提供真实的受约束 LLM/Tool 循环：模型可先调用只读
 `inspect_retrieval 1.0.0` 调整多查询、候选数和上下文预算，再调用一次 `grounded_qa 1.0.0`，
 由现有 QA Run、Worker、SSE、Grounded QA Port 和 Citation 链路完成问答。动态数值由服务端
 profile 封顶，Space/版本边界不能由模型扩大；规划失败会降级到原问题的 Grounded QA，而不是
-把 Run 变成基础设施失败。Tool 仅向外层模型返回状态和覆盖计数，不返回回答或原文。旧
-`0.1.0` 保留用于固定 Run 恢复和回滚。默认 fake 可跑通流程，配置允许的
+把 Run 变成基础设施失败。Tool 仅向外层模型返回状态和覆盖计数，不返回回答或原文。旧 Agent
+版本和 `knowledge_qa` 包保留用于固定 Run 恢复。默认 fake 可跑通流程，配置允许的
 OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。写 Tool 仍被明确拒绝。
+Assistant v2 使用独立的活动调用目录，包含 `/ask`、`/summarize`、`/compare`、`/cards`
+对应的 v2 Skill 元数据；模型只能返回 Skill 意图，服务端负责当前 Space 资源解析、版本 pin、
+权限和 QA Worker 投影。历史固定 Skill 身份仍可恢复旧 Run。普通聊天不会强制进入
+
+Assistant 对话演进 Step 5 增加有界多轮上下文。原始消息保持追加写入；版本化滚动摘要保留其覆盖范围、
+摘要指纹、prompt/模型版本和敏感度。路由、直接回答和 Skill 交接共享一个有界快照，而 QA 仍保持证据隔离。
+`/compact` 和软水位压缩通过现有 Worker 队列创建可持久化的后台 Run。这仍是 ADR-010/011 下的临时工程能力。
+
+Assistant 对话演进 Step 6 将原 QA 工作区演进为通用对话工作区：输入 `/` 时显示可搜索、
+可键盘操作的命令面板，资源歧义在消息内显示安全候选。选择候选会重新校验当前 Space 并回到原 Run，
+不会重建会话。`GET /api/v2/conversations/{conversation_id}/runs` 用于刷新后恢复对话 Run 和待澄清
+状态；引用侧栏只在已完成的 grounded Run 有 Citation 时出现。折叠运行信息只显示实际模型、token
+和耗时，不显示预算、剩余额度或 Tool 上限。
+
+Assistant 对话演进 Step 7 增加隐私安全的运行计数器，用于记录路由、指令、澄清、上下文压缩、实际 token
+用量、延迟和终止原因。`scripts/evaluate_assistant_routing.py --validate-only` 用于校验固定的仅合成数据路由
+开发集；预测报告明确标记为“开发集/临时”，不会调用 Provider、读取受控语料或启用正式留出集。
+结构化指标日志只包含指标名称、安全标签和聚合值，不包含对话内容、prompt、文档正文、Provider 响应或内部资源 ID。
+
+Assistant 对话演进 Step 8 将 Web 入口切换到临时 API v2 对话工作区。`兼容问答`选择器仅在配置的兼容窗口
+内开放现有 v1 QA 路径（`VITE_ASSISTANT_V1_COMPATIBILITY_UNTIL`，默认值为
+`2026-09-30T23:59:59Z`）。窗口到期后选择器会失效关闭；v1 端点、历史 Run 和已安装 Skill 包仍可读取，
+用于恢复和单独审查的客户端。
+
+发布 v2 时应先使用 `MODEL_PROVIDER=fake` 或获批准的本地 Chat stub。启用外部 Chat Provider 仍需满足现有的
+`MODEL_ALLOW_EXTERNAL`、来源策略、部署策略和用户可见同意检查；Web 发布配置不会绕过这些边界。如需回滚 Web
+入口，可在重新构建 Web 镜像前设置 `VITE_ASSISTANT_DEFAULT_API_MODE=v1`。这只改变入口路径，不会删除 v2 数据、
+历史 Run 或 Skill 包。缩短兼容窗口前，应监控路由误判、澄清循环、取消率、恢复失败以及实际 token/延迟回归。
+
+QA；资源歧义只显示服务端生成的候选，不暴露内部 UUID。该自动路由和 Step 4 Command API
+均为临时能力；Step 5 才实现上下文压缩。
 真实本地组合使用外部 OpenAI-compatible `fast_chat`、
 `EMBEDDING_PROVIDER=text-embeddings-inference`、本地 Qwen3 TEI Embedding 和本地
 BGE reranker；完整 GPU 路径使用 `RERANKER_PROVIDER=inherit`。`RERANKER_PROVIDER=fake`
 只适用于不启动 reranker 服务时的确定性流程验证。三项能力独立路由，Embedding 不会随外部
 Chat 回退为 fake。
 阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
-[Stage 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
-[Stage 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行 holdout；历史 `90.48%` Recall@5 和
-`75.8%` Claim Recall@10 均不能作为当前代码的质量结论。PR #4 的 `dense_rerank` development
-复现也仍是 provisional，阶段 3 已终止；若未来重新开启，必须发布新的 dataset/config version
+[阶段 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
+[阶段 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行留出集；历史 `90.48%` Recall@5 和
+`75.8%` Claim Recall@10 均不能作为当前代码的质量结论。PR #4 的 `dense_rerank` 开发集
+复现也仍是临时结果，阶段 3 已终止；若未来重新开启，必须发布新的数据集/配置版本
 并重新走评测流程。
 
 ## 快速启动
@@ -103,23 +142,21 @@ POSTGRES_PASSWORD=your-database-password
 docker compose -f deploy/compose.yaml --env-file .env up --build --detach --wait
 ```
 
-The command above is the deterministic fake-provider path. For Web QA or `knowledge_agent` with a
-real Chat provider and the complete local GPU retrieval path, configure the capability split
-described in `.env.example` and start both model profiles explicitly:
+上面的命令使用确定性的 fake provider 路径。若要在 Web QA 或 `knowledge_agent` 中使用真实 Chat provider
+和完整的本地 GPU 检索路径，请按照 `.env.example` 中的能力拆分进行配置，并显式启动两个模型 profile：
 
 ```bash
 docker compose -f deploy/compose.yaml --env-file .env \
   --profile embedding --profile reranker up --build --detach --wait
 ```
 
-`text-embeddings-inference` is not a Chat provider. Use
-`MODEL_PROVIDER=openai-compatible` plus `FAST_CHAT_ENDPOINT`, `FAST_CHAT_MODEL`, and
-`MODEL_ALLOW_EXTERNAL=true` for external Chat, while keeping
-`EMBEDDING_PROVIDER=text-embeddings-inference`. For the default `dense_rerank` route, set
-`RERANKER_PROVIDER=inherit`, `RERANKER_ENDPOINT=http://tei-reranker:80`, and
-`RERANKER_MODEL=BAAI/bge-reranker-v2-m3`. Set `RERANKER_PROVIDER=fake` only when deliberately
-validating the flow without the optional GPU reranker. After changing `.env`, recreate both `api`
-and `worker`.
+`text-embeddings-inference` 不是 Chat provider。外部 Chat 需要设置
+`MODEL_PROVIDER=openai-compatible`、`FAST_CHAT_ENDPOINT`、`FAST_CHAT_MODEL` 和
+`MODEL_ALLOW_EXTERNAL=true`，同时保持 `EMBEDDING_PROVIDER=text-embeddings-inference`。默认
+`dense_rerank` 路径需要设置 `RERANKER_PROVIDER=inherit`、
+`RERANKER_ENDPOINT=http://tei-reranker:80` 和 `RERANKER_MODEL=BAAI/bge-reranker-v2-m3`。
+只有在有意不启动可选 GPU reranker、验证流程时，才设置 `RERANKER_PROVIDER=fake`。修改 `.env` 后，
+请重新创建 `api` 和 `worker` 服务。
 
 真实模型组合需要在被 Git 忽略的 `.env` 中同时配置外部 Chat、
 `EMBEDDING_PROVIDER=text-embeddings-inference`、`EMBEDDING_ENDPOINT=http://tei:80`、固定的
@@ -141,25 +178,22 @@ API、Worker 和 Web 达到各自完成或健康条件。
 
 ## Smoke Test
 
-### One-command GPU startup
+### 一键启动 GPU
 
-When `.env` contains the approved Chat endpoint and key, the complete GPU stack can be started from
-PowerShell with:
+当 `.env` 中包含已批准的 Chat 端点和密钥时，可以在 PowerShell 中执行以下命令启动完整 GPU 栈：
 
 ```powershell
 .\scripts\start-local.ps1
 ```
 
-The script checks Docker GPU passthrough, starts the `embedding` and `reranker` profiles, forces the
-effective reranker configuration to `inherit` with `BAAI/bge-reranker-v2-m3`, and verifies Web, API,
-Embedding, and Reranker health. It does not modify `.env` or print secret values. The configured
-external Chat endpoint can receive questions and retrieved snippets; do not use it with private or
-restricted sources without the required policy approval.
+脚本会检查 Docker GPU 透传，启动 `embedding` 和 `reranker` profile，将生效的 reranker 配置强制为
+使用 `BAAI/bge-reranker-v2-m3` 的 `inherit`，并检查 Web、API、Embedding 和 Reranker 健康状态。脚本不会
+修改 `.env` 或打印密钥。配置的外部 Chat 端点可能接收问题和检索片段；没有完成必要的策略审批时，
+不要将私有或受限来源用于该路径。
 
-For a prewarmed local Reranker model cache, set `RERANKER_VOLUME_NAME` in `.env` to the existing
-Docker volume name. The startup script preserves this setting while forcing the real Reranker route.
-The first GPU model warm-up can take several minutes; Compose now allows an extended health window
-for both TEI services before reporting startup failure.
+如果本地已有预热完成的 Reranker 模型缓存，请将 `.env` 中的 `RERANKER_VOLUME_NAME` 设置为现有 Docker
+卷名。启动脚本会保留该设置，同时强制使用真实 Reranker 路径。首次 GPU 模型预热可能需要几分钟；
+Compose 已为两个 TEI 服务提供更长的健康检查窗口，避免过早报告启动失败。
 
 ```bash
 curl --fail http://127.0.0.1:8000/api/v1/health/live
@@ -236,7 +270,7 @@ git config core.hooksPath .githooks
 | 服务 | 默认地址/端口 | 说明 |
 | --- | --- | --- |
 | Web | `http://127.0.0.1:5173` | nginx 静态托管并代理同源 `/api` |
-| API | `http://127.0.0.1:8000` | 公开接口前缀为 `/api/v1` |
+| API | `http://127.0.0.1:8000` | 兼容接口为 `/api/v1`；`/api/v2` 提供临时 Assistant 对话、`/commands`、显式/自动 Skill 路由、取消和无正文 SSE |
 | PostgreSQL | `127.0.0.1:5432` | PostgreSQL 16 + pgvector |
 | Redis | `127.0.0.1:6379` | Dramatiq broker，启用 AOF |
 | OTel Collector | `4317`、`4318` | 仅 `--profile otel` 启动 |
@@ -276,14 +310,14 @@ docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml --env-file .env
 - [阶段 3 实施计划](docs/stage-3-implementation-plan.md)
 - [阶段 3 验收记录](docs/stage-3-acceptance.md)
 - [阶段 4 实施计划](docs/stage-4-implementation-plan.md)
-- [阶段 4 provisional 验收记录](docs/stage-4-acceptance.md)
+- [阶段 4 临时验收记录](docs/stage-4-acceptance.md)
 - [阶段 4 持久化设计](docs/stage-4-persistence-design.md)
 - [ADR-007：Grounded QA 持久化、引用、执行与 SSE](docs/adr/007-grounded-qa-persistence-and-sse.md)
 - [阶段 5 实施计划](docs/stage-5-implementation-plan.md)
 - [阶段 5 实现审查记录](docs/stage-5-implementation-review.md)
-- [阶段 5 provisional 验收记录](docs/stage-5-acceptance.md)
+- [阶段 5 临时验收记录](docs/stage-5-acceptance.md)
 - [阶段 4/5 收尾看板](docs/stage-4-5-completion-tracker.md)
-- [阶段 3 v1 development 复核记录](docs/stage-3-reopen-development-v1.md)
+- [阶段 3 v1 开发集复核记录](docs/stage-3-reopen-development-v1.md)
 - [阶段 3 终止后的阶段 4/5 收尾计划](docs/post-stage-3-stage-4-5-completion-plan.md)
 - [OpenAPI](docs/openapi.json)
 - [架构决策记录](docs/adr/README.md)

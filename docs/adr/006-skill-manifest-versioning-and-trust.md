@@ -38,6 +38,22 @@ registered by application startup. A manifest cannot import arbitrary Python, ex
 shell/SQL, fetch URLs, or select an unregistered handler. The initial implementation
 may use a declaration-only workflow or a repository-owned handler allowlist.
 
+### Manifest v2 amendment (2026-08-06)
+
+ADR-013 adds manifest v2 for product-level Assistant routing. V2 adds an `invocation` block with a
+primary command, aliases, argument hint, bounded trigger summary, examples, and input mode. The
+Registry validates that primary commands and aliases are unique across the active catalog, trigger
+metadata is bounded and contains no sensitive examples, and the declared input mode is compatible
+with the input schema. A change to invocation metadata creates a new immutable Skill version and
+content digest. Manifest v1 remains readable only for installed historical runs and recovery.
+
+The active catalog exposes only safe invocation metadata for active versions. It excludes complete
+prompts, workflow details, internal budgets, inactive versions, and Tool limits. A product-level
+router can select only a catalog entry; it cannot execute a Tool, choose a resource ID, or grant a
+permission. The Application layer fixes the active `(name, version, content_sha256)`, validates
+caller/Space policy and schema, and then loads the pinned version's full prompt, workflow, and Tool
+allowlist.
+
 An LLM decision node, when enabled by an application-owned handler, may call only the
 provider-neutral `ModelGateway.fast_chat` capability and must return the versioned
 `LLMDecision` schema. The allowed actions are `call_tool`, `complete`, and `refuse`.
@@ -79,6 +95,9 @@ Skill and allowed by deployment policy (including the existing model gateway pol
 ### Errors, events, and recovery
 
 Stable error codes use the prefixes `SKILL_`, `TOOL_`, `RUN_`, `AUTH_`, and `DEPENDENCY_`.
+`RESOURCE_NOT_FOUND` and `RESOURCE_CONFLICT` are the explicit exception for current-Space resource
+resolution and are versioned by the Assistant contract. They do not expose a storage identity or
+expand a lookup scope.
 Validation, compatibility, permission, and schema errors are non-retryable. Bounded
 provider, queue, or transient dependency failures may be retried under the run budget;
 evidence insufficiency is a normal grounded-answer refusal, not an infrastructure

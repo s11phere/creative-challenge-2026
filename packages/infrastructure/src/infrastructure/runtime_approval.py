@@ -13,7 +13,12 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from .database import Database
-from .orm import DerivedKnowledgeItemModel, QACitationModel, QARunModel, RuntimeApprovalModel
+from .orm import (
+    ConversationRunModel,
+    DerivedKnowledgeItemModel,
+    QACitationModel,
+    RuntimeApprovalModel,
+)
 
 
 @dataclass(frozen=True)
@@ -219,10 +224,10 @@ class PostgresDerivedKnowledgeStore:
             raise ValueError("derived knowledge citations must be UUIDs") from exc
         async with self._database.transaction() as session:
             run_space_id = await session.scalar(
-                select(QARunModel.space_id).where(QARunModel.id == run_id)
+                select(ConversationRunModel.space_id).where(ConversationRunModel.id == run_id)
             )
             if run_space_id != space_id:
-                raise ValueError("derived knowledge Space does not match the QA Run")
+                raise ValueError("derived knowledge Space does not match the ConversationRun")
             citation_rows = (
                 await session.execute(
                     select(QACitationModel.evidence_id).where(

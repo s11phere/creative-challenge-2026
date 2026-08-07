@@ -245,6 +245,101 @@
         "title": "ApprovalResponse",
         "type": "object"
       },
+      "AssistantCommandResponse": {
+        "properties": {
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
+          "argument_hint": {
+            "title": "Argument Hint",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "input_mode": {
+            "title": "Input Mode",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "aliases",
+          "kind",
+          "description",
+          "argument_hint",
+          "input_mode"
+        ],
+        "title": "AssistantCommandResponse",
+        "type": "object"
+      },
+      "AssistantMessageResponse": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "content"
+        ],
+        "title": "AssistantMessageResponse",
+        "type": "object"
+      },
+      "AssistantTurnRequest": {
+        "properties": {
+          "command": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "content": {
+            "maxLength": 12000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "idempotency_key"
+        ],
+        "title": "AssistantTurnRequest",
+        "type": "object"
+      },
       "Body_upload_file_api_v1_spaces__space_id__sources__source_id__upload_post": {
         "properties": {
           "file": {
@@ -426,6 +521,131 @@
         ],
         "title": "CitationStatus",
         "type": "string"
+      },
+      "ClarificationResponse": {
+        "properties": {
+          "clarification_id": {
+            "title": "Clarification Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "resource_candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ResourceCandidateResponse"
+            },
+            "title": "Resource Candidates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "clarification_id",
+          "kind",
+          "message",
+          "resource_candidates"
+        ],
+        "title": "ClarificationResponse",
+        "type": "object"
+      },
+      "ClarificationSelectionRequest": {
+        "properties": {
+          "candidate_id": {
+            "maxLength": 200,
+            "minLength": 10,
+            "title": "Candidate Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id"
+        ],
+        "title": "ClarificationSelectionRequest",
+        "type": "object"
+      },
+      "CommandCatalogResponse": {
+        "properties": {
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantCommandResponse"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "schema_version": {
+            "default": "assistant-command-catalog-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "commands"
+        ],
+        "title": "CommandCatalogResponse",
+        "type": "object"
+      },
+      "CommandExecutionResponse": {
+        "properties": {
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/AssistantCommandResponse"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationRunResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "status"
+        ],
+        "title": "CommandExecutionResponse",
+        "type": "object"
       },
       "CompareSourcesRequest": {
         "properties": {
@@ -664,6 +884,96 @@
           "owner_id"
         ],
         "title": "ConversationResponse",
+        "type": "object"
+      },
+      "ConversationRunResponse": {
+        "properties": {
+          "assistant_message": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssistantMessageResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clarification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClarificationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "model_identity": {
+            "title": "Model Identity",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "run_kind": {
+            "title": "Run Kind",
+            "type": "string"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/SelectionResponse"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/UsageResponse"
+          },
+          "user_message_id": {
+            "format": "uuid",
+            "title": "User Message Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "user_message_id",
+          "status",
+          "run_kind",
+          "selection",
+          "model_identity",
+          "usage"
+        ],
+        "title": "ConversationRunResponse",
+        "type": "object"
+      },
+      "ConversationRunsResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationRunResponse"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
+        ],
+        "title": "ConversationRunsResponse",
         "type": "object"
       },
       "CreateSourceRequest": {
@@ -1411,6 +1721,51 @@
         "title": "RefusalResultResponse",
         "type": "object"
       },
+      "ResourceCandidateResponse": {
+        "properties": {
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "resource_type": {
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "source_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Label"
+          },
+          "version_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Label"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "resource_type",
+          "label"
+        ],
+        "title": "ResourceCandidateResponse",
+        "type": "object"
+      },
       "RetrievalMode": {
         "enum": [
           "keyword",
@@ -1489,9 +1844,8 @@
             "title": "Question"
           },
           "skill_name": {
-            "default": "knowledge_qa",
+            "default": "knowledge_agent",
             "enum": [
-              "knowledge_qa",
               "knowledge_agent",
               "summarize_document",
               "compare_sources",
@@ -2228,6 +2582,29 @@
         "title": "SearchLocatorResponse",
         "type": "object"
       },
+      "SelectionResponse": {
+        "properties": {
+          "skill": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillIdentityResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "SelectionResponse",
+        "type": "object"
+      },
       "SkillActivationRequest": {
         "properties": {
           "expected_revision": {
@@ -2351,6 +2728,29 @@
           "references"
         ],
         "title": "SkillCleanupResponse",
+        "type": "object"
+      },
+      "SkillIdentityResponse": {
+        "properties": {
+          "content_sha256": {
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "content_sha256"
+        ],
+        "title": "SkillIdentityResponse",
         "type": "object"
       },
       "SkillSummaryResponse": {
@@ -2655,6 +3055,34 @@
           "is_unchanged"
         ],
         "title": "UploadResponse",
+        "type": "object"
+      },
+      "UsageResponse": {
+        "properties": {
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "model_latency_ms": {
+            "title": "Model Latency Ms",
+            "type": "number"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "total_tokens",
+          "model_latency_ms"
+        ],
+        "title": "UsageResponse",
         "type": "object"
       },
       "ValidationError": {
@@ -5693,6 +6121,466 @@
           }
         },
         "summary": "Retry Task Endpoint"
+      }
+    },
+    "/api/v2/commands": {
+      "get": {
+        "operationId": "list_commands_api_v2_commands_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandCatalogResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Commands"
+      }
+    },
+    "/api/v2/conversations/{conversation_id}/runs": {
+      "get": {
+        "operationId": "list_conversation_runs_api_v2_conversations__conversation_id__runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRunsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Command could not be parsed"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conversation or Run was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Idempotency or Run state conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Conversation Runs"
+      }
+    },
+    "/api/v2/conversations/{conversation_id}/turns": {
+      "post": {
+        "description": "Durably accept a user turn without synchronously selecting or calling a model.",
+        "operationId": "submit_turn_api_v2_conversations__conversation_id__turns_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantTurnRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ConversationRunResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CommandExecutionResponse"
+                    }
+                  ],
+                  "title": "Response Submit Turn Api V2 Conversations  Conversation Id  Turns Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Command could not be parsed"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conversation or Run was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Idempotency or Run state conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Turn"
+      }
+    },
+    "/api/v2/runs/{run_id}": {
+      "get": {
+        "operationId": "get_run_api_v2_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Command could not be parsed"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conversation or Run was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Idempotency or Run state conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run"
+      }
+    },
+    "/api/v2/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_run_api_v2_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Command could not be parsed"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conversation or Run was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Idempotency or Run state conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Run"
+      }
+    },
+    "/api/v2/runs/{run_id}/clarifications/{clarification_id}": {
+      "post": {
+        "operationId": "select_clarification_resource_api_v2_runs__run_id__clarifications__clarification_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "clarification_id",
+            "required": true,
+            "schema": {
+              "title": "Clarification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClarificationSelectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Command could not be parsed"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conversation or Run was not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Idempotency or Run state conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Select Clarification Resource"
+      }
+    },
+    "/api/v2/runs/{run_id}/events": {
+      "get": {
+        "operationId": "stream_events_api_v2_runs__run_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Events"
       }
     }
   }

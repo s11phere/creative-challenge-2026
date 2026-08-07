@@ -101,6 +101,17 @@ class InMemoryRuntimeStateStore:
             )
             return deepcopy(stored_run), deepcopy(stored_checkpoint)
 
+    async def finalize(self, run: AgentRun) -> AgentRun:
+        async with self._lock:
+            existing = self._runs.get(run.context.run_id)
+            if existing is not None:
+                if existing.context != run.context or existing.budget != run.budget:
+                    raise RecoveryRejectedError("stored run identity is immutable")
+                if _usage_decreased(existing, run):
+                    raise RecoveryRejectedError("stored run usage cannot decrease")
+            self._runs[run.context.run_id] = deepcopy(run)
+            return deepcopy(run)
+
     async def get_run(self, run_id: UUID) -> AgentRun | None:
         async with self._lock:
             run = self._runs.get(run_id)

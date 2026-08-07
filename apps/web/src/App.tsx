@@ -30,6 +30,11 @@ import {
 import { SourcesPanel } from './SourcesPanel'
 import { SkillsPanel } from './SkillsPanel'
 import { QAWorkspace } from './QAWorkspace'
+import {
+  assistantDefaultApiMode,
+  assistantV1CompatibilityAvailable,
+  type AssistantApiMode,
+} from './assistantRelease'
 import { deleteConversation, fetchConversationHistory, type ConversationHistoryItem } from './qa'
 import './App.css'
 
@@ -154,11 +159,13 @@ function questionCount(conversation: ConversationHistoryItem): number {
 
 function App() {
   const [activeView, setActiveView] = useState<WorkspaceView>(() => {
+    if (window.location.hash === '#system-status') return 'status'
     if (window.location.hash === '#sources') return 'sources'
     if (window.location.hash === '#skills') return 'skills'
     if (window.location.hash === '#qa') return 'qa'
-    return 'status'
+    return 'qa'
   })
+  const [assistantApiMode, setAssistantApiMode] = useState<AssistantApiMode>(assistantDefaultApiMode)
   const [qaConversationId, setQaConversationId] = useState<string | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(232)
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
@@ -174,6 +181,9 @@ function App() {
       document.body.classList.remove('qa-scroll-locked')
     }
   }, [activeView])
+  useEffect(() => {
+    if (!window.location.hash) window.history.replaceState(null, '', '#qa')
+  }, [])
   const healthQuery = useQuery<HealthSnapshot, HealthApiError>({
     queryKey: ['system-health'],
     queryFn: ({ signal }) => fetchHealthSnapshot(signal),
@@ -255,7 +265,7 @@ function App() {
             }}
           >
             <MessageSquareText size={18} />
-            知识问答
+            对话
           </a>
         </nav>
 
@@ -387,7 +397,7 @@ function App() {
               {activeView === 'status'
                 ? '运行概览'
                 : activeView === 'qa'
-                  ? '当前知识空间'
+                  ? '当前会话'
                   : activeView === 'skills'
                     ? '技能与版本'
                     : '知识库内容'}
@@ -396,12 +406,30 @@ function App() {
               {activeView === 'status'
                 ? '系统状态'
                 : activeView === 'qa'
-                  ? '知识问答'
+                  ? '对话'
                   : activeView === 'skills'
                     ? '技能管理'
                     : '数据来源'}
             </h1>
           </div>
+          {activeView === 'qa' && assistantV1CompatibilityAvailable && (
+            <div className="assistant-mode-switch" role="group" aria-label="对话模式">
+              <button
+                type="button"
+                aria-pressed={assistantApiMode === 'v2'}
+                onClick={() => setAssistantApiMode('v2')}
+              >
+                Assistant
+              </button>
+              <button
+                type="button"
+                aria-pressed={assistantApiMode === 'v1'}
+                onClick={() => setAssistantApiMode('v1')}
+              >
+                兼容问答
+              </button>
+            </div>
+          )}
           {activeView === 'status' && <button
             className="icon-button"
             type="button"
@@ -541,6 +569,7 @@ function App() {
           <QAWorkspace
             selectedConversationId={qaConversationId}
             onConversationSelected={setQaConversationId}
+            apiMode={assistantApiMode}
           />
         )}
       </main>

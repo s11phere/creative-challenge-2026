@@ -60,6 +60,9 @@ _SAFE_EXTRA_FIELDS = {
     "retry_count",
     "retries",
     "status_code",
+    "metric",
+    "metric_labels",
+    "value",
 }
 
 

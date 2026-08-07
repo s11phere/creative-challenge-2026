@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from enum import StrEnum
 
@@ -129,12 +130,27 @@ class FakeModelGateway:
                 ).encode()
             ).hexdigest()
             input_tokens = sum(max(1, len(message.content.split())) for message in request.messages)
-            usage = ModelUsage(input_tokens=input_tokens, output_tokens=1)
+            if any(
+                "assistant router decision v1" in message.content.lower()
+                for message in request.messages
+                if message.role.value == "system"
+            ):
+                text = json.dumps(
+                    {
+                        "schema_version": "assistant-router-decision-v1",
+                        "action": "respond",
+                        "assistant_message": f"fake-response-{digest[:16]}",
+                    },
+                    separators=(",", ":"),
+                )
+            else:
+                text = f"fake-response-{digest[:16]}"
+            usage = ModelUsage(input_tokens=input_tokens, output_tokens=max(1, len(text.split())))
             span.set_attribute("gen_ai.usage.input_tokens", usage.input_tokens)
             span.set_attribute("gen_ai.usage.output_tokens", usage.output_tokens)
             self._log_success(capability, usage)
             return ChatResponse(
-                text=f"fake-response-{digest[:16]}",
+                text=text,
                 finish_reason="stop",
                 usage=usage,
                 capability=capability,

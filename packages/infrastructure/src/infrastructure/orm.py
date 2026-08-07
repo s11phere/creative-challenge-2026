@@ -340,11 +340,83 @@ _QA_STATUS_CHECK = (
     "'failed', 'cancel_requested', 'cancelled', 'timed_out')"
 )
 
+_CONVERSATION_RUN_STATUS_CHECK = (
+    "status IN ('created', 'queued', 'running', 'waiting_clarification', 'waiting_approval', "
+    "'completed', 'refused', 'failed', 'cancel_requested', 'cancelled', 'timed_out')"
+)
+_CONVERSATION_RUN_KIND_CHECK = (
+    "run_kind IN ('assistant_turn', 'grounded_qa', 'skill', 'context_compaction')"
+)
+_CONVERSATION_RUN_SELECTION_CHECK = "selection_source IN ('auto', 'command', 'none')"
+
+
+class ConversationRunModel(Base):
+    """Shared durable parent identity for Assistant, QA, and Runtime work."""
+
+    __tablename__ = "conversation_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    caller_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    user_message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="CASCADE"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    run_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    selection_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="created")
+    cancellation_requested: Mapped[bool] = mapped_column(default=False)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    router_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    core_prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    model_identity: Mapped[str] = mapped_column(String(255), nullable=False)
+    skill_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    skill_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    skill_content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    usage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "space_id", "caller_id", "idempotency_key", name="uq_conversation_runs_idempotency"
+        ),
+        CheckConstraint(_CONVERSATION_RUN_STATUS_CHECK, name="ck_conversation_runs_status"),
+        CheckConstraint(_CONVERSATION_RUN_KIND_CHECK, name="ck_conversation_runs_kind"),
+        CheckConstraint(_CONVERSATION_RUN_SELECTION_CHECK, name="ck_conversation_runs_selection"),
+        CheckConstraint(
+            "(skill_name IS NULL AND skill_version IS NULL AND skill_content_sha256 IS NULL) OR "
+            "(skill_name IS NOT NULL AND skill_version IS NOT NULL "
+            "AND skill_content_sha256 IS NOT NULL)",
+            name="ck_conversation_runs_skill_identity",
+        ),
+        Index("idx_conversation_runs_conversation", "conversation_id", "created_at"),
+        Index("idx_conversation_runs_status", "status", "updated_at"),
+        Index("idx_conversation_runs_recovery", "run_kind", "status", "lease_expires_at"),
+    )
+
 
 class QARunModel(Base):
     __tablename__ = "qa_runs"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("conversation_runs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )
@@ -364,6 +436,10 @@ class QARunModel(Base):
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     versions: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     retrieval_scope: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    standalone_request: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_sensitivity: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="private_local"
+    )
     usage: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -386,7 +462,7 @@ class QAMessageModel(Base):
         UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )
     run_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=True
+        UUID(as_uuid=True), ForeignKey("conversation_runs.id", ondelete="CASCADE"), nullable=True
     )
     space_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
@@ -403,6 +479,52 @@ class QAMessageModel(Base):
             unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
+    )
+
+
+class ConversationSummaryModel(Base):
+    """Append-only rolling summaries; source messages remain unchanged."""
+
+    __tablename__ = "conversation_summaries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversation_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    covered_start_message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="RESTRICT"), nullable=False
+    )
+    covered_end_message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("qa_messages.id", ondelete="RESTRICT"), nullable=False
+    )
+    covered_message_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    model_identity: Mapped[str] = mapped_column(String(255), nullable=False)
+    sensitivity: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_conversation_summaries_run"),
+        UniqueConstraint(
+            "conversation_id",
+            "covered_end_message_id",
+            "prompt_version",
+            name="uq_conversation_summaries_coverage",
+        ),
+        CheckConstraint("covered_message_count >= 1", name="ck_conversation_summaries_count"),
+        CheckConstraint(
+            "sensitivity IN ('public_demo', 'private_local', 'restricted')",
+            name="ck_conversation_summaries_sensitivity",
+        ),
+        Index("idx_conversation_summaries_conversation", "conversation_id", "created_at"),
     )
 
 
@@ -493,6 +615,23 @@ class QAEventModel(Base):
     __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_qa_events_run_sequence"),)
 
 
+class AssistantEventModel(Base):
+    """Privacy-safe product-level Assistant events, distinct from legacy QA SSE."""
+
+    __tablename__ = "assistant_events"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversation_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_assistant_events_run_sequence"),
+    )
+
+
 class QAFeedbackModel(Base):
     __tablename__ = "qa_feedback"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -545,7 +684,7 @@ class RuntimeRunModel(Base):
     __tablename__ = "runtime_runs"
 
     run_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), primary_key=True
+        UUID(as_uuid=True), ForeignKey("conversation_runs.id", ondelete="CASCADE"), primary_key=True
     )
     space_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
@@ -608,7 +747,7 @@ class RuntimeApprovalModel(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("conversation_runs.id", ondelete="CASCADE"), nullable=False
     )
     space_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
@@ -645,7 +784,7 @@ class DerivedKnowledgeItemModel(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("qa_runs.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("conversation_runs.id", ondelete="CASCADE"), nullable=False
     )
     space_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False

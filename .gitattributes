@@ -1,3 +1,8 @@
 # Keep the pre-commit hook executable on Windows checkouts (core.autocrlf would
 # otherwise convert it to CRLF and break sh).
 .githooks/pre-commit text eol=lf
+
+# Keep hash-pinned contracts and synthetic evaluation fixtures stable across
+# Windows and Unix checkouts.
+packages/application/src/application/assistant/contracts/* text eol=lf
+cases/evals/datasets/assistant-routing-v1/* text eol=lf

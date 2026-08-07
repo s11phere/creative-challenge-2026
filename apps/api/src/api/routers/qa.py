@@ -53,12 +53,11 @@ class RunCreateRequest(BaseModel):
     """Generic Run facade for every server-registered knowledge Skill."""
 
     skill_name: Literal[
-        "knowledge_qa",
         "knowledge_agent",
         "summarize_document",
         "compare_sources",
         "create_review_cards",
-    ] = "knowledge_qa"
+    ] = "knowledge_agent"
     conversation_id: UUID
     question: str | None = Field(default=None, max_length=12000)
     document_id: UUID | None = None
@@ -76,7 +75,7 @@ class RunCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_skill_input(self) -> RunCreateRequest:
-        if self.skill_name in {"knowledge_qa", "knowledge_agent"}:
+        if self.skill_name == "knowledge_agent":
             if not self.question or not self.question.strip():
                 raise ValueError("question is required for this Skill")
         elif self.skill_name in {"summarize_document", "create_review_cards"}:

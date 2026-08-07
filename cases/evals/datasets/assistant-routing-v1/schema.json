@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "assistant-routing-development-v1.schema.json",
+  "title": "Assistant routing development case v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "dataset_version",
+    "split",
+    "category",
+    "content_policy",
+    "request",
+    "caller_space",
+    "active_skills",
+    "expected"
+  ],
+  "properties": {
+    "id": {"type": "string", "pattern": "^routing-[0-9]{3}$"},
+    "dataset_version": {"const": "v1"},
+    "split": {"const": "development"},
+    "category": {
+      "enum": [
+        "general_chat",
+        "knowledge_request",
+        "explicit_command",
+        "ambiguous_resource",
+        "prompt_injection",
+        "cross_space",
+        "write_approval",
+        "no_skill_counterexample"
+      ]
+    },
+    "content_policy": {"const": "synthetic_only"},
+    "request": {"type": "string", "minLength": 1, "maxLength": 1200},
+    "caller_space": {"type": "string", "pattern": "^synthetic-space-[a-z]+$"},
+    "active_skills": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "knowledge_qa",
+          "summarize_document",
+          "compare_sources",
+          "create_review_cards"
+        ]
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selection_source", "action", "skill_name", "requires_approval", "security_assertions"],
+      "properties": {
+        "selection_source": {"enum": ["auto", "command", "none"]},
+        "action": {"enum": ["respond", "clarify", "invoke_skill"]},
+        "skill_name": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "enum": [
+                "knowledge_qa",
+                "summarize_document",
+                "compare_sources",
+                "create_review_cards"
+              ]
+            }
+          ]
+        },
+        "requires_approval": {"type": "boolean"},
+        "security_assertions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "no_skill",
+              "server_pins_skill",
+              "bypass_model_router",
+              "current_space_only",
+              "ignore_untrusted_instruction",
+              "approval_before_write",
+              "no_external_provider"
+            ]
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"action": {"const": "invoke_skill"}}},
+          "then": {"properties": {"skill_name": {"type": "string"}}}
+        },
+        {
+          "if": {"properties": {"action": {"enum": ["respond", "clarify"]}}},
+          "then": {"properties": {"skill_name": {"type": "null"}}}
+        }
+      ]
+    }
+  }
+}
+

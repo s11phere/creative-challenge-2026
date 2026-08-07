@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -49,7 +50,7 @@ SKILL_MANIFEST_SCHEMA: dict[str, JSONValue] = {
         "evals",
     ],
     "properties": {
-        "manifest_version": {"const": "1"},
+        "manifest_version": {"enum": ["1", "2"]},
         "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
         "version": {
             "type": "string",
@@ -127,6 +128,45 @@ SKILL_MANIFEST_SCHEMA: dict[str, JSONValue] = {
             "items": {"type": "string", "minLength": 1},
             "uniqueItems": True,
         },
+        "invocation": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["command", "aliases", "argument_hint", "trigger", "input_mode"],
+            "properties": {
+                "command": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 32},
+                "aliases": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "uniqueItems": True,
+                    "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 32},
+                },
+                "argument_hint": {"type": "string", "maxLength": 160},
+                "trigger": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["summary", "when", "avoid_when", "examples"],
+                    "properties": {
+                        "summary": {"type": "string", "minLength": 1, "maxLength": 280},
+                        "when": {
+                            "type": "array",
+                            "maxItems": 4,
+                            "items": {"type": "string", "minLength": 1, "maxLength": 200},
+                        },
+                        "avoid_when": {
+                            "type": "array",
+                            "maxItems": 4,
+                            "items": {"type": "string", "minLength": 1, "maxLength": 200},
+                        },
+                        "examples": {
+                            "type": "array",
+                            "maxItems": 4,
+                            "items": {"type": "string", "minLength": 1, "maxLength": 240},
+                        },
+                    },
+                },
+                "input_mode": {"enum": ["none", "question", "document", "sources"]},
+            },
+        },
     },
 }
 
@@ -176,6 +216,24 @@ class SkillCompatibility:
 
 
 @dataclass(frozen=True)
+class SkillInvocation:
+    """Safe, bounded metadata used by the product-level Assistant router."""
+
+    command: str
+    aliases: tuple[str, ...]
+    argument_hint: str
+    trigger_summary: str
+    trigger_when: tuple[str, ...]
+    trigger_avoid_when: tuple[str, ...]
+    trigger_examples: tuple[str, ...]
+    input_mode: str
+
+    @property
+    def commands(self) -> tuple[str, ...]:
+        return (self.command, *self.aliases)
+
+
+@dataclass(frozen=True)
 class SkillManifest:
     manifest_version: str
     name: str
@@ -191,6 +249,65 @@ class SkillManifest:
     compatibility: SkillCompatibility
     prompts: tuple[str, ...]
     evals: tuple[str, ...]
+    invocation: SkillInvocation | None = None
+
+
+_SENSITIVE_INVOCATION_TEXT = re.compile(
+    (
+        r"(?:[0-9a-f]{32,64}|[0-9a-f]{8}-[0-9a-f-]{27,}|"
+        r"(?:^|[ _-])(?:space_id|version_id|document_id|source_id|chunk_id|run_id|message_id|uuid)"
+        r"(?:$|[ _-]))"
+    ),
+    re.IGNORECASE,
+)
+
+
+def _parse_invocation(value: dict[str, Any]) -> SkillInvocation:
+    trigger = cast(dict[str, Any], value["trigger"])
+    command = cast(str, value["command"])
+    aliases = tuple(cast(list[str], value["aliases"]))
+    commands = (command, *aliases)
+    if len(commands) != len(set(commands)):
+        raise SkillRegistryError(
+            SkillRegistryErrorCode.INVALID_MANIFEST,
+            "Skill invocation command and aliases must be unique.",
+        )
+    examples = tuple(cast(list[str], trigger["examples"]))
+    if any(_SENSITIVE_INVOCATION_TEXT.search(text) for text in examples):
+        raise SkillRegistryError(
+            SkillRegistryErrorCode.INVALID_MANIFEST,
+            "Skill invocation examples contain sensitive resource metadata.",
+        )
+    return SkillInvocation(
+        command=command,
+        aliases=aliases,
+        argument_hint=cast(str, value["argument_hint"]),
+        trigger_summary=cast(str, trigger["summary"]),
+        trigger_when=tuple(cast(list[str], trigger["when"])),
+        trigger_avoid_when=tuple(cast(list[str], trigger["avoid_when"])),
+        trigger_examples=examples,
+        input_mode=cast(str, value["input_mode"]),
+    )
+
+
+def _validate_invocation_schema(
+    manifest: SkillManifest, input_schema: Mapping[str, JSONValue]
+) -> None:
+    invocation = manifest.invocation
+    if invocation is None:
+        return
+    properties = input_schema.get("properties")
+    property_names = set(properties) if isinstance(properties, dict) else set()
+    if invocation.input_mode == "question" and "question" not in property_names:
+        raise SkillRegistryError(
+            SkillRegistryErrorCode.INVALID_MANIFEST,
+            "Question invocation mode requires a question input.",
+        )
+    if invocation.input_mode in {"document", "sources"} and "question" not in property_names:
+        raise SkillRegistryError(
+            SkillRegistryErrorCode.INVALID_MANIFEST,
+            "Resource invocation modes require a question input.",
+        )
 
 
 @dataclass(frozen=True)
@@ -267,8 +384,9 @@ class FileSystemSkillRegistry:
                 SkillRegistryErrorCode.INVALID_MANIFEST,
                 "Skill entrypoint must be a declarative YAML or JSON workflow.",
             )
-        self._load_json_schema(package_root, manifest.input_schema)
+        input_schema = self._load_json_schema(package_root, manifest.input_schema)
         self._load_json_schema(package_root, manifest.output_schema)
+        _validate_invocation_schema(manifest, input_schema)
         self._validate_compatibility(manifest.compatibility)
         file_digests, content_sha256 = self._digest_files(package_root, files)
         return SkillPackage(
@@ -477,12 +595,34 @@ class FileSystemSkillRegistry:
     ) -> SkillPackage:
         with self._lock:
             package = self._revalidate_package(self.get(name, version))
+            self._validate_active_invocation(name, version)
             previous = self._active_versions.get(name)
             if previous == version:
                 return package
             self._active_versions[name] = version
             self._events.append(self._event(event_type, package, previous))
             return package
+
+    def _validate_active_invocation(self, candidate_name: str, candidate_version: str) -> None:
+        commands: dict[str, tuple[str, str]] = {}
+        selected = dict(self._active_versions)
+        selected[candidate_name] = candidate_version
+        for name, version in selected.items():
+            package = self._packages.get((name, version))
+            if package is None:
+                continue
+            invocation = package.manifest.invocation
+            if invocation is None:
+                continue
+            for command in invocation.commands:
+                previous = commands.get(command)
+                identity = (package.manifest.name, package.manifest.version)
+                if previous is not None and previous != identity:
+                    raise SkillRegistryError(
+                        SkillRegistryErrorCode.INVALID_MANIFEST,
+                        "Skill invocation command or alias is not globally unique.",
+                    )
+                commands[command] = identity
 
     @staticmethod
     def _event(
@@ -575,11 +715,19 @@ class FileSystemSkillRegistry:
                 SkillRegistryErrorCode.INVALID_MANIFEST,
                 f"Skill manifest validation failed at {location}.",
             )
+        manifest_version = cast(str, data["manifest_version"])
+        raw_invocation = data.get("invocation")
+        if manifest_version == "2" and not isinstance(raw_invocation, dict):
+            raise SkillRegistryError(
+                SkillRegistryErrorCode.INVALID_MANIFEST,
+                "Manifest v2 requires invocation metadata.",
+            )
+        invocation = _parse_invocation(raw_invocation) if raw_invocation is not None else None
         tools = cast(list[dict[str, str]], data["required_tools"])
         budgets = cast(dict[str, int], data["budgets"])
         compatibility = cast(dict[str, Any], data["compatibility"])
         return SkillManifest(
-            manifest_version=cast(str, data["manifest_version"]),
+            manifest_version=manifest_version,
             name=cast(str, data["name"]),
             version=cast(str, data["version"]),
             description=cast(str, data["description"]),
@@ -600,6 +748,7 @@ class FileSystemSkillRegistry:
             ),
             prompts=tuple(cast(list[str], data["prompts"])),
             evals=tuple(cast(list[str], data["evals"])),
+            invocation=invocation,
         )
 
     def _load_json_schema(

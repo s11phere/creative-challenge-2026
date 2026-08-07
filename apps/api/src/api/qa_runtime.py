@@ -35,7 +35,7 @@ class QAWorkerDispatcher:
         self._repository = repository
         self._enqueuer = enqueuer
 
-    async def current_versions(self, skill_name: str = "knowledge_qa") -> QARunVersions:
+    async def current_versions(self, skill_name: str = "knowledge_agent") -> QARunVersions:
         if self._skill_lifecycle is not None:
             await self._skill_lifecycle.current(skill_name)
         return qa_execution_versions(self._skill_registry, skill_name=skill_name)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID
 
@@ -75,6 +76,15 @@ class StaticSearchService:
         if isinstance(self._result, RetrievalError):
             raise self._result
         return self._result
+
+
+class StaticRewriter:
+    def __init__(self, queries: tuple[str, ...]) -> None:
+        self._queries = queries
+
+    async def rewrite(self, _question: QuestionInput, *, max_queries: int) -> tuple[str, ...]:
+        assert max_queries >= len(self._queries)
+        return self._queries
 
 
 class StaticTargets:
@@ -194,7 +204,9 @@ def _versions(profile: GroundedQAExecutionProfile) -> QARunVersions:
     )
 
 
-def _service(search_service: StaticSearchService) -> GroundedQAService:
+def _service(
+    search_service: StaticSearchService, *, planner: QueryPlanner | None = None
+) -> GroundedQAService:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     generator = GroundedAnswerGenerator(
         gateway=StructuredChatGateway(),
@@ -207,7 +219,7 @@ def _service(search_service: StaticSearchService) -> GroundedQAService:
     )
     return GroundedQAService(
         repository=InMemoryGroundedQARepository(),
-        planner=QueryPlanner(),
+        planner=planner or QueryPlanner(),
         search=QASearchCoordinator(search_service),
         evidence_binding=EvidenceBindingService(),
         context_builder=ContextBuilder(),
@@ -232,6 +244,35 @@ async def _submitted_run(
         versions=_versions(profile),
     )
     return conversation, run.run_id
+
+
+@pytest.mark.asyncio
+async def test_agent_retrieval_keeps_llm_rewrites_within_the_shared_query_budget() -> None:
+    base_profile = _profile()
+    profile = replace(
+        base_profile,
+        planning=replace(base_profile.planning, rewrite_enabled=True, max_subqueries=4),
+    )
+    search_service = StaticSearchService(_search_result())
+    service = _service(
+        search_service,
+        planner=QueryPlanner(StaticRewriter(("llm query one", "llm query two"))),
+    )
+    _conversation, run_id = await _submitted_run(service, profile)
+
+    inspected = await service.inspect_retrieval(
+        run_id,
+        profile=profile,
+        agent_plan=AgentRetrievalPlan(additional_queries=("agent query",)),
+    )
+
+    assert len(inspected.diagnostics) == 4
+    assert tuple(request.query for request in search_service.requests) == (
+        "What does the synthetic fixture support?",
+        "llm query one",
+        "llm query two",
+        "agent query",
+    )
 
 
 @pytest.mark.asyncio

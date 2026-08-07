@@ -8,8 +8,14 @@ from contextlib import suppress
 from uuid import UUID, uuid4
 
 import dramatiq
+from application.assistant import ConversationFinalizer, FinalizationInput
+from domain.assistant_sse import AssistantEventType
+from domain.conversation_run import ConversationRun, ConversationRunKind, ConversationRunStatus
 from domain.grounded_qa import QAStatus
+from domain.qa_persistence import MessageRole, QARunRecord
+from infrastructure.assistant_events import PostgresAssistantEventStore
 from infrastructure.config import settings
+from infrastructure.conversation_runs import PostgresConversationRunRepository
 from infrastructure.database import Database
 from infrastructure.qa_execution import GroundedQAExecutor
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
@@ -138,6 +144,8 @@ async def _run_qa_async(run_id: UUID, trace_id: str, gateway: ModelGateway) -> b
     if claimed is None:
         return False
     if claimed.status in _TERMINAL:
+        if claimed.status in {QAStatus.COMPLETED, QAStatus.REFUSED}:
+            await _finalize_parent_completion(run_id, claimed, gateway)
         return True
 
     stop = asyncio.Event()
@@ -157,7 +165,12 @@ async def _run_qa_async(run_id: UUID, trace_id: str, gateway: ModelGateway) -> b
             executor.execute(run_id, trace_id=trace_id),
             name=f"qa-execution-{run_id}",
         )
-        return await _wait_for_execution(execution, lease_lost, run_id=run_id)
+        completed = await _wait_for_execution(execution, lease_lost, run_id=run_id)
+        if completed and not lease_lost.is_set():
+            qa_run = await repository.get_run(run_id)
+            if qa_run is not None:
+                await _finalize_parent_completion(run_id, qa_run, gateway)
+        return completed
     finally:
         stop.set()
         await heartbeat
@@ -207,6 +220,113 @@ async def _heartbeat(
             if not renewed:
                 lease_lost.set()
                 return
+
+
+async def _finalize_parent_completion(
+    run_id: UUID, qa_run: QARunRecord, gateway: ModelGateway
+) -> None:
+    """Synthesize and publish one independent user-facing answer for a completed Skill Run."""
+    parent_runs = PostgresConversationRunRepository(database)
+    parent = await parent_runs.get_conversation_run(run_id)
+    if parent is None or parent.run_kind not in {
+        ConversationRunKind.SKILL,
+        ConversationRunKind.GROUNDED_QA,
+    }:
+        return
+    if qa_run.status not in {QAStatus.COMPLETED, QAStatus.REFUSED}:
+        return
+    events = PostgresAssistantEventStore(database)
+    lease_owner = f"finalizer:{uuid4()}"
+    claimed = await parent_runs.claim_conversation_run(
+        run_id,
+        lease_owner=lease_owner,
+        lease_seconds=settings.qa_task_lease_seconds,
+    )
+    if claimed is None:
+        return
+    if claimed.status in {
+        ConversationRunStatus.COMPLETED,
+        ConversationRunStatus.REFUSED,
+        ConversationRunStatus.FAILED,
+        ConversationRunStatus.CANCELLED,
+        ConversationRunStatus.TIMED_OUT,
+    }:
+        if claimed.core_prompt_version in {"assistant-base-prompt-v2", "assistant-base-prompt-v3"}:
+            await _ensure_finalizer_terminal_event(events, claimed)
+        return
+    try:
+        published = await events.replay(run_id)
+        if not any(
+            event.event_type is AssistantEventType.PHASE
+            and event.payload.get("phase") == "final_answer"
+            for event in published
+        ):
+            await events.append(
+                run_id,
+                AssistantEventType.PHASE,
+                {"status": claimed.status.value, "phase": "final_answer", "once": True},
+            )
+        qa_repository = PostgresGroundedQARepository(database)
+        question = await qa_repository.get_message(qa_run.question_message_id)
+        result_message = (
+            await qa_repository.get_message(qa_run.answer_message_id)
+            if qa_run.answer_message_id is not None
+            else None
+        )
+        if question is None or question.role is not MessageRole.USER:
+            return
+        tool_result = (
+            result_message.content
+            if result_message is not None
+            else "Skill returned no answer text."
+        )
+        finalized = await ConversationFinalizer(runs=parent_runs, gateway=gateway).execute(
+            claimed,
+            input=FinalizationInput(question=question.content, skill_result=tool_result),
+        )
+        if finalized.status not in {ConversationRunStatus.COMPLETED, ConversationRunStatus.REFUSED}:
+            if finalized.status in {
+                ConversationRunStatus.FAILED,
+                ConversationRunStatus.CANCELLED,
+                ConversationRunStatus.TIMED_OUT,
+            }:
+                await _ensure_finalizer_terminal_event(events, finalized)
+            return
+        published = await events.replay(run_id)
+        terminal_types = {
+            AssistantEventType.COMPLETED,
+            AssistantEventType.FAILED,
+            AssistantEventType.CANCELLED,
+        }
+        if not any(event.event_type in terminal_types for event in published):
+            await events.append(
+                run_id,
+                AssistantEventType.COMPLETED,
+                {"status": finalized.status.value, "action": "final_answer"},
+            )
+    finally:
+        await parent_runs.release_conversation_run_lease(run_id, lease_owner=lease_owner)
+
+
+async def _ensure_finalizer_terminal_event(
+    events: PostgresAssistantEventStore, run: ConversationRun
+) -> None:
+    """Repair the small crash window between final-message and SSE publication."""
+    event_type = {
+        ConversationRunStatus.COMPLETED: AssistantEventType.COMPLETED,
+        ConversationRunStatus.REFUSED: AssistantEventType.COMPLETED,
+        ConversationRunStatus.FAILED: AssistantEventType.FAILED,
+        ConversationRunStatus.CANCELLED: AssistantEventType.CANCELLED,
+        ConversationRunStatus.TIMED_OUT: AssistantEventType.FAILED,
+    }.get(run.status)
+    if event_type is None:
+        return
+    payload: dict[str, str] = {"status": run.status.value}
+    if event_type is AssistantEventType.COMPLETED:
+        payload["action"] = "final_answer"
+    elif run.error_code is not None:
+        payload["error_code"] = run.error_code
+    await events.append(run.run_id, event_type, payload)
 
 
 def enqueue_qa_run(*, run_id: str, trace_id: str, event_version: int = 1) -> dramatiq.Message[None]:

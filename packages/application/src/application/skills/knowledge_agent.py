@@ -183,7 +183,7 @@ class KnowledgeAgentSkillAdapter:
             tool_context.run.run_id, profile=self._config.profile, agent_plan=plan
         )
         return {
-            "query_count": len(plan.additional_queries) + 1,
+            "query_count": len(result.diagnostics),
             "hit_count": len(result.hits),
             "matched_count": sum(not hit.context_only for hit in result.hits),
             "document_count": len({hit.document_id for hit in result.hits}),
