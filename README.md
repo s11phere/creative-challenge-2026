@@ -38,28 +38,28 @@ Chat Provider 仍走相同结构化生成与引用校验路径。Web 会展示�
 Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL；API/Worker 重启可恢复
 未完成运行，重复投递不会重复发布终态；Citation 原文解析不会接受客户端伪造的版本、locator 或 Blob 路径；
 阶段 3 默认检索配置和质量门禁也尚未冻结。
-阶段 5 的 `knowledge_qa 0.1.0` 已从本地受信根显式激活：API 在新 QA Run 中固定 Skill 名称、
-版本和内容摘要，Worker 恢复时按该固定身份校验声明式 workflow，再调用唯一 QA Application Port。
-现有 QA Web/API 因此已是该 provisional Skill 的真实入口；统一 `/api/v1/runs` facade、PostgreSQL
-Runtime Checkpoint、Skill 管理 Web 和受控旧版本清理均已提供。`/api/v1/skills` 可查询 active/已安装版本、
-摘要、预算和 pointer revision，并通过受控 CAS 接口激活或回滚到受信根中已安装的版本；pointer
-保存在 PostgreSQL，API 重启后恢复。阶段 5 工程功能已完成；正式 Skill Eval 和阶段退出仍受
-Stage 3/4 质量门禁约束，不能把 provisional 结果写成正式质量通过。
+新建知识问答统一固定为 `knowledge_agent 0.3.0`：v1 提问入口、`/api/v1/runs` 默认值、Web
+兼容入口和 Assistant v2 的 `/ask`/`/qa` 都只会创建该 Skill 的 Run。API 在提交时固定名称、版本和
+内容摘要，Worker 恢复时按该固定身份校验声明式 workflow，再经唯一 QA Application Port 执行。
+`knowledge_qa` 包仅保留给已固定的历史 Run 校验和恢复，不在任何新调用目录或 Skill 管理 catalog 中
+暴露。统一 `/api/v1/runs` facade、PostgreSQL Runtime Checkpoint、Skill 管理和受控旧版本清理均已提供。
+阶段 5 工程功能已完成；正式 Skill Eval 和阶段退出仍受 Stage 3/4 质量门禁约束，不能把 provisional
+结果写成正式质量通过。
 `summarize_document`、`compare_sources` 和 `create_review_cards` 也已提供 provisional HTTP
 入口并固定提交时的 Source/Document/DocumentVersion 范围；版本变更、撤下或跨 Space 选择不会
 扩大检索范围。比较结果必须引用至少两个来源，否则按证据不足拒答。复习卡当前只返回带引用预览，
 并以 `SKILL_WRITE_REQUIRES_APPROVAL` 明确报告审批前 `side_effects=0`；批准后通过持久化
 Derived Knowledge Port 幂等写入，并可查询或撤销。
-`knowledge_agent 0.2.0` 提供真实的受约束 LLM/Tool 循环：模型可先调用只读
+`knowledge_agent 0.3.0` 提供真实的受约束 LLM/Tool 循环：模型可先调用只读
 `inspect_retrieval 1.0.0` 调整多查询、候选数和上下文预算，再调用一次 `grounded_qa 1.0.0`，
 由现有 QA Run、Worker、SSE、Grounded QA Port 和 Citation 链路完成问答。动态数值由服务端
 profile 封顶，Space/版本边界不能由模型扩大；规划失败会降级到原问题的 Grounded QA，而不是
-把 Run 变成基础设施失败。Tool 仅向外层模型返回状态和覆盖计数，不返回回答或原文。旧
-`0.1.0` 保留用于固定 Run 恢复和回滚。默认 fake 可跑通流程，配置允许的
+把 Run 变成基础设施失败。Tool 仅向外层模型返回状态和覆盖计数，不返回回答或原文。旧 Agent
+版本和 `knowledge_qa` 包保留用于固定 Run 恢复。默认 fake 可跑通流程，配置允许的
 OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。写 Tool 仍被明确拒绝。
 Assistant v2 使用独立的 active invocation catalog，包含 `/ask`、`/summarize`、`/compare`、`/cards`
 对应的 v2 Skill 元数据；模型只能返回 Skill 意图，服务端负责当前 Space 资源解析、版本 pin、
-权限和 QA Worker 投影。legacy v1 Skill pointer 和 API 仍可恢复历史 Run。普通聊天不会强制进入
+权限和 QA Worker 投影。历史固定 Skill 身份仍可恢复旧 Run。普通聊天不会强制进入
 
 Assistant Conversation Evolution Step 5 adds bounded multi-turn context. Original messages remain
 append-only; versioned rolling summaries retain their covered range, digest, prompt/model version,

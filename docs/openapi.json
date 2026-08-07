@@ -1844,9 +1844,8 @@
             "title": "Question"
           },
           "skill_name": {
-            "default": "knowledge_qa",
+            "default": "knowledge_agent",
             "enum": [
-              "knowledge_qa",
               "knowledge_agent",
               "summarize_document",
               "compare_sources",

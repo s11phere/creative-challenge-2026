@@ -68,10 +68,10 @@ Tool 时，Agent 应直接回答、说明不确定性或请求澄清。
 | `/compact` | 请求为当前会话生成新的滚动摘要 | 是，后台运行 |
 | `/stop` | 取消当前活动 Run | 否，复用现有取消协议 |
 
-首期 Skill 指令建议为 `/ask`、`/summarize`、`/compare`、`/cards`，分别映射
-`knowledge_qa`、`summarize_document`、`compare_sources` 和 `create_review_cards`。
-现有 `knowledge_agent` 不再作为用户可选模式；其检索规划能力并入通用 Agent 调用
-`knowledge_qa` 的路径，并保留旧版本仅供历史 Run 恢复和兼容 API 使用。
+首期 Skill 指令为 `/ask`、`/summarize`、`/compare`、`/cards`，分别映射
+`knowledge_agent`、`summarize_document`、`compare_sources` 和 `create_review_cards`。
+`knowledge_agent 0.3.0` 是唯一的新知识问答入口；`knowledge_qa` 的旧包只保留给固定历史 Run
+恢复，不能由命令、自动路由或新的 v1 Run 请求选择。
 
 客户端负责即时匹配和键盘交互，服务端负责最终解析。规则固定为：仅消息首个非空字符为 `/` 时
 解释为指令；指令名大小写不敏感；`//` 转义为普通文本；未知指令不猜测执行，而是返回候选；Skill
@@ -248,7 +248,7 @@ completed/failed/cancelled`。Grounded QA 事件投影到该协议，现有 `qa-
 - 扩展 Registry 读取 manifest v2 `invocation`，验证命令唯一性并生成安全 active catalog。
 - 为四个业务 Skill 发布新版本的触发说明；旧 Skill 版本保持可恢复。
 - 将 active catalog 注入基础 prompt；实现 `invoke_skill` decision、固定版本和 child execution mapping。
-- `knowledge_qa` 继续只通过 `GroundedQAApplicationPort`；组织 Skill 继续复用既有 QA Run/Worker/SSE。
+- `knowledge_agent` 通过 `GroundedQAApplicationPort` 完成最终回答；组织 Skill 继续复用既有 QA Run/Worker/SSE。
 - 增加资源解析 Port 和 `clarify` 候选，不允许模型提供可信 UUID/Space/版本。
 
 退出条件：普通聊天不强制进入 QA；明确知识请求可自动调用正确 Skill；命令/模型均不能调用 hidden、
@@ -312,8 +312,8 @@ system instruction 或跨 Space 泄漏。
 | 场景 | 预期结果 |
 | --- | --- |
 | “今天状态怎么样” | 直接回答，不调用知识 Skill |
-| “我的笔记里进程和线程有什么区别” | 自动调用 `knowledge_qa`，返回可验证引用或证据不足拒答 |
-| `/ask 比较 TCP 和 UDP` | 确定性调用 `knowledge_qa`，不经过模型选择 |
+| “我的笔记里进程和线程有什么区别” | 自动调用 `knowledge_agent`，返回可验证引用或证据不足拒答 |
+| `/ask 比较 TCP 和 UDP` | 确定性调用 `knowledge_agent`，不经过模型选择 |
 | `/summarize 操作系统笔记中的内存章节` | 唯一文档则固定版本执行；歧义则请求选择 |
 | `/compare CS229 笔记和数学笔记中的优化方法` | 固定至少两个合法来源后执行，否则澄清 |
 | `/cards 量子力学常用公式` | 生成带引用预览；写入仍需持久审批 |
@@ -341,4 +341,3 @@ system instruction 或跨 Space 泄漏。
 再接自动 Skill；先完成服务端 Command 契约，再做前端候选面板；上下文压缩必须在长会话默认开放前
 完成。任何阶段都不得通过前端硬编码 Skill、在 API 内同步跑长任务、复制 QA 逻辑或放宽数据外发
 策略来提前演示。
-

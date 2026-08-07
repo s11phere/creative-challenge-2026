@@ -1,13 +1,6 @@
 import { apiBaseUrl } from './health'
 
 export const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
-export type QASkillName =
-  | 'knowledge_agent'
-  | 'knowledge_qa'
-  | 'summarize_document'
-  | 'compare_sources'
-  | 'create_review_cards'
-
 export type Conversation = {
   conversation_id: string
   space_id: string
@@ -166,6 +159,16 @@ export type AssistantRun = {
   }
 }
 
+export type AssistantRunEvent = {
+  schema_version: 'agent-run-sse-v2'
+  event_id: string
+  run_id: string
+  sequence: number
+  occurred_at: string
+  type: 'accepted' | 'routing' | 'clarification' | 'skill_started' | 'phase' | 'completed' | 'failed' | 'cancelled'
+  payload: Record<string, unknown>
+}
+
 export type AssistantCommandResult = {
   command: string
   status: string
@@ -234,12 +237,11 @@ export function submitQuestion(
   conversationId: string,
   question: string,
   idempotencyKey: string,
-  skillName: QASkillName = 'knowledge_qa',
+  legacyRoute = false,
 ): Promise<QARun> {
-  const path =
-    skillName === 'knowledge_agent'
-      ? `/api/v1/conversations/${conversationId}/skills/knowledge_agent/runs`
-      : `/api/v1/conversations/${conversationId}/questions`
+  const path = legacyRoute
+    ? `/api/v1/conversations/${conversationId}/questions`
+    : `/api/v1/conversations/${conversationId}/skills/knowledge_agent/runs`
   return request(path, {
     method: 'POST',
     body: JSON.stringify({ question, idempotency_key: idempotencyKey }),
@@ -411,6 +413,18 @@ export function fetchAssistantRun(runId: string, signal?: AbortSignal): Promise<
   return request(`/api/v2/runs/${runId}`, { signal })
 }
 
+export async function fetchAssistantRunEvents(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<AssistantRunEvent[]> {
+  const response = await fetch(`${apiBaseUrl}/api/v2/runs/${runId}/events`, {
+    headers: { Accept: 'text/event-stream' },
+    signal,
+  })
+  if (!response.ok) throw new QAApiError(response.statusText, response.status)
+  return parseAssistantRunEvents(await response.text())
+}
+
 export function fetchAssistantConversationRuns(
   conversationId: string,
   signal?: AbortSignal,
@@ -436,6 +450,22 @@ export function selectClarificationResource(
     method: 'POST',
     body: JSON.stringify({ candidate_id: candidateId }),
   })
+}
+
+function parseAssistantRunEvents(stream: string): AssistantRunEvent[] {
+  const events: AssistantRunEvent[] = []
+  for (const line of stream.split(/\r?\n/)) {
+    if (!line.startsWith('data: ')) continue
+    try {
+      const event = JSON.parse(line.slice('data: '.length)) as AssistantRunEvent
+      if (event.schema_version === 'agent-run-sse-v2' && typeof event.sequence === 'number') {
+        events.push(event)
+      }
+    } catch {
+      // A malformed event cannot replace the persisted Run state used by the workspace.
+    }
+  }
+  return events
 }
 
 export { isAssistantRun }

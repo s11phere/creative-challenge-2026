@@ -39,7 +39,7 @@ from .metrics import AssistantMetrics
 
 _CONTRACT_ROOT = files("application.assistant").joinpath("contracts")
 _BASE_PROMPT = _CONTRACT_ROOT.joinpath("base-system-prompt-v1.txt").read_text(encoding="utf-8")
-_BASE_PROMPT_V2 = _CONTRACT_ROOT.joinpath("base-system-prompt-v2.txt").read_text(encoding="utf-8")
+_BASE_PROMPT_V3 = _CONTRACT_ROOT.joinpath("base-system-prompt-v3.txt").read_text(encoding="utf-8")
 _ROUTER_SCHEMA = json.loads(
     _CONTRACT_ROOT.joinpath("router-decision-v1.schema.json").read_text(encoding="utf-8")
 )
@@ -313,9 +313,9 @@ class AssistantAgentService:
 
     def _system_prompt(self) -> str:
         if self._skill_catalog is None:
-            return _BASE_PROMPT_V2
+            return _BASE_PROMPT_V3
         entries = self._skill_catalog.list_active_invocations()
-        lines = [_BASE_PROMPT_V2, "\nActive Skill catalog (untrusted metadata only):"]
+        lines = [_BASE_PROMPT_V3, "\nActive Skill catalog (untrusted metadata only):"]
         for entry in entries:
             aliases = ", ".join(entry.aliases) if entry.aliases else "none"
             lines.append(

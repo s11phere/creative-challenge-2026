@@ -139,9 +139,10 @@ Agent Runtime → Domain + ModelGateway
 │
 ├── skills/
 │   ├── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
-│   ├── knowledge_qa/               # active provisional Grounded QA Skill
-│   ├── knowledge_agent/            # active bounded LLM Agent Skill
-│   ├── knowledge_agent_v0_1/       # compatibility/rollback package
+│   ├── knowledge_agent_v3/         # active knowledge invocation (0.3.0)
+│   ├── knowledge_agent/            # immutable 0.2.0 recovery package
+│   ├── knowledge_agent_v0_1/       # immutable 0.1.0 recovery package
+│   ├── knowledge_qa/               # legacy recovery-only Grounded QA packages
 │   ├── summarize_document/         # 固定单文档版本的引用摘要
 │   ├── compare_sources/            # 固定多来源的引用比较
 │   └── create_review_cards/        # 带引用预览与审批后的派生知识写入
@@ -289,7 +290,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/assistant/context.py` | Bounded shared context snapshots, automatic/manual compaction Run creation, and Worker-only summary generation |
 | `src/application/assistant/metrics.py` | 不含正文的 Assistant 路由/命令/澄清/压缩/用量/延迟/终止指标，以及 synthetic development 报告聚合 |
 | `src/application/qa/service.py` | 唯一 provisional `GroundedQAApplicationPort`；编排幂等提交、阶段 3 SearchService、Evidence/上下文、结构化生成、原子发布、取消和稳定失败终态 |
-| `src/application/skills/knowledge_qa.py` | provisional Skill Adapter；Worker 模式执行同一既有 QA Run，仅将 Runtime 服务端上下文映射到唯一 QA Port 并投影其结构化结果 |
+| `src/application/skills/knowledge_qa.py` | legacy Skill Adapter；仅为固定历史 Run 将 Runtime 服务端上下文映射到唯一 QA Port 并投影其结构化结果 |
 | `src/application/skills/organization.py` | 校验知识整理 Skill 的 Space 归属和当前 published Source/Document/DocumentVersion，并生成固定检索范围 |
 | `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
 | `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
@@ -416,7 +417,7 @@ published version，避免排队期间跟随新版本或扩大范围。比较结
 则拒答；复习卡在审批前只返回预览并报告 `side_effects=0`，批准后才通过派生知识 Port 写入。
 
 `knowledge_agent` 是当前 LLM Agent 业务入口。它通过现有 `fast_chat` 能力产生严格的
-`call_tool/complete/refuse` 决策。`knowledge_agent 0.2.0` 最多三次调用
+`call_tool/complete/refuse` 决策。`knowledge_agent 0.3.0` 最多三次调用
 `inspect_retrieval 1.0.0` 调整多查询和上下文预算，最后调用一次 `grounded_qa 1.0.0`；Tool
 Registry 在服务端重验
 版本、权限、Space、预算和输入/输出 schema。`grounded_qa` 仍是回答、引用、终态发布和恢复的唯一
@@ -580,6 +581,11 @@ Web 已包含系统健康、数据来源和 provisional 知识问答工作区。
 问题、轮询/取消 Run，并展示真实 PostgreSQL 检索后生成的回答/拒答、限制以及已校验的文档、
 版本、Chunk 和 locator 身份。点击 Citation 会按需加载固定版本的最小原文片段并高亮 locator；
 伪造 Evidence 返回 404，失效历史引用返回状态而不重定向到新版本。用户重试仍待实现。
+
+每个 v2 Skill Run 在对应用户消息下保留一个默认收起的调用卡片；展开后从同一 Run 与
+`agent-run-sse-v2` 事件序列展示安全的路由/执行链、固定 Skill 版本、状态、实际模型用量和
+最终回答或澄清。该卡片不读取或展示原始 prompt、Tool payload、文档正文、预算上限或内部
+调试 trace，刷新后通过会话 Run 列表恢复。
 
 **规范命令**：
 ```bash
@@ -849,7 +855,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 2** | **✅ 正式完成** | **Step 0～9 完成；冻结 manifest 的 74 个 P0 来源成功率 100%，退出记录见 `docs/stage-2-acceptance.md`** |
 | **阶段 3** | **⏹️ 已终止** | **工程 Step 0～10 已完成；正式质量门禁未通过，因当前评测集代表性局限终止，未运行正式 holdout，配置保持 provisional（ADR-010）** |
 | 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、PostgreSQL QA 持久化、SSE/API/Web、Worker lease/重启恢复、原文解析和回答评测门禁已落地；默认配置和 holdout 未落地 |
-| **阶段 5** | **🟡 provisional Skills** | **Step 0～10 工程功能已实现；当前 active 为 `knowledge_agent 0.2.0`（保留 `0.1.0` 回滚包）、`knowledge_qa 0.1.0` 和三个知识整理 `0.1.0` Skill，质量状态仍受 Stage 3/4 正式 Eval 门禁约束** |
+| **阶段 5** | **🟡 provisional Skills** | **Step 0～10 工程功能已实现；新知识入口为 `knowledge_agent 0.3.0`（保留 0.1/0.2 回滚包），`knowledge_qa` 仅用于历史 Run 恢复，另有三个知识整理 `0.1.0` Skill，质量状态仍受 Stage 3/4 正式 Eval 门禁约束** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 

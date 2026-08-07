@@ -14,10 +14,15 @@ from application.skills import (
 
 class FileSystemSkillCatalog(SkillCatalogPort):
     def __init__(
-        self, registry: FileSystemSkillRegistry, *, include_manifest_v2: bool = False
+        self,
+        registry: FileSystemSkillRegistry,
+        *,
+        include_manifest_v2: bool = False,
+        visible_names: frozenset[str] | None = None,
     ) -> None:
         self._registry = registry
         self._include_manifest_v2 = include_manifest_v2
+        self._visible_names = visible_names
         self._active_revisions: dict[str, int] = {}
 
     def set_active_revision(self, name: str, revision: int) -> None:
@@ -36,10 +41,12 @@ class FileSystemSkillCatalog(SkillCatalogPort):
                     or self._registry.get(name, version).manifest.manifest_version == "1"
                 ),
             )
-            for name in self._registry.names()
+            for name in self._names()
         )
 
     def list_versions(self, name: str) -> tuple[SkillVersionView, ...]:
+        if self._visible_names is not None and name not in self._visible_names:
+            return ()
         active_version = self._active_version(name)
         return tuple(
             self._version(name, version, active=version == active_version)
@@ -51,7 +58,7 @@ class FileSystemSkillCatalog(SkillCatalogPort):
     def list_active_invocations(self) -> tuple[SkillInvocationView, ...]:
         invocations: list[SkillInvocationView] = []
         commands: set[str] = set()
-        for name in self._registry.names():
+        for name in self._names():
             try:
                 package = self._registry.get(name)
             except SkillRegistryError:
@@ -111,6 +118,12 @@ class FileSystemSkillCatalog(SkillCatalogPort):
             return self._registry.active_version(name)
         except SkillRegistryError:
             return None
+
+    def _names(self) -> tuple[str, ...]:
+        names = self._registry.names()
+        if self._visible_names is None:
+            return names
+        return tuple(name for name in names if name in self._visible_names)
 
 
 __all__ = ["FileSystemSkillCatalog"]

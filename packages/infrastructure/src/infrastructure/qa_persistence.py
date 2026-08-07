@@ -1056,7 +1056,8 @@ def _validate_parent(
             or model.skill_name != run.versions.skill_name
             or model.skill_version != run.versions.skill_version
             or model.skill_content_sha256 != run.versions.skill_content_sha256
-            or model.core_prompt_version != "assistant-base-prompt-v2"
+            or model.core_prompt_version
+            not in {"assistant-base-prompt-v2", "assistant-base-prompt-v3"}
         ):
             raise QAContractError("QA Run conflicts with its Assistant ConversationRun parent")
         return

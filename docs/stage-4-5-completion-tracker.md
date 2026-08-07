@@ -88,6 +88,16 @@ focused v1 compatibility tests cover explicit submit/cancel behavior and the v2 
 covers empty-hash startup. OpenAPI has no endpoint change and remains unchanged; browser Playwright
 desktop/mobile evidence is still unavailable in the current environment.
 
+## 2026-08-07 Skill Invocation Trace Cards
+
+The v2 Web conversation now keeps one collapsible, default-closed card for every persisted Skill Run.
+The card remains in the conversation after completion, failure, cancellation, or clarification and
+is reconstructed from the same `ConversationRun` after refresh. Expanded details show the safe
+`agent-run-sse-v2` activity chain, pinned Skill identity, execution status/model/actual usage, and
+the final answer or server-authored clarification. Raw prompts, Tool payloads, document excerpts,
+and internal budgets remain excluded. This is a Web presentation change only; the existing Run,
+Worker, QA Application Port, and SSE persistence contracts are reused.
+
 ## 2026-08-06 Assistant Conversation Evolution Step 1
 
 按 `agent-conversation-evolution-plan.md` 的 Step 1，新增了共享 `ConversationRun` 父身份和 API v2
@@ -165,7 +175,7 @@ Step 4 验证为 provisional，未运行 formal retrieval/answer/Skill holdout�
 | --- | --- | --- | --- |
 | 阶段 3 | 工程 Step 0-10 已完成；v1 development 复核已执行 | 仍未通过，未冻结，未运行 holdout | [ADR-010](adr/010-stage-3-termination-and-evaluation-boundary.md)；[v1 development 记录](stage-3-reopen-development-v1.md)：v1 修复标注但未 materially improve coverage/representativeness |
 | 阶段 4 | QA Domain/Application、PostgreSQL、Worker、SSE、API、Web、Citation、反馈提交与反馈审核生命周期已实现 | 工程实现完成，质量 provisional | [stage-4-acceptance.md](stage-4-acceptance.md)：Playwright、真实回答质量、正式默认配置冻结和 answer holdout 未完成 |
-| 阶段 5 | Runtime/Registry、active pointer、`knowledge_qa`、知识整理 Skill、审批/派生知识和 Skill 清理已实现 | 工程实现完成，质量 provisional | [stage-5-acceptance.md](stage-5-acceptance.md)：正式 Eval 和浏览器门禁未完成 |
+| 阶段 5 | Runtime/Registry、active pointer、`knowledge_agent`、知识整理 Skill、审批/派生知识和 Skill 清理已实现 | 工程实现完成，质量 provisional | [stage-5-acceptance.md](stage-5-acceptance.md)：正式 Eval 和浏览器门禁未完成 |
 
 本看板不批准任何正式 holdout，不改变 `retrieval-v1.yaml`、`qa-v1.yaml` 或现有 Skill 的状态，
 也不改变阶段 0 的 `internal_team_only` 分发边界。
@@ -211,7 +221,7 @@ lint、typecheck、Vitest 27 项、production build，以及隔离 Web 首页、
 | --- | --- | --- | --- | --- | --- |
 | 阶段 3 检索 | `retrieval-v1.yaml` + dataset `knowledge-qa-v0`；另有 `retrieval-v1-knowledge-qa-v1.yaml` + dataset `knowledge-qa-v1` | v1 schema/locator/hash 校验和 GPU development 消融已通过；两者仍 `provisional`，formal runs disabled；正式门未通过但满足 ADR-011 continuation gate | 可在 v1 上继续阶段 4/5 provisional 工程；正式线仍需新 dataset/config、代表性覆盖、claim-aware evaluator、development 达标、配置 hash 冻结后才可一次性运行 retrieval holdout | 仅使用 manifest 允许来源；默认本地；私有语料不得外发 | 待认领 |
 | 阶段 4 QA 评测 | `qa-continuation-v1.yaml` + `qa-profile-continuation-v1.yaml`；dataset `knowledge-qa-v0`；prompt `grounded-qa-v1-provisional` | provisional continuation 配置已 pin `retrieval-v1-knowledge-qa-v1`，validate-only 和受影响单测通过；正式配置未冻结 | 在 continuation gate 下继续 QA/E2E 工程；正式线仍需代表性 QA dataset、真实模型 development、answer config hash 和一次性 holdout | 题目、回答、引用原文和 Provider 响应不得写日志/报告；外部 Chat 需显式策略和同意 | 待认领 |
-| 阶段 5 Skill 评测 | active `knowledge_qa 0.1.0`；`knowledge_agent 0.2.0`（保留 `0.1.0` 旧包）；`summarize_document 0.1.0`、`compare_sources 0.1.0`、`create_review_cards 0.1.0` | 工程实现完成、质量 provisional；整理 Skill 已支持预览/审批/派生写入，正式 Eval 未关闭 | 为每个 Skill 固定 workflow/manifest/prompt/schema/eval 版本和摘要；现有 Runtime 恢复、审批、派生写入、回滚/清理引用检查已实现，之后再做正式 Skill Eval | 受信根加载；运行固定 Skill identity；派生写入前必须持久审批，所有输入继承来源敏感度 | 待认领 |
+| 阶段 5 Skill 评测 | 新知识入口 `knowledge_agent 0.3.0`（保留 0.1/0.2 旧包）；`knowledge_qa` 仅历史 Run 恢复；`summarize_document 0.1.0`、`compare_sources 0.1.0`、`create_review_cards 0.1.0` | 工程实现完成、质量 provisional；整理 Skill 已支持预览/审批/派生写入，正式 Eval 未关闭 | 为每个 Skill 固定 workflow/manifest/prompt/schema/eval 版本和摘要；现有 Runtime 恢复、审批、派生写入、回滚/清理引用检查已实现，之后再做正式 Skill Eval | 受信根加载；运行固定 Skill identity；派生写入前必须持久审批，所有输入继承来源敏感度 | 待认领 |
 
 ### 2.1 版本冻结顺序
 

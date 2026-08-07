@@ -50,8 +50,8 @@ from infrastructure.parsers import MarkdownParser, PdfParser
 from infrastructure.qa import PostgresCitationTargetPort
 from infrastructure.qa_execution import (
     assistant_skill_registry,
-    knowledge_qa_registry,
     qa_execution_versions,
+    qa_skill_registry,
 )
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
 from infrastructure.runtime_approval import PostgresApprovalPort, PostgresDerivedKnowledgeStore
@@ -115,6 +115,16 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
+def _active_skill_versions() -> dict[str, str]:
+    """Return the Skills that may receive new durable activations."""
+    return {
+        "knowledge_agent": settings.knowledge_agent_skill_version,
+        "summarize_document": "0.1.0",
+        "compare_sources": "0.1.0",
+        "create_review_cards": "0.1.0",
+    }
+
+
 def create_app(
     model_gateway: ModelGateway | None = None,
     *,
@@ -161,26 +171,32 @@ def create_app(
             cast(ConversationRunRepository, qa_repository)
             if all(hasattr(qa_repository, method) for method in parent_methods)
             else PostgresConversationRunRepository(database)
-        )
+    )
     assistant_turn_service = ConversationRunService(
         conversations=cast(ConversationReader, qa_repository),
         runs=conversation_run_repository,
     )
     assistant_metrics = AssistantMetrics()
-    skill_registry = knowledge_qa_registry()
+    skill_registry = qa_skill_registry()
+    active_skill_versions = _active_skill_versions()
     activation_store = skill_activation_store or PostgresSkillActivationStore(database)
     skill_lifecycle = SkillLifecycleService(
         registry=skill_registry,
         store=activation_store,
-        defaults={
-            "knowledge_qa": settings.knowledge_qa_skill_version,
-            "summarize_document": "0.1.0",
-            "compare_sources": "0.1.0",
-            "create_review_cards": "0.1.0",
-            "knowledge_agent": settings.knowledge_agent_skill_version,
-        },
+        defaults=active_skill_versions,
     )
-    skill_catalog = skill_catalog or FileSystemSkillCatalog(skill_registry)
+    skill_catalog = skill_catalog or FileSystemSkillCatalog(
+        skill_registry,
+        include_manifest_v2=True,
+        visible_names=frozenset(
+            {
+                "knowledge_agent",
+                "summarize_document",
+                "compare_sources",
+                "create_review_cards",
+            }
+        ),
+    )
     assistant_catalog = FileSystemSkillCatalog(assistant_skill_registry(), include_manifest_v2=True)
     qa_event_log = qa_event_store or PostgresQAEventStore(database)
     if assistant_event_store is not None:
@@ -260,8 +276,8 @@ def create_app(
         database.instrument()
         try:
             if enable_qa_execution:
-                for installed_skill in skill_registry.names():
-                    await skill_lifecycle.current(installed_skill)
+                for active_skill in active_skill_versions:
+                    await skill_lifecycle.current(active_skill)
                 await qa_runtime.recover()
                 await assistant_runtime.recover()
             yield

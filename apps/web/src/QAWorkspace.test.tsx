@@ -24,6 +24,12 @@ function response(body: unknown, status = 200): Response {
   })
 }
 
+function eventStream(events: unknown[]): Response {
+  return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''), {
+    headers: { 'Content-Type': 'text/event-stream' },
+  })
+}
+
 function assistantRun(overrides: Record<string, unknown> = {}) {
   return {
     run_id: 'run-1',
@@ -169,6 +175,60 @@ describe('assistant conversation workspace', () => {
     expect(await screen.findByText('One grounded answer.')).toBeInTheDocument()
     expect(screen.getAllByText('One grounded answer.')).toHaveLength(1)
     expect(screen.getByText('Question.').closest('.chat-message-group')).toHaveClass('chat-message-group-user')
+  })
+
+  it('keeps a collapsed Skill invocation card with its persisted activity and final answer', async () => {
+    const completed = assistantRun({
+      run_kind: 'skill',
+      selection: { source: 'auto', skill: { name: 'knowledge_agent', version: '0.2.0', content_sha256: 'a'.repeat(64) } },
+      assistant_message: { message_id: 'assistant-1', content: 'Architecture answer.' },
+    })
+    const fetchMock = baseFetch({
+      conversations: [{
+        ...conversation,
+        messages: [
+          { message_id: 'message-1', role: 'user', content: 'Explain the architecture.', run_id: null, created_at: '2026-08-06T10:00:00Z' },
+          { message_id: 'assistant-1', role: 'assistant', content: 'Architecture answer.', run_id: 'run-1', created_at: '2026-08-06T10:01:00Z' },
+        ],
+        runs: [],
+      }],
+    })
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
+        return Promise.resolve(response({ conversations: [{
+          ...conversation,
+          messages: [
+            { message_id: 'message-1', role: 'user', content: 'Explain the architecture.', run_id: null, created_at: '2026-08-06T10:00:00Z' },
+            { message_id: 'assistant-1', role: 'assistant', content: 'Architecture answer.', run_id: 'run-1', created_at: '2026-08-06T10:01:00Z' },
+          ],
+          runs: [],
+        }] }))
+      }
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [completed] }))
+      if (url.endsWith('/api/v2/runs/run-1/events')) return Promise.resolve(eventStream([
+        { schema_version: 'agent-run-sse-v2', event_id: 'event-1', run_id: 'run-1', sequence: 1, occurred_at: '2026-08-06T10:00:01Z', type: 'routing', payload: { status: 'running', action: 'invoke_skill' } },
+        { schema_version: 'agent-run-sse-v2', event_id: 'event-2', run_id: 'run-1', sequence: 2, occurred_at: '2026-08-06T10:00:02Z', type: 'skill_started', payload: { status: 'running', skill: 'knowledge_agent' } },
+        { schema_version: 'agent-run-sse-v2', event_id: 'event-3', run_id: 'run-1', sequence: 3, occurred_at: '2026-08-06T10:00:03Z', type: 'completed', payload: { status: 'completed', action: 'invoke_skill' } },
+      ]))
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderWorkspace()
+
+    const title = await screen.findByText('Skill 调用 · knowledge_agent')
+    const card = title.closest('details')
+    if (!card) throw new Error('Skill invocation card not rendered')
+    expect(card).not.toHaveAttribute('open')
+
+    fireEvent.click(title)
+
+    expect(card).toHaveAttribute('open')
+    expect(await screen.findByText('Agent 已选择调用此 Skill')).toBeInTheDocument()
+    expect(screen.getByText('开始执行 knowledge_agent')).toBeInTheDocument()
+    expect(screen.getByText('调用已完成')).toBeInTheDocument()
+    expect(screen.getByText('Architecture answer.')).toBeInTheDocument()
   })
 
   it('uses the refreshed API Run instead of an optimistic created snapshot', async () => {

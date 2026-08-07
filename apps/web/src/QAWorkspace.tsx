@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
+  Bot,
   BookOpenText,
   Check,
+  ChevronDown,
   CircleHelp,
   FileText,
   LoaderCircle,
@@ -20,6 +22,7 @@ import {
   createConversation,
   fetchAssistantConversationRuns,
   fetchAssistantCommands,
+  fetchAssistantRunEvents,
   fetchCitationExcerpt,
   fetchConversationHistory,
   fetchRun,
@@ -31,6 +34,7 @@ import {
   type AssistantCommand,
   type AssistantCommandResult,
   type AssistantRun,
+  type AssistantRunEvent,
   type ConversationHistoryItem,
 } from './qa'
 import { assistantDefaultApiMode, type AssistantApiMode } from './assistantRelease'
@@ -74,6 +78,133 @@ function citationKey(sourceId: string, documentId: string): string {
 
 function isGroundedRun(run: AssistantRun): boolean {
   return run.run_kind === 'grounded_qa' || run.run_kind === 'skill'
+}
+
+function isSkillInvocation(run: AssistantRun): boolean {
+  return run.selection.skill !== null
+}
+
+function selectionSourceLabel(source: AssistantRun['selection']['source']): string {
+  const labels: Record<AssistantRun['selection']['source'], string> = {
+    auto: 'Agent 自动路由',
+    command: '显式指令',
+    none: '兼容入口',
+  }
+  return labels[source]
+}
+
+function eventLabel(event: AssistantRunEvent, skillName: string): string {
+  const action = typeof event.payload.action === 'string' ? event.payload.action : null
+  const phase = typeof event.payload.phase === 'string' ? event.payload.phase : null
+  switch (event.type) {
+    case 'accepted':
+      return '已接收调用请求'
+    case 'routing':
+      return action === 'invoke_skill' ? 'Agent 已选择调用此 Skill' : 'Agent 已完成路由'
+    case 'skill_started':
+      return `开始执行 ${skillName}`
+    case 'phase':
+      return phase ? `正在执行 ${phase}` : '正在执行任务阶段'
+    case 'clarification':
+      return '等待补充资源信息'
+    case 'completed':
+      return '调用已完成'
+    case 'failed':
+      return '调用失败'
+    case 'cancelled':
+      return '调用已取消'
+  }
+}
+
+type SkillRunCardProps = {
+  run: AssistantRun
+  answer: string | null
+  limitations: string[]
+  clarificationPending: boolean
+  onSelectClarification: (candidateId: string) => void
+}
+
+function SkillRunCard({
+  run,
+  answer,
+  limitations,
+  clarificationPending,
+  onSelectClarification,
+}: SkillRunCardProps) {
+  const skill = run.selection.skill
+  const activityQuery = useQuery({
+    queryKey: ['assistant-run-events', run.run_id],
+    queryFn: ({ signal }) => fetchAssistantRunEvents(run.run_id, signal),
+    retry: false,
+    enabled: skill !== null,
+    refetchInterval: activeStatuses.has(run.status) ? 2_000 : false,
+  })
+  if (!skill) return null
+  const activity = activityQuery.data ?? []
+
+  return (
+    <details className="chat-skill-run" data-status={run.status}>
+      <summary>
+        <span className="chat-skill-run-title">
+          <Bot size={17} aria-hidden="true" />
+          <span><strong>Skill 调用 · {skill.name}</strong><small>{selectionSourceLabel(run.selection.source)} · {statusLabel(run.status)}</small></span>
+        </span>
+        <ChevronDown size={16} aria-hidden="true" />
+      </summary>
+      <div className="chat-skill-run-content">
+        <section>
+          <h3>调用链</h3>
+          <ol className="chat-skill-activity">
+            <li><span>发起方式</span><strong>{selectionSourceLabel(run.selection.source)}</strong></li>
+            <li><span>固定版本</span><code>{skill.name} {skill.version}</code></li>
+            {activity.map((event) => <li key={event.event_id}><span>步骤 {event.sequence}</span><strong>{eventLabel(event, skill.name)}</strong></li>)}
+            {activity.length === 0 && <li><span>执行状态</span><strong>{statusLabel(run.status)}</strong></li>}
+          </ol>
+        </section>
+        <section>
+          <h3>执行信息</h3>
+          <dl className="chat-skill-run-metadata">
+            <div><dt>状态</dt><dd>{statusLabel(run.status)}</dd></div>
+            <div><dt>模型</dt><dd>{run.model_identity}</dd></div>
+            <div><dt>输入 Token</dt><dd>{run.usage.input_tokens.toLocaleString('zh-CN')}</dd></div>
+            <div><dt>输出 Token</dt><dd>{run.usage.output_tokens.toLocaleString('zh-CN')}</dd></div>
+            <div><dt>模型耗时</dt><dd>{Math.round(run.usage.model_latency_ms).toLocaleString('zh-CN')} ms</dd></div>
+          </dl>
+        </section>
+        {answer && (
+          <section>
+            <h3>回答</h3>
+            <div className="qa-answer">
+              <p>{answer}</p>
+              {limitations.map((limitation) => <small key={limitation}>{limitation}</small>)}
+            </div>
+          </section>
+        )}
+        {run.clarification && (
+          <section className="chat-clarification">
+            <h3>需要选择</h3>
+            <p>{run.clarification.message}</p>
+            {run.clarification.resource_candidates.length > 0 && (
+              <div role="group" aria-label="资源选择">
+                {run.clarification.resource_candidates.map((candidate) => (
+                  <button
+                    key={candidate.candidate_id}
+                    type="button"
+                    disabled={clarificationPending}
+                    onClick={() => onSelectClarification(candidate.candidate_id)}
+                  >
+                    <FileText size={16} aria-hidden="true" />
+                    <span><strong>{candidate.label}</strong>{candidate.source_label && <small>{candidate.source_label}</small>}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+        {run.error_code && <code className="chat-skill-run-error">{run.error_code}</code>}
+      </div>
+    </details>
+  )
 }
 
 function commandNameMatches(command: AssistantCommand, needle: string): boolean {
@@ -264,7 +395,7 @@ export function QAWorkspace({
       }
       const result = usingLegacyV1
         ? legacyQARunToAssistantRun(
-          await submitQuestion(targetConversationId, content, crypto.randomUUID()),
+          await submitQuestion(targetConversationId, content, crypto.randomUUID(), true),
         )
         : await submitAssistantTurn(targetConversationId, content, crypto.randomUUID())
       return { content, result, targetConversationId }
@@ -432,6 +563,10 @@ export function QAWorkspace({
             const run = message.role === 'user' ? runsByMessage.get(message.message_id) : undefined
             const legacyRun = run ? legacyRunsById.get(run.run_id) : undefined
             const qaRun = run?.run_id === currentRun?.run_id ? currentQARunQuery.data ?? legacyRun : legacyRun
+            const answer = qaRun?.result
+              ? qaRun.result.text ?? qaRun.result.message ?? null
+              : run?.assistant_message?.content ?? null
+            const limitations = qaRun?.result?.limitations ?? []
             return (
               <div key={message.message_id} className={`chat-message-group chat-message-group-${message.role}`}>
                 <div
@@ -440,39 +575,44 @@ export function QAWorkspace({
                   <p>{message.content}</p>
                 </div>
                 {run && (
-                  <article className="chat-run" data-status={run.status}>
-                    <div className="qa-run-heading">
-                      {activeStatuses.has(run.status) ? <LoaderCircle className="spin" size={17} aria-hidden="true" /> : run.status === 'failed' || run.status === 'timed_out' ? <AlertCircle size={17} aria-hidden="true" /> : <Check size={17} aria-hidden="true" />}
-                      <strong>{statusLabel(run.status)}</strong>
-                    </div>
-                    {qaRun?.result ? (
-                      <div className="qa-answer">
-                        <p>{qaRun.result.text ?? qaRun.result.message}</p>
-                        {qaRun.result.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}
+                  isSkillInvocation(run) ? (
+                    <SkillRunCard
+                      run={run}
+                      answer={answer}
+                      limitations={limitations}
+                      clarificationPending={clarificationMutation.isPending}
+                      onSelectClarification={(candidateId) => clarificationMutation.mutate({ run, candidateId })}
+                    />
+                  ) : (
+                    <article className="chat-run" data-status={run.status}>
+                      <div className="qa-run-heading">
+                        {activeStatuses.has(run.status) ? <LoaderCircle className="spin" size={17} aria-hidden="true" /> : run.status === 'failed' || run.status === 'timed_out' ? <AlertCircle size={17} aria-hidden="true" /> : <Check size={17} aria-hidden="true" />}
+                        <strong>{statusLabel(run.status)}</strong>
                       </div>
-                    ) : run.assistant_message ? <div className="qa-answer"><p>{run.assistant_message.content}</p></div> : null}
-                    {run.clarification && (
-                      <div className="chat-clarification">
-                        <p>{run.clarification.message}</p>
-                        {run.clarification.resource_candidates.length > 0 && (
-                          <div role="group" aria-label="资源选择">
-                            {run.clarification.resource_candidates.map((candidate) => (
-                              <button
-                                key={candidate.candidate_id}
-                                type="button"
-                                disabled={clarificationMutation.isPending}
-                                onClick={() => clarificationMutation.mutate({ run, candidateId: candidate.candidate_id })}
-                              >
-                                <FileText size={16} aria-hidden="true" />
-                                <span><strong>{candidate.label}</strong>{candidate.source_label && <small>{candidate.source_label}</small>}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {run.error_code && <code>{run.error_code}</code>}
-                  </article>
+                      {answer && <div className="qa-answer"><p>{answer}</p>{limitations.map((limitation) => <small key={limitation}>{limitation}</small>)}</div>}
+                      {run.clarification && (
+                        <div className="chat-clarification">
+                          <p>{run.clarification.message}</p>
+                          {run.clarification.resource_candidates.length > 0 && (
+                            <div role="group" aria-label="资源选择">
+                              {run.clarification.resource_candidates.map((candidate) => (
+                                <button
+                                  key={candidate.candidate_id}
+                                  type="button"
+                                  disabled={clarificationMutation.isPending}
+                                  onClick={() => clarificationMutation.mutate({ run, candidateId: candidate.candidate_id })}
+                                >
+                                  <FileText size={16} aria-hidden="true" />
+                                  <span><strong>{candidate.label}</strong>{candidate.source_label && <small>{candidate.source_label}</small>}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {run.error_code && <code>{run.error_code}</code>}
+                    </article>
+                  )
                 )}
               </div>
             )

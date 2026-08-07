@@ -43,6 +43,13 @@ untrusted intent: Application code validates it, resolves natural-language resou
 Space, pins `(name, version, content_sha256)`, validates input, and applies policy before execution.
 The schema prevents model-created resource, Space, and version identifiers.
 
+`assistant-base-prompt-v3` is the current router prompt. The active catalog exposes only
+`knowledge_agent 0.3.0` for every new knowledge request, including focused evidence questions,
+architecture, component/data-flow, design-rationale, and multi-document synthesis. The
+`knowledge_qa` packages remain installed only to validate and recover historical fixed Runs; they
+cannot be selected by a new Assistant or v1 Run request. Existing Runs retain their pinned v2 prompt
+identity for recovery and audit.
+
 Direct responses are a distinct terminal result and never include fabricated grounded citations.
 Clarifications use the server-authored `assistant-clarification-v1` schema. Resource candidates
 contain only safe display metadata. A candidate selection derives a confirmation idempotency key

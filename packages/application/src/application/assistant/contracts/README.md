@@ -7,6 +7,8 @@ are intentionally separate from individual Skill manifests and from the bounded 
 | Artifact | Purpose |
 | --- | --- |
 | `base-system-prompt-v1.txt` | Product-level routing and response boundary. |
+| `base-system-prompt-v2.txt` | Historical router prompt retained for persisted v2 Runs. |
+| `base-system-prompt-v3.txt` | Current router prompt; prefers `knowledge_agent` for architecture and multi-document synthesis. |
 | `router-decision-v1.schema.json` | Strict model intent for `respond`, `clarify`, or `invoke_skill`. |
 | `command-catalog-v1.schema.json` | Safe metadata returned by the versioned command catalog. |
 | `clarification-v1.schema.json` | Server-authored clarification and safe resource candidates. |
@@ -17,7 +19,7 @@ identity, expand a Space, or bypass policy. The Application layer validates ever
 resolves resources in the current Space, pins an active Skill version, and dispatches any long
 work through the existing Worker boundary.
 
-Changing an artifact changes its SHA-256 in `manifest.json` and requires a new contract version.
+The frozen v1 artifacts remain pinned in `manifest.json`. Router prompt revisions are separately
+versioned in each ConversationRun's `core_prompt_version`; historical prompt files remain readable.
 The v1 contracts are frozen for the staged implementation described in
 `docs/agent-conversation-evolution-plan.md`.
-

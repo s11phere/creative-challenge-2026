@@ -14,8 +14,8 @@ from infrastructure.database import Database
 from infrastructure.qa_execution import (
     GroundedQAExecutor,
     StructuredFakeGateway,
-    knowledge_qa_registry,
     qa_execution_versions,
+    qa_skill_registry,
 )
 from model_gateway import ChatMessage, ChatRequest, ChatRole, FakeModelGateway
 
@@ -84,8 +84,8 @@ async def test_worker_dispatcher_enqueues_control_metadata_only() -> None:
     assert captured["event_version"] == 1
     assert len(str(captured["trace_id"])) == 32
     assert set(captured) == {"run_id", "trace_id", "event_version"}
-    assert runtime.versions.skill_name == "knowledge_qa"
-    assert runtime.versions.skill_version == "0.1.0"
+    assert runtime.versions.skill_name == "knowledge_agent"
+    assert runtime.versions.skill_version == "0.3.0"
     assert runtime.versions.skill_content_sha256 is not None
     assert len(runtime.versions.skill_content_sha256) == 64
 
@@ -163,7 +163,7 @@ async def test_worker_rejects_a_run_whose_fixed_skill_digest_changed() -> None:
         gateway=FakeModelGateway(),
         repository=repository,
         events=Events(),  # type: ignore[arg-type]
-        skill_registry=knowledge_qa_registry(),
+        skill_registry=qa_skill_registry(),
     )
 
     resolved = await executor.execute(run_id, trace_id="1" * 32)

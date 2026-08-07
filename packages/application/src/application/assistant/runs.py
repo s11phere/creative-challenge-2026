@@ -79,7 +79,7 @@ class ConversationRunService:
             idempotency_key=submission.idempotency_key,
             selection_source=submission.selection_source,
             run_kind=ConversationRunKind.ASSISTANT_TURN,
-            core_prompt_version="assistant-base-prompt-v2",
+            core_prompt_version="assistant-base-prompt-v3",
             created_at=now,
             updated_at=now,
         )

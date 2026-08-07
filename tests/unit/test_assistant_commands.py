@@ -42,10 +42,10 @@ class FakeSkillCatalog:
         return ()
 
 
-def skill(*, name: str = "knowledge_qa", command: str = "ask") -> SkillInvocationView:
+def skill(*, name: str = "knowledge_agent", command: str = "ask") -> SkillInvocationView:
     return SkillInvocationView(
         name=name,
-        version="0.2.0",
+        version="0.3.0",
         content_sha256="a" * 64,
         command=command,
         aliases=("qa",),
@@ -106,7 +106,7 @@ async def test_explicit_skill_dispatch_reuses_turn_port_and_command_selection() 
             arguments: dict[str, object],
             selection_source: ConversationRunSelectionSource,
         ) -> ConversationRun:
-            assert skill.name == "knowledge_qa"
+            assert skill.name == "knowledge_agent"
             assert arguments == {"question": "Synthetic question."}
             assert selection_source is ConversationRunSelectionSource.COMMAND
             return run
@@ -200,7 +200,7 @@ async def test_skill_projection_uses_only_the_current_question_for_qa_retrieval(
     registry = assistant_skill_registry()
     catalog = FileSystemSkillCatalog(registry, include_manifest_v2=True)
     selected = next(
-        item for item in catalog.list_active_invocations() if item.name == "knowledge_qa"
+        item for item in catalog.list_active_invocations() if item.name == "knowledge_agent"
     )
     projected: dict[str, object] = {}
 
@@ -250,3 +250,16 @@ async def test_skill_projection_uses_only_the_current_question_for_qa_retrieval(
 
     assert projected["standalone_request"] == "Current question?"
     assert "Previous answer" not in str(projected["standalone_request"])
+
+
+def test_active_assistant_catalog_exposes_only_knowledge_agent_for_knowledge_requests() -> None:
+    registry = assistant_skill_registry()
+    catalog = FileSystemSkillCatalog(registry, include_manifest_v2=True)
+
+    entries = catalog.list_active_invocations()
+    knowledge_entries = [entry for entry in entries if entry.command == "ask"]
+
+    assert [(entry.name, entry.version, entry.aliases) for entry in knowledge_entries] == [
+        ("knowledge_agent", "0.3.0", ("qa",))
+    ]
+    assert all(entry.name != "knowledge_qa" for entry in entries)

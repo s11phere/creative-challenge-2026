@@ -46,10 +46,12 @@ class DecisionGateway(FakeModelGateway):
         )
 
 
-def test_v2_router_prompt_includes_raw_json_examples() -> None:
-    from application.assistant.agent import _BASE_PROMPT_V2
+def test_v3_router_prompt_includes_skill_routing_guidance_and_raw_json_examples() -> None:
+    from application.assistant.agent import _BASE_PROMPT_V3
 
-    assert "Return raw JSON only" in _BASE_PROMPT_V2
+    assert "sole active knowledge-retrieval Skill" in _BASE_PROMPT_V3
+    assert "Do not select knowledge_qa" in _BASE_PROMPT_V3
+    assert "Return raw JSON only" in _BASE_PROMPT_V3
     parser = AssistantRouterDecisionParser()
     examples = (
         {
@@ -65,13 +67,18 @@ def test_v2_router_prompt_includes_raw_json_examples() -> None:
         {
             "schema_version": "assistant-router-decision-v1",
             "action": "invoke_skill",
-            "skill_name": "knowledge_qa",
-            "arguments": {"question": "What does the current workspace say about this?"},
+            "skill_name": "knowledge_agent",
+            "arguments": {
+                "question": (
+                    "Explain the architecture, component relationships, and data flow "
+                    "in the current workspace."
+                )
+            },
         },
     )
     for example in examples:
         decision = json.dumps(example, separators=(",", ":"))
-        assert decision in _BASE_PROMPT_V2
+        assert decision in _BASE_PROMPT_V3
         parsed = parser.parse(decision)
         assert parsed.action in {"respond", "clarify", "invoke_skill"}
 
@@ -203,7 +210,7 @@ async def test_clarify_is_server_authored_and_does_not_create_fake_assistant_mes
                 {
                     "schema_version": "assistant-router-decision-v1",
                     "action": "invoke_skill",
-                    "skill_name": "knowledge_qa",
+                    "skill_name": "not_an_active_skill",
                     "arguments": {"question": "Synthetic"},
                 }
             )

@@ -1222,7 +1222,7 @@ def _same_qa_parent_identity(existing: ConversationRun, run: QARunRecord) -> boo
             ConversationRunSelectionSource.AUTO,
             ConversationRunSelectionSource.COMMAND,
         }
-        and existing.core_prompt_version == "assistant-base-prompt-v2"
+        and existing.core_prompt_version in {"assistant-base-prompt-v2", "assistant-base-prompt-v3"}
     )
 
 
