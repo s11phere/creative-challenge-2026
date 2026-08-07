@@ -17,6 +17,11 @@ const commands = [
   { name: 'summarize', aliases: ['summary'], kind: 'skill', description: 'Summarize one document', argument_hint: '<document>', input_mode: 'document' },
 ]
 
+const commandsWithAsk = [
+  ...commands,
+  { name: 'ask', aliases: [], kind: 'skill', description: 'Answer using the workspace knowledge base', argument_hint: '<question>', input_mode: 'question' },
+]
+
 function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -134,6 +139,100 @@ describe('assistant conversation workspace', () => {
     )
     expect(screen.queryByText('你')).not.toBeInTheDocument()
     expect(screen.queryByText('助手')).not.toBeInTheDocument()
+  })
+
+  it('submits a Skill command with its full original content when Enter is pressed', async () => {
+    const submittedBodies: unknown[] = []
+    const fetchMock = baseFetch()
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands: commandsWithAsk }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
+        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [], runs: [] }] }))
+      }
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [] }))
+      if (url.endsWith('/api/v2/conversations/conversation-1/turns')) {
+        submittedBodies.push(JSON.parse(String(init?.body)))
+        return Promise.resolve(response({
+          command: 'ask',
+          status: 'completed',
+          content: null,
+          conversation_id: 'conversation-1',
+          run: assistantRun({
+            run_kind: 'skill',
+            selection: { source: 'command', skill: { name: 'knowledge_agent', version: '0.3.0', content_sha256: 'a'.repeat(64) } },
+          }),
+          commands: [],
+        }, 202))
+      }
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'ask-idempotency-1' })
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox', { name: '消息' })
+    fireEvent.change(composer, { target: { value: '/ask Explain the architecture.' } })
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' })
+
+    await waitFor(() => expect(submittedBodies).toEqual([{
+      content: '/ask Explain the architecture.',
+      idempotency_key: 'ask-idempotency-1',
+    }]))
+    const displayedCommand = await screen.findByText('/ask')
+    expect(displayedCommand).toHaveClass('chat-command-token')
+    expect(displayedCommand.parentElement).toHaveTextContent('/ask Explain the architecture.')
+    expect(document.querySelector('.chat-command-notice')).not.toBeInTheDocument()
+  })
+
+  it('highlights only a valid command prefix in the composer', async () => {
+    vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands: commandsWithAsk }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) return Promise.resolve(response({ conversations: [{ ...conversation, messages: [], runs: [] }] }))
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [] }))
+      return Promise.resolve(response({}))
+    })
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox', { name: '消息' })
+    fireEvent.change(composer, { target: { value: '/askx question' } })
+    expect(document.querySelector('.chat-composer-highlight .chat-command-token')).not.toBeInTheDocument()
+
+    fireEvent.change(composer, { target: { value: '/ask question' } })
+    expect(document.querySelector('.chat-composer-highlight .chat-command-token')).toHaveTextContent('/ask')
+  })
+
+  it('renders Markdown and LaTeX in an Assistant answer', async () => {
+    const markdown = '# Answer\n\n- first item\n\n| key | value |\n| --- | --- |\n| x | 1 |\n\n```ts\nconst x = 1\n```\n\nInline $x^2$. '
+    const completed = assistantRun({ assistant_message: { message_id: 'assistant-1', content: markdown } })
+    const fetchMock = baseFetch({
+      conversations: [{
+        ...conversation,
+        messages: [
+          { message_id: 'message-1', role: 'user', content: 'Show formatted output.', run_id: null, created_at: '2026-08-06T10:00:00Z' },
+          { message_id: 'assistant-1', role: 'assistant', content: markdown, run_id: 'run-1', created_at: '2026-08-06T10:01:00Z' },
+        ],
+        runs: [],
+      }],
+    })
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) return Promise.resolve(response({ conversations: [{ ...conversation, messages: [{ message_id: 'message-1', role: 'user', content: 'Show formatted output.', run_id: null, created_at: '2026-08-06T10:00:00Z' }, { message_id: 'assistant-1', role: 'assistant', content: markdown, run_id: 'run-1', created_at: '2026-08-06T10:01:00Z' }], runs: [] }] }))
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [completed] }))
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderWorkspace()
+
+    expect(await screen.findByText('Answer')).toBeInTheDocument()
+    expect(document.querySelector('.qa-markdown h1')).toHaveTextContent('Answer')
+    expect(document.querySelector('.qa-markdown li')).toHaveTextContent('first item')
+    expect(document.querySelector('.qa-markdown table')).toBeInTheDocument()
+    expect(document.querySelector('.qa-markdown pre code')).toHaveTextContent('const x = 1')
+    expect(document.querySelector('.katex')).toBeInTheDocument()
   })
 
   it('renders a persisted Run answer only below its user message', async () => {

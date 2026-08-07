@@ -15,7 +15,12 @@ import {
   Square,
   X,
 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import rehypeKatex from 'rehype-katex'
+import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import 'katex/dist/katex.min.css'
 import {
   cancelRun,
   cancelAssistantRun,
@@ -177,8 +182,10 @@ function SkillRunCard({
           <section>
             <h3>Skill 结果</h3>
             <div className="qa-answer">
-              <p>{result.text ?? result.message}</p>
-              {result.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}
+              <RenderedAssistantAnswer
+                content={result.text ?? result.message ?? ''}
+                limitations={result.limitations}
+              />
             </div>
           </section>
         )}
@@ -234,6 +241,57 @@ function commandDescriptionMatches(command: AssistantCommand, needle: string): b
   return Boolean(normalized) && command.description.toLocaleLowerCase().includes(normalized)
 }
 
+type CommandPrefix = {
+  leading: string
+  command: string
+  trailing: string
+}
+
+function validCommandPrefix(value: string, commands: AssistantCommand[]): CommandPrefix | null {
+  const match = /^(\s*)(\/[^\s/]+)([\s\S]*)$/.exec(value)
+  if (!match) return null
+  const token = match[2].slice(1).toLocaleLowerCase()
+  const descriptor = commands.find((command) =>
+    [command.name, ...command.aliases].some((name) => name.toLocaleLowerCase() === token),
+  )
+  return descriptor
+    ? { leading: match[1], command: match[2], trailing: match[3] }
+    : null
+}
+
+function CommandText({ value, commands }: { value: string; commands: AssistantCommand[] }) {
+  const prefix = validCommandPrefix(value, commands)
+  if (!prefix) return <>{value}</>
+  return (
+    <>
+      <span>{prefix.leading}</span>
+      <span className="chat-command-token">{prefix.command}</span>
+      <span>{prefix.trailing}</span>
+    </>
+  )
+}
+
+function RenderedAssistantAnswer({
+  content,
+  limitations = [],
+}: {
+  content: string
+  limitations?: string[]
+}) {
+  return (
+    <div className="qa-markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        skipHtml
+      >
+        {content}
+      </ReactMarkdown>
+      {limitations.map((limitation) => <small key={limitation}>{limitation}</small>)}
+    </div>
+  )
+}
+
 export function QAWorkspace({
   selectedConversationId,
   onConversationSelected,
@@ -250,6 +308,7 @@ export function QAWorkspace({
   const [commandMenuDismissed, setCommandMenuDismissed] = useState(false)
   const [commandNotice, setCommandNotice] = useState<CommandNotice | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const commandHighlightRef = useRef<HTMLDivElement>(null)
   const isComposingRef = useRef(false)
   const excerptRef = useRef<HTMLDivElement>(null)
   const historyInitializedRef = useRef(false)
@@ -364,8 +423,23 @@ export function QAWorkspace({
       ? nameMatches
       : commands.filter((command) => commandDescriptionMatches(command, commandToken))
   }, [commandToken, commandsQuery.data])
-  const commandMenuOpen = !usingLegacyV1 && trimmed.startsWith('/') && !trimmed.startsWith('//') && !commandMenuDismissed
+  const commandHasArguments = /\s/.test(trimmed.slice(1))
+  const commandMenuOpen = !usingLegacyV1
+    && trimmed.startsWith('/')
+    && !trimmed.startsWith('//')
+    && !commandHasArguments
+    && !commandMenuDismissed
   const activeCommand = commandOptions[commandIndex]
+  const commandPrefix = useMemo(
+    () => validCommandPrefix(draft, commandsQuery.data ?? []),
+    [commandsQuery.data, draft],
+  )
+
+  useEffect(() => {
+    if (!commandHighlightRef.current || !textareaRef.current) return
+    commandHighlightRef.current.scrollTop = textareaRef.current.scrollTop
+    commandHighlightRef.current.scrollLeft = textareaRef.current.scrollLeft
+  }, [commandPrefix, draft])
 
   useEffect(() => {
     if (commandIndex >= commandOptions.length) setCommandIndex(0)
@@ -453,13 +527,25 @@ export function QAWorkspace({
         setConversationId(targetConversationId)
         onConversationSelected?.(targetConversationId)
       } else {
-        setCommandNotice({ command: result.command, content: result.content, commands: result.commands })
+        // Skill commands already have a durable Run card; base-command notices are
+        // useful for commands such as /help and /skills, but would duplicate a Skill turn.
+        setCommandNotice(result.run ? null : { command: result.command, content: result.content, commands: result.commands })
         const nextConversationId = result.conversation_id ?? targetConversationId
         if (result.run) {
           const run = result.run
           setLocalRuns((current) => [
             ...current.filter((item) => item.run_id !== run.run_id),
             run,
+          ])
+          setLocalMessages((current) => [
+            ...current.filter((message) => message.message_id !== run.user_message_id),
+            {
+              message_id: run.user_message_id,
+              role: 'user',
+              content,
+              run_id: null,
+              created_at: new Date().toISOString(),
+            },
           ])
           setActiveRunId(run.run_id)
         } else {
@@ -621,7 +707,9 @@ export function QAWorkspace({
                 <div
                   className={`qa-message chat-message ${message.role === 'user' ? 'qa-message-user' : 'chat-message-assistant'}`}
                 >
-                  <p>{message.content}</p>
+                  {message.role === 'user'
+                    ? <p><CommandText value={message.content} commands={commandsQuery.data ?? []} /></p>
+                    : <RenderedAssistantAnswer content={message.content} />}
                 </div>
                 {run && (
                   isSkillInvocation(run) ? (
@@ -636,7 +724,7 @@ export function QAWorkspace({
                       {answer && (
                         <article className="chat-final-answer" data-status={run.status}>
                           <div className="qa-run-heading"><Check size={17} aria-hidden="true" /><strong>最终回答</strong></div>
-                          <div className="qa-answer"><p>{answer}</p>{limitations.map((limitation) => <small key={limitation}>{limitation}</small>)}</div>
+                          <div className="qa-answer"><RenderedAssistantAnswer content={answer} limitations={limitations} /></div>
                           {isGroundedRun(run) && (
                             <button className="chat-evidence-button" type="button" onClick={() => openEvidence(run.run_id)}>
                               <Quote size={15} aria-hidden="true" />查看引用证据
@@ -651,7 +739,7 @@ export function QAWorkspace({
                         {activeStatuses.has(run.status) ? <LoaderCircle className="spin" size={17} aria-hidden="true" /> : run.status === 'failed' || run.status === 'timed_out' ? <AlertCircle size={17} aria-hidden="true" /> : <Check size={17} aria-hidden="true" />}
                         <strong>{statusLabel(run.status)}</strong>
                       </div>
-                      {answer && <div className="qa-answer"><p>{answer}</p>{limitations.map((limitation) => <small key={limitation}>{limitation}</small>)}</div>}
+                      {answer && <div className="qa-answer"><RenderedAssistantAnswer content={answer} limitations={limitations} /></div>}
                       {isGroundedRun(run) && <button className="chat-evidence-button" type="button" onClick={() => openEvidence(run.run_id)}><Quote size={15} aria-hidden="true" />查看引用证据</button>}
                       {run.clarification && (
                         <div className="chat-clarification">
@@ -685,9 +773,18 @@ export function QAWorkspace({
 
         <form className="qa-composer chat-composer" onSubmit={onSubmit}>
           <label htmlFor="qa-question">消息</label>
-          <textarea
+          <div className="chat-composer-editor">
+            {commandPrefix && (
+              <div ref={commandHighlightRef} className="chat-composer-highlight" aria-hidden="true">
+                <span>{commandPrefix.leading}</span>
+                <span className="chat-command-token">{commandPrefix.command}</span>
+                <span>{commandPrefix.trailing}</span>
+              </div>
+            )}
+            <textarea
             id="qa-question"
             ref={textareaRef}
+            className={commandPrefix ? 'chat-composer-textarea-highlighted' : undefined}
             value={draft}
             role={usingLegacyV1 ? undefined : 'combobox'}
             aria-autocomplete={usingLegacyV1 ? undefined : 'list'}
@@ -697,12 +794,18 @@ export function QAWorkspace({
             onChange={(event) => { setDraft(event.target.value); setCommandMenuDismissed(false) }}
             onCompositionStart={() => { isComposingRef.current = true }}
             onCompositionEnd={() => { isComposingRef.current = false }}
+            onScroll={(event) => {
+              if (!commandHighlightRef.current) return
+              commandHighlightRef.current.scrollTop = event.currentTarget.scrollTop
+              commandHighlightRef.current.scrollLeft = event.currentTarget.scrollLeft
+            }}
             onKeyDown={onComposerKeyDown}
             placeholder="输入消息"
             rows={3}
             maxLength={12_000}
             disabled={submitMutation.isPending}
-          />
+            />
+          </div>
           {commandMenuOpen && commandOptions.length > 0 && (
             <div className="chat-command-menu" id="assistant-command-listbox" role="listbox" aria-label="可用指令">
               {commandOptions.map((command, index) => (

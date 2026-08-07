@@ -402,7 +402,9 @@ class AssistantCommandService:
         run = await self._turns.submit(
             AssistantTurnSubmission(
                 conversation_id=conversation_id,
-                content=parsed.argument_text or parsed.content,
+                # Keep the original command in the append-only user message. The parsed
+                # argument remains the execution input passed to the Skill below.
+                content=parsed.content,
                 idempotency_key=idempotency_key,
                 selection_source=ConversationRunSelectionSource.COMMAND,
             )

@@ -1190,6 +1190,105 @@
   line-height: 1.5;
 }
 
+.qa-markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: inherit;
+  font-size: 13px;
+  line-height: 24px;
+}
+
+.qa-markdown > :first-child {
+  margin-top: 0;
+}
+
+.qa-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.qa-markdown p {
+  margin: 0 0 9px;
+  white-space: normal;
+}
+
+.qa-markdown h1,
+.qa-markdown h2,
+.qa-markdown h3,
+.qa-markdown h4 {
+  margin: 14px 0 6px;
+  color: var(--ink);
+  line-height: 1.35;
+}
+
+.qa-markdown ul,
+.qa-markdown ol {
+  margin: 6px 0 10px;
+  padding-left: 22px;
+}
+
+.qa-markdown li + li {
+  margin-top: 3px;
+}
+
+.qa-markdown blockquote {
+  margin: 8px 0;
+  padding: 3px 11px;
+  color: var(--muted);
+  border-left: 3px solid var(--border-strong);
+}
+
+.qa-markdown code {
+  padding: 1px 4px;
+  color: var(--ink-soft);
+  background: #edf2ef;
+  border-radius: 3px;
+  font: 0.92em/1.5 var(--mono);
+}
+
+.qa-markdown pre {
+  margin: 9px 0;
+  padding: 11px 12px;
+  overflow: auto;
+  color: #eaf4ef;
+  background: #18332b;
+  border-radius: 4px;
+}
+
+.qa-markdown pre code {
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font-size: 12px;
+  line-height: 19px;
+  white-space: pre;
+}
+
+.qa-markdown a {
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.qa-markdown table {
+  width: 100%;
+  margin: 9px 0;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.qa-markdown th,
+.qa-markdown td {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.qa-markdown th {
+  color: var(--ink);
+  background: #edf4f0;
+}
+
 .qa-feedback {
   display: grid;
   gap: 7px;
@@ -1982,6 +2081,41 @@
 
 .chat-composer {
   position: relative;
+}
+
+.chat-composer-editor {
+  position: relative;
+}
+
+.chat-composer-highlight {
+  position: absolute;
+  inset: 1px;
+  z-index: 0;
+  padding: 10px 12px;
+  overflow: hidden;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 21px;
+  pointer-events: none;
+}
+
+.chat-command-token {
+  color: var(--accent-strong);
+}
+
+.qa-message-user .chat-command-token {
+  color: #a6f1d2;
+}
+
+.qa-composer textarea.chat-composer-textarea-highlighted {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background: transparent;
+  caret-color: var(--ink);
 }
 
 .chat-command-menu {

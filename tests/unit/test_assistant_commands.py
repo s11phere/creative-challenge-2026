@@ -126,6 +126,9 @@ async def test_explicit_skill_dispatch_reuses_turn_port_and_command_selection() 
     )
     assert result.run is not None
     assert result.run.selection_source is ConversationRunSelectionSource.COMMAND
+    message = await repository.get_message(result.run.user_message_id)
+    assert message is not None
+    assert message.content == "/ask Synthetic question."
 
 
 @pytest.mark.asyncio
@@ -250,6 +253,23 @@ async def test_skill_projection_uses_only_the_current_question_for_qa_retrieval(
 
     assert projected["standalone_request"] == "Current question?"
     assert "Previous answer" not in str(projected["standalone_request"])
+
+    run_without_context = await ConversationRunService(
+        conversations=repository, runs=repository
+    ).submit(
+        AssistantTurnSubmission(
+            conversation_id=conversation.conversation_id,
+            content="Current question without context?",
+            idempotency_key="projection-question-without-context",
+        )
+    )
+    await invoker.invoke(
+        run_without_context,
+        skill=selected,
+        arguments={"question": "Current question without context?"},
+    )
+
+    assert projected["standalone_request"] == "Current question without context?"
 
 
 def test_active_assistant_catalog_exposes_only_knowledge_agent_for_knowledge_requests() -> None:
