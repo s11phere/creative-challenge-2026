@@ -5,6 +5,21 @@
 > 适用范围：现有 Web 对话入口、Agent Runtime、Skill Registry、QA Run/Worker/SSE 及相关公开契约  
 > 质量边界：本文只规划 provisional 工程演进，不改变 ADR-010/ADR-011，也不构成检索、回答或 Skill 的正式质量接受
 
+## 2026-08-07 Implementation Status
+
+Steps 0-8 in this plan are implemented for the current provisional engineering boundary. The v2
+conversation workspace is the default Web entry, and the server-authoritative command catalog
+supports automatic routing plus explicit slash commands. New knowledge requests use only
+`knowledge_agent 0.3.0`; `knowledge_qa` is retained for historical Run recovery and validation.
+
+The closeout includes bounded conversation context, operational metrics, exactly-once finalization,
+durable Skill invocation trace cards, mutually exclusive and closable citation display, original
+command preservation with metric-neutral prefix highlighting, and Markdown/GFM/LaTeX rendering.
+The finalizer receives the user question and the Skill result as separate inputs and publishes a
+separate Assistant message, so a Skill result is never treated as the final answer. Formal
+retrieval, answer, and Skill quality gates remain provisional under ADR-010/ADR-011; browser
+Playwright evidence is still not claimed.
+
 ## 1. 目标与非目标
 
 本次演进的目标是把当前“先手动选择 Skill，再提交问题”的知识问答工作区，改造成一个默认可直接

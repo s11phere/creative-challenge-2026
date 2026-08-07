@@ -53,9 +53,7 @@ class ConversationFinalizer:
         self._runs = runs
         self._gateway = gateway
 
-    async def execute(
-        self, run: ConversationRun, *, input: FinalizationInput
-    ) -> ConversationRun:
+    async def execute(self, run: ConversationRun, *, input: FinalizationInput) -> ConversationRun:
         if run.status in _TERMINAL_STATUSES:
             return run
         if run.cancellation_requested or run.status is ConversationRunStatus.CANCEL_REQUESTED:

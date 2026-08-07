@@ -423,9 +423,7 @@ def _token_count(value: str) -> int:
     return len(value.encode("utf-8"))
 
 
-def _is_user_visible_message(
-    message: MessageRecord, runs: Mapping[UUID, ConversationRun]
-) -> bool:
+def _is_user_visible_message(message: MessageRecord, runs: Mapping[UUID, ConversationRun]) -> bool:
     """Keep user messages and the one published assistant result per parent Run."""
     if message.role is MessageRole.USER or message.run_id is None:
         return True

@@ -171,7 +171,7 @@ def create_app(
             cast(ConversationRunRepository, qa_repository)
             if all(hasattr(qa_repository, method) for method in parent_methods)
             else PostgresConversationRunRepository(database)
-    )
+        )
     assistant_turn_service = ConversationRunService(
         conversations=cast(ConversationReader, qa_repository),
         runs=conversation_run_repository,

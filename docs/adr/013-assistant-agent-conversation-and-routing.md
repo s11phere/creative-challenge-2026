@@ -130,6 +130,12 @@ finalizer message in an expanded final-answer frame. Evidence is opened by the f
 invocation record, and one shared Run-scoped evidence panel is used so different components cannot
 open competing panels; the panel has an explicit close action.
 
+The Web also preserves the original explicit slash command in the user message and composer. A
+valid command prefix receives a metric-neutral accent rather than a font-weight change, so the
+caret and text layout remain stable. Assistant messages and both Skill/finalizer result surfaces
+render GFM Markdown and LaTeX; this is presentation only and does not expose raw prompts, Tool
+payloads, document excerpts, or internal budgets.
+
 ### Privacy and quality boundary
 
 The router sees the current request, bounded conversation context, and safe active catalog metadata,

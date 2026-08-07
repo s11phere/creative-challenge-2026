@@ -1,6 +1,6 @@
 # 阶段 5 Provisional 工程验收记录
 
-## 2026-08-04 Engineering Completion Update
+## 2026-08-07 Engineering Completion Update
 
 Runtime checkpoint persistence, approval and derived-knowledge exactly-once behavior, active Skill
 pointer CAS/rollback, reference-aware cleanup, the three knowledge-organization Skills, their Web
@@ -13,6 +13,14 @@ The Stage 5 engineering implementation is complete for the current contracts, bu
 provisional: no formal Skill evaluation or Stage 3/4 holdout result is claimed. Playwright/browser
 coverage is unavailable and is recorded as not executed.
 
+The Assistant v2 conversation closeout is included in this engineering boundary. New knowledge
+requests use `knowledge_agent 0.3.0`; `knowledge_qa` remains readable only for historical Run
+recovery and validation. Each grounded Skill Run gets a persistent collapsed trace card, followed
+by one independent finalizer message. The Web supports original slash-command display and
+metric-neutral prefix highlighting, Markdown/GFM and LaTeX rendering, citation actions on both
+the trace card and final answer, and one closable mutually exclusive evidence panel. The Skill
+result and final answer remain separate records and rendering surfaces.
+
 > 记录日期：2026-07-31
 >
 > 结论：Stage 5 当前可用子集已完成 provisional 工程验收；阶段 5 未正式退出。
@@ -20,8 +28,9 @@ coverage is unavailable and is recorded as not executed.
 ## 验收范围
 
 本次验收覆盖 ADR-006 约束的单 Agent Runtime、Tool/Skill Registry、受信包加载、固定摘要、
-预算/权限/审计、事务式 reload/回滚、PostgreSQL active pointer，以及当前五个 Skill（`knowledge_agent
-0.2.0`，保留 `0.1.0` 回滚包；其余四个为 `0.1.0`）：
+预算/权限/审计、事务式 reload/回滚、PostgreSQL active pointer，以及当前四个 active Skill（`knowledge_agent
+0.3.0`、`summarize_document 0.1.0`、`compare_sources 0.1.0`、`create_review_cards 0.1.0`）；
+`knowledge_qa` 仅保留历史版本用于固定 Run 回滚/恢复：
 
 - `knowledge_agent` 通过真实 `fast_chat` 决策节点在同一 QA Run 中调用受限只读 `grounded_qa` Tool。
 - `knowledge_qa` 复用唯一 Grounded QA Application Port 和现有 QA Web/API/Worker/SSE。
@@ -57,9 +66,10 @@ corepack pnpm@10.20.0 --dir apps/web build
 git diff --check
 ```
 
-结果：Ruff format/check 通过；mypy 覆盖 102 个源文件；后端全量 pytest 为
-`698 passed, 48 skipped`；Web lint/typecheck、Vitest `28 passed` 和 production build 通过；
-OpenAPI 重导出及一致性测试通过。Windows 沙箱不能写 `.pytest_cache` 的既有警告不影响结果。
+结果（2026-08-07）：Ruff format/check 通过（234 个 Python 文件已格式化）；mypy 覆盖 122 个
+源文件；后端全量 pytest 为 `744 passed, 52 skipped`；Web lint/typecheck、Vitest `38 passed`
+和 production build 通过；OpenAPI 重导出及一致性测试通过。Windows 沙箱不能写 `.pytest_cache`
+的既有警告不影响结果。
 
 一次性隔离 PostgreSQL 已验证迁移 `upgrade head -> downgrade 29d0e1f2a3b4 -> upgrade head`、
 单一 head 和 QA/Runtime/Skill persistence 集成测试 `6 passed`，测试数据库均已清理。此前 Step 5～7 的隔离
@@ -90,7 +100,7 @@ Citation 完成预览且写入副作用为 0。伪造版本和跨 Space 文档�
 | --- | --- | --- |
 | Runtime/Registry/版本/预算/权限通用契约 | 已完成 | 离线确定性 Runtime 和安全边界回归通过 |
 | QA Run/Worker/SSE/Citation 重启恢复 | provisional 已完成 | 复用 Stage 4 PostgreSQL QA 事实源，不代表通用 Runtime Checkpoint |
-| `knowledge_qa` Web/API/测试同一链路 | provisional 已完成 | 固定 Skill identity 并调用唯一 QA Port |
+| `knowledge_agent` Web/API/测试同一链路 | provisional 已完成 | active `0.3.0` 固定 Skill identity 并调用唯一 QA Port；`knowledge_qa` 仅供历史 Run 恢复 |
 | `knowledge_agent` LLM/Tool 只读链路 | provisional 已完成 | 真实 Provider 接口已接线；QA Run 仍是结果和恢复权威 |
 | 三个知识整理 Skill | 工程实现完成，质量 provisional | HTTP/Worker/契约、统一 `/runs` facade 和复用 QA Run/SSE 可用；正式 Eval 仍未执行 |
 | 通用 AgentRun/Checkpoint PostgreSQL 持久化 | 工程实现完成，质量 provisional | 复用 `qa_runs.id` 的 Runtime 快照与 append-only checkpoint、序号/摘要校验、Worker resume、lease-loss 取消和统一 Run 查询/恢复入口已实现 |

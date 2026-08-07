@@ -1,6 +1,6 @@
 # 阶段 4/5 收尾看板
 
-## 2026-08-04 Implementation Status Update
+## 2026-08-07 Implementation Status Update
 
 All requested Stage 4/5 engineering functions are implemented, including Web entry points for all
 five registered Skills, Web feedback controls,
@@ -97,6 +97,31 @@ is reconstructed from the same `ConversationRun` after refresh. Expanded details
 the final answer or server-authored clarification. Raw prompts, Tool payloads, document excerpts,
 and internal budgets remain excluded. This is a Web presentation change only; the existing Run,
 Worker, QA Application Port, and SSE persistence contracts are reused.
+
+## 2026-08-07 Assistant Finalization, Evidence, and Rendering
+
+The final conversation closeout is implemented. After a grounded Skill reaches a business-terminal
+state, the Worker emits one `phase=final_answer` event and invokes `ConversationFinalizer` once.
+The finalizer receives the original question and the Skill result as separate reference inputs and
+publishes a separate Assistant message. The Skill result is therefore not copied into the final
+answer frame, and recovery cannot create a second final answer.
+
+The invocation card and final-answer frame each expose a citation button when the Run has evidence.
+Both use one shared, Run-scoped evidence panel; opening another component replaces the current
+panel, and the panel has an explicit close action. The Web preserves the original `/command`
+message, highlights only a valid command prefix with a metric-neutral accent, submits commands on
+Enter, and renders assistant GFM Markdown and LaTeX. These changes reuse the existing v2 Run,
+`agent-run-sse-v2`, QA citation, and recovery contracts.
+
+## 2026-08-07 Verification Closeout
+
+The repository checks for this closeout passed: `uv run --frozen ruff format --check .`,
+`uv run --frozen ruff check .`, `uv run --frozen mypy apps packages` (122 source files), and the
+full backend suite (`744 passed, 52 skipped`). Web lint, typecheck, Vitest (`38 passed`), and
+production build passed; OpenAPI regeneration produced no diff and its consistency test passed.
+Routing and answer `--validate-only` commands reported `formal_run_eligible=false` and
+`provisional`. The only test warning was the existing Windows inability to write `.pytest_cache`;
+no Playwright/browser evidence or formal retrieval/answer/Skill holdout is claimed.
 
 ## 2026-08-06 Assistant Conversation Evolution Step 1
 

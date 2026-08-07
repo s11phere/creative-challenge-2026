@@ -1067,7 +1067,8 @@ def _validate_parent(
 def _project_conversation_run(model: ConversationRunModel, run: QARunRecord) -> None:
     _validate_parent(model, run, check_idempotency=False)
     hold_for_finalizer = (
-        model.run_kind in {
+        model.run_kind
+        in {
             ConversationRunKind.SKILL.value,
             ConversationRunKind.GROUNDED_QA.value,
         }

@@ -196,8 +196,7 @@ async def test_v2_command_catalog_and_base_commands_do_not_create_business_runs(
         "cards",
     } <= names
     assert all(
-        "content_sha256" not in item and "budget" not in item
-        for item in catalog.json()["commands"]
+        "content_sha256" not in item and "budget" not in item for item in catalog.json()["commands"]
     )
     assert help_result.status_code == 202
     assert help_result.json()["command"] == "help"

@@ -305,9 +305,7 @@ class InMemoryGroundedQARepository:
             self._conversation_runs[run_id] = updated
             return updated
 
-    async def reopen_clarification(
-        self, run_id: UUID, *, clarification_id: str
-    ) -> ConversationRun:
+    async def reopen_clarification(self, run_id: UUID, *, clarification_id: str) -> ConversationRun:
         async with self._lock:
             run = self._require_assistant_conversation_run(run_id)
             clarification = run.result.clarification if run.result is not None else None

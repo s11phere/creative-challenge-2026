@@ -502,7 +502,7 @@ class TestRegisterFile:
         deleted_document = await doc_repo.create(
             Document(
                 source_id=source.id,
-                stable_key='deleted.md',
+                stable_key="deleted.md",
                 current_version_id=uuid4(),
                 deleted_at=datetime.now(UTC),
             )
@@ -510,9 +510,9 @@ class TestRegisterFile:
 
         result = await service.register_file(
             source,
-            b'restored content',
+            b"restored content",
             blob_store,
-            file_stable_key='deleted.md',
+            file_stable_key="deleted.md",
         )
 
         restored = await doc_repo.get(deleted_document.id)

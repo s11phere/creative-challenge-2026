@@ -8,11 +8,31 @@
 >
 > 最近审查：2026-07-19，见 `docs/stage-5-implementation-review.md`
 
+## Current implementation sync (2026-08-07)
+
+The engineering implementation is complete through Step 10 for the current provisional contracts.
+The Assistant conversation closeout adds the v2 default Web workspace, server-authoritative slash
+commands, automatic Skill routing, bounded context, operational metrics, and durable invocation
+trace cards. New knowledge requests are pinned to `knowledge_agent 0.3.0`; `knowledge_qa` is a
+legacy adapter kept only for fixed historical Run recovery and contract validation.
+
+The Worker performs one independent finalization pass after a grounded Skill terminal state. The
+finalizer uses the user question and Skill result as separate reference inputs and persists its own
+Assistant message. The Web exposes that final answer separately from the Skill trace, provides
+evidence actions with a mutually exclusive closable panel, preserves and accents explicit command
+text, and renders Markdown/GFM/LaTeX. None of these engineering additions close the formal
+retrieval, answer, or Skill quality gates; those remain provisional under ADR-010/ADR-011.
+
+The closeout verification on 2026-08-07 passed Ruff format/check, mypy for 122 source files, the
+full backend suite (`744 passed, 52 skipped`), Web lint/typecheck/Vitest (`38 passed`)/build, and
+OpenAPI regeneration plus its consistency test. The Windows `.pytest_cache` permission warning is
+environmental; Playwright/browser evidence and formal quality holdouts remain unclaimed.
+
 ## 1. 结论摘要
 
-截至 2026-08-03，Step 0～10 的工程实现均已完成：阶段 4 QA Run/Worker/SSE/API/Web
+截至 2026-08-07，Step 0～10 的工程实现均已完成：阶段 4 QA Run/Worker/SSE/API/Web
 链路、通用 Runtime Checkpoint PostgreSQL 持久化、持久审批、派生知识 exactly-once 写入、
-五个 Skill 的统一 Run facade、active pointer CAS/回滚、引用保护清理和反馈审核/候选导出均已
+四个 active Skill 与 legacy `knowledge_qa` 的统一 Run facade、active pointer CAS/回滚、引用保护清理和反馈审核/候选导出均已
 接入并通过单元、契约和隔离 PostgreSQL 回归。正式检索/回答/Skill 质量门禁仍保持
 `provisional`，不将未执行的 holdout 计为通过。
 
@@ -673,9 +693,9 @@ revision CAS 保证并发激活/回滚不会静默覆盖。Registry reload 仍�
 | 3. Skill Registry | 步骤 0/1；受信目录和摘要规则确定 | 已完成 |
 | 4. 执行器、预算与审计 | 步骤 1～3；FakeModelGateway 已可用 | 已完成 |
 | 5. AgentRun 与检查点持久化 | 步骤 1/4；阶段 4 数据模型交接；迁移协调 | 已完成；Runtime Run/Checkpoint、lease-loss 取消、幂等重放和恢复回归通过 |
-| 6. `knowledge_qa` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | active `0.1.0` 已由固定摘要 Worker 执行；正式质量门禁仍 provisional |
+| 6. `knowledge_agent` | 阶段 2 摄入、阶段 3 检索、阶段 4 引用问答退出条件 | active `0.3.0` 已由受约束 Agent/Worker 执行；`knowledge_qa` 仅用于历史 Run 恢复；正式质量门禁仍 provisional |
 | 7. Runtime API 与 Web | 步骤 5/6；ADR-007 或等价已接受协议 | 已完成；统一 `/api/v1/runs`、Skill Catalog、激活/回滚、取消/恢复/审批入口均可用 |
-| 8. 三个知识整理 Skill | `knowledge_qa` 真实链路稳定；写入 Application 用例可用 | 已完成工程链路；固定版本、引用约束、预览、审批和派生写入均可用 |
+| 8. 三个知识整理 Skill | `knowledge_agent` 真实链路稳定；写入 Application 用例可用 | 已完成工程链路；固定版本、引用约束、预览、审批和派生写入均可用 |
 | 9. 热加载与回滚 | 步骤 3/5；不可变版本和恢复语义已验证 | 已完成；PostgreSQL active pointer CAS、回滚和引用保护清理通过 |
 | 10. 测试与验收 | 步骤 0～9；阶段 0 数据门禁关闭 | 工程验收完成；正式退出仍等待 Stage 3/4 质量门禁、浏览器证据和 Skill Eval |
 

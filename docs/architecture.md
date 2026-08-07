@@ -1,6 +1,6 @@
 # 项目架构概览
 
-## Current completion boundary (2026-08-04)
+## Current completion boundary (2026-08-07)
 
 The implemented Stage 4/5 boundary now includes feedback review persistence in `qa_feedback`,
 Space-scoped metadata-only review endpoints, and a separate privacy-safe candidate exporter. The
@@ -25,9 +25,24 @@ are reranked directly. `hybrid_rerank` remains an explicit compatibility mode, n
 Search API or QA. The corrected GPU development runs are provisional evidence only; they do not
 reopen Stage 3 or authorize the existing holdout.
 
+The current Assistant v2 boundary is also closed for this development phase. New turns enter
+`AssistantAgentService`; the active catalog uses `knowledge_agent 0.3.0` for every new knowledge
+request, while `knowledge_qa` remains a legacy adapter for fixed historical Runs only. After a
+grounded Skill reaches a business-terminal state, the Worker invokes `ConversationFinalizer` once.
+Its independently persisted Assistant message is the user-facing answer; the grounded Skill
+result remains an internal reference with its own trace and evidence projection.
+
+The Web reconstructs one durable, collapsible card per Skill invocation from `ConversationRun` and
+`agent-run-sse-v2`. Cards expose safe activity, pinned identity, status, model usage, finalizer or
+clarification output, and a citation action when evidence exists. The shared evidence panel has an
+explicit close action and is mutually exclusive across cards and final answers. The composer and
+user messages preserve explicit slash commands, render valid prefixes with a metric-neutral accent,
+and render assistant Markdown/GFM and LaTeX. No second persistence, QA, or Worker protocol is
+introduced.
+
 > 本文档描述 "Agent 驱动的个人知识仓库" 项目的整体架构、各组件职责与协作关系。
 > 更新于阶段 3 终止决策、阶段 4 provisional Step 0～10 和阶段 5 通用 Runtime/Registry
-> 审查完成时（2026-08-04）。
+> Assistant v2 收口与 Web 渲染检查完成时（2026-08-07）。
 
 ---
 

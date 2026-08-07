@@ -4,6 +4,22 @@
 > 适用阶段：从方案验证到可演示版本，再到可持续扩展产品  
 > 核心原则：先闭环、可评测、可追溯；后扩展、多 Agent、规模化
 
+## Current implementation sync (2026-08-07)
+
+The current development cut has completed the planned Assistant conversation evolution through
+Step 8 on top of the Stage 4/5 provisional contracts. The v2 Web workspace provides direct
+conversation, server-authoritative automatic routing, explicit slash commands, bounded context,
+and durable Skill invocation trace cards. New knowledge requests use `knowledge_agent 0.3.0`;
+`knowledge_qa` is retained only for historical fixed Run recovery.
+
+Grounded Skill output is an internal reference. The Worker invokes a one-shot
+`ConversationFinalizer` and persists an independent user-facing Assistant message. The Web keeps
+Skill cards visible, exposes citation actions from cards and final answers, uses one closable
+mutually exclusive evidence panel, preserves/accents valid command prefixes, and renders
+Markdown/GFM/LaTeX. This is engineering completion only: Stage 3 remains terminated without a
+formal holdout, and Stage 4/5 retrieval, answer, Skill, and browser-quality gates remain
+provisional.
+
 ## 1. 项目定位
 
 ### 1.1 一句话目标
@@ -585,10 +601,9 @@ holdout 未执行，`retrieval-v1.yaml` 继续保持 provisional。该终止不�
 
 ### 阶段 5：Agent Runtime 与 Skill 标准化（第 7-8 周）
 
-> 当前实现状态（2026-07-19）：通用基础已通过审查，阶段整体未完成。Step 0～4 和 Step 9
-> 可独立部分已落地；运行持久化、`knowledge_qa`、Runtime API/Web、三个知识整理 Skill 和
-> 端到端验收等待阶段 2～4 交接。详见
-> [阶段 5 实现审查记录](stage-5-implementation-review.md)。
+> 历史计划基线（2026-07-19）：当时通用基础已通过审查，运行持久化、Skill 和 Runtime API/Web
+> 尚在等待阶段 2～4 交接。当前实现状态见上方 2026-08-07 同步段及
+> [阶段 5 provisional 验收记录](stage-5-acceptance.md)。
 
 **目标**：将已经验证的知识能力封装为稳定、可复用的 Skill。
 
@@ -599,7 +614,7 @@ holdout 未执行，`retrieval-v1.yaml` 继续保持 provisional。该终止不�
 
 - 实现 Tool/Skill manifest、schema 校验、注册和版本固定。
 - 实现有界状态机、检查点、预算、超时和运行审计。
-- 将知识问答封装为 `knowledge_qa` Skill。
+- 将知识问答封装为 active `knowledge_agent` Skill；`knowledge_qa` 仅作为历史兼容适配器保留。
 - 增加 `summarize_document`、`compare_sources`、`create_review_cards` 三个工作流型 Skill。
 - 实现只读/写入权限与写入前确认。
 - 实现热加载的兼容性检查和旧版本回滚。

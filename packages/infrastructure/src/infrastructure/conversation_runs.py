@@ -200,9 +200,7 @@ class PostgresConversationRunRepository:
             await session.flush()
             return _run(model)
 
-    async def reopen_clarification(
-        self, run_id: UUID, *, clarification_id: str
-    ) -> ConversationRun:
+    async def reopen_clarification(self, run_id: UUID, *, clarification_id: str) -> ConversationRun:
         async with self._database.transaction() as session:
             model = await self._locked_assistant_run(session, run_id)
             current = _run(model)
