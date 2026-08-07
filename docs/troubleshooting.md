@@ -334,3 +334,28 @@ missing runs or incomplete review records. It does not run a formal evaluation.
 The older provisional notes above describe the pre-completion baseline; the current Runtime
 checkpoint, approval, derived-knowledge, Skill cleanup, and feedback review implementations are
 covered by the Stage 4/5 completion tracker and their regression tests.
+
+## Assistant Web release rollback
+
+The normal Web entry is API v2. During the compatibility window, the header's `兼容问答` selector
+uses the existing `/api/v1` conversation and QA Run endpoints. If a v2 regression is observed, set
+`VITE_ASSISTANT_DEFAULT_API_MODE=v1` in the ignored `.env` and rebuild/recreate only `web`:
+
+```powershell
+docker compose -f deploy/compose.yaml --env-file .env build web
+docker compose -f deploy/compose.yaml --env-file .env up --detach --no-deps web
+```
+
+This rollback preserves v2 records, historical Runs, active Skill pointers, and installed packages.
+It does not bypass external-provider policy. Keep `MODEL_ALLOW_EXTERNAL`, source policy, deployment
+policy, and user consent unchanged. If the compatibility deadline has passed, v1 is intentionally
+fail-closed in the Web and requires a separately reviewed release decision; do not delete data to
+force a rollback. For rollout diagnosis, use the Step 7 aggregate counters and inspect only safe
+labels for routing misfires, clarification loops, cancellation, recovery, token usage, and latency.
+
+## `start-local.ps1` Count error
+
+If PowerShell reports that the `Count` property is missing, use the current
+`scripts/start-local.ps1`. The script normalizes Skill files and managed Compose projects to arrays
+before checking `.Count`, so both a single result and an empty result are supported. This check runs
+before Docker startup and does not remove volumes or application data.

@@ -81,6 +81,20 @@ Provider, read the controlled corpus, or enable a formal holdout. Structured met
 metric names, safe labels, and aggregate values, never conversation content, prompts, document text,
 Provider responses, or internal resource IDs.
 
+Assistant Conversation Evolution Step 8 changes the Web entry to the provisional API v2
+conversation workspace. The `兼容问答` selector exposes the existing v1 QA path only during the
+configured compatibility window (`VITE_ASSISTANT_V1_COMPATIBILITY_UNTIL`, default
+`2026-09-30T23:59:59Z`). The selector is fail-closed after expiry; v1 endpoints, historical Runs,
+and installed Skill packages remain readable for recovery and separately reviewed clients.
+
+Release v2 first with `MODEL_PROVIDER=fake` or an approved local Chat stub. Enabling an external Chat
+Provider still requires the existing `MODEL_ALLOW_EXTERNAL`, source policy, deployment policy, and
+visible user-consent checks; the Web release controls do not bypass those boundaries. To roll the Web
+entry back, set `VITE_ASSISTANT_DEFAULT_API_MODE=v1` before rebuilding the Web image. This changes only
+the entry path and does not delete v2 data, historical Runs, or Skill packages. Monitor routing
+misfires, clarification loops, cancellation rate, recovery failures, and actual token/latency
+regressions before shortening the compatibility window.
+
 QA；资源歧义只显示 server-authored 候选，不暴露内部 UUID。该自动路由和 Step 4 Command API
 均为 provisional；Step 5 才实现上下文压缩。
 真实本地组合使用外部 OpenAI-compatible `fast_chat`、

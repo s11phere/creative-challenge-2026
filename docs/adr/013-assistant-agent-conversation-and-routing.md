@@ -124,6 +124,21 @@ The routing development set is synthetic and provisional. No implementation step
 current formal holdout or describe routing, retrieval, answers, or Skills as formally quality
 accepted.
 
+### Controlled migration and release
+
+Step 8 makes the Web v2 conversation workspace the default entry and exposes v1 only through an
+explicit compatibility selector with a build-time UTC deadline. The deadline is fail-closed: an
+expired or malformed value resolves to v2. The selector is a client entry choice, not a second QA
+implementation; v1 submission, cancellation, Run reads, and citation reads continue through the
+existing application ports.
+
+The release sequence is fake/local Provider first, followed by a small, policy-approved external
+Chat rollout. Existing `MODEL_ALLOW_EXTERNAL`, source sensitivity, deployment policy, and visible
+consent remain the only external-provider gates. Rollback is configuration-only (`v1` default plus a
+Web rebuild) and must preserve v2 records, historical Run identity, active Skill pointers, and old
+Skill packages. Retirement of v1 requires a separate versioned decision after real usage shows that
+the compatibility path is no longer needed and all historical Runs remain readable.
+
 ## Alternatives
 
 - Keep client-selected Skill modes as the default. Rejected because it cannot support ordinary

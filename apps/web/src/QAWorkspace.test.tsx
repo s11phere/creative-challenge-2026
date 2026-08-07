@@ -13,7 +13,7 @@ const conversation = {
 }
 
 const commands = [
-  { name: 'help', aliases: [], kind: 'base', description: 'Show commands', argument_hint: '', input_mode: 'none' },
+  { name: 'help', aliases: [], kind: 'base', description: 'Show active Skills and commands', argument_hint: '', input_mode: 'none' },
   { name: 'summarize', aliases: ['summary'], kind: 'skill', description: 'Summarize one document', argument_hint: '<document>', input_mode: 'document' },
 ]
 
@@ -40,11 +40,11 @@ function assistantRun(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function renderWorkspace() {
+function renderWorkspace(apiMode: 'v1' | 'v2' = 'v2') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
   return render(
     <QueryClientProvider client={client}>
-      <QAWorkspace selectedConversationId="conversation-1" />
+      <QAWorkspace selectedConversationId="conversation-1" apiMode={apiMode} />
     </QueryClientProvider>,
   )
 }
@@ -82,6 +82,17 @@ describe('assistant conversation workspace', () => {
     expect(screen.queryByRole('button', { name: 'LLM Agent' })).not.toBeInTheDocument()
   })
 
+  it('prefers command-name prefixes over description matches', async () => {
+    vi.stubGlobal('fetch', baseFetch())
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox', { name: '消息' })
+    fireEvent.change(composer, { target: { value: '/s' } })
+
+    expect(await screen.findByRole('option', { name: /\/summarize/ })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /\/help/ })).not.toBeInTheDocument()
+  })
+
   it('submits a generic v2 turn and renders its durable Run', async () => {
     const fetchMock = baseFetch()
     fetchMock.mockImplementation((input: RequestInfo | URL, _init?: RequestInit) => {
@@ -112,6 +123,177 @@ describe('assistant conversation workspace', () => {
         body: JSON.stringify({ content: 'Continue this conversation.', idempotency_key: 'idempotency-1' }),
       }),
     )
+    expect(screen.getByText('Continue this conversation.').closest('.chat-message-group')).toHaveClass(
+      'chat-message-group-user',
+    )
+    expect(screen.queryByText('你')).not.toBeInTheDocument()
+    expect(screen.queryByText('助手')).not.toBeInTheDocument()
+  })
+
+  it('renders a persisted Run answer only below its user message', async () => {
+    const completed = assistantRun({
+      run_kind: 'grounded_qa',
+      assistant_message: { message_id: 'assistant-1', content: 'One grounded answer.' },
+      selection: { source: 'auto', skill: { name: 'knowledge_qa', version: '0.2.0', content_sha256: 'a'.repeat(64) } },
+    })
+    const fetchMock = baseFetch({
+      conversations: [{
+        ...conversation,
+        messages: [
+          { message_id: 'message-1', role: 'user', content: 'Question.', run_id: null, created_at: '2026-08-06T10:00:00Z' },
+          { message_id: 'assistant-1', role: 'assistant', content: 'One grounded answer.', run_id: 'run-1', created_at: '2026-08-06T10:01:00Z' },
+        ],
+        runs: [],
+      }],
+    })
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
+        return Promise.resolve(response({ conversations: [{
+          ...conversation,
+          messages: [
+            { message_id: 'message-1', role: 'user', content: 'Question.', run_id: null, created_at: '2026-08-06T10:00:00Z' },
+            { message_id: 'assistant-1', role: 'assistant', content: 'One grounded answer.', run_id: 'run-1', created_at: '2026-08-06T10:01:00Z' },
+          ],
+          runs: [],
+        }] }))
+      }
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [completed] }))
+      if (url.endsWith('/api/v1/qa/runs/run-1')) return Promise.resolve(response({ status: 'completed', result: { type: 'answer', text: 'One grounded answer.', limitations: [] } }))
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderWorkspace()
+
+    expect(await screen.findByText('One grounded answer.')).toBeInTheDocument()
+    expect(screen.getAllByText('One grounded answer.')).toHaveLength(1)
+    expect(screen.getByText('Question.').closest('.chat-message-group')).toHaveClass('chat-message-group-user')
+  })
+
+  it('uses the refreshed API Run instead of an optimistic created snapshot', async () => {
+    let submitted = false
+    const fetchMock = baseFetch()
+    fetchMock.mockImplementation((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
+        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [], runs: [] }] }))
+      }
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) {
+        return Promise.resolve(response({ runs: submitted ? [assistantRun()] : [] }))
+      }
+      if (url.endsWith('/api/v2/conversations/conversation-1/turns')) {
+        submitted = true
+        return Promise.resolve(response(assistantRun({ status: 'created', assistant_message: null }), 202))
+      }
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'authoritative-run-id' })
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox', { name: '消息' })
+    fireEvent.change(composer, { target: { value: 'Show the completed status.' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText('已完成')).toBeInTheDocument()
+    expect(screen.queryByText('已创建')).not.toBeInTheDocument()
+    expect(screen.getByText('Direct response.')).toBeInTheDocument()
+  })
+
+  it('renders the command details returned by a base command', async () => {
+    const fetchMock = baseFetch()
+    fetchMock.mockImplementation((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
+        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [], runs: [] }] }))
+      }
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [] }))
+      if (url.endsWith('/api/v2/conversations/conversation-1/turns')) {
+        return Promise.resolve(response({
+          command: 'skills',
+          status: 'completed',
+          content: 'Current active Skills.',
+          conversation_id: 'conversation-1',
+          run: null,
+          commands: [commands[1]],
+        }, 202))
+      }
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'command-idempotency-1' })
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox')
+    fireEvent.change(composer, { target: { value: '/skills' } })
+    const sendButton = composer.closest('form')?.querySelector('button[type="submit"]')
+    if (!sendButton) throw new Error('send control not rendered')
+    fireEvent.click(sendButton)
+
+    expect(await screen.findByText('Current active Skills.')).toBeInTheDocument()
+    expect(screen.getByText('/summarize')).toBeInTheDocument()
+    expect(screen.getByText('Summarize one document')).toBeInTheDocument()
+    expect(screen.getByText('<document>')).toBeInTheDocument()
+  })
+
+  it('uses v1 only when the compatibility mode is explicitly selected', async () => {
+    const legacyRun: QARun = {
+      run_id: 'legacy-run-1',
+      attempt_id: 'legacy-attempt-1',
+      status: 'queued',
+      conversation_id: 'conversation-1',
+      question_message_id: 'legacy-message-1',
+      cancellation_requested: false,
+      error_code: null,
+      skill: { name: 'knowledge_qa', version: '0.1.0', content_sha256: null },
+      fixed_scope: { source_ids: [], document_ids: [], version_ids: [] },
+    }
+    const fetchMock = baseFetch()
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
+        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [], runs: [] }] }))
+      }
+      if (url.endsWith('/api/v1/conversations/conversation-1/questions') && init?.method === 'POST') {
+        return Promise.resolve(response(legacyRun, 202))
+      }
+      if (url.endsWith('/api/v1/qa/runs/legacy-run-1')) return Promise.resolve(response(legacyRun))
+      if (url.endsWith('/api/v1/qa/runs/legacy-run-1/cancel') && init?.method === 'POST') {
+        return Promise.resolve(response({ ...legacyRun, status: 'cancelled', cancellation_requested: true }))
+      }
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'legacy-idempotency-1' })
+    const view = renderWorkspace('v1')
+
+    const composer = await screen.findByRole('textbox', { name: '消息' })
+    fireEvent.change(composer, { target: { value: 'Legacy question.' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/v1\/conversations\/conversation-1\/questions$/),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ question: 'Legacy question.', idempotency_key: 'legacy-idempotency-1' }),
+      }),
+    ))
+    const cancelButton = await waitFor(() => {
+      const element = view.container.querySelector('button.qa-cancel-button')
+      if (!element) throw new Error('cancel control not rendered')
+      return element
+    })
+    fireEvent.click(cancelButton)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/v1\/qa\/runs\/legacy-run-1\/cancel$/),
+      expect.objectContaining({ method: 'POST' }),
+    ))
+    const requestedUrls = fetchMock.mock.calls.map(([input]) => String(input))
+    expect(requestedUrls.some((url) => url.includes('/api/v2/commands'))).toBe(false)
+    expect(requestedUrls.some((url) => url.includes('/api/v2/conversations/conversation-1/turns'))).toBe(false)
   })
 
   it('continues a resource clarification on its existing Run', async () => {

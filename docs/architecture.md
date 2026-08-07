@@ -478,6 +478,16 @@ resource identifier. The development evaluator accepts only the pinned `syntheti
 body-free prediction metadata; its report is permanently labeled `provisional` and cannot run a
 formal holdout.
 
+Assistant Conversation Evolution Step 8 makes the Web v2 workspace the default entry while retaining
+an explicit, time-bounded v1 compatibility selector. The release controls are Vite build arguments
+(`VITE_ASSISTANT_DEFAULT_API_MODE` and `VITE_ASSISTANT_V1_COMPATIBILITY_UNTIL`); an expired or invalid
+window fails closed to v2. The v1 API, historical Run projections, and installed Skill packages are
+not removed. Rollback is a Web rebuild with `VITE_ASSISTANT_DEFAULT_API_MODE=v1`, so it does not
+delete data or mutate Skill pointers. Fake/local Provider rollout precedes any external Chat rollout;
+the existing `MODEL_ALLOW_EXTERNAL`, source-policy, deployment-policy, and consent checks remain
+authoritative. Operational monitoring uses the Step 7 privacy-safe counters and covers routing
+misfires, clarification loops, cancellation, recovery, token usage, and latency.
+
 **错误协议 (`errors.py`)**：
 
 | 异常类型 | code 示例 | status |

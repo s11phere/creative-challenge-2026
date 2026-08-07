@@ -222,6 +222,22 @@ RERANKER_ENDPOINT=http://host.docker.internal:<reranker-port>
 RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 ```
 
+## Assistant Web release controls
+
+The Web build defaults to API v2. Compose passes these Vite variables to `Dockerfile.web` at build
+time:
+
+```dotenv
+VITE_ASSISTANT_DEFAULT_API_MODE=v2
+VITE_ASSISTANT_V1_COMPATIBILITY_UNTIL=2026-09-30T23:59:59Z
+```
+
+During the compatibility window, set `VITE_ASSISTANT_DEFAULT_API_MODE=v1` and rebuild only the Web
+image to restore the legacy QA entry. This is a reversible entry-point change: it does not remove
+v2 data, historical Runs, or Skill packages. The selector is hidden after the deadline and malformed
+or expired deadlines fail closed to v2. Deploy fake/local Chat first; an external Chat endpoint still
+requires the existing `MODEL_ALLOW_EXTERNAL` and source/deployment/consent policy checks.
+
 `host.docker.internal` is an explicitly allowed local endpoint name. This pattern is specific to
 Docker Desktop; use a reviewed reachable host address on other platforms. Recreate `api` and
 `worker` after changing either endpoint, then verify the Web proxy and an actual `dense_rerank`

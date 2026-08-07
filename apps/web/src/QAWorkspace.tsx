@@ -3,10 +3,8 @@ import {
   AlertCircle,
   BookOpenText,
   Check,
-  ChevronDown,
   CircleHelp,
   FileText,
-  Info,
   LoaderCircle,
   MessageSquareText,
   Quote,
@@ -17,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import {
+  cancelRun,
   cancelAssistantRun,
   createConversation,
   fetchAssistantConversationRuns,
@@ -25,18 +24,22 @@ import {
   fetchConversationHistory,
   fetchRun,
   isAssistantRun,
+  legacyQARunToAssistantRun,
   selectClarificationResource,
+  submitQuestion,
   submitAssistantTurn,
   type AssistantCommand,
   type AssistantCommandResult,
   type AssistantRun,
   type ConversationHistoryItem,
 } from './qa'
+import { assistantDefaultApiMode, type AssistantApiMode } from './assistantRelease'
 import { fetchSourceDetail } from './sources'
 
 export type QAWorkspaceProps = {
   selectedConversationId?: string | null
   onConversationSelected?: (conversationId: string | null) => void
+  apiMode?: AssistantApiMode
 }
 
 type CitationMetadata = {
@@ -65,16 +68,6 @@ function statusLabel(status: string): string {
   return labels[status] ?? status
 }
 
-function runKindLabel(kind: AssistantRun['run_kind']): string {
-  const labels: Record<AssistantRun['run_kind'], string> = {
-    assistant_turn: '对话',
-    grounded_qa: '检索回答',
-    skill: 'Skill',
-    context_compaction: '上下文压缩',
-  }
-  return labels[kind]
-}
-
 function citationKey(sourceId: string, documentId: string): string {
   return `${sourceId}:${documentId}`
 }
@@ -83,30 +76,22 @@ function isGroundedRun(run: AssistantRun): boolean {
   return run.run_kind === 'grounded_qa' || run.run_kind === 'skill'
 }
 
-function commandMatches(command: AssistantCommand, needle: string): boolean {
+function commandNameMatches(command: AssistantCommand, needle: string): boolean {
   const normalized = needle.trim().toLocaleLowerCase()
   if (!normalized) return true
-  return [command.name, ...command.aliases, command.description]
-    .some((value) => value.toLocaleLowerCase().includes(normalized))
+  return [command.name, ...command.aliases]
+    .some((value) => value.toLocaleLowerCase().startsWith(normalized))
 }
 
-function RunDetails({ run }: { run: AssistantRun }) {
-  return (
-    <details className="chat-run-details">
-      <summary><Info size={14} aria-hidden="true" />运行信息<ChevronDown size={14} aria-hidden="true" /></summary>
-      <dl>
-        <div><dt>类型</dt><dd>{runKindLabel(run.run_kind)}</dd></div>
-        <div><dt>模型</dt><dd>{run.model_identity}</dd></div>
-        <div><dt>Token</dt><dd>{run.usage.input_tokens} 输入 / {run.usage.output_tokens} 输出</dd></div>
-        <div><dt>耗时</dt><dd>{Math.round(run.usage.model_latency_ms)} ms</dd></div>
-      </dl>
-    </details>
-  )
+function commandDescriptionMatches(command: AssistantCommand, needle: string): boolean {
+  const normalized = needle.trim().toLocaleLowerCase()
+  return Boolean(normalized) && command.description.toLocaleLowerCase().includes(normalized)
 }
 
 export function QAWorkspace({
   selectedConversationId,
   onConversationSelected,
+  apiMode = assistantDefaultApiMode,
 }: QAWorkspaceProps = {}) {
   const [draft, setDraft] = useState('')
   const [conversationId, setConversationId] = useState<string | null>(null)
@@ -122,6 +107,7 @@ export function QAWorkspace({
   const excerptRef = useRef<HTMLDivElement>(null)
   const historyInitializedRef = useRef(false)
   const queryClient = useQueryClient()
+  const usingLegacyV1 = apiMode === 'v1'
 
   const historyQuery = useQuery({
     queryKey: ['qa-history'],
@@ -134,11 +120,12 @@ export function QAWorkspace({
     queryFn: ({ signal }) => fetchAssistantCommands(signal),
     staleTime: 60_000,
     retry: false,
+    enabled: !usingLegacyV1,
   })
   const assistantRunsQuery = useQuery({
     queryKey: ['assistant-runs', conversationId],
     queryFn: ({ signal }) => fetchAssistantConversationRuns(conversationId!, signal),
-    enabled: Boolean(conversationId),
+    enabled: Boolean(conversationId) && !usingLegacyV1,
     retry: false,
     refetchInterval: (query) =>
       query.state.data?.some((run) => activeStatuses.has(run.status)) ? 2_000 : false,
@@ -149,10 +136,14 @@ export function QAWorkspace({
     (conversation) => conversation.conversation_id === conversationId,
   )
   const runs = useMemo(() => {
-    const values = new Map((assistantRunsQuery.data ?? []).map((run) => [run.run_id, run]))
-    for (const run of localRuns) values.set(run.run_id, run)
+    const apiRuns = usingLegacyV1
+      ? (selectedConversation?.runs ?? []).map(legacyQARunToAssistantRun)
+      : (assistantRunsQuery.data ?? [])
+    // The submission response is only an optimistic snapshot. A refreshed API Run is authoritative.
+    const values = new Map(localRuns.map((run) => [run.run_id, run]))
+    for (const run of apiRuns) values.set(run.run_id, run)
     return [...values.values()]
-  }, [assistantRunsQuery.data, localRuns])
+  }, [assistantRunsQuery.data, localRuns, selectedConversation?.runs, usingLegacyV1])
   const runsByMessage = useMemo(
     () => new Map(runs.map((run) => [run.user_message_id, run])),
     [runs],
@@ -209,11 +200,15 @@ export function QAWorkspace({
   const commandToken = trimmed.startsWith('/') && !trimmed.startsWith('//')
     ? trimmed.slice(1).split(/\s/, 1)[0]
     : ''
-  const commandOptions = useMemo(
-    () => (commandsQuery.data ?? []).filter((command) => commandMatches(command, commandToken)),
-    [commandToken, commandsQuery.data],
-  )
-  const commandMenuOpen = trimmed.startsWith('/') && !trimmed.startsWith('//') && !commandMenuDismissed
+  const commandOptions = useMemo(() => {
+    const commands = commandsQuery.data ?? []
+    if (!commandToken.trim()) return commands
+    const nameMatches = commands.filter((command) => commandNameMatches(command, commandToken))
+    return nameMatches.length > 0
+      ? nameMatches
+      : commands.filter((command) => commandDescriptionMatches(command, commandToken))
+  }, [commandToken, commandsQuery.data])
+  const commandMenuOpen = !usingLegacyV1 && trimmed.startsWith('/') && !trimmed.startsWith('//') && !commandMenuDismissed
   const activeCommand = commandOptions[commandIndex]
 
   useEffect(() => {
@@ -242,6 +237,15 @@ export function QAWorkspace({
   }, [conversationId, historyQuery.data, onConversationSelected, selectedConversationId])
 
   useEffect(() => {
+    setLocalMessages([])
+    setLocalRuns([])
+    setActiveRunId(null)
+    setSelectedEvidenceId(null)
+    setCommandNotice(null)
+    setCommandMenuDismissed(false)
+  }, [apiMode])
+
+  useEffect(() => {
     if (currentRun && !activeStatuses.has(currentRun.status)) {
       void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
     }
@@ -258,7 +262,11 @@ export function QAWorkspace({
         const created = await createConversation()
         targetConversationId = created.conversation_id
       }
-      const result = await submitAssistantTurn(targetConversationId, content, crypto.randomUUID())
+      const result = usingLegacyV1
+        ? legacyQARunToAssistantRun(
+          await submitQuestion(targetConversationId, content, crypto.randomUUID()),
+        )
+        : await submitAssistantTurn(targetConversationId, content, crypto.randomUUID())
       return { content, result, targetConversationId }
     },
     onSuccess: ({ content, result, targetConversationId }) => {
@@ -302,7 +310,12 @@ export function QAWorkspace({
     },
   })
   const cancelMutation = useMutation({
-    mutationFn: () => cancelAssistantRun(currentRun!.run_id),
+    mutationFn: async () => {
+      if (usingLegacyV1) {
+        return legacyQARunToAssistantRun(await cancelRun(currentRun!.run_id))
+      }
+      return cancelAssistantRun(currentRun!.run_id)
+    },
     onSuccess: (run) => {
       setLocalRuns((current) => [...current.filter((item) => item.run_id !== run.run_id), run])
       queryClient.setQueryData<AssistantRun[]>(['assistant-runs', conversationId], (current = []) =>
@@ -377,7 +390,11 @@ export function QAWorkspace({
   const messages = useMemo(() => {
     const values = new Map((selectedConversation?.messages ?? []).map((message) => [message.message_id, message]))
     for (const message of localMessages) values.set(message.message_id, message)
-    return [...values.values()].sort((left, right) => left.created_at.localeCompare(right.created_at))
+    // QA results belong to the Run below their originating user message. Rendering their
+    // persisted assistant message separately would show the same answer twice.
+    return [...values.values()]
+      .filter((message) => message.role !== 'assistant' || message.run_id === null)
+      .sort((left, right) => left.created_at.localeCompare(right.created_at))
   }, [localMessages, selectedConversation?.messages])
   const currentRunIsActive = currentRun ? activeStatuses.has(currentRun.status) : false
   const visibleCitations = currentEvidenceRun?.citations ?? []
@@ -389,7 +406,24 @@ export function QAWorkspace({
           {commandNotice && (
             <article className="chat-command-notice" role="status">
               <CircleHelp size={17} aria-hidden="true" />
-              <div><strong>/{commandNotice.command}</strong>{commandNotice.content && <p>{commandNotice.content}</p>}</div>
+              <div>
+                <strong>/{commandNotice.command}</strong>
+                {commandNotice.content && <p>{commandNotice.content}</p>}
+                {commandNotice.commands.length > 0 && (
+                  <ul className="chat-command-results" aria-label="可用指令">
+                    {commandNotice.commands.map((command) => (
+                      <li key={command.name}>
+                        <div className="chat-command-result-heading">
+                          <code>/{command.name}</code>
+                          {command.aliases.map((alias) => <code key={alias}>/{alias}</code>)}
+                        </div>
+                        <span>{command.description}</span>
+                        {command.argument_hint && <small>{command.argument_hint}</small>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </article>
           )}
           {messages.length === 0 && !commandNotice ? (
@@ -398,34 +432,25 @@ export function QAWorkspace({
             const run = message.role === 'user' ? runsByMessage.get(message.message_id) : undefined
             const legacyRun = run ? legacyRunsById.get(run.run_id) : undefined
             const qaRun = run?.run_id === currentRun?.run_id ? currentQARunQuery.data ?? legacyRun : legacyRun
-            const hasStoredAssistant = run?.assistant_message && messages.some(
-              (item) => item.message_id === run.assistant_message?.message_id,
-            )
             return (
-              <div key={message.message_id} className="chat-message-group">
-                <button
+              <div key={message.message_id} className={`chat-message-group chat-message-group-${message.role}`}>
+                <div
                   className={`qa-message chat-message ${message.role === 'user' ? 'qa-message-user' : 'chat-message-assistant'}`}
-                  type="button"
-                  onClick={() => run && setActiveRunId(run.run_id)}
-                  disabled={!run}
                 >
-                  <span className="qa-message-label">{message.role === 'user' ? '你' : '助手'}</span>
                   <p>{message.content}</p>
-                </button>
+                </div>
                 {run && (
-                  <article className="chat-run" data-selected={run.run_id === currentRun?.run_id} data-status={run.status}>
+                  <article className="chat-run" data-status={run.status}>
                     <div className="qa-run-heading">
                       {activeStatuses.has(run.status) ? <LoaderCircle className="spin" size={17} aria-hidden="true" /> : run.status === 'failed' || run.status === 'timed_out' ? <AlertCircle size={17} aria-hidden="true" /> : <Check size={17} aria-hidden="true" />}
                       <strong>{statusLabel(run.status)}</strong>
-                      <span>{runKindLabel(run.run_kind)}</span>
                     </div>
-                    {run.assistant_message && !hasStoredAssistant && <div className="qa-answer"><p>{run.assistant_message.content}</p></div>}
-                    {qaRun?.result && (
+                    {qaRun?.result ? (
                       <div className="qa-answer">
                         <p>{qaRun.result.text ?? qaRun.result.message}</p>
                         {qaRun.result.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}
                       </div>
-                    )}
+                    ) : run.assistant_message ? <div className="qa-answer"><p>{run.assistant_message.content}</p></div> : null}
                     {run.clarification && (
                       <div className="chat-clarification">
                         <p>{run.clarification.message}</p>
@@ -447,7 +472,6 @@ export function QAWorkspace({
                       </div>
                     )}
                     {run.error_code && <code>{run.error_code}</code>}
-                    <RunDetails run={run} />
                   </article>
                 )}
               </div>
@@ -462,11 +486,11 @@ export function QAWorkspace({
             id="qa-question"
             ref={textareaRef}
             value={draft}
-            role="combobox"
-            aria-autocomplete="list"
-            aria-expanded={commandMenuOpen}
-            aria-controls="assistant-command-listbox"
-            aria-activedescendant={commandMenuOpen && activeCommand ? `assistant-command-${activeCommand.name}` : undefined}
+            role={usingLegacyV1 ? undefined : 'combobox'}
+            aria-autocomplete={usingLegacyV1 ? undefined : 'list'}
+            aria-expanded={usingLegacyV1 ? undefined : commandMenuOpen}
+            aria-controls={usingLegacyV1 ? undefined : 'assistant-command-listbox'}
+            aria-activedescendant={usingLegacyV1 || !activeCommand ? undefined : `assistant-command-${activeCommand.name}`}
             onChange={(event) => { setDraft(event.target.value); setCommandMenuDismissed(false) }}
             onCompositionStart={() => { isComposingRef.current = true }}
             onCompositionEnd={() => { isComposingRef.current = false }}

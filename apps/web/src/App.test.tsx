@@ -37,7 +37,8 @@ function mockHealthyFetch(model = { healthy: true, code: 'MODEL_FAKE_READY' }) {
   })
 }
 
-function renderApp() {
+function renderApp(initialHash = '#system-status') {
+  window.history.replaceState(null, '', initialHash)
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Infinity } },
   })
@@ -55,6 +56,20 @@ afterEach(() => {
 })
 
 describe('system status workspace', () => {
+  it('uses the v2 Assistant conversation workspace as the default entry', async () => {
+    vi.stubGlobal('fetch', mockHealthyFetch())
+
+    renderApp('')
+
+    expect(await screen.findByRole('combobox', { name: '消息' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Assistant' })).toHaveAttribute('aria-pressed', 'true')
+    expect(window.location.hash).toBe('#qa')
+
+    fireEvent.click(screen.getByRole('button', { name: '兼容问答' }))
+    expect(screen.getByRole('button', { name: '兼容问答' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('textbox', { name: '消息' })).toBeInTheDocument()
+  })
+
   it('shows bounded loading and then all healthy services', async () => {
     const fetchMock = mockHealthyFetch()
     vi.stubGlobal('fetch', fetchMock)

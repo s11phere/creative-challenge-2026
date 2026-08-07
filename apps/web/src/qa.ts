@@ -177,6 +177,26 @@ export type AssistantCommandResult = {
 
 export type AssistantTurnResult = AssistantRun | AssistantCommandResult
 
+export function legacyQARunToAssistantRun(run: QARun): AssistantRun {
+  return {
+    run_id: run.run_id,
+    user_message_id: run.question_message_id,
+    status: run.status,
+    run_kind: 'grounded_qa',
+    error_code: run.error_code,
+    selection: { source: 'none', skill: null },
+    model_identity: 'legacy-v1',
+    assistant_message: null,
+    clarification: null,
+    usage: {
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+      model_latency_ms: 0,
+    },
+  }
+}
+
 function isAssistantRun(value: AssistantTurnResult): value is AssistantRun {
   return 'run_id' in value
 }

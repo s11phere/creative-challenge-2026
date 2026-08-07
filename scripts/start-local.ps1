@@ -88,6 +88,79 @@ function Test-HttpEndpoint {
     }
 }
 
+function Get-SkillStateFingerprint {
+    param([Parameter(Mandatory = $true)][string]$SkillsRoot)
+
+    $files = @(Get-ChildItem -LiteralPath $SkillsRoot -Recurse -File |
+        Sort-Object -Property FullName
+    )
+    if ($files.Count -eq 0) {
+        Stop-Startup "No trusted Skill package files were found under $SkillsRoot."
+    }
+
+    $records = foreach ($file in $files) {
+        $relativePath = $file.FullName.Substring($SkillsRoot.Length).TrimStart([char[]]@("\", "/")).Replace("\", "/")
+        $digest = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$relativePath`:$digest"
+    }
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes(($records -join "`n"))
+        $hash = $sha256.ComputeHash($bytes)
+        return (-join ($hash | ForEach-Object { $_.ToString("x2") })).Substring(0, 12)
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Get-ManagedComposeProjects {
+    param(
+        [Parameter(Mandatory = $true)][string]$ComposePath,
+        [Parameter(Mandatory = $true)][string]$LegacyProjectName
+    )
+
+    $rawProjects = & docker compose ls --format json
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Startup "Could not list Docker Compose projects."
+    }
+    if ([string]::IsNullOrWhiteSpace($rawProjects)) {
+        return @()
+    }
+
+    $expectedPath = [System.IO.Path]::GetFullPath($ComposePath)
+    $projects = @($rawProjects | ConvertFrom-Json)
+    return @($projects | Where-Object {
+        $matchesConfig = $_.ConfigFiles -split ',' | ForEach-Object {
+            [System.IO.Path]::GetFullPath($_.Trim()) -eq $expectedPath
+        } | Where-Object { $_ } | Select-Object -First 1
+        $matchesConfig -and ($_.Name -eq $LegacyProjectName -or $_.Name -like "creative-challenge-local-*")
+    } | ForEach-Object { $_.Name })
+}
+
+function Stop-ManagedComposeProjects {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$BaseArguments,
+        [Parameter(Mandatory = $true)][string[]]$ProjectNames
+    )
+
+    foreach ($projectName in $ProjectNames) {
+        Invoke-DockerChecked `
+            -Description "Stop previous local stack $projectName without deleting volumes" `
+            -Arguments (@("compose", "--project-name", $projectName) + $BaseArguments + @("down", "--remove-orphans"))
+    }
+}
+
+function Show-ComposeFailureDiagnostics {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$ComposeArguments,
+        [Parameter(Mandatory = $true)][string]$ProjectName
+    )
+
+    Write-Host "`n==> API startup diagnostics" -ForegroundColor Yellow
+    & docker @("compose", "--project-name", $ProjectName) @ComposeArguments "logs" "--tail" "120" "api"
+}
+
 $envPath = Join-Path $repoRoot ".env"
 if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) {
     Stop-Startup ".env was not found. Create it from .env.example and fill in the local secrets first."
@@ -126,6 +199,11 @@ $env:RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 $env:EMBEDDING_PROVIDER = "text-embeddings-inference"
 $env:EMBEDDING_ENDPOINT = "http://tei:80"
 
+$composeFile = "deploy/compose.yaml"
+$skillFingerprint = Get-SkillStateFingerprint -SkillsRoot (Join-Path $repoRoot "skills")
+$composeProjectName = "creative-challenge-local-$skillFingerprint"
+$legacyComposeProjectName = Split-Path -Leaf (Split-Path -Parent (Join-Path $repoRoot $composeFile))
+
 $apiPort = Get-ConfiguredValue -Values $envValues -Name "API_PORT" -Default "8000"
 $webPort = Get-ConfiguredValue -Values $envValues -Name "WEB_PORT" -Default "5173"
 $embeddingPort = Get-ConfiguredValue -Values $envValues -Name "EMBEDDING_PORT" -Default "8080"
@@ -134,6 +212,7 @@ $rerankerPort = Get-ConfiguredValue -Values $envValues -Name "RERANKER_PORT" -De
 Write-Host "Using .env from $envPath" -ForegroundColor Gray
 Write-Host "Effective retrieval: local TEI embedding + real TEI reranker" -ForegroundColor Gray
 Write-Host "Chat credentials: loaded from .env (secret value hidden)" -ForegroundColor Gray
+Write-Host "Local Compose project: $composeProjectName (trusted Skill fingerprint $skillFingerprint)" -ForegroundColor Gray
 
 Invoke-DockerChecked `
     -Description "Check Docker Engine" `
@@ -148,20 +227,33 @@ Invoke-DockerChecked `
     )
 
 $composeArguments = @(
-    "compose",
-    "-f", "deploy/compose.yaml",
+    "-f", $composeFile,
     "--env-file", ".env",
     "--profile", "embedding",
     "--profile", "reranker"
 )
 
-Invoke-DockerChecked `
-    -Description "Build and start the complete GPU stack" `
-    -Arguments ($composeArguments + @("up", "--build", "--force-recreate", "--detach", "--wait"))
+$previousProjects = @(Get-ManagedComposeProjects `
+    -ComposePath (Join-Path $repoRoot $composeFile) `
+    -LegacyProjectName $legacyComposeProjectName
+)
+if ($previousProjects.Count -gt 0) {
+    Stop-ManagedComposeProjects -BaseArguments $composeArguments -ProjectNames $previousProjects
+}
+
+try {
+    Invoke-DockerChecked `
+        -Description "Build and start the complete GPU stack" `
+        -Arguments (@("compose", "--project-name", $composeProjectName) + $composeArguments + @("up", "--build", "--force-recreate", "--detach", "--wait"))
+}
+catch {
+    Show-ComposeFailureDiagnostics -ComposeArguments $composeArguments -ProjectName $composeProjectName
+    throw
+}
 
 Invoke-DockerChecked `
     -Description "Show service status" `
-    -Arguments ($composeArguments + @("ps"))
+    -Arguments (@("compose", "--project-name", $composeProjectName) + $composeArguments + @("ps"))
 
 Test-HttpEndpoint -Name "API live" -Uri "http://127.0.0.1:$apiPort/api/v1/health/live"
 Test-HttpEndpoint -Name "API ready" -Uri "http://127.0.0.1:$apiPort/api/v1/health/ready"

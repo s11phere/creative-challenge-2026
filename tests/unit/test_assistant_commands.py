@@ -8,18 +8,22 @@ from application.assistant import (
     AssistantCommandParser,
     AssistantCommandService,
     AssistantSkillInvocationService,
+    AssistantTurnSubmission,
     CommandCatalogError,
     CommandParseError,
+    ConversationContextMessage,
+    ConversationContextSnapshot,
     ConversationRunService,
 )
 from application.qa import InMemoryGroundedQARepository
 from application.skills import SkillInvocationView
+from domain.conversation_context import ConversationSensitivity
 from domain.conversation_run import (
     ConversationRun,
     ConversationRunSelectionSource,
     ConversationRunStatus,
 )
-from domain.qa_persistence import ConversationRecord
+from domain.qa_persistence import ConversationRecord, MessageRole
 from infrastructure.qa_execution import assistant_skill_registry
 from infrastructure.skill_catalog import FileSystemSkillCatalog
 
@@ -177,3 +181,72 @@ async def test_empty_skill_command_is_idempotently_clarified_without_a_projectio
     assert first.run.status is ConversationRunStatus.WAITING_CLARIFICATION
     assert first.run.selection_source is ConversationRunSelectionSource.COMMAND
     assert projected == []
+
+
+@pytest.mark.asyncio
+async def test_skill_projection_uses_only_the_current_question_for_qa_retrieval() -> None:
+    repository = InMemoryGroundedQARepository()
+    conversation = ConversationRecord(
+        conversation_id=UUID(int=621), space_id=UUID(int=622), owner_id="synthetic-user"
+    )
+    await repository.create_conversation(conversation)
+    run = await ConversationRunService(conversations=repository, runs=repository).submit(
+        AssistantTurnSubmission(
+            conversation_id=conversation.conversation_id,
+            content="Current question?",
+            idempotency_key="projection-question",
+        )
+    )
+    registry = assistant_skill_registry()
+    catalog = FileSystemSkillCatalog(registry, include_manifest_v2=True)
+    selected = next(
+        item for item in catalog.list_active_invocations() if item.name == "knowledge_qa"
+    )
+    projected: dict[str, object] = {}
+
+    class Projection:
+        async def create(
+            self,
+            promoted: ConversationRun,
+            *,
+            skill: object,
+            arguments: dict[str, object],
+            resource_scope: object,
+        ) -> ConversationRun:
+            _ = skill, resource_scope
+            projected.update(arguments)
+            return promoted
+
+    context = ConversationContextSnapshot(
+        conversation_id=conversation.conversation_id,
+        space_id=conversation.space_id,
+        current_message_id=run.user_message_id,
+        current_content="Current question?",
+        summary=None,
+        recent_messages=(
+            # The router may see prior content, but QA retrieval must not receive it as query text.
+            # This value represents a prior persisted assistant answer.
+            ConversationContextMessage(
+                UUID(int=623), MessageRole.ASSISTANT, "Previous answer from a document."
+            ),
+        ),
+        sensitivity=ConversationSensitivity.PRIVATE_LOCAL,
+        estimated_input_tokens=10,
+        soft_limit_exceeded=False,
+    )
+    invoker = AssistantSkillInvocationService(
+        runs=repository,
+        catalog=catalog,
+        registry=registry,
+        projection=Projection(),
+    )
+
+    await invoker.invoke(
+        run,
+        skill=selected,
+        arguments={"question": "Current question?"},
+        context=context,
+    )
+
+    assert projected["standalone_request"] == "Current question?"
+    assert "Previous answer" not in str(projected["standalone_request"])

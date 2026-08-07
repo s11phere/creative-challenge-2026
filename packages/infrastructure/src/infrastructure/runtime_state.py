@@ -109,6 +109,44 @@ class PostgresRuntimeStateStore:
             stored = await session.get(RuntimeRunModel, run_id)
             return _run(stored) if stored is not None else None
 
+    async def finalize(self, run: AgentRun) -> AgentRun:
+        """Persist a terminal snapshot without inventing a recovery checkpoint."""
+        if run.status not in {
+            RunStatus.COMPLETED,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+            RunStatus.TIMED_OUT,
+        }:
+            raise RecoveryRejectedError("only terminal Runtime runs can be finalized")
+        async with self._database.transaction() as session:
+            stored = await session.get(RuntimeRunModel, run.context.run_id, with_for_update=True)
+            if stored is None:
+                stored = RuntimeRunModel(
+                    run_id=run.context.run_id,
+                    space_id=run.context.space_id,
+                    caller_id=run.context.caller_id,
+                    trace_id=run.context.trace_id,
+                    skill_name=run.context.skill_name,
+                    skill_version=run.context.skill_version,
+                    skill_content_sha256=run.context.skill_content_sha256,
+                )
+                session.add(stored)
+            else:
+                _validate_identity(stored, run)
+                if _usage_decreased(stored, run):
+                    raise RecoveryRejectedError("stored run usage cannot decrease")
+            stored.granted_permissions = sorted(
+                permission.value for permission in run.context.granted_permissions
+            )
+            stored.budget = _budget(run.budget)
+            stored.usage = _usage(run.usage)
+            stored.status = run.status.value
+            stored.current_step = None
+            stored.checkpoint_sequence = run.checkpoint_sequence
+            stored.last_error = _error(run.last_error)
+            await session.flush()
+            return _run(stored)
+
     async def get_latest(self, run_id: UUID) -> RunCheckpoint | None:
         async with self._database.session() as session:
             result = await session.execute(

@@ -67,6 +67,27 @@ synthetic evaluator reported eight development cases with `formal_run_eligible=f
 repository formatting check still reports 18 pre-existing, out-of-scope files; all Assistant
 Conversation Evolution files are formatted.
 
+## 2026-08-07 Assistant Conversation Evolution Step 8
+
+Step 8 changes the Web default entry to the API v2 Assistant conversation workspace. The old QA
+surface remains available through an explicit `兼容问答` selector until the Vite-configured UTC
+deadline (`2026-09-30T23:59:59Z` by default); invalid or expired values fail closed to v2. The
+compatibility path reuses the existing v1 conversation, question, Run, cancellation, and citation
+ports, so no parallel QA workflow or persistence protocol is introduced.
+
+The Web image receives `VITE_ASSISTANT_DEFAULT_API_MODE` and
+`VITE_ASSISTANT_V1_COMPATIBILITY_UNTIL` as build arguments. Release verification is limited to
+fake/local Provider paths; external Chat remains governed by `MODEL_ALLOW_EXTERNAL`, source and
+deployment policy, and visible consent. Rollback is configuration-only and preserves v2 data,
+historical Runs, active pointers, and Skill packages. Monitoring requirements are recorded for
+routing misfires, clarification loops, cancellation, recovery, token usage, and latency. This step
+remains provisional under ADR-010/ADR-011; no formal retrieval, answer, or Skill holdout was run.
+
+Step 8 verification: Web lint, typecheck, Vitest (`31` tests), and production build passed. The
+focused v1 compatibility tests cover explicit submit/cancel behavior and the v2 default-entry test
+covers empty-hash startup. OpenAPI has no endpoint change and remains unchanged; browser Playwright
+desktop/mobile evidence is still unavailable in the current environment.
+
 ## 2026-08-06 Assistant Conversation Evolution Step 1
 
 按 `agent-conversation-evolution-plan.md` 的 Step 1，新增了共享 `ConversationRun` 父身份和 API v2

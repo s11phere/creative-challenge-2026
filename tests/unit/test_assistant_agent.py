@@ -9,6 +9,7 @@ from api.assistant_runtime import AssistantWorkerDispatcher
 from application.assistant import (
     AssistantAgentService,
     AssistantMetrics,
+    AssistantRouterDecisionParser,
     AssistantTurnSubmission,
     ConversationRunService,
 )
@@ -43,6 +44,36 @@ class DecisionGateway(FakeModelGateway):
             capability=capability,
             latency_ms=1.5,
         )
+
+
+def test_v2_router_prompt_includes_raw_json_examples() -> None:
+    from application.assistant.agent import _BASE_PROMPT_V2
+
+    assert "Return raw JSON only" in _BASE_PROMPT_V2
+    parser = AssistantRouterDecisionParser()
+    examples = (
+        {
+            "schema_version": "assistant-router-decision-v1",
+            "action": "respond",
+            "assistant_message": "I can help with that.",
+        },
+        {
+            "schema_version": "assistant-router-decision-v1",
+            "action": "clarify",
+            "assistant_message": "Which document should I use?",
+        },
+        {
+            "schema_version": "assistant-router-decision-v1",
+            "action": "invoke_skill",
+            "skill_name": "knowledge_qa",
+            "arguments": {"question": "What does the current workspace say about this?"},
+        },
+    )
+    for example in examples:
+        decision = json.dumps(example, separators=(",", ":"))
+        assert decision in _BASE_PROMPT_V2
+        parsed = parser.parse(decision)
+        assert parsed.action in {"respond", "clarify", "invoke_skill"}
 
 
 async def _turn(

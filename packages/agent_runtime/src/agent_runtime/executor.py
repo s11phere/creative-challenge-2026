@@ -316,6 +316,7 @@ class DeterministicWorkflowExecutor:
                         events,
                         RuntimeAuditEventType.RUN_CANCELLED,
                     )
+                    run = await self._finalize(run)
                     return RuntimeExecutionResult(run, None, False, None, tuple(events))
                 node = node_map[node_id]
                 run = await self._enter_step(run, pin, node.step, events)
@@ -408,6 +409,7 @@ class DeterministicWorkflowExecutor:
                         else RuntimeAuditEventType.RUN_COMPLETED
                     )
                     await self._emit(run, pin, events, event_type)
+                    run = await self._finalize(run)
                     return RuntimeExecutionResult(
                         run=run,
                         output=result.output,
@@ -624,7 +626,16 @@ class DeterministicWorkflowExecutor:
             else RuntimeAuditEventType.RUN_FAILED,
             error_code=failure.code,
         )
+        # Ordinary failures retain their last verified checkpoint for an explicit retry.
+        # A timeout is terminal by contract and cannot be safely resumed.
+        if failure.timed_out:
+            run = await self._finalize(run)
         return RuntimeExecutionResult(run, None, False, error, tuple(events))
+
+    async def _finalize(self, run: AgentRun) -> AgentRun:
+        if self._state_store is None:
+            return run
+        return await self._state_store.finalize(run)
 
     async def _emit(
         self,

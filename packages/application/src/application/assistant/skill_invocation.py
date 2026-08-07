@@ -260,7 +260,12 @@ class AssistantSkillInvocationService:
         assert promoted.skill is not None
         projection_arguments = dict(arguments)
         if context is not None:
-            projection_arguments["standalone_request"] = context.standalone_request()
+            # The router may inspect bounded conversation context, but the QA retrieval
+            # query must remain the Skill's current question. Persisting router_input()
+            # here leaked prior assistant answers into later searches.
+            question = projection_arguments.get("question")
+            if isinstance(question, str) and question.strip():
+                projection_arguments["standalone_request"] = question.strip()
             projection_arguments["context_sensitivity"] = context.sensitivity.value
         return await self._projection.create(
             promoted,
