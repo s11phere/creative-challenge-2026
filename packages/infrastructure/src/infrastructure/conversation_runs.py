@@ -319,6 +319,8 @@ class PostgresConversationRunRepository:
             if model is None or model.run_kind not in {
                 ConversationRunKind.ASSISTANT_TURN.value,
                 ConversationRunKind.CONTEXT_COMPACTION.value,
+                ConversationRunKind.SKILL.value,
+                ConversationRunKind.GROUNDED_QA.value,
             }:
                 return None
             current = _run(model)
@@ -405,7 +407,7 @@ class PostgresConversationRunRepository:
         model_identity: str,
     ) -> ConversationRun:
         async with self._database.transaction() as session:
-            model = await self._locked_assistant_run(session, run_id)
+            model = await self._locked_executable_run(session, run_id)
             current = _run(model)
             if current.status in _TERMINAL:
                 return current
@@ -548,6 +550,8 @@ class PostgresConversationRunRepository:
         if model is None or model.run_kind not in {
             ConversationRunKind.ASSISTANT_TURN.value,
             ConversationRunKind.CONTEXT_COMPACTION.value,
+            ConversationRunKind.SKILL.value,
+            ConversationRunKind.GROUNDED_QA.value,
         }:
             raise QAContractError("ConversationRun does not exist")
         return model

@@ -27,6 +27,7 @@ from .context import (
     ConversationContextService,
     ConversationContextSnapshot,
 )
+from .finalization import ConversationFinalizer, FinalizationInput
 from .metrics import (
     AssistantAction,
     AssistantMetrics,
@@ -80,6 +81,8 @@ __all__ = [
     "ConversationReader",
     "ConversationRunApplicationError",
     "ConversationRunService",
+    "ConversationFinalizer",
+    "FinalizationInput",
     "NaturalLanguageResourceResolver",
     "ResourceResolutionError",
     "ResourceResolutionErrorCode",

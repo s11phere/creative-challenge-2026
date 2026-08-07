@@ -50,6 +50,10 @@ architecture, component/data-flow, design-rationale, and multi-document synthesi
 cannot be selected by a new Assistant or v1 Run request. Existing Runs retain their pinned v2 prompt
 identity for recovery and audit.
 
+The grounded QA contract continues to use the versioned `grounded-qa-v1-provisional` prompt for
+the Skill's internal, citation-validated result. A separate finalizer uses that result as
+reference material and produces the user-facing response.
+
 Direct responses are a distinct terminal result and never include fabricated grounded citations.
 Clarifications use the server-authored `assistant-clarification-v1` schema. Resource candidates
 contain only safe display metadata. A candidate selection derives a confirmation idempotency key
@@ -117,6 +121,14 @@ creation order. It is the recovery read model for an active Run, waiting clarifi
 direct response, and the v2 identity of a grounded result after a browser refresh. Grounded result
 and citation bodies continue to use the existing scoped v1 QA read endpoints; v2 does not expose
 evidence bodies, internal continuation data, or runtime guardrail values.
+
+When a grounded Skill reaches a business-terminal QA state, the QA Worker appends one `phase` event
+with `phase=final_answer`, then runs the finalizer exactly once for the parent Run. The QA message
+remains an internal, citation-validated Skill result. The finalizer publishes a separate parent
+Assistant message, after which one terminal v2 event is appended. The Web workspace renders the
+finalizer message in an expanded final-answer frame. Evidence is opened by the frame or its Skill
+invocation record, and one shared Run-scoped evidence panel is used so different components cannot
+open competing panels; the panel has an explicit close action.
 
 ### Privacy and quality boundary
 

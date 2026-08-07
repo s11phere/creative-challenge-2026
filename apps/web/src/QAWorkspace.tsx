@@ -36,6 +36,7 @@ import {
   type AssistantRun,
   type AssistantRunEvent,
   type ConversationHistoryItem,
+  type QARun,
 } from './qa'
 import { assistantDefaultApiMode, type AssistantApiMode } from './assistantRelease'
 import { fetchSourceDetail } from './sources'
@@ -104,6 +105,7 @@ function eventLabel(event: AssistantRunEvent, skillName: string): string {
     case 'skill_started':
       return `开始执行 ${skillName}`
     case 'phase':
+      if (phase === 'final_answer') return '已完成最终回答'
       return phase ? `正在执行 ${phase}` : '正在执行任务阶段'
     case 'clarification':
       return '等待补充资源信息'
@@ -118,18 +120,18 @@ function eventLabel(event: AssistantRunEvent, skillName: string): string {
 
 type SkillRunCardProps = {
   run: AssistantRun
-  answer: string | null
-  limitations: string[]
+  result: QARun['result']
   clarificationPending: boolean
   onSelectClarification: (candidateId: string) => void
+  onOpenEvidence: (runId: string) => void
 }
 
 function SkillRunCard({
   run,
-  answer,
-  limitations,
+  result,
   clarificationPending,
   onSelectClarification,
+  onOpenEvidence,
 }: SkillRunCardProps) {
   const skill = run.selection.skill
   const activityQuery = useQuery({
@@ -171,14 +173,27 @@ function SkillRunCard({
             <div><dt>模型耗时</dt><dd>{Math.round(run.usage.model_latency_ms).toLocaleString('zh-CN')} ms</dd></div>
           </dl>
         </section>
-        {answer && (
+        {result && skill.name !== 'knowledge_qa' && (result.text || result.message) && (
           <section>
-            <h3>回答</h3>
+            <h3>Skill 结果</h3>
             <div className="qa-answer">
-              <p>{answer}</p>
-              {limitations.map((limitation) => <small key={limitation}>{limitation}</small>)}
+              <p>{result.text ?? result.message}</p>
+              {result.limitations?.map((limitation) => <small key={limitation}>{limitation}</small>)}
             </div>
           </section>
+        )}
+        {isGroundedRun(run) && (
+          <button
+            className="chat-evidence-button"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation()
+              onOpenEvidence(run.run_id)
+            }}
+          >
+            <Quote size={15} aria-hidden="true" />
+            查看引用证据
+          </button>
         )}
         {run.clarification && (
           <section className="chat-clarification">
@@ -229,6 +244,7 @@ export function QAWorkspace({
   const [localMessages, setLocalMessages] = useState<ConversationHistoryItem['messages']>([])
   const [localRuns, setLocalRuns] = useState<AssistantRun[]>([])
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
+  const [evidenceRunId, setEvidenceRunId] = useState<string | null>(null)
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null)
   const [commandIndex, setCommandIndex] = useState(0)
   const [commandMenuDismissed, setCommandMenuDismissed] = useState(false)
@@ -237,6 +253,7 @@ export function QAWorkspace({
   const isComposingRef = useRef(false)
   const excerptRef = useRef<HTMLDivElement>(null)
   const historyInitializedRef = useRef(false)
+  const evidenceUserClosedRef = useRef(false)
   const queryClient = useQueryClient()
   const usingLegacyV1 = apiMode === 'v1'
 
@@ -293,10 +310,18 @@ export function QAWorkspace({
     retry: false,
     refetchInterval: (query) => activeStatuses.has(query.state.data?.status ?? '') ? 2_000 : false,
   })
-  const currentEvidenceRun = currentQARunQuery.data ?? currentLegacyRun
+  const evidenceLegacyRun = evidenceRunId ? legacyRunsById.get(evidenceRunId) : undefined
+  const evidenceRunQuery = useQuery<QARun>({
+    queryKey: ['qa-evidence-run', evidenceRunId],
+    queryFn: ({ signal }) => fetchRun(evidenceRunId!, signal),
+    enabled: Boolean(evidenceRunId),
+    initialData: evidenceLegacyRun,
+    retry: false,
+  })
+  const evidenceRun = evidenceRunQuery.data ?? evidenceLegacyRun
   const citationSourceIds = useMemo(
-    () => [...new Set(currentEvidenceRun?.citations?.map((citation) => citation.source_id) ?? [])],
-    [currentEvidenceRun?.citations],
+    () => [...new Set(evidenceRun?.citations?.map((citation) => citation.source_id) ?? [])],
+    [evidenceRun?.citations],
   )
   const citationMetadataQuery = useQuery<Record<string, CitationMetadata>>({
     queryKey: ['qa-citation-source-details', citationSourceIds],
@@ -321,9 +346,9 @@ export function QAWorkspace({
     retry: false,
   })
   const citationQuery = useQuery({
-    queryKey: ['qa-citation', currentEvidenceRun?.run_id, selectedEvidenceId],
-    queryFn: ({ signal }) => fetchCitationExcerpt(currentEvidenceRun!.run_id, selectedEvidenceId!, signal),
-    enabled: Boolean(currentEvidenceRun?.run_id && selectedEvidenceId),
+    queryKey: ['qa-citation', evidenceRun?.run_id, selectedEvidenceId],
+    queryFn: ({ signal }) => fetchCitationExcerpt(evidenceRun!.run_id, selectedEvidenceId!, signal),
+    enabled: Boolean(evidenceRun?.run_id && selectedEvidenceId),
     retry: false,
   })
 
@@ -362,6 +387,8 @@ export function QAWorkspace({
       setLocalMessages([])
       setLocalRuns([])
       setActiveRunId(null)
+      evidenceUserClosedRef.current = false
+      setEvidenceRunId(null)
       setSelectedEvidenceId(null)
       setCommandNotice(null)
     }
@@ -371,6 +398,8 @@ export function QAWorkspace({
     setLocalMessages([])
     setLocalRuns([])
     setActiveRunId(null)
+    evidenceUserClosedRef.current = false
+    setEvidenceRunId(null)
     setSelectedEvidenceId(null)
     setCommandNotice(null)
     setCommandMenuDismissed(false)
@@ -385,6 +414,13 @@ export function QAWorkspace({
   useEffect(() => {
     if (selectedEvidenceId && (citationQuery.data || citationQuery.error)) excerptRef.current?.focus()
   }, [citationQuery.data, citationQuery.error, selectedEvidenceId])
+
+  useEffect(() => {
+    const citations = currentQARunQuery.data?.citations ?? currentLegacyRun?.citations ?? []
+    if (!evidenceRunId && !evidenceUserClosedRef.current && currentRun?.run_id && citations.length > 0) {
+      setEvidenceRunId(currentRun.run_id)
+    }
+  }, [currentQARunQuery.data?.citations, currentLegacyRun?.citations, currentRun?.run_id, evidenceRunId])
 
   const submitMutation = useMutation({
     mutationFn: async (content: string) => {
@@ -433,6 +469,7 @@ export function QAWorkspace({
         setConversationId(nextConversationId)
         onConversationSelected?.(nextConversationId)
       }
+      evidenceUserClosedRef.current = false
       setSelectedEvidenceId(null)
       setDraft('')
       setCommandMenuDismissed(false)
@@ -528,10 +565,20 @@ export function QAWorkspace({
       .sort((left, right) => left.created_at.localeCompare(right.created_at))
   }, [localMessages, selectedConversation?.messages])
   const currentRunIsActive = currentRun ? activeStatuses.has(currentRun.status) : false
-  const visibleCitations = currentEvidenceRun?.citations ?? []
+  const visibleCitations = evidenceRun?.citations ?? []
+  const openEvidence = (runId: string) => {
+    evidenceUserClosedRef.current = false
+    setEvidenceRunId(runId)
+    setSelectedEvidenceId(null)
+  }
+  const closeEvidence = () => {
+    evidenceUserClosedRef.current = true
+    setEvidenceRunId(null)
+    setSelectedEvidenceId(null)
+  }
 
   return (
-    <section className={`qa-layout chat-layout${visibleCitations.length > 0 ? ' chat-layout-with-evidence' : ''}`} aria-label="对话工作区">
+    <section className={`qa-layout chat-layout${evidenceRunId ? ' chat-layout-with-evidence' : ''}`} aria-label="对话工作区">
       <div className="qa-conversation chat-conversation">
         <div className="qa-thread chat-thread" data-empty={messages.length === 0 && !commandNotice} aria-live="polite">
           {commandNotice && (
@@ -563,9 +610,11 @@ export function QAWorkspace({
             const run = message.role === 'user' ? runsByMessage.get(message.message_id) : undefined
             const legacyRun = run ? legacyRunsById.get(run.run_id) : undefined
             const qaRun = run?.run_id === currentRun?.run_id ? currentQARunQuery.data ?? legacyRun : legacyRun
-            const answer = qaRun?.result
+            // New Skills expose only the parent finalizer message. The legacy
+            // knowledge_qa projection remains readable for historical v1 Runs.
+            const answer = run?.assistant_message?.content ?? (qaRun?.skill?.name === 'knowledge_qa' && qaRun?.result
               ? qaRun.result.text ?? qaRun.result.message ?? null
-              : run?.assistant_message?.content ?? null
+              : null)
             const limitations = qaRun?.result?.limitations ?? []
             return (
               <div key={message.message_id} className={`chat-message-group chat-message-group-${message.role}`}>
@@ -576,13 +625,26 @@ export function QAWorkspace({
                 </div>
                 {run && (
                   isSkillInvocation(run) ? (
-                    <SkillRunCard
-                      run={run}
-                      answer={answer}
-                      limitations={limitations}
-                      clarificationPending={clarificationMutation.isPending}
-                      onSelectClarification={(candidateId) => clarificationMutation.mutate({ run, candidateId })}
-                    />
+                    <>
+                      <SkillRunCard
+                        run={run}
+                        result={qaRun?.result ?? null}
+                        clarificationPending={clarificationMutation.isPending}
+                        onSelectClarification={(candidateId) => clarificationMutation.mutate({ run, candidateId })}
+                        onOpenEvidence={openEvidence}
+                      />
+                      {answer && (
+                        <article className="chat-final-answer" data-status={run.status}>
+                          <div className="qa-run-heading"><Check size={17} aria-hidden="true" /><strong>最终回答</strong></div>
+                          <div className="qa-answer"><p>{answer}</p>{limitations.map((limitation) => <small key={limitation}>{limitation}</small>)}</div>
+                          {isGroundedRun(run) && (
+                            <button className="chat-evidence-button" type="button" onClick={() => openEvidence(run.run_id)}>
+                              <Quote size={15} aria-hidden="true" />查看引用证据
+                            </button>
+                          )}
+                        </article>
+                      )}
+                    </>
                   ) : (
                     <article className="chat-run" data-status={run.status}>
                       <div className="qa-run-heading">
@@ -590,6 +652,7 @@ export function QAWorkspace({
                         <strong>{statusLabel(run.status)}</strong>
                       </div>
                       {answer && <div className="qa-answer"><p>{answer}</p>{limitations.map((limitation) => <small key={limitation}>{limitation}</small>)}</div>}
+                      {isGroundedRun(run) && <button className="chat-evidence-button" type="button" onClick={() => openEvidence(run.run_id)}><Quote size={15} aria-hidden="true" />查看引用证据</button>}
                       {run.clarification && (
                         <div className="chat-clarification">
                           <p>{run.clarification.message}</p>
@@ -673,11 +736,13 @@ export function QAWorkspace({
         </form>
       </div>
 
-      {visibleCitations.length > 0 && (
+      {evidenceRunId && (
         <aside className="qa-evidence" aria-labelledby="qa-evidence-title">
-          <div className="qa-evidence-heading"><Quote size={18} aria-hidden="true" /><h2 id="qa-evidence-title">引用证据</h2><span className="qa-evidence-count">{visibleCitations.length}</span></div>
+          <div className="qa-evidence-heading"><Quote size={18} aria-hidden="true" /><h2 id="qa-evidence-title">引用证据</h2><span className="qa-evidence-count">{visibleCitations.length}</span><button className="qa-evidence-close" type="button" onClick={closeEvidence} aria-label="关闭证据栏" title="关闭证据栏"><X size={16} aria-hidden="true" /></button></div>
           <div className="qa-evidence-content">
             <div className="qa-citation-list">
+              {evidenceRunQuery.isPending && <div className="qa-evidence-empty"><LoaderCircle className="spin" size={22} aria-hidden="true" /><span>正在加载引用证据</span></div>}
+              {evidenceRunQuery.error && <div className="qa-evidence-empty" role="alert"><AlertCircle size={22} aria-hidden="true" /><span>引用证据暂不可用</span></div>}
               {visibleCitations.map((citation) => {
                 const metadata = citationMetadataQuery.data?.[citationKey(citation.source_id, citation.document_id)]
                 const documentName = metadata?.displayName ?? `文档 ${citation.document_id.slice(0, 8)}`

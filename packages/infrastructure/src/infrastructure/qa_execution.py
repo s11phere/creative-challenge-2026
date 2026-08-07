@@ -523,6 +523,7 @@ def _profiles() -> tuple[QAPlanningProfileV1, RetrievalProfileV1, QAGenerationPr
     generation = QAGenerationProfileV1(
         retrieval_profile_reference=retrieval.profile_version,
         model_identity=(settings.fast_chat_model or "fake-fast-chat-v1"),
+        prompt_template_id="grounded-qa-v1-provisional",
     )
     return planning, retrieval, generation
 

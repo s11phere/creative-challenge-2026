@@ -405,6 +405,8 @@ class InMemoryGroundedQARepository:
             if run is None or run.run_kind not in {
                 ConversationRunKind.ASSISTANT_TURN,
                 ConversationRunKind.CONTEXT_COMPACTION,
+                ConversationRunKind.SKILL,
+                ConversationRunKind.GROUNDED_QA,
             }:
                 return None
             if run.status in {
@@ -626,6 +628,8 @@ class InMemoryGroundedQARepository:
         if run is None or run.run_kind not in {
             ConversationRunKind.ASSISTANT_TURN,
             ConversationRunKind.CONTEXT_COMPACTION,
+            ConversationRunKind.SKILL,
+            ConversationRunKind.GROUNDED_QA,
         }:
             raise QAContractError("ConversationRun does not exist")
         return run
@@ -1097,7 +1101,20 @@ class InMemoryGroundedQARepository:
         if parent is None:
             self._create_legacy_conversation_run(run)
             return
-        self._conversation_runs[run.run_id] = _conversation_run_from_qa(run, existing=parent)
+        projected = _conversation_run_from_qa(run, existing=parent)
+        if (
+            parent.run_kind in {ConversationRunKind.SKILL, ConversationRunKind.GROUNDED_QA}
+            and parent.core_prompt_version
+            in {"assistant-base-prompt-v2", "assistant-base-prompt-v3"}
+            and parent.result is None
+            and run.status in {QAStatus.COMPLETED, QAStatus.REFUSED}
+        ):
+            projected = replace(
+                projected,
+                status=ConversationRunStatus.RUNNING,
+                result=None,
+            )
+        self._conversation_runs[run.run_id] = projected
 
 
 def _result_content(result: QAResult) -> str:

@@ -347,9 +347,9 @@ async def test_v2_explicit_skill_command_bypasses_model_and_is_idempotent() -> N
 
     assert first.status_code == 202
     assert first.json()["command"] == "ask"
-    assert first.json()["run"]["run_kind"] == "grounded_qa"
+    assert first.json()["run"]["run_kind"] == "skill"
     assert first.json()["run"]["selection"]["source"] == "command"
-    assert first.json()["run"]["selection"]["skill"]["version"] == "0.2.0"
+    assert first.json()["run"]["selection"]["skill"]["version"] == "0.3.0"
     assert second.json()["run"]["run_id"] == first.json()["run"]["run_id"]
     replayed = await events.replay(UUID(first.json()["run"]["run_id"]))
     assert [event.event_type for event in replayed] == [

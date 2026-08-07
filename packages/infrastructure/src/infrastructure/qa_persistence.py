@@ -1066,11 +1066,24 @@ def _validate_parent(
 
 def _project_conversation_run(model: ConversationRunModel, run: QARunRecord) -> None:
     _validate_parent(model, run, check_idempotency=False)
-    model.status = _conversation_run_status(run.status).value
+    hold_for_finalizer = (
+        model.run_kind in {
+            ConversationRunKind.SKILL.value,
+            ConversationRunKind.GROUNDED_QA.value,
+        }
+        and model.core_prompt_version in {"assistant-base-prompt-v2", "assistant-base-prompt-v3"}
+        and model.result is None
+        and run.status in _BUSINESS_TERMINAL
+    )
+    model.status = (
+        ConversationRunStatus.RUNNING.value
+        if hold_for_finalizer
+        else _conversation_run_status(run.status).value
+    )
     model.cancellation_requested = run.cancellation_requested
     model.error_code = run.error_code
     model.usage = _conversation_run_usage(run)
-    model.result = _conversation_run_result(run)
+    model.result = None if hold_for_finalizer else _conversation_run_result(run)
     model.updated_at = run.updated_at
 
 

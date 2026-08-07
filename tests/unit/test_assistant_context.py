@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from application.assistant import (
@@ -9,9 +9,15 @@ from application.assistant import (
     ConversationContextService,
     ConversationRunService,
 )
+from application.assistant.context import _is_user_visible_message
 from application.qa import InMemoryGroundedQARepository
-from domain.conversation_run import ConversationRunStatus
-from domain.qa_persistence import ConversationRecord
+from domain.conversation_run import (
+    AssistantResult,
+    AssistantResultKind,
+    ConversationRun,
+    ConversationRunStatus,
+)
+from domain.qa_persistence import ConversationRecord, MessageRecord, MessageRole
 from model_gateway import FakeModelGateway, FakeScenario
 
 
@@ -99,3 +105,37 @@ async def test_compaction_failure_does_not_modify_original_messages() -> None:
     assert failed.error_code == "RUN_CONTEXT_COMPACTION_FAILED"
     assert await repository.list_messages(conversation.conversation_id) == before
     assert await repository.list_conversation_summaries(conversation.conversation_id) == ()
+
+
+def test_context_only_retains_the_parent_run_final_assistant_message() -> None:
+    run_id = uuid4()
+    final_message_id = uuid4()
+    parent = ConversationRun(
+        run_id=run_id,
+        conversation_id=uuid4(),
+        space_id=uuid4(),
+        caller_id="context-user",
+        user_message_id=uuid4(),
+        idempotency_key="context-finalizer",
+        status=ConversationRunStatus.COMPLETED,
+        result=AssistantResult(AssistantResultKind.DIRECT_MESSAGE, message_id=final_message_id),
+    )
+    raw_skill_message = MessageRecord(
+        message_id=uuid4(),
+        conversation_id=parent.conversation_id,
+        space_id=parent.space_id,
+        role=MessageRole.ASSISTANT,
+        content="Raw Skill result that must remain internal.",
+        run_id=run_id,
+    )
+    final_message = MessageRecord(
+        message_id=final_message_id,
+        conversation_id=parent.conversation_id,
+        space_id=parent.space_id,
+        role=MessageRole.ASSISTANT,
+        content="Organized final answer for the user.",
+        run_id=run_id,
+    )
+
+    assert not _is_user_visible_message(raw_skill_message, {run_id: parent})
+    assert _is_user_visible_message(final_message, {run_id: parent})

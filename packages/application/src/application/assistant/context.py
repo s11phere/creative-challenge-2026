@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
@@ -12,7 +12,6 @@ from uuid import UUID, uuid4
 from domain.conversation_context import (
     ConversationSensitivity,
     ConversationSummary,
-    ConversationSummaryRepository,
     most_restrictive_sensitivity,
 )
 from domain.conversation_run import (
@@ -44,7 +43,15 @@ _SUMMARY_PROMPT = (
 )
 
 
-class ConversationContextDataPort(ConversationSummaryRepository, Protocol):
+class ConversationContextDataPort(Protocol):
+    async def list_conversation_summaries(
+        self, conversation_id: UUID
+    ) -> tuple[ConversationSummary, ...]: ...
+
+    async def create_conversation_summary(
+        self, summary: ConversationSummary
+    ) -> ConversationSummary: ...
+
     async def get_conversation(self, conversation_id: UUID) -> ConversationRecord | None: ...
 
     async def get_message(self, message_id: UUID) -> MessageRecord | None: ...
@@ -130,6 +137,10 @@ class ConversationContextService:
 
     async def snapshot(self, run: ConversationRun) -> ConversationContextSnapshot:
         messages = await self._data.list_messages(run.conversation_id)
+        runs = {
+            item.run_id: item
+            for item in await self._runs.list_conversation_runs(run.conversation_id)
+        }
         current_index = next(
             (
                 index
@@ -154,6 +165,7 @@ class ConversationContextService:
         recent = tuple(
             ConversationContextMessage(item.message_id, item.role, item.content)
             for item in messages[recent_start:current_index]
+            if _is_user_visible_message(item, runs)
         )
         sensitivity = most_restrictive_sensitivity(
             tuple(summary_item.sensitivity for summary_item in summaries)
@@ -163,7 +175,11 @@ class ConversationContextService:
         if summary is not None:
             estimated += _token_count(summary.content)
         estimated += sum(_token_count(item.content) for item in recent)
-        prior_tokens = sum(_token_count(item.content) for item in messages[:current_index])
+        prior_tokens = sum(
+            _token_count(item.content)
+            for item in messages[:current_index]
+            if _is_user_visible_message(item, runs)
+        )
         return ConversationContextSnapshot(
             conversation_id=run.conversation_id,
             space_id=run.space_id,
@@ -405,6 +421,18 @@ def _compaction_input(
 
 def _token_count(value: str) -> int:
     return len(value.encode("utf-8"))
+
+
+def _is_user_visible_message(
+    message: MessageRecord, runs: Mapping[UUID, ConversationRun]
+) -> bool:
+    """Keep user messages and the one published assistant result per parent Run."""
+    if message.role is MessageRole.USER or message.run_id is None:
+        return True
+    parent = runs.get(message.run_id)
+    if parent is None:
+        return True
+    return parent.result is not None and parent.result.message_id == message.message_id
 
 
 def _terminal_statuses() -> frozenset[ConversationRunStatus]:
