@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Protocol, cast
 
@@ -289,15 +289,7 @@ class BoundedLLMAgentNode:
                     f"{_json_digest(decision.arguments)}"
                 ),
             )
-            try:
-                result = await self.tool_registry.invoke(local_run, invocation)
-            except ToolRegistryError as exc:
-                raise NodeExecutionError(
-                    code=exc.code.value,
-                    category=_tool_error_category(exc.code),
-                    message=str(exc),
-                    retryable=exc.retryable,
-                ) from exc
+            result = await self._invoke_with_retry(local_run, invocation, definition)
             local_run = result.run
             usage = usage.add(tool_calls=1)
             tool_event: dict[str, JSONValue] = {
@@ -334,6 +326,38 @@ class BoundedLLMAgentNode:
             category=RunErrorCategory.BUDGET,
             message="LLM Agent did not terminate within its iteration limit.",
         )
+
+    async def _invoke_with_retry(
+        self,
+        run: AgentRun,
+        invocation: ToolInvocation,
+        definition: ToolDefinition,
+    ) -> ToolInvocationResult:
+        """Invoke a Tool, retrying transient failures up to its declared budget.
+
+        Provider/network flakiness can surface as a Tool handler error even when
+        the model gateway already retried at the HTTP layer. A bounded inline retry
+        keeps the Agent's chosen plan (arguments and limits) instead of degrading
+        the whole loop to the server-side fallback.
+        """
+        while True:
+            try:
+                return await self.tool_registry.invoke(run, invocation)
+            except ToolRegistryError as exc:
+                if not exc.retryable or invocation.retry_count >= definition.max_retries:
+                    raise NodeExecutionError(
+                        code=exc.code.value,
+                        category=_tool_error_category(exc.code),
+                        message=str(exc),
+                        retryable=exc.retryable,
+                    ) from exc
+                invocation = replace(
+                    invocation,
+                    retry_count=invocation.retry_count + 1,
+                    idempotency_key=(
+                        f"{invocation.idempotency_key}:retry:{invocation.retry_count + 1}"
+                    ),
+                )
 
     @staticmethod
     def _tool_spec(definition: ToolDefinition) -> dict[str, JSONValue]:

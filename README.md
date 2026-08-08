@@ -302,6 +302,7 @@ docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml --env-file .env
 
 - [架构概览](docs/architecture.md)
 - [开发环境与 Provider 边界](docs/development-environment.md)
+- [knowledge_agent 证据扩池实验报告](docs/knowledge-agent-evidence-expansion-report.md)
 - [阶段 1 验收记录](docs/stage-1-acceptance.md)
 - [阶段 2 验收记录](docs/stage-2-acceptance.md)
 - [故障排查与已知限制](docs/troubleshooting.md)

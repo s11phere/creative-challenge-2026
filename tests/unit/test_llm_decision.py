@@ -155,7 +155,7 @@ async def search_handler(
     return {"matches": [f"found:{arguments['query']}"]}
 
 
-def search_tool(*, model_visible: bool = True) -> ToolDefinition:
+def search_tool(*, model_visible: bool = True, max_retries: int = 0) -> ToolDefinition:
     return ToolDefinition(
         name="search_knowledge",
         version="1.0.0",
@@ -175,6 +175,7 @@ def search_tool(*, model_visible: bool = True) -> ToolDefinition:
         permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
         handler_name="search",
         model_visible=model_visible,
+        max_retries=max_retries,
     )
 
 
@@ -286,6 +287,68 @@ async def test_bounded_agent_stops_at_iteration_limit() -> None:
             max_iterations=1,
         )(agent_context(agent_run(permissions=tool.permissions), gateway))
     assert exhausted.value.code == "RUN_LLM_MAX_ITERATIONS"
+
+
+@pytest.mark.asyncio
+async def test_bounded_agent_retries_transient_tool_failure_within_declared_budget() -> None:
+    attempts = {"count": 0}
+
+    async def flaky_handler(
+        arguments: dict[str, JSONValue], _context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("transient model failure")
+        return {"matches": [f"found:{arguments['query']}"]}
+
+    registry = InMemoryToolRegistry(handlers={"search": flaky_handler})
+    tool = registry.register(search_tool(max_retries=1))
+    gateway = DecisionGateway(
+        '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"safe"}}',
+        '{"action":"complete","reason":"grounded result"}',
+    )
+    result = await BoundedLLMAgentNode(
+        tool_registry=registry,
+        allowed_tools=(tool.ref,),
+        system_prompt="Use only authorized evidence.",
+    )(agent_context(agent_run(permissions=tool.permissions), gateway))
+
+    assert attempts["count"] == 2
+    assert result.output == {"action": "complete", "reason": "grounded result"}
+    assert result.usage.tool_calls == 1
+    calls = result.state_updates["agent_tool_calls"]
+    assert isinstance(calls, list)
+    assert len(calls) == 1
+    first_call = calls[0]
+    assert isinstance(first_call, dict)
+    assert first_call["tool_name"] == "search_knowledge"
+    assert "found:safe" in gateway.requests[1].messages[1].content
+
+
+@pytest.mark.asyncio
+async def test_bounded_agent_does_not_retry_without_declared_budget() -> None:
+    attempts = {"count": 0}
+
+    async def always_failing_handler(
+        _arguments: dict[str, JSONValue], _context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        attempts["count"] += 1
+        raise RuntimeError("persistent failure")
+
+    registry = InMemoryToolRegistry(handlers={"search": always_failing_handler})
+    tool = registry.register(search_tool())  # max_retries defaults to 0
+    gateway = DecisionGateway(
+        '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"safe"}}'
+    )
+    with pytest.raises(NodeExecutionError) as failure:
+        await BoundedLLMAgentNode(
+            tool_registry=registry,
+            allowed_tools=(tool.ref,),
+            system_prompt="Use only authorized evidence.",
+        )(agent_context(agent_run(permissions=tool.permissions), gateway))
+    assert failure.value.code == "TOOL_EXECUTION_FAILED"
+    assert failure.value.retryable is False
+    assert attempts["count"] == 1
 
 
 @pytest.mark.asyncio

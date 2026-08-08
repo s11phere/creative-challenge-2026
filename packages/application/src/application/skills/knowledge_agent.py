@@ -77,6 +77,7 @@ class KnowledgeAgentSkillAdapter:
                 permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
                 handler_name="inspect_retrieval",
                 model_visible=True,
+                max_retries=1,
             )
         )
         self.tool = registry.register(
