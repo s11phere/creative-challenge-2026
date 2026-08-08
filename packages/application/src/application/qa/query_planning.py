@@ -177,7 +177,11 @@ class QASearchCoordinator:
 
 def classify_question(question: str) -> QuestionType:
     normalized = normalize_question(question).casefold()
-    if any(marker in normalized for marker in ("compare", "difference", "区别", "比较", "分别")):
+    # "分别" is deliberately excluded: in Chinese it most often means
+    # "respectively / each" (a listing) rather than "compare", and treating it
+    # as a comparison marker made questions like "Stage-1a 和 Stage-1b 分别使用
+    # 哪些数据集" fail the comparison grounding gate and get wrongly refused.
+    if any(marker in normalized for marker in ("compare", "difference", "区别", "比较")):
         return QuestionType.COMPARISON
     if any(marker in normalized for marker in ("how", "步骤", "如何", "怎么", "流程")):
         return QuestionType.PROCEDURAL
