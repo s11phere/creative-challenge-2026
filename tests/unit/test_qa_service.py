@@ -81,9 +81,11 @@ class StaticSearchService:
 class StaticRewriter:
     def __init__(self, queries: tuple[str, ...]) -> None:
         self._queries = queries
+        self.calls = 0
 
     async def rewrite(self, _question: QuestionInput, *, max_queries: int) -> tuple[str, ...]:
         assert max_queries >= len(self._queries)
+        self.calls += 1
         return self._queries
 
 
@@ -247,17 +249,18 @@ async def _submitted_run(
 
 
 @pytest.mark.asyncio
-async def test_agent_retrieval_keeps_llm_rewrites_within_the_shared_query_budget() -> None:
+async def test_agent_supplied_queries_skip_the_generic_rewrite() -> None:
+    # When the agent already chooses retrieval queries, the generic rewrite LLM
+    # call is redundant and is skipped; the merged plan keeps the original
+    # question plus the agent's queries.
     base_profile = _profile()
     profile = replace(
         base_profile,
         planning=replace(base_profile.planning, rewrite_enabled=True, max_subqueries=4),
     )
+    rewriter = StaticRewriter(("llm query one", "llm query two"))
     search_service = StaticSearchService(_search_result())
-    service = _service(
-        search_service,
-        planner=QueryPlanner(StaticRewriter(("llm query one", "llm query two"))),
-    )
+    service = _service(search_service, planner=QueryPlanner(rewriter))
     _conversation, run_id = await _submitted_run(service, profile)
 
     inspected = await service.inspect_retrieval(
@@ -266,12 +269,45 @@ async def test_agent_retrieval_keeps_llm_rewrites_within_the_shared_query_budget
         agent_plan=AgentRetrievalPlan(additional_queries=("agent query",)),
     )
 
-    assert len(inspected.diagnostics) == 4
+    assert rewriter.calls == 0
+    assert len(inspected.diagnostics) == 2
+    assert tuple(request.query for request in search_service.requests) == (
+        "What does the synthetic fixture support?",
+        "agent query",
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_reuses_the_plan_from_an_earlier_inspect() -> None:
+    # An agent flow that inspects retrieval and then runs grounded_qa without
+    # adding queries must not re-run the rewrite LLM or duplicate the search.
+    base_profile = _profile()
+    profile = replace(
+        base_profile,
+        planning=replace(base_profile.planning, rewrite_enabled=True, max_subqueries=4),
+    )
+    rewriter = StaticRewriter(("llm query one",))
+    search_service = StaticSearchService(_search_result())
+    service = _service(search_service, planner=QueryPlanner(rewriter))
+    _conversation, run_id = await _submitted_run(service, profile)
+
+    inspected = await service.inspect_retrieval(
+        run_id, profile=profile, agent_plan=AgentRetrievalPlan()
+    )
+    assert len(inspected.diagnostics) == 2
+
+    completed = await service.execute(run_id, profile=profile, agent_plan=AgentRetrievalPlan())
+
+    assert completed.status.value == "completed"
+    assert rewriter.calls == 1
+    # inspect searched the 2-query plan and execute re-searched the same reused
+    # plan; the rewrite LLM ran exactly once instead of once per tool call.
+    assert len(search_service.requests) == 4
     assert tuple(request.query for request in search_service.requests) == (
         "What does the synthetic fixture support?",
         "llm query one",
-        "llm query two",
-        "agent query",
+        "What does the synthetic fixture support?",
+        "llm query one",
     )
 
 

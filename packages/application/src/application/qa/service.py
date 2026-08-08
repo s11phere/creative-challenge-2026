@@ -146,6 +146,12 @@ class GroundedQAService:
         self._evidence_binding = evidence_binding
         self._context_builder = context_builder
         self._generator = generator
+        # Per-run planning cache: an agent flow that inspects retrieval and then
+        # runs grounded_qa on the same run should not re-run the rewrite LLM.
+        # Guarded against unbounded growth by clearing entries when the run
+        # reaches a terminal state and by capping the total size.
+        self._plan_cache: dict[UUID, QueryPlanningResult] = {}
+        self._plan_cache_cap = 64
 
     async def create_conversation(self, conversation: ConversationRecord) -> ConversationRecord:
         return await self._repository.create_conversation(conversation)
@@ -222,7 +228,9 @@ class GroundedQAService:
             question = await self._question_for_run(run)
 
             started = perf_counter()
-            planning, effective_planning = await self._planning_for(question, profile, agent_plan)
+            planning, effective_planning = await self._planning_for(
+                run_id, question, profile, agent_plan
+            )
             timings.append(QAPhaseTiming(QAPhase.PLANNING, _elapsed_ms(started)))
 
             started = perf_counter()
@@ -267,6 +275,7 @@ class GroundedQAService:
                 answer_message=answer_message,
                 citations=_citation_records(run, generated.result, answer_message.message_id),
             )
+            self._plan_cache.pop(run_id, None)
             return published
         except RetrievalError as error:
             return await self._fail(
@@ -296,11 +305,14 @@ class GroundedQAService:
         if run.status is not QAStatus.QUEUED:
             raise QAContractError("Retrieval inspection requires a queued QA Run")
         question = await self._question_for_run(run)
-        planning, effective_planning = await self._planning_for(question, profile, agent_plan)
+        planning, effective_planning = await self._planning_for(
+            run_id, question, profile, agent_plan
+        )
         return await self._search_for(run, question, planning, profile, effective_planning)
 
     async def _planning_for(
         self,
+        run_id: UUID,
         question: QuestionInput,
         profile: GroundedQAExecutionProfile,
         agent_plan: AgentRetrievalPlan | None,
@@ -309,19 +321,36 @@ class GroundedQAService:
             agent_plan.apply(profile.planning) if agent_plan is not None else profile.planning
         )
         planner_profile = effective
-        if agent_plan is not None and agent_plan.additional_queries:
+        agent_queries = () if agent_plan is None else agent_plan.additional_queries
+        if agent_queries:
+            # Agent-driven retrieval: the agent already chose its sub-queries, so
+            # the generic rewrite LLM call is redundant. The rewrite stays
+            # question-only (R4-04); only the planner budget is skipped here.
             planner_profile = replace(
                 effective,
-                max_subqueries=max(
-                    1, effective.max_subqueries - len(agent_plan.additional_queries)
-                ),
+                max_subqueries=max(1, effective.max_subqueries - len(agent_queries)),
+                rewrite_enabled=False,
             )
-        planning = await self._planner.plan(question, planner_profile)
-        if agent_plan is None or not agent_plan.additional_queries:
+        cached = self._plan_cache.get(run_id)
+        if (
+            cached is not None
+            and not agent_queries
+            and (cached.plan.original_question == question.question)
+        ):
+            # Reuse the plan an earlier inspect_retrieval produced for this run
+            # instead of re-running the rewrite LLM (and the duplicate retrieval).
+            planning = cached
+        else:
+            planning = await self._planner.plan(question, planner_profile)
+            if cached is None and not agent_queries:
+                self._plan_cache[run_id] = planning
+                if len(self._plan_cache) > self._plan_cache_cap:
+                    self._plan_cache.clear()
+        if not agent_queries:
             return planning, effective
         queries = _merge_queries(
             planning.plan.queries,
-            agent_plan.additional_queries,
+            agent_queries,
             max_queries=effective.max_subqueries,
         )
         plan = replace(
@@ -400,6 +429,7 @@ class GroundedQAService:
             raise QAError(QAErrorCode.CANCELLED, "QA run was cancelled.")
 
     async def _fail(self, run_id: UUID, error: QAError) -> QARunRecord:
+        self._plan_cache.pop(run_id, None)
         run = await self._require_run(run_id)
         if run.status in _TERMINAL_STATUSES:
             return run
