@@ -71,17 +71,18 @@ async def _skill_run(repository: InMemoryGroundedQARepository):
 
 
 @pytest.mark.asyncio
-async def test_finalizer_publishes_independent_synthesized_message_once() -> None:
+async def test_finalizer_publishes_skill_result_directly_without_second_generation() -> None:
     repository = InMemoryGroundedQARepository()
     run = await _skill_run(repository)
-    gateway = SynthesisGateway(response="Use the architecture document to trace the data flow.")
+    gateway = SynthesisGateway(response="unused")
     finalizer = ConversationFinalizer(runs=repository, gateway=gateway)
+    skill_result = "Synthetic evidence supports this answer. [citation]"
 
     completed = await finalizer.execute(
         run,
         input=FinalizationInput(
             question="How do I use the architecture document?",
-            skill_result="Raw retrieval output with redundant metadata and repeated paragraphs.",
+            skill_result=skill_result,
         ),
     )
     repeated = await finalizer.execute(
@@ -95,28 +96,25 @@ async def test_finalizer_publishes_independent_synthesized_message_once() -> Non
     message = await repository.get_message(completed.result.message_id)
     assert message is not None
     assert message.role is MessageRole.ASSISTANT
-    assert message.content == "Use the architecture document to trace the data flow."
-    assert message.content != (
-        "Raw retrieval output with redundant metadata and repeated paragraphs."
-    )
+    assert message.content == skill_result
     assert repeated == completed
-    assert gateway.calls == 1
+    assert gateway.calls == 0
     assert len(await repository.list_messages(run.conversation_id)) == 2
 
 
 @pytest.mark.asyncio
-async def test_finalizer_failure_publishes_safe_fallback_without_tool_result() -> None:
+async def test_finalizer_uses_fallback_when_skill_result_is_empty() -> None:
     repository = InMemoryGroundedQARepository()
     run = await _skill_run(repository)
     gateway = SynthesisGateway(response="unused", scenario=FakeScenario.UNAVAILABLE)
 
     completed = await ConversationFinalizer(runs=repository, gateway=gateway).execute(
         run,
-        input=FinalizationInput(question="Question", skill_result="Sensitive raw result"),
+        input=FinalizationInput(question="Question", skill_result="   "),
     )
 
     assert completed.status is ConversationRunStatus.COMPLETED
     assert completed.result is not None
     message = await repository.get_message(completed.result.message_id)
     assert message is not None
-    assert "Sensitive raw result" not in message.content
+    assert message.content == "工具执行已完成，但没有生成可展示的最终回答，请重试。"
