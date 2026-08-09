@@ -39,6 +39,13 @@ introduced incrementally.
    files, malformed UTF-8, and cancellation. Their payloads are explicitly untrusted data and
    Registry audit records retain digests only. Model-visible access defaults to `public_demo`;
    private or restricted content requires an explicit deployment-policy decision.
+8. Side-effect Tools are opt-in and require a durable approval for every invocation identity.
+   `WRITE_KNOWLEDGE` covers allowlisted atomic file writes and `EXECUTE_PROCESS` is a separate
+   process-launch permission. Approvals bind Run, Space, caller, Tool name/version, idempotency
+   key, and digested input. `fs_write` denies protected configuration, credential, system-prompt,
+   and Skill-package targets even when accidentally allowlisted. `shell_exec` uses an executable
+   alias, fixed Space-scoped cwd, policy-owned minimal environment, argv-only execution, bounded
+   output, timeout/cancellation cleanup, and no `EXTERNAL_NETWORK` grant.
 
 ## Alternatives
 
@@ -54,8 +61,10 @@ introduced incrementally.
 The next steps can add the loop state machine and read-only Tools against stable contracts. Existing
 v1/v2 API and SSE clients remain on their projections until an explicit feature flag enables v3.
 The synthetic fixture provides repeatable security and terminal-state cases without introducing
-controlled corpus content or formal evaluation results. File reads are idempotent within an
-in-memory Runtime registry; durable side-effect idempotency remains a separate Step 4 requirement.
+controlled corpus content or formal evaluation results. Side-effect Tools are not part of the
+default Skill or Web command surface. The in-memory Registry serializes duplicate side-effect
+invocations for one Run/key; a future durable invocation-result store is required before claiming
+exactly-once semantics across process restart.
 
 ## Reassessment Triggers
 

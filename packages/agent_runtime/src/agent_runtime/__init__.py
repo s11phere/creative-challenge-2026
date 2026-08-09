@@ -41,6 +41,14 @@ from .llm_decision import (
     parse_llm_decision,
 )
 from .loop import AgentLoopExecutor, AgentLoopFinalizer, AgentLoopResult
+from .side_effect_tools import (
+    FileWritePolicy,
+    ShellExecutionPolicy,
+    SideEffectTools,
+    WritableFile,
+    create_side_effect_registry,
+    register_side_effect_tools,
+)
 from .skills import (
     FileSystemSkillRegistry,
     PinnedSkill,
@@ -64,6 +72,7 @@ from .tools import (
     ToolRef,
     ToolRegistryError,
     ToolRegistryErrorCode,
+    tool_requires_durable_approval,
 )
 
 __all__ = [
@@ -72,6 +81,7 @@ __all__ = [
     "DeterministicWorkflowExecutor",
     "FileSystemSkillRegistry",
     "FileToolPolicy",
+    "FileWritePolicy",
     "JSONValue",
     "InMemoryToolRegistry",
     "InMemoryRuntimeStateStore",
@@ -88,6 +98,8 @@ __all__ = [
     "RuntimeAuditSink",
     "RuntimeExecutionResult",
     "ReadOnlyFileTools",
+    "ShellExecutionPolicy",
+    "SideEffectTools",
     "SkillCompatibility",
     "SkillInvocation",
     "SkillManifest",
@@ -104,8 +116,10 @@ __all__ = [
     "ToolRef",
     "ToolRegistryError",
     "ToolRegistryErrorCode",
+    "tool_requires_durable_approval",
     "WorkflowDefinition",
     "WorkflowNode",
+    "WritableFile",
     "build_checkpoint",
     "checkpoint_state_sha256",
     "create_read_only_file_registry",
@@ -119,6 +133,8 @@ __all__ = [
     "LLMDecisionNode",
     "parse_llm_decision",
     "register_read_only_file_tools",
+    "register_side_effect_tools",
+    "create_side_effect_registry",
     "AgentLoopExecutor",
     "AgentLoopFinalizer",
     "AgentLoopResult",

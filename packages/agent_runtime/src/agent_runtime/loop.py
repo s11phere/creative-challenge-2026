@@ -30,7 +30,6 @@ from domain.agent_runtime import (
     RunStatus,
     RunStep,
     RuntimeStateStore,
-    ToolPermission,
     validate_recovery,
 )
 from model_gateway import ModelGateway
@@ -52,6 +51,7 @@ from .tools import (
     ToolRef,
     ToolRegistryError,
     ToolRegistryErrorCode,
+    tool_requires_durable_approval,
 )
 
 type CancellationCheck = Callable[[AgentRun], Awaitable[bool]]
@@ -297,7 +297,7 @@ class AgentLoopExecutor:
                         message="Agent Loop repeated a Tool request without progress.",
                     ) from exc
                 run = _move_to_executing(run)
-                if ToolPermission.WRITE_KNOWLEDGE in definition.permissions and approval_id is None:
+                if tool_requires_durable_approval(definition.permissions) and approval_id is None:
                     state = state.wait_for_approval()
                     run = run.transition(RunEvent.WAIT_APPROVAL)
                     run = await self._persist(run, state)

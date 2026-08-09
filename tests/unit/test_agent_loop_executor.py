@@ -92,7 +92,7 @@ async def search_handler(
     return {"matches": [f"found:{arguments['query']}"]}
 
 
-def tool(*, write: bool = False) -> ToolDefinition:
+def tool(*, write: bool = False, permission: ToolPermission | None = None) -> ToolDefinition:
     return ToolDefinition(
         name="search_knowledge" if not write else "write_note",
         version="1.0.0",
@@ -110,7 +110,9 @@ def tool(*, write: bool = False) -> ToolDefinition:
             "properties": {"matches": {"type": "array", "items": {"type": "string"}}},
         },
         permissions=frozenset(
-            {ToolPermission.WRITE_KNOWLEDGE} if write else {ToolPermission.READ_KNOWLEDGE}
+            {permission}
+            if permission is not None
+            else ({ToolPermission.WRITE_KNOWLEDGE} if write else {ToolPermission.READ_KNOWLEDGE})
         ),
         handler_name="tool",
         model_visible=True,
@@ -238,3 +240,29 @@ async def test_waiting_approval_checkpoints_and_resumes_the_pending_tool() -> No
     assert resumed.run.status is RunStatus.COMPLETED
     assert resumed.state.phase is AgentLoopPhase.COMPLETED
     assert len(resumed.state.observations) == 1
+
+
+@pytest.mark.asyncio
+async def test_process_permission_also_enters_waiting_approval() -> None:
+    registry = InMemoryToolRegistry(handlers={"tool": search_handler}, approval_port=ApprovedPort())
+    definition = registry.register(tool(permission=ToolPermission.EXECUTE_PROCESS))
+    result = await AgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use only the registered synthetic Tool.",
+        model_gateway=cast(
+            ModelGateway,
+            DecisionGateway(
+                '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"process"}}'
+            ),
+        ),
+    ).execute(
+        loop_run(permissions=definition.permissions),
+        cast(PinnedSkill, object()),
+        {"question": "synthetic"},
+        goal="Run the approved process operation.",
+    )
+
+    assert result.waiting_approval
+    assert result.run.status is RunStatus.WAITING_APPROVAL
+    assert result.state.phase is AgentLoopPhase.WAITING_APPROVAL

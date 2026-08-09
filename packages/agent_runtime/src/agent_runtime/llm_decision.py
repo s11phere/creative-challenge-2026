@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Protocol, cast
 
-from domain.agent_runtime import AgentRun, BudgetUsage, RunErrorCategory, ToolPermission
+from domain.agent_runtime import AgentRun, BudgetUsage, RunErrorCategory
 from jsonschema import Draft202012Validator
 from model_gateway import CapabilityAlias, ChatMessage, ChatRequest, ChatRole
 
@@ -22,6 +22,7 @@ from .tools import (
     ToolRef,
     ToolRegistryError,
     ToolRegistryErrorCode,
+    tool_requires_durable_approval,
 )
 
 
@@ -228,7 +229,7 @@ class BoundedLLMAgentNode:
     async def __call__(self, context: NodeExecutionContext) -> NodeResult:
         definitions = tuple(self.tool_registry.get(ref) for ref in self.allowed_tools)
         for definition in definitions:
-            if ToolPermission.WRITE_KNOWLEDGE in definition.permissions:
+            if tool_requires_durable_approval(definition.permissions):
                 raise NodeExecutionError(
                     code=ToolRegistryErrorCode.APPROVAL_REQUIRED.value,
                     category=RunErrorCategory.PERMISSION,

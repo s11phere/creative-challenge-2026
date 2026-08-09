@@ -65,6 +65,26 @@ class PostgresApprovalPort(ApprovalPort):
     async def request(self, context: AgentRunContext, tool: ToolCallRecord) -> str:
         approval_id = uuid4()
         async with self._database.transaction() as session:
+            statement = (
+                insert(RuntimeApprovalModel)
+                .values(
+                    id=approval_id,
+                    run_id=context.run_id,
+                    space_id=context.space_id,
+                    caller_id=context.caller_id,
+                    action=tool.tool_name,
+                    tool_name=tool.tool_name,
+                    tool_version=tool.tool_version,
+                    idempotency_key=tool.idempotency_key,
+                    status="pending",
+                    details={
+                        "input_summary": tool.input_summary,
+                        "permissions": sorted(permission.value for permission in tool.permissions),
+                    },
+                )
+                .on_conflict_do_nothing(constraint="uq_runtime_approvals_idempotency")
+            )
+            await session.execute(statement)
             existing = await session.scalar(
                 select(RuntimeApprovalModel).where(
                     RuntimeApprovalModel.run_id == context.run_id,
@@ -80,20 +100,7 @@ class PostgresApprovalPort(ApprovalPort):
                 ):
                     raise ValueError("approval identity conflicts with the existing request")
                 return str(existing.id)
-            session.add(
-                RuntimeApprovalModel(
-                    id=approval_id,
-                    run_id=context.run_id,
-                    space_id=context.space_id,
-                    caller_id=context.caller_id,
-                    action=tool.tool_name,
-                    tool_name=tool.tool_name,
-                    tool_version=tool.tool_version,
-                    idempotency_key=tool.idempotency_key,
-                    status="pending",
-                )
-            )
-        return str(approval_id)
+            raise RuntimeError("approval request was not persisted")
 
     async def is_approved(self, approval_id: str, context: AgentRunContext) -> bool:
         return await self.is_approved_for_tool(approval_id, context)
@@ -123,6 +130,38 @@ class PostgresApprovalPort(ApprovalPort):
             and (tool_name is None or approval.tool_name == tool_name)
             and (tool_version is None or approval.tool_version == tool_version)
             and (approval.expires_at is None or approval.expires_at > now)
+        )
+
+    async def is_approved_for_invocation(
+        self,
+        approval_id: str,
+        context: AgentRunContext,
+        *,
+        tool_name: str,
+        tool_version: str,
+        idempotency_key: str,
+        input_summary: str,
+    ) -> bool:
+        """Validate approval against the exact side-effect invocation identity."""
+        try:
+            approval_uuid = UUID(approval_id)
+        except ValueError:
+            return False
+        async with self._database.session() as session:
+            approval = await session.get(RuntimeApprovalModel, approval_uuid)
+        if approval is None:
+            return False
+        details = approval.details or {}
+        stored_summary = details.get("input_summary")
+        return (
+            await self.is_approved_for_tool(
+                approval_id,
+                context,
+                tool_name=tool_name,
+                tool_version=tool_version,
+            )
+            and approval.idempotency_key == idempotency_key
+            and (not stored_summary or stored_summary == input_summary)
         )
 
     async def decide(

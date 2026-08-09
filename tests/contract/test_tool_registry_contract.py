@@ -280,6 +280,13 @@ def test_registration_validates_permissions_and_capabilities() -> None:
         registry.register(replace(definition(), required_capabilities=frozenset({"retrieval"})))
     assert unavailable.value.code == ToolRegistryErrorCode.CAPABILITY_UNAVAILABLE
 
+    with pytest.raises(ToolRegistryError) as non_idempotent_process:
+        replace(
+            definition(permissions=frozenset({ToolPermission.EXECUTE_PROCESS})),
+            idempotent=False,
+        )
+    assert non_idempotent_process.value.code == ToolRegistryErrorCode.INVALID_DEFINITION
+
 
 @pytest.mark.asyncio
 async def test_write_tool_requires_durable_approval_and_idempotency() -> None:

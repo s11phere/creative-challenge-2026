@@ -127,10 +127,10 @@ class ToolDefinition:
                 ToolRegistryErrorCode.INVALID_DEFINITION,
                 "Tool capability aliases cannot be empty.",
             )
-        if ToolPermission.WRITE_KNOWLEDGE in self.permissions and not self.idempotent:
+        if tool_requires_durable_approval(self.permissions) and not self.idempotent:
             raise ToolRegistryError(
                 ToolRegistryErrorCode.INVALID_DEFINITION,
-                "Write-capable Tools must declare idempotent execution.",
+                "Side-effect Tools must declare idempotent execution.",
             )
 
     @property
@@ -180,6 +180,7 @@ class InMemoryToolRegistry:
         self._idempotent_results: dict[
             tuple[UUID, str], tuple[ToolRef, str, ToolInvocationResult]
         ] = {}
+        self._idempotency_locks: dict[tuple[UUID, str], asyncio.Lock] = {}
 
     def register(self, definition: ToolDefinition) -> ToolDefinition:
         self._validate_schema(definition.input_schema)
@@ -220,91 +221,103 @@ class InMemoryToolRegistry:
     async def invoke(self, run: AgentRun, invocation: ToolInvocation) -> ToolInvocationResult:
         definition = self.get(invocation.ref)
         self._validate_preconditions(run, definition, invocation)
-        if ToolPermission.WRITE_KNOWLEDGE in definition.permissions:
-            await self._validate_approval(run.context, invocation.approval_id, definition)
         arguments = dict(invocation.arguments)
         self._validate_instance(
             definition.input_schema, arguments, ToolRegistryErrorCode.INPUT_INVALID
         )
         cache_key = (run.context.run_id, invocation.idempotency_key)
         fingerprint = self._digest(arguments)
-        cached = self._idempotent_results.get(cache_key)
-        if cached is not None:
-            cached_ref, cached_fingerprint, cached_result = cached
-            if cached_ref != definition.ref or cached_fingerprint != fingerprint:
-                raise ToolRegistryError(
-                    ToolRegistryErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Tool idempotency key conflicts with an earlier invocation.",
-                )
-            return cached_result
-        try:
-            updated_run = run.consume(tool_calls=1)
-        except BudgetExceededError as exc:
-            raise ToolRegistryError(
-                ToolRegistryErrorCode.BUDGET_EXCEEDED,
-                "Tool call budget is exhausted.",
-            ) from exc
-
-        started = monotonic()
-        context = ToolExecutionContext(run=run.context, idempotency_key=invocation.idempotency_key)
-        handler = self._handlers[definition.handler_name]
-        try:
-            output = await asyncio.wait_for(
-                handler(arguments, context), timeout=definition.timeout_seconds
-            )
-        except ToolRegistryError as exc:
-            record = exc.record or self._record(
-                definition, invocation, started, error_code=exc.code
-            )
-            raise ToolRegistryError(
-                exc.code,
-                str(exc),
-                retryable=exc.retryable,
-                record=record,
-            ) from exc
-        except TimeoutError as exc:
-            record = self._record(
-                definition, invocation, started, error_code=ToolRegistryErrorCode.TIMEOUT
-            )
-            raise ToolRegistryError(
-                ToolRegistryErrorCode.TIMEOUT,
-                "Tool execution timed out.",
-                retryable=invocation.retry_count < definition.max_retries,
-                record=record,
-            ) from exc
-        except Exception as exc:
-            record = self._record(
-                definition, invocation, started, error_code=ToolRegistryErrorCode.EXECUTION_FAILED
-            )
-            raise ToolRegistryError(
-                ToolRegistryErrorCode.EXECUTION_FAILED,
-                "Tool execution failed.",
-                retryable=invocation.retry_count < definition.max_retries,
-                record=record,
-            ) from exc
-
-        try:
-            self._validate_instance(
-                definition.output_schema, output, ToolRegistryErrorCode.OUTPUT_INVALID
-            )
-        except ToolRegistryError as exc:
-            record = self._record(
-                definition,
+        if tool_requires_durable_approval(definition.permissions):
+            await self._validate_approval(
+                run.context,
                 invocation,
-                started,
-                output=output,
-                error_code=ToolRegistryErrorCode.OUTPUT_INVALID,
+                definition,
+                input_summary=fingerprint,
             )
-            raise ToolRegistryError(
-                ToolRegistryErrorCode.OUTPUT_INVALID,
-                str(exc),
-                record=record,
-            ) from exc
-        record = self._record(definition, invocation, started, output=output)
-        result = ToolInvocationResult(output=output, run=updated_run, record=record)
-        if definition.idempotent:
-            self._idempotent_results[cache_key] = (definition.ref, fingerprint, result)
-        return result
+        lock = self._idempotency_locks.setdefault(cache_key, asyncio.Lock())
+        async with lock:
+            cached = self._idempotent_results.get(cache_key)
+            if cached is not None:
+                cached_ref, cached_fingerprint, cached_result = cached
+                if cached_ref != definition.ref or cached_fingerprint != fingerprint:
+                    raise ToolRegistryError(
+                        ToolRegistryErrorCode.IDEMPOTENCY_CONFLICT,
+                        "Tool idempotency key conflicts with an earlier invocation.",
+                    )
+                return cached_result
+            try:
+                updated_run = run.consume(tool_calls=1)
+            except BudgetExceededError as exc:
+                raise ToolRegistryError(
+                    ToolRegistryErrorCode.BUDGET_EXCEEDED,
+                    "Tool call budget is exhausted.",
+                ) from exc
+
+            started = monotonic()
+            context = ToolExecutionContext(
+                run=run.context, idempotency_key=invocation.idempotency_key
+            )
+            handler = self._handlers[definition.handler_name]
+            try:
+                output = await asyncio.wait_for(
+                    handler(arguments, context), timeout=definition.timeout_seconds
+                )
+            except ToolRegistryError as exc:
+                record = exc.record or self._record(
+                    definition, invocation, started, error_code=exc.code
+                )
+                raise ToolRegistryError(
+                    exc.code,
+                    str(exc),
+                    retryable=exc.retryable,
+                    record=record,
+                ) from exc
+            except TimeoutError as exc:
+                record = self._record(
+                    definition, invocation, started, error_code=ToolRegistryErrorCode.TIMEOUT
+                )
+                raise ToolRegistryError(
+                    ToolRegistryErrorCode.TIMEOUT,
+                    "Tool execution timed out.",
+                    retryable=invocation.retry_count < definition.max_retries,
+                    record=record,
+                ) from exc
+            except Exception as exc:
+                record = self._record(
+                    definition,
+                    invocation,
+                    started,
+                    error_code=ToolRegistryErrorCode.EXECUTION_FAILED,
+                )
+                raise ToolRegistryError(
+                    ToolRegistryErrorCode.EXECUTION_FAILED,
+                    "Tool execution failed.",
+                    retryable=invocation.retry_count < definition.max_retries,
+                    record=record,
+                ) from exc
+
+            try:
+                self._validate_instance(
+                    definition.output_schema, output, ToolRegistryErrorCode.OUTPUT_INVALID
+                )
+            except ToolRegistryError as exc:
+                record = self._record(
+                    definition,
+                    invocation,
+                    started,
+                    output=output,
+                    error_code=ToolRegistryErrorCode.OUTPUT_INVALID,
+                )
+                raise ToolRegistryError(
+                    ToolRegistryErrorCode.OUTPUT_INVALID,
+                    str(exc),
+                    record=record,
+                ) from exc
+            record = self._record(definition, invocation, started, output=output)
+            result = ToolInvocationResult(output=output, run=updated_run, record=record)
+            if definition.idempotent:
+                self._idempotent_results[cache_key] = (definition.ref, fingerprint, result)
+            return result
 
     def _validate_preconditions(
         self, run: AgentRun, definition: ToolDefinition, invocation: ToolInvocation
@@ -336,27 +349,44 @@ class InMemoryToolRegistry:
             )
 
     async def _validate_approval(
-        self, context: AgentRunContext, approval_id: str | None, definition: ToolDefinition
+        self,
+        context: AgentRunContext,
+        invocation: ToolInvocation,
+        definition: ToolDefinition,
+        *,
+        input_summary: str,
     ) -> None:
+        approval_id = invocation.approval_id
         if approval_id is None or self._approval_port is None:
             raise ToolRegistryError(
                 ToolRegistryErrorCode.APPROVAL_REQUIRED,
-                "Write-capable Tool requires a durable approval.",
+                "Side-effect Tool requires a durable approval.",
             )
-        validator = getattr(self._approval_port, "is_approved_for_tool", None)
+        validator = getattr(self._approval_port, "is_approved_for_invocation", None)
         if validator is not None:
             approved = await validator(
                 approval_id,
                 context,
                 tool_name=definition.name,
                 tool_version=definition.version,
+                idempotency_key=invocation.idempotency_key,
+                input_summary=input_summary,
             )
         else:
-            approved = await self._approval_port.is_approved(approval_id, context)
+            validator = getattr(self._approval_port, "is_approved_for_tool", None)
+            if validator is not None:
+                approved = await validator(
+                    approval_id,
+                    context,
+                    tool_name=definition.name,
+                    tool_version=definition.version,
+                )
+            else:
+                approved = await self._approval_port.is_approved(approval_id, context)
         if not approved:
             raise ToolRegistryError(
                 ToolRegistryErrorCode.APPROVAL_REQUIRED,
-                "Write-capable Tool approval is invalid or expired.",
+                "Side-effect Tool approval is invalid or expired.",
             )
 
     @classmethod
@@ -419,3 +449,25 @@ class InMemoryToolRegistry:
     def _digest(value: JSONValue | Mapping[str, JSONValue]) -> str:
         encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return f"sha256:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
+
+
+def tool_requires_durable_approval(permissions: frozenset[ToolPermission]) -> bool:
+    """Return whether a Tool can mutate state or start an external process."""
+    return bool(
+        permissions & frozenset({ToolPermission.WRITE_KNOWLEDGE, ToolPermission.EXECUTE_PROCESS})
+    )
+
+
+__all__ = [
+    "InMemoryToolRegistry",
+    "JSONValue",
+    "ToolDefinition",
+    "ToolExecutionContext",
+    "ToolHandler",
+    "ToolInvocation",
+    "ToolInvocationResult",
+    "ToolRef",
+    "ToolRegistryError",
+    "ToolRegistryErrorCode",
+    "tool_requires_durable_approval",
+]

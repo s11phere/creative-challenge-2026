@@ -49,6 +49,8 @@ class ToolPermission(StrEnum):
     WRITE_KNOWLEDGE = "write_knowledge"
     MODEL = "model"
     EXTERNAL_NETWORK = "external_network"
+    EXECUTE_PROCESS = "execute_process"
+    PROCESS_EXECUTION = "execute_process"
 
 
 class RunErrorCategory(StrEnum):

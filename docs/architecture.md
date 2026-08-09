@@ -32,6 +32,17 @@ marked untrusted, and recorded by digest only. The default model-visible policy 
 `public_demo` entries; private or restricted content remains local until a deployment policy and
 visible consent authorize a narrower exception.
 
+The Agent Loop Step 4 boundary adds opt-in `fs_write` and `shell_exec` without enabling either in a
+default Skill or Web command. `FileWritePolicy` resolves Space-scoped explicit targets under
+non-link trusted roots and performs same-directory temporary-file replacement after target and
+optional digest revalidation; protected environment, credential, system-prompt, and Skill-package
+paths are denied unconditionally. `ShellExecutionPolicy` maps simple aliases to fixed executables
+and Space-scoped working directories, uses argv-only launch with a policy-owned minimal environment,
+bounded untrusted output, timeout/cancellation cleanup, and no `EXTERNAL_NETWORK` permission.
+Both permissions require durable approval bound to the full invocation identity. The Registry
+serializes duplicate side-effect deliveries per Run/idempotency key in-process; cross-restart
+exactly-once requires a future durable invocation-result store.
+
 PR #4 corrected the online and evaluation retrieval path to `dense_rerank`: dense-exact candidates
 are reranked directly. `hybrid_rerank` remains an explicit compatibility mode, not the default for
 Search API or QA. The corrected GPU development runs are provisional evidence only; they do not
