@@ -30,6 +30,6 @@ any event after the first terminal outcome. Downgrade refuses to discard non-emp
 
 ## Quality Boundary
 
-This is provisional observability and recovery engineering only. It does not enable the v3 Web
-timeline, alter the default `knowledge_agent 0.3.0` path, run a formal holdout, or close any
-retrieval, answer, or Skill quality gate under ADR-010 and ADR-011.
+This is provisional observability and recovery engineering only. The v3 Web timeline is documented
+separately in Step 8; neither step alters the default `knowledge_agent 0.3.0` path, runs a formal
+holdout, or closes any retrieval, answer, or Skill quality gate under ADR-010 and ADR-011.

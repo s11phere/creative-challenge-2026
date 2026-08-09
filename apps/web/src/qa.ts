@@ -169,6 +169,45 @@ export type AssistantRunEvent = {
   payload: Record<string, unknown>
 }
 
+export type AgentRunEventType =
+  | 'accepted'
+  | 'iteration_started'
+  | 'tool_requested'
+  | 'tool_started'
+  | 'tool_output'
+  | 'approval_required'
+  | 'checkpoint_saved'
+  | 'finalizing'
+  | 'completed'
+  | 'clarifying'
+  | 'refused'
+  | 'failed'
+  | 'cancelled'
+  | 'timed_out'
+
+export type AgentRunEvent = {
+  schema_version: 'agent-run-sse-v3'
+  event_id: string
+  run_id: string
+  sequence: number
+  occurred_at: string
+  event_type: AgentRunEventType
+  payload: Record<string, unknown>
+}
+
+type AgentRunEventPage = {
+  schema_version: 'agent-run-event-page-v1'
+  events: unknown[]
+  next_sequence: number | null
+  has_more: boolean
+}
+
+export type AgentRunEventStreamOptions = {
+  afterSequence?: number
+  signal?: AbortSignal
+  onEvents: (events: AgentRunEvent[]) => void
+}
+
 export type AssistantCommandResult = {
   command: string
   status: string
@@ -425,6 +464,60 @@ export async function fetchAssistantRunEvents(
   return parseAssistantRunEvents(await response.text())
 }
 
+export async function fetchAgentRunEvents(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<AgentRunEvent[]> {
+  const events: AgentRunEvent[] = []
+  let afterSequence = 0
+
+  while (true) {
+    const page = await request<AgentRunEventPage>(
+      `/api/v3/runs/${runId}/events?after_sequence=${afterSequence}&limit=200`,
+      { signal },
+    )
+    for (const value of page.events ?? []) {
+      const event = parseAgentRunEvent(value)
+      if (event) events.push(event)
+    }
+    const nextSequence = page.next_sequence
+    if (!page.has_more || nextSequence === null || !Number.isInteger(nextSequence) || nextSequence <= afterSequence) {
+      return mergeAgentRunEvents([], events)
+    }
+    afterSequence = nextSequence
+  }
+}
+
+export async function streamAgentRunEvents(
+  runId: string,
+  { afterSequence = 0, signal, onEvents }: AgentRunEventStreamOptions,
+): Promise<void> {
+  let cursor = afterSequence
+
+  while (!signal?.aborted) {
+    try {
+      const headers: Record<string, string> = { Accept: 'text/event-stream' }
+      if (cursor > 0) headers['Last-Event-ID'] = String(cursor)
+      const response = await fetch(`${apiBaseUrl}/api/v3/runs/${runId}/events/stream`, {
+        headers,
+        signal,
+      })
+      if (!response.ok) throw new QAApiError(response.statusText, response.status)
+
+      const received = parseAgentRunEventStream(await response.text())
+      if (received.length > 0) {
+        cursor = received.at(-1)!.sequence
+        onEvents(received)
+      }
+      await waitForAgentEventReconnect(signal, response.headers.get('X-Agent-Event-Has-More') === 'true' ? 0 : 1_000)
+    } catch (error) {
+      if (signal?.aborted || isAbortError(error)) return
+      if (error instanceof QAApiError && (error.status === 404 || error.status === 409)) return
+      await waitForAgentEventReconnect(signal, 1_000)
+    }
+  }
+}
+
 export function fetchAssistantConversationRuns(
   conversationId: string,
   signal?: AbortSignal,
@@ -466,6 +559,83 @@ function parseAssistantRunEvents(stream: string): AssistantRunEvent[] {
     }
   }
   return events
+}
+
+function parseAgentRunEventStream(stream: string): AgentRunEvent[] {
+  const events: AgentRunEvent[] = []
+  for (const block of stream.split(/\r?\n\r?\n/)) {
+    const data = block.split(/\r?\n/).find((line) => line.startsWith('data: '))
+    if (!data) continue
+    try {
+      const event = parseAgentRunEvent(JSON.parse(data.slice('data: '.length)))
+      if (event) events.push(event)
+    } catch {
+      // The durable history endpoint remains authoritative after a malformed stream frame.
+    }
+  }
+  return mergeAgentRunEvents([], events)
+}
+
+function parseAgentRunEvent(value: unknown): AgentRunEvent | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const event = value as Record<string, unknown>
+  const sequence = event.sequence
+  if (
+    event.schema_version !== 'agent-run-sse-v3'
+    || typeof event.event_id !== 'string'
+    || typeof event.run_id !== 'string'
+    || typeof sequence !== 'number'
+    || !Number.isInteger(sequence)
+    || sequence < 1
+    || typeof event.occurred_at !== 'string'
+    || !isAgentRunEventType(event.event_type)
+    || !isFlatPayload(event.payload)
+  ) return null
+  return {
+    schema_version: event.schema_version,
+    event_id: event.event_id,
+    run_id: event.run_id,
+    sequence,
+    occurred_at: event.occurred_at,
+    event_type: event.event_type,
+    payload: event.payload,
+  }
+}
+
+function isAgentRunEventType(value: unknown): value is AgentRunEventType {
+  return typeof value === 'string' && [
+    'accepted', 'iteration_started', 'tool_requested', 'tool_started', 'tool_output',
+    'approval_required', 'checkpoint_saved', 'finalizing', 'completed', 'clarifying',
+    'refused', 'failed', 'cancelled', 'timed_out',
+  ].includes(value)
+}
+
+function isFlatPayload(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.values(value).every((item) => ['string', 'number', 'boolean'].includes(typeof item))
+}
+
+function mergeAgentRunEvents(
+  current: AgentRunEvent[],
+  incoming: AgentRunEvent[],
+): AgentRunEvent[] {
+  const bySequence = new Map(current.map((event) => [event.sequence, event]))
+  for (const event of incoming) bySequence.set(event.sequence, event)
+  return [...bySequence.values()].sort((left, right) => left.sequence - right.sequence)
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
+function waitForAgentEventReconnect(signal: AbortSignal | undefined, delay: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, delay)
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer)
+      resolve()
+    }, { once: true })
+  })
 }
 
 export { isAssistantRun }

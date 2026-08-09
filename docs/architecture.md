@@ -76,13 +76,17 @@ grounded Skill reaches a business-terminal state, the Worker invokes `Conversati
 Its independently persisted Assistant message is the user-facing answer; the grounded Skill
 result remains an internal reference with its own trace and evidence projection.
 
-The Web reconstructs one durable, collapsible card per Skill invocation from `ConversationRun` and
-`agent-run-sse-v2`. Cards expose safe activity, pinned identity, status, model usage, finalizer or
-clarification output, and a citation action when evidence exists. The shared evidence panel has an
-explicit close action and is mutually exclusive across cards and final answers. The composer and
-user messages preserve explicit slash commands, render valid prefixes with a metric-neutral accent,
-and render assistant Markdown/GFM and LaTeX. No second persistence, QA, or Worker protocol is
-introduced.
+The Web reconstructs one durable card per Skill invocation from `ConversationRun`. When an
+`agent-run-sse-v3` history exists, the card becomes an Agent Run Timeline: paginated history is
+recovered on refresh and active Runs reconnect from `Last-Event-ID`; Tool cards remain collapsed
+until a user opens their digest-only summaries. It projects only the v3 safe fields for iteration,
+Tool identity/state, retry/duration, approval state, reasoning profile, usage, and stop reason;
+prompts, answers, document content, credentials, raw Tool output, and event IDs are never rendered.
+The finalizer's Assistant message remains a separate final frame after the timeline. Historical Runs
+without v3 history retain their `agent-run-sse-v2` card. The shared evidence panel has an explicit
+close action and is mutually exclusive across cards and final answers. The composer and user messages
+preserve explicit slash commands, render valid prefixes with a metric-neutral accent, and render
+assistant Markdown/GFM and LaTeX. No second persistence, QA, or Worker protocol is introduced.
 
 > 本文档描述 "Agent 驱动的个人知识仓库" 项目的整体架构、各组件职责与协作关系。
 > 更新于阶段 3 终止决策、阶段 4 provisional Step 0～10 和阶段 5 通用 Runtime/Registry

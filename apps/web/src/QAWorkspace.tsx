@@ -21,6 +21,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import 'katex/dist/katex.min.css'
+import { AgentRunTimeline } from './AgentRunTimeline'
 import {
   cancelRun,
   cancelAssistantRun,
@@ -28,6 +29,7 @@ import {
   fetchAssistantConversationRuns,
   fetchAssistantCommands,
   fetchAssistantRunEvents,
+  fetchAgentRunEvents,
   fetchCitationExcerpt,
   fetchConversationHistory,
   fetchRun,
@@ -40,8 +42,10 @@ import {
   type AssistantCommandResult,
   type AssistantRun,
   type AssistantRunEvent,
+  type AgentRunEvent,
   type ConversationHistoryItem,
   type QARun,
+  streamAgentRunEvents,
 } from './qa'
 import { assistantDefaultApiMode, type AssistantApiMode } from './assistantRelease'
 import { fetchSourceDetail } from './sources'
@@ -131,7 +135,7 @@ type SkillRunCardProps = {
   onOpenEvidence: (runId: string) => void
 }
 
-function SkillRunCard({
+function LegacySkillRunCard({
   run,
   result,
   clarificationPending,
@@ -227,6 +231,51 @@ function SkillRunCard({
       </div>
     </details>
   )
+}
+
+function mergeAgentRunEvents(
+  current: AgentRunEvent[],
+  incoming: AgentRunEvent[],
+): AgentRunEvent[] {
+  const bySequence = new Map(current.map((event) => [event.sequence, event]))
+  for (const event of incoming) bySequence.set(event.sequence, event)
+  return [...bySequence.values()].sort((left, right) => left.sequence - right.sequence)
+}
+
+function SkillRunCard(props: SkillRunCardProps) {
+  const { run } = props
+  const skill = run.selection.skill
+  const queryClient = useQueryClient()
+  const agentEventsQuery = useQuery({
+    queryKey: ['agent-run-events', run.run_id],
+    queryFn: ({ signal }) => fetchAgentRunEvents(run.run_id, signal),
+    retry: false,
+    enabled: skill !== null,
+    refetchInterval: activeStatuses.has(run.status) ? 3_000 : false,
+  })
+  const agentEvents = agentEventsQuery.data ?? []
+  const lastSequence = agentEvents.at(-1)?.sequence ?? 0
+
+  useEffect(() => {
+    if (!skill || !activeStatuses.has(run.status) || !agentEventsQuery.isSuccess) return
+    const controller = new AbortController()
+    void streamAgentRunEvents(run.run_id, {
+      afterSequence: lastSequence,
+      signal: controller.signal,
+      onEvents: (incoming) => {
+        queryClient.setQueryData<AgentRunEvent[]>(['agent-run-events', run.run_id], (current = []) =>
+          mergeAgentRunEvents(current, incoming),
+        )
+      },
+    })
+    return () => controller.abort()
+  }, [agentEventsQuery.isSuccess, lastSequence, queryClient, run.run_id, run.status, skill])
+
+  if (!skill) return null
+  if (agentEvents.length > 0) {
+    return <AgentRunTimeline {...props} events={agentEvents} />
+  }
+  return <LegacySkillRunCard {...props} />
 }
 
 function commandNameMatches(command: AssistantCommand, needle: string): boolean {

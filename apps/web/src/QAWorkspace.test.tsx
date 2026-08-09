@@ -330,6 +330,107 @@ describe('assistant conversation workspace', () => {
     expect(screen.getByText('Architecture answer.')).toBeInTheDocument()
   })
 
+  it('recovers paged v3 history into a collapsed Agent timeline before the final answer', async () => {
+    const completed = assistantRun({
+      run_kind: 'skill',
+      selection: { source: 'auto', skill: { name: 'knowledge_agent', version: '0.3.0', content_sha256: 'a'.repeat(64) } },
+      assistant_message: { message_id: 'assistant-1', content: 'Architecture answer.' },
+      usage: { input_tokens: 120, output_tokens: 48, total_tokens: 168, model_latency_ms: 1240 },
+    })
+    const events = [
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-1', run_id: 'run-1', sequence: 1, occurred_at: '2026-08-09T10:00:01Z', event_type: 'accepted', payload: { status: 'accepted', requested_effort: 'high', effective_effort: 'medium', model: 'fake-reasoner' } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-2', run_id: 'run-1', sequence: 2, occurred_at: '2026-08-09T10:00:02Z', event_type: 'iteration_started', payload: { status: 'planning', iteration: 1, tool_call_count: 0, observation_count: 0 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-3', run_id: 'run-1', sequence: 3, occurred_at: '2026-08-09T10:00:03Z', event_type: 'tool_requested', payload: { status: 'requested', iteration: 1, tool_name: 'inspect_retrieval', tool_version: '1.0.0', input_summary: 'sha256:input-1', retry_count: 0 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-4', run_id: 'run-1', sequence: 4, occurred_at: '2026-08-09T10:00:04Z', event_type: 'tool_output', payload: { status: 'succeeded', iteration: 1, tool_name: 'inspect_retrieval', tool_version: '1.0.0', input_summary: 'sha256:input-1', output_summary: 'sha256:output-1', retry_count: 1, duration_ms: 126 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-5', run_id: 'run-1', sequence: 5, occurred_at: '2026-08-09T10:00:05Z', event_type: 'iteration_started', payload: { status: 'planning', iteration: 2, tool_call_count: 1, observation_count: 1 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-6', run_id: 'run-1', sequence: 6, occurred_at: '2026-08-09T10:00:06Z', event_type: 'tool_requested', payload: { status: 'requested', iteration: 2, tool_name: 'write_file', tool_version: '1.0.0', input_summary: 'sha256:input-2', retry_count: 0 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-7', run_id: 'run-1', sequence: 7, occurred_at: '2026-08-09T10:00:07Z', event_type: 'approval_required', payload: { status: 'waiting_approval', iteration: 2, tool_name: 'write_file', tool_version: '1.0.0', input_summary: 'sha256:input-2', retry_count: 0 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-8', run_id: 'run-1', sequence: 8, occurred_at: '2026-08-09T10:00:08Z', event_type: 'iteration_started', payload: { status: 'planning', iteration: 3, tool_call_count: 2, observation_count: 1 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-9', run_id: 'run-1', sequence: 9, occurred_at: '2026-08-09T10:00:09Z', event_type: 'tool_requested', payload: { status: 'requested', iteration: 3, tool_name: 'shell_exec', tool_version: '1.0.0', input_summary: 'sha256:input-3', retry_count: 0 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-10', run_id: 'run-1', sequence: 10, occurred_at: '2026-08-09T10:00:10Z', event_type: 'approval_required', payload: { status: 'waiting_approval', iteration: 3, tool_name: 'shell_exec', tool_version: '1.0.0', input_summary: 'sha256:input-3', retry_count: 0 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-11', run_id: 'run-1', sequence: 11, occurred_at: '2026-08-09T10:00:11Z', event_type: 'tool_started', payload: { status: 'running', iteration: 3, tool_name: 'shell_exec', tool_version: '1.0.0', input_summary: 'sha256:input-3', retry_count: 0 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-12', run_id: 'run-1', sequence: 12, occurred_at: '2026-08-09T10:00:12Z', event_type: 'iteration_started', payload: { status: 'planning', iteration: 4, tool_call_count: 3, observation_count: 1 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-13', run_id: 'run-1', sequence: 13, occurred_at: '2026-08-09T10:00:13Z', event_type: 'tool_requested', payload: { status: 'requested', iteration: 4, tool_name: 'write_file', tool_version: '1.0.0', input_summary: 'sha256:input-4', retry_count: 0 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-14', run_id: 'run-1', sequence: 14, occurred_at: '2026-08-09T10:00:14Z', event_type: 'tool_output', payload: { status: 'failed', iteration: 4, tool_name: 'write_file', tool_version: '1.0.0', input_summary: 'sha256:input-4', output_summary: 'sha256:unavailable', error_code: 'APPROVAL_REJECTED', retry_count: 0, duration_ms: 0 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-15', run_id: 'run-1', sequence: 15, occurred_at: '2026-08-09T10:00:15Z', event_type: 'finalizing', payload: { status: 'finalizing', iteration: 4, stop_reason: 'goal_complete', goal_complete: true, evidence_sufficient: true, has_conflict: false, publication_id: 'publication-1' } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-16', run_id: 'run-1', sequence: 16, occurred_at: '2026-08-09T10:00:16Z', event_type: 'completed', payload: { status: 'completed', iteration: 4, stop_reason: 'goal_complete', publication_id: 'publication-1' } },
+    ]
+    const fetchMock = baseFetch({
+      conversations: [{
+        ...conversation,
+        messages: [
+          { message_id: 'message-1', role: 'user', content: 'Explain the architecture.', run_id: null, created_at: '2026-08-09T10:00:00Z' },
+          { message_id: 'assistant-1', role: 'assistant', content: 'Architecture answer.', run_id: 'run-1', created_at: '2026-08-09T10:01:00Z' },
+        ],
+        runs: [],
+      }],
+    })
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) return Promise.resolve(response({ conversations: [{ ...conversation, messages: [{ message_id: 'message-1', role: 'user', content: 'Explain the architecture.', run_id: null, created_at: '2026-08-09T10:00:00Z' }, { message_id: 'assistant-1', role: 'assistant', content: 'Architecture answer.', run_id: 'run-1', created_at: '2026-08-09T10:01:00Z' }], runs: [] }] }))
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [completed] }))
+      if (url.includes('/api/v3/runs/run-1/events?after_sequence=0')) return Promise.resolve(response({ schema_version: 'agent-run-event-page-v1', events: events.slice(0, 8), next_sequence: 8, has_more: true }))
+      if (url.includes('/api/v3/runs/run-1/events?after_sequence=8')) return Promise.resolve(response({ schema_version: 'agent-run-event-page-v1', events: events.slice(8), next_sequence: 16, has_more: false }))
+      if (url.endsWith('/api/v2/runs/run-1/events')) return Promise.resolve(eventStream([]))
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderWorkspace()
+
+    const timeline = await screen.findByLabelText('Agent 运行时间线')
+    expect(screen.getByText('请求强度')).toBeInTheDocument()
+    expect(screen.getByText('实际强度')).toBeInTheDocument()
+    expect(screen.getByText('实际 Token')).toBeInTheDocument()
+    expect(screen.getByText('目标已完成')).toBeInTheDocument()
+    expect(screen.getByText('等待审批')).toBeInTheDocument()
+    expect(screen.getByText('审批已通过，执行中')).toBeInTheDocument()
+    expect(screen.getByText('审批已拒绝，无副作用')).toBeInTheDocument()
+    const retrievalTool = screen.getByText('inspect_retrieval').closest('details')
+    if (!retrievalTool) throw new Error('retrieval Tool card not rendered')
+    expect(retrievalTool).not.toHaveAttribute('open')
+    expect(retrievalTool).toHaveAttribute('data-kind', 'retrieval')
+    expect(retrievalTool.querySelector('.chat-agent-tool-details')).not.toBeVisible()
+    fireEvent.click(screen.getByText('inspect_retrieval'))
+    expect(retrievalTool.querySelector('.chat-agent-tool-details')).toBeVisible()
+    const answer = screen.getByText('Architecture answer.')
+    expect(timeline.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+  })
+
+  it('reconnects an active Agent Run stream from its durable event cursor', async () => {
+    const active = assistantRun({
+      status: 'running',
+      run_kind: 'skill',
+      assistant_message: null,
+      selection: { source: 'auto', skill: { name: 'knowledge_agent', version: '0.3.0', content_sha256: 'a'.repeat(64) } },
+    })
+    const fetchMock = baseFetch({
+      conversations: [{
+        ...conversation,
+        messages: [{ message_id: 'message-1', role: 'user', content: 'Inspect sources.', run_id: null, created_at: '2026-08-09T10:00:00Z' }],
+        runs: [],
+      }],
+    })
+    fetchMock.mockImplementation((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) return Promise.resolve(response({ conversations: [{ ...conversation, messages: [{ message_id: 'message-1', role: 'user', content: 'Inspect sources.', run_id: null, created_at: '2026-08-09T10:00:00Z' }], runs: [] }] }))
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [active] }))
+      if (url.includes('/api/v3/runs/run-1/events?after_sequence=0')) return Promise.resolve(response({ schema_version: 'agent-run-event-page-v1', events: [{ schema_version: 'agent-run-sse-v3', event_id: 'event-1', run_id: 'run-1', sequence: 1, occurred_at: '2026-08-09T10:00:01Z', event_type: 'accepted', payload: { status: 'accepted', requested_effort: 'low', effective_effort: 'low', model: 'fake-reasoner' } }], next_sequence: 1, has_more: false }))
+      if (url.endsWith('/api/v3/runs/run-1/events/stream')) return Promise.resolve(new Response('id: 2\nevent: iteration_started\ndata: {"schema_version":"agent-run-sse-v3","event_id":"event-2","run_id":"run-1","sequence":2,"occurred_at":"2026-08-09T10:00:02Z","event_type":"iteration_started","payload":{"status":"planning","iteration":1,"tool_call_count":0,"observation_count":0}}\n\n', { headers: { 'Content-Type': 'text/event-stream', 'X-Agent-Event-Has-More': 'false' } }))
+      if (url.endsWith('/api/v2/runs/run-1/events')) return Promise.resolve(eventStream([]))
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderWorkspace()
+
+    expect(await screen.findByText('第 1 轮')).toBeInTheDocument()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/v3\/runs\/run-1\/events\/stream$/),
+      expect.objectContaining({ headers: expect.objectContaining({ 'Last-Event-ID': '1' }) }),
+    ))
+  })
+
   it('uses the refreshed API Run instead of an optimistic created snapshot', async () => {
     let submitted = false
     const fetchMock = baseFetch()
