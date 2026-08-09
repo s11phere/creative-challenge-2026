@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "reasoning-profile-v1.schema.json",
+  "title": "Provider-neutral reasoning profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "requested_effort", "effective_effort", "mapping_version"],
+  "properties": {
+    "schema_version": {"const": "reasoning-profile-v1"},
+    "requested_effort": {"enum": ["auto", "none", "minimal", "low", "medium", "high", "xhigh", "max"]},
+    "effective_effort": {"enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"]},
+    "provider": {"type": "string", "maxLength": 120},
+    "model": {"type": "string", "maxLength": 200},
+    "mapping_version": {"type": "string", "pattern": "^reasoning-mapping-v[0-9]+$"},
+    "mode": {"enum": ["disabled", "native", "coarse"]},
+    "downgrade_reason": {
+      "enum": ["none", "provider_unsupported", "capability_unavailable", "policy_denied"]
+    }
+  }
+}

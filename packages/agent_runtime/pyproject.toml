@@ -17,3 +17,6 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["agent_runtime*"]
+
+[tool.setuptools.package-data]
+agent_runtime = ["contracts/*.json", "contracts/*.md"]

@@ -1,0 +1,190 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+from jsonschema import Draft202012Validator, ValidationError
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+CONTRACT_ROOT = (
+    REPOSITORY_ROOT / "packages" / "agent_runtime" / "src" / "agent_runtime" / "contracts"
+)
+DATASET_ROOT = REPOSITORY_ROOT / "cases" / "evals" / "datasets" / "agent-loop-v1"
+
+
+def _json(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(value, dict)
+    return value
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _validator(name: str) -> Draft202012Validator:
+    return Draft202012Validator(_json(CONTRACT_ROOT / name))
+
+
+def test_frozen_contract_manifest_matches_all_schema_hashes() -> None:
+    manifest = _json(CONTRACT_ROOT / "manifest.json")
+    assert manifest["schema_version"] == "agent-runtime-contract-manifest-v1"
+    assert manifest["status"] == "provisional"
+    artifacts = manifest["artifacts"]
+    assert set(artifacts) == {
+        "agent-loop-v1.schema.json",
+        "tool-invocation-v1.schema.json",
+        "reasoning-profile-v1.schema.json",
+        "agent-run-sse-v3.schema.json",
+        "assistant-final-answer-v2.schema.json",
+    }
+    for name, expected in artifacts.items():
+        assert _sha256(CONTRACT_ROOT / name) == expected
+        Draft202012Validator.check_schema(_json(CONTRACT_ROOT / name))
+
+
+def test_loop_intent_requires_tool_for_tool_action_and_completion_for_finalize() -> None:
+    validator = _validator("agent-loop-v1.schema.json")
+    validator.validate(
+        {
+            "schema_version": "agent-loop-v1",
+            "action": "call_tool",
+            "goal": "Inspect synthetic notes.",
+            "tool": {
+                "name": "knowledge_search",
+                "version": "1.0.0",
+                "arguments": {"query": "notes"},
+            },
+        }
+    )
+    validator.validate(
+        {
+            "schema_version": "agent-loop-v1",
+            "action": "finalize",
+            "goal": "Answer the request.",
+            "completion": {
+                "goal_complete": True,
+                "evidence_sufficient": True,
+                "has_conflict": False,
+            },
+            "stop_reason": "goal_complete",
+        }
+    )
+    with pytest.raises(ValidationError):
+        validator.validate(
+            {"schema_version": "agent-loop-v1", "action": "finalize", "goal": "early"}
+        )
+    with pytest.raises(ValidationError):
+        validator.validate(
+            {
+                "schema_version": "agent-loop-v1",
+                "action": "call_tool",
+                "goal": "unsafe",
+                "tool": {"name": "shell_exec", "version": "1.0.0", "arguments": {"space_id": "x"}},
+            }
+        )
+
+
+def test_tool_and_sse_contracts_reject_scope_or_private_payload_fields() -> None:
+    tool_validator = _validator("tool-invocation-v1.schema.json")
+    tool_validator.validate(
+        {
+            "schema_version": "tool-invocation-v1",
+            "tool_name": "fs_read",
+            "tool_version": "1.0.0",
+            "arguments": {"path": "docs/README.md"},
+        }
+    )
+    with pytest.raises(ValidationError):
+        tool_validator.validate(
+            {
+                "schema_version": "tool-invocation-v1",
+                "tool_name": "fs_read",
+                "tool_version": "1.0.0",
+                "arguments": {"space_id": "server-chosen"},
+            }
+        )
+
+    sse_validator = _validator("agent-run-sse-v3.schema.json")
+    sse_validator.validate(
+        {
+            "schema_version": "agent-run-sse-v3",
+            "run_id": "00000000-0000-0000-0000-000000000001",
+            "sequence": 1,
+            "event_type": "tool_output",
+            "payload": {"tool_name": "fs_read", "output_summary": "sha256:abc", "duration_ms": 4},
+        }
+    )
+    with pytest.raises(ValidationError):
+        sse_validator.validate(
+            {
+                "schema_version": "agent-run-sse-v3",
+                "run_id": "00000000-0000-0000-0000-000000000001",
+                "sequence": 2,
+                "event_type": "tool_output",
+                "payload": {"prompt": "private"},
+            }
+        )
+
+
+def test_reasoning_and_final_answer_contracts_keep_provider_neutral_fields() -> None:
+    _validator("reasoning-profile-v1.schema.json").validate(
+        {
+            "schema_version": "reasoning-profile-v1",
+            "requested_effort": "auto",
+            "effective_effort": "low",
+            "provider": "fake",
+            "model": "synthetic-chat",
+            "mapping_version": "reasoning-mapping-v1",
+            "mode": "native",
+            "downgrade_reason": "none",
+        }
+    )
+    _validator("assistant-final-answer-v2.schema.json").validate(
+        {
+            "schema_version": "assistant-final-answer-v2",
+            "status": "refused",
+            "message": "The synthetic evidence is insufficient.",
+            "stop_reason": "evidence_insufficient",
+            "publication_id": "assistant-publication:synthetic-1",
+            "verified_evidence_count": 0,
+            "citation_count": 0,
+        }
+    )
+
+
+def test_agent_loop_development_dataset_is_synthetic_and_hash_pinned() -> None:
+    manifest = yaml.safe_load((DATASET_ROOT / "manifest.yaml").read_text(encoding="utf-8"))
+    assert manifest["status"] == "provisional"
+    assert manifest["distribution_scope"] == "repository_fixture"
+    assert manifest["content_policy"] == "synthetic_only"
+    assert manifest["formal_runs_enabled"] is False
+    assert _sha256(REPOSITORY_ROOT / manifest["schema_path"]) == manifest["schema_sha256"]
+    assert _sha256(REPOSITORY_ROOT / manifest["cases_path"]) == manifest["cases_sha256"]
+
+    validator = Draft202012Validator(_json(DATASET_ROOT / "schema.json"))
+    cases = [
+        json.loads(line)
+        for line in (DATASET_ROOT / "development.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    assert len(cases) == 8
+    assert len(cases) == len({case["id"] for case in cases})
+    for case in cases:
+        validator.validate(case)
+        assert case["content_policy"] == "synthetic_only"
+        assert case["split"] == "development"
+    assert {case["category"] for case in cases} == {
+        "general_chat",
+        "multi_round_retrieval",
+        "insufficient_evidence",
+        "conflicting_evidence",
+        "prompt_injection",
+        "cross_space",
+        "write_approval",
+        "command_overreach",
+    }

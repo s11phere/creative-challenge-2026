@@ -20,3 +20,5 @@ privacy-safe candidate export rules.
 ADR-013 records the product-level Assistant Agent, shared ConversationRun identity, safe automatic
 Skill routing, manifest v2 invocation metadata, context compression, and the versioned v2 event
 projection. It explicitly preserves the ADR-010/011 provisional-quality boundary.
+ADR-014 records the generic Agent Loop, Tool trust, provider-neutral reasoning profile, v3 event
+envelope, finalization-only publication gate, and synthetic development contract boundary.

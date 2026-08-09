@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tool-invocation-v1.schema.json",
+  "title": "Agent tool invocation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool_name", "tool_version", "arguments"],
+  "properties": {
+    "schema_version": {"const": "tool-invocation-v1"},
+    "tool_name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+    "tool_version": {"type": "string", "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"},
+    "arguments": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": {"not": {"pattern": "(^|_)(space|space_id|version_id|credential|secret)$"}}
+    },
+    "reason": {"type": "string", "maxLength": 1000}
+  }
+}

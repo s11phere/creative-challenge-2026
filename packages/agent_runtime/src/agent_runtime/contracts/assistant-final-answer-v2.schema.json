@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "assistant-final-answer-v2.schema.json",
+  "title": "Assistant final answer v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "message", "stop_reason", "publication_id"],
+  "properties": {
+    "schema_version": {"const": "assistant-final-answer-v2"},
+    "status": {"enum": ["completed", "refused", "clarifying"]},
+    "message": {"type": "string", "minLength": 1, "maxLength": 20000},
+    "stop_reason": {
+      "enum": ["goal_complete", "evidence_insufficient", "conflict", "user_clarification", "policy_refusal"]
+    },
+    "publication_id": {"type": "string", "pattern": "^assistant-publication:[A-Za-z0-9_-]+$"},
+    "verified_evidence_count": {"type": "integer", "minimum": 0},
+    "citation_count": {"type": "integer", "minimum": 0}
+  }
+}
