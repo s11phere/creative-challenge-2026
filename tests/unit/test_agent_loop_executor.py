@@ -1,0 +1,240 @@
+from __future__ import annotations
+
+from typing import cast
+from uuid import UUID
+
+import pytest
+from agent_runtime import AgentLoopExecutor, InMemoryRuntimeStateStore, InMemoryToolRegistry
+from agent_runtime.skills import PinnedSkill
+from agent_runtime.tools import JSONValue, ToolDefinition, ToolExecutionContext, ToolRef
+from domain.agent_loop import AgentLoopFinalizationState, AgentLoopPhase
+from domain.agent_runtime import AgentRun, AgentRunContext, RunBudget, RunStatus, ToolPermission
+from model_gateway import (
+    CapabilityAlias,
+    ChatRequest,
+    ChatResponse,
+    FakeModelGateway,
+    GatewayStatus,
+    ModelGateway,
+    ModelUsage,
+)
+
+
+class DecisionGateway:
+    def __init__(self, *responses: str) -> None:
+        self._delegate = FakeModelGateway()
+        self._responses = list(responses)
+        self.requests: list[ChatRequest] = []
+
+    @property
+    def status(self) -> GatewayStatus:
+        return self._delegate.status
+
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        self.requests.append(request)
+        return ChatResponse(
+            text=self._responses.pop(0),
+            finish_reason="stop",
+            usage=ModelUsage(input_tokens=3, output_tokens=2),
+            capability=capability,
+            latency_ms=1.0,
+        )
+
+
+class RecordingFinalizer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def finalize(self, **kwargs: object) -> dict[str, JSONValue]:
+        self.calls += 1
+        decision = kwargs["decision"]
+        return {"message": f"final:{getattr(decision, 'reason', '')}"}
+
+
+class ApprovedPort:
+    async def request(self, _context: AgentRunContext, _tool: object) -> str:
+        return "approval-1"
+
+    async def is_approved(self, approval_id: str, _context: AgentRunContext) -> bool:
+        return approval_id == "approval-1"
+
+
+def loop_run(*, permissions: frozenset[ToolPermission]) -> AgentRun:
+    return AgentRun(
+        context=AgentRunContext(
+            run_id=UUID("00000000-0000-4000-8000-000000000011"),
+            space_id=UUID("00000000-0000-4000-8000-000000000012"),
+            skill_name="loop_fixture",
+            skill_version="1.0.0",
+            skill_content_sha256="a" * 64,
+            trace_id="loop-trace",
+            caller_id="loop-caller",
+            granted_permissions=permissions,
+        ),
+        budget=RunBudget(
+            max_steps=8,
+            max_tool_calls=4,
+            max_input_tokens=100,
+            max_output_tokens=100,
+            timeout_seconds=30,
+        ),
+    )
+
+
+async def search_handler(
+    arguments: dict[str, JSONValue], _context: ToolExecutionContext
+) -> dict[str, JSONValue]:
+    return {"matches": [f"found:{arguments['query']}"]}
+
+
+def tool(*, write: bool = False) -> ToolDefinition:
+    return ToolDefinition(
+        name="search_knowledge" if not write else "write_note",
+        version="1.0.0",
+        description="Operate on synthetic loop data.",
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["query"],
+            "properties": {"query": {"type": "string", "minLength": 1}},
+        },
+        output_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["matches"],
+            "properties": {"matches": {"type": "array", "items": {"type": "string"}}},
+        },
+        permissions=frozenset(
+            {ToolPermission.WRITE_KNOWLEDGE} if write else {ToolPermission.READ_KNOWLEDGE}
+        ),
+        handler_name="tool",
+        model_visible=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_loop_observes_multiple_tools_then_finalizes_once() -> None:
+    registry = InMemoryToolRegistry(handlers={"tool": search_handler})
+    definition = registry.register(tool())
+    finalizer = RecordingFinalizer()
+    state_store = InMemoryRuntimeStateStore()
+    result = await AgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(ToolRef(definition.name, definition.version),),
+        system_prompt="Use only the registered synthetic Tool.",
+        model_gateway=cast(
+            ModelGateway,
+            DecisionGateway(
+                '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"one"}}',
+                '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"two"}}',
+                '{"action":"complete","reason":"verified synthetic result"}',
+            ),
+        ),
+        state_store=state_store,
+        finalizer=finalizer,
+    ).execute(
+        loop_run(permissions=definition.permissions),
+        cast(PinnedSkill, object()),
+        {"question": "synthetic"},
+        goal="Answer the synthetic request with evidence.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert result.state.phase is AgentLoopPhase.COMPLETED
+    assert result.state.finalization is AgentLoopFinalizationState.PUBLISHED
+    assert len(result.state.observations) == 2
+    assert result.run.checkpoint_sequence == 2
+    assert result.output == {"message": "final:verified synthetic result"}
+    assert finalizer.calls == 1
+    stored = await state_store.get_run(result.run.context.run_id)
+    assert stored == result.run
+
+
+@pytest.mark.asyncio
+async def test_loop_rejects_repeated_tool_arguments_as_no_progress() -> None:
+    calls = 0
+
+    async def count_handler(
+        arguments: dict[str, JSONValue], context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        nonlocal calls
+        calls += 1
+        return await search_handler(arguments, context)
+
+    registry = InMemoryToolRegistry(handlers={"tool": count_handler})
+    definition = registry.register(tool())
+    result = await AgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use only the registered synthetic Tool.",
+        model_gateway=cast(
+            ModelGateway,
+            DecisionGateway(
+                '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"same"}}',
+                '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"same"}}',
+            ),
+        ),
+    ).execute(
+        loop_run(permissions=definition.permissions),
+        cast(PinnedSkill, object()),
+        {"question": "synthetic"},
+        goal="Answer the synthetic request.",
+    )
+
+    assert result.run.status is RunStatus.FAILED
+    assert result.error is not None
+    assert result.error.code == "RUN_LLM_NO_PROGRESS"
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_waiting_approval_checkpoints_and_resumes_the_pending_tool() -> None:
+    registry = InMemoryToolRegistry(handlers={"tool": search_handler}, approval_port=ApprovedPort())
+    definition = registry.register(tool(write=True))
+    state_store = InMemoryRuntimeStateStore()
+    gateway = cast(
+        ModelGateway,
+        DecisionGateway(
+            '{"action":"call_tool","tool_name":"write_note","arguments":{"query":"approved"}}',
+            '{"action":"complete","reason":"write completed"}',
+        ),
+    )
+    executor = AgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use only the registered synthetic Tool.",
+        model_gateway=gateway,
+        state_store=state_store,
+    )
+    started = loop_run(permissions=definition.permissions)
+    waiting = await executor.execute(
+        started,
+        cast(PinnedSkill, object()),
+        {"question": "synthetic"},
+        goal="Write the approved synthetic note.",
+    )
+    assert waiting.waiting_approval
+    assert waiting.run.status is RunStatus.WAITING_APPROVAL
+    checkpoint = await state_store.get_latest(waiting.run.context.run_id)
+    assert checkpoint is not None
+    assert checkpoint.caller_id == waiting.run.context.caller_id
+    assert checkpoint.space_id == waiting.run.context.space_id
+    assert checkpoint.idempotency_key is not None
+
+    resumed = await executor.resume(
+        waiting.run,
+        cast(PinnedSkill, object()),
+        checkpoint,
+        {"question": "synthetic"},
+        caller_id=waiting.run.context.caller_id,
+        space_id=waiting.run.context.space_id,
+        approval_id="approval-1",
+    )
+    assert resumed.run.status is RunStatus.COMPLETED
+    assert resumed.state.phase is AgentLoopPhase.COMPLETED
+    assert len(resumed.state.observations) == 1

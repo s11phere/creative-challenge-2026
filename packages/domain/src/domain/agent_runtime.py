@@ -41,6 +41,7 @@ class RunEvent(StrEnum):
     FAIL = "fail"
     TIMEOUT = "timeout"
     COMPLETE = "complete"
+    FINALIZE = "finalize"
 
 
 class ToolPermission(StrEnum):
@@ -207,6 +208,11 @@ class RunCheckpoint:
     next_step: RunStep | None = None
     next_node: str | None = None
     verified: bool = False
+    caller_id: str | None = None
+    space_id: UUID | None = None
+    approval_id: str | None = None
+    lease_id: str | None = None
+    idempotency_key: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
@@ -218,6 +224,12 @@ class RunCheckpoint:
             raise ValueError("checkpoint must contain a state digest")
         if (self.next_step is None) != (self.next_node is None):
             raise ValueError("checkpoint next step and node must be specified together")
+        if self.caller_id is not None and not self.caller_id.strip():
+            raise ValueError("checkpoint caller identity cannot be blank")
+        if self.lease_id is not None and not self.lease_id.strip():
+            raise ValueError("checkpoint lease identity cannot be blank")
+        if self.idempotency_key is not None and not self.idempotency_key.strip():
+            raise ValueError("checkpoint idempotency key cannot be blank")
 
 
 @dataclass(frozen=True)
@@ -320,7 +332,21 @@ _TRANSITIONS: dict[tuple[RunStatus, RunStep | None, RunEvent], _State] = {
     ),
 }
 
-for _status, _step in (
+# A generic Agent Loop may reach finalization directly after an observation. The
+# legacy workflow still uses the explicit planning/retrieving/executing/verifying
+# path; this transition only provides the shared finalizer gate.
+for _finalize_status, _finalize_step in (
+    (RunStatus.RUNNING, RunStep.PLANNING),
+    (RunStatus.RUNNING, RunStep.RETRIEVING),
+    (RunStatus.RUNNING, RunStep.EXECUTING),
+    (RunStatus.RUNNING, RunStep.VERIFYING),
+):
+    _TRANSITIONS[(_finalize_status, _finalize_step, RunEvent.FINALIZE)] = (
+        RunStatus.RUNNING,
+        RunStep.VERIFYING,
+    )
+
+for _cancellable_status, _cancellable_step in (
     (RunStatus.CREATED, None),
     (RunStatus.RUNNING, RunStep.PLANNING),
     (RunStatus.RUNNING, RunStep.RETRIEVING),
@@ -328,12 +354,18 @@ for _status, _step in (
     (RunStatus.RUNNING, RunStep.VERIFYING),
     (RunStatus.WAITING_APPROVAL, RunStep.EXECUTING),
 ):
-    _TRANSITIONS[(_status, _step, RunEvent.REQUEST_CANCEL)] = (
+    _TRANSITIONS[(_cancellable_status, _cancellable_step, RunEvent.REQUEST_CANCEL)] = (
         RunStatus.CANCEL_REQUESTED,
-        _step,
+        _cancellable_step,
     )
-    _TRANSITIONS[(_status, _step, RunEvent.FAIL)] = (RunStatus.FAILED, None)
-    _TRANSITIONS[(_status, _step, RunEvent.TIMEOUT)] = (RunStatus.TIMED_OUT, None)
+    _TRANSITIONS[(_cancellable_status, _cancellable_step, RunEvent.FAIL)] = (
+        RunStatus.FAILED,
+        None,
+    )
+    _TRANSITIONS[(_cancellable_status, _cancellable_step, RunEvent.TIMEOUT)] = (
+        RunStatus.TIMED_OUT,
+        None,
+    )
 _TRANSITIONS[(RunStatus.CANCEL_REQUESTED, RunStep.PLANNING, RunEvent.CANCEL)] = (
     RunStatus.CANCELLED,
     None,
@@ -414,6 +446,10 @@ def validate_recovery(
     """Reject recovery unless ownership, fixed Skill, schema, and terminal state are safe."""
     if run.context.caller_id != caller_id or run.context.space_id != space_id:
         raise RecoveryRejectedError("run ownership does not match recovery caller")
+    if checkpoint.caller_id is not None and checkpoint.caller_id != caller_id:
+        raise RecoveryRejectedError("checkpoint caller does not match recovery caller")
+    if checkpoint.space_id is not None and checkpoint.space_id != space_id:
+        raise RecoveryRejectedError("checkpoint Space does not match recovery Space")
     if run.status in {
         RunStatus.COMPLETED,
         RunStatus.FAILED,

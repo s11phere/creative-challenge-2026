@@ -1,5 +1,18 @@
 """Domain layer: pure types and ports."""
 
+from .agent_loop import (
+    AgentLoopCompletionCheck,
+    AgentLoopContractError,
+    AgentLoopFinalizationState,
+    AgentLoopIteration,
+    AgentLoopNoProgressError,
+    AgentLoopPhase,
+    AgentLoopState,
+    AgentLoopStopReason,
+    AgentLoopTask,
+    AgentLoopToolObservation,
+    AgentLoopTransitionError,
+)
 from .agent_runtime import (
     AgentRun,
     AgentRunContext,
@@ -204,6 +217,17 @@ __all__ = [
     "AssistantResultKind",
     "AssistantStreamEvent",
     "AgentRunContext",
+    "AgentLoopCompletionCheck",
+    "AgentLoopContractError",
+    "AgentLoopFinalizationState",
+    "AgentLoopIteration",
+    "AgentLoopNoProgressError",
+    "AgentLoopPhase",
+    "AgentLoopState",
+    "AgentLoopStopReason",
+    "AgentLoopTask",
+    "AgentLoopToolObservation",
+    "AgentLoopTransitionError",
     "AgentRuntime",
     "ApprovalPort",
     "BudgetExceededError",

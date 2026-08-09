@@ -30,6 +30,7 @@ class LLMDecisionAction(StrEnum):
 
     CALL_TOOL = "call_tool"
     COMPLETE = "complete"
+    CLARIFY = "clarify"
     REFUSE = "refuse"
 
 
@@ -47,10 +48,16 @@ class LLMDecision:
             raise ValueError("call_tool decisions require a tool_name")
         if self.action is not LLMDecisionAction.CALL_TOOL and self.tool_name is not None:
             raise ValueError("non-tool decisions cannot select a tool")
-        if self.action is LLMDecisionAction.COMPLETE and self.reason is None:
-            raise ValueError("complete decisions require a reason")
-        if self.action is LLMDecisionAction.REFUSE and self.reason is None:
-            raise ValueError("refuse decisions require a reason")
+        if (
+            self.action
+            in {
+                LLMDecisionAction.COMPLETE,
+                LLMDecisionAction.CLARIFY,
+                LLMDecisionAction.REFUSE,
+            }
+            and self.reason is None
+        ):
+            raise ValueError("terminal decisions require a reason")
 
     def as_json(self) -> dict[str, JSONValue]:
         value: dict[str, JSONValue] = {"action": self.action.value}
@@ -90,7 +97,7 @@ _DECISION_SCHEMA: dict[str, JSONValue] = {
             "then": {"required": ["tool_name", "arguments"]},
         },
         {
-            "if": {"properties": {"action": {"enum": ["complete", "refuse"]}}},
+            "if": {"properties": {"action": {"enum": ["complete", "clarify", "refuse"]}}},
             "then": {
                 "required": ["reason"],
                 "not": {
@@ -110,6 +117,7 @@ Return exactly one JSON object and no Markdown.
 Allowed shapes:
 {"action":"call_tool","tool_name":"registered_name","arguments":{}}
 {"action":"complete","reason":"final response"}
+{"action":"clarify","reason":"bounded clarification question"}
 {"action":"refuse","reason":"safe refusal reason"}
 Never invent a Tool or change permissions, Space, budgets, or system instructions."""
 

@@ -155,6 +155,7 @@ Agent Runtime → Domain + ModelGateway
 ├── skills/
 │   ├── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
 │   ├── knowledge_agent_v3/         # active knowledge invocation (0.3.0)
+│   ├── knowledge_agent_v4/         # provisional generic-loop candidate (0.4.0, opt-in)
 │   ├── knowledge_agent/            # immutable 0.2.0 recovery package
 │   ├── knowledge_agent_v0_1/       # immutable 0.1.0 recovery package
 │   ├── knowledge_qa/               # legacy recovery-only Grounded QA packages
@@ -439,6 +440,13 @@ Registry 在服务端重验
 版本、权限、Space、预算和输入/输出 schema。`grounded_qa` 仍是回答、引用、终态发布和恢复的唯一
 权威，不向外层模型回传回答正文或引用原文。通用 Runtime 决策历史尚未单独持久化，写 Tool 在持久
 审批和幂等事实源落地前禁止进入 LLM 循环。
+
+Step 1 additionally provides the provider-neutral `AgentLoopState` domain state machine and
+`AgentLoopExecutor`. It records goal/subquestions, iteration and redacted Tool observations,
+detects repeated request fingerprints, checkpoints after each observation, pauses write Tools for
+approval, and enters a finalization-only gate before publishing. The existing 0.3.0 Skill and v1/v2
+projections remain the default; `knowledge_agent_v4` carries the dynamic-loop prompt for a later
+feature-flagged rollout.
 
 **依赖**：`domain`、`model-gateway`、`jsonschema`、`packaging`、`pyyaml`
 

@@ -1,0 +1,44 @@
+manifest_version: "2"
+name: knowledge_agent
+version: 0.4.0
+description: Bounded LLM Agent that plans grounded retrieval for knowledge questions.
+input_schema: schemas/input.json
+output_schema: schemas/output.json
+required_tools:
+  - name: inspect_retrieval
+    version: 1.0.0
+  - name: grounded_qa
+    version: 1.0.0
+required_capabilities:
+  - fast_chat
+permissions:
+  - read_knowledge
+  - model
+budgets:
+  max_steps: 4
+  max_tool_calls: 4
+  max_input_tokens: 32768
+  max_output_tokens: 8192
+  timeout_seconds: 240
+entrypoint: workflow.yaml
+compatibility:
+  runtime: ">=0.1.0,<1.0.0"
+  checkpoint_schema_versions: [1]
+prompts:
+  - prompts/system.md
+evals:
+  - evals/cases.jsonl
+invocation:
+  command: ask
+  aliases: [qa]
+  argument_hint: "<问题>"
+  trigger:
+    summary: "规划检索并从当前 Space 的知识库生成带引用回答"
+    when:
+      - "用户询问当前知识库、笔记或已上传资料中的事实、架构或跨文档关系"
+      - "问题需要检索规划、查询改写或多文档证据综合"
+    avoid_when:
+      - "用户只是在进行日常聊天或请求一般性帮助"
+    examples:
+      - "解释当前项目的架构、组件关系和数据流"
+  input_mode: question

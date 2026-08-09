@@ -233,7 +233,7 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
         "name": "knowledge_agent",
         "active_version": "0.3.0",
         "active_revision": 1,
-        "versions": ["0.1.0", "0.2.0", "0.3.0"],
+        "versions": ["0.1.0", "0.2.0", "0.3.0", "0.4.0"],
     }
     assert legacy.status_code == 404
     assert legacy.json()["code"] == "SKILL_NOT_FOUND"

@@ -45,10 +45,13 @@ def build_checkpoint(
     next_step: RunStep,
     next_node: str,
 ) -> tuple[AgentRun, RunCheckpoint]:
-    if run.status is not RunStatus.RUNNING or not next_node:
+    if run.status not in {RunStatus.RUNNING, RunStatus.WAITING_APPROVAL} or not next_node:
         raise RecoveryRejectedError("checkpoint requires an active run and safe continuation")
     sequence = run.checkpoint_sequence + 1
     stored_state = deepcopy(dict(state))
+    approval_id = _optional_string(stored_state.get("approval_id"))
+    lease_id = _optional_string(stored_state.get("lease_id"))
+    idempotency_key = _optional_string(stored_state.get("last_idempotency_key"))
     checkpoint = RunCheckpoint(
         run_id=run.context.run_id,
         sequence=sequence,
@@ -62,8 +65,17 @@ def build_checkpoint(
         next_step=next_step,
         next_node=next_node,
         verified=True,
+        caller_id=run.context.caller_id,
+        space_id=run.context.space_id,
+        approval_id=approval_id,
+        lease_id=lease_id,
+        idempotency_key=idempotency_key,
     )
     return replace(run, checkpoint_sequence=sequence), checkpoint
+
+
+def _optional_string(value: JSONValue | object) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 class InMemoryRuntimeStateStore:
@@ -129,6 +141,10 @@ class InMemoryRuntimeStateStore:
     def _validate_commit(run: AgentRun, checkpoint: RunCheckpoint) -> None:
         if run.context.run_id != checkpoint.run_id:
             raise RecoveryRejectedError("checkpoint belongs to another run")
+        if checkpoint.caller_id not in {None, run.context.caller_id}:
+            raise RecoveryRejectedError("checkpoint caller does not match run")
+        if checkpoint.space_id not in {None, run.context.space_id}:
+            raise RecoveryRejectedError("checkpoint Space does not match run")
         if (
             checkpoint.skill_name,
             checkpoint.skill_version,

@@ -32,6 +32,7 @@ from .llm_decision import (
     LLMDecisionVerifyNode,
     parse_llm_decision,
 )
+from .loop import AgentLoopExecutor, AgentLoopFinalizer, AgentLoopResult
 from .skills import (
     FileSystemSkillRegistry,
     PinnedSkill,
@@ -104,4 +105,7 @@ __all__ = [
     "LLMDecisionError",
     "LLMDecisionNode",
     "parse_llm_decision",
+    "AgentLoopExecutor",
+    "AgentLoopFinalizer",
+    "AgentLoopResult",
 ]
