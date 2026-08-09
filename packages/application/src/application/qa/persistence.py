@@ -44,6 +44,7 @@ from domain.qa_persistence import (
     QARunUsage,
     terminal_status_for_result,
 )
+from domain.reasoning import ReasoningEffort
 
 _RUNTIME_TERMINAL = frozenset({QAStatus.FAILED, QAStatus.CANCELLED, QAStatus.TIMED_OUT})
 _BUSINESS_TERMINAL = frozenset({QAStatus.COMPLETED, QAStatus.REFUSED})
@@ -85,6 +86,23 @@ class InMemoryGroundedQARepository:
     async def get_conversation(self, conversation_id: UUID) -> ConversationRecord | None:
         async with self._lock:
             return self._conversations.get(conversation_id)
+
+    async def set_reasoning_effort(
+        self, conversation_id: UUID, effort: ReasoningEffort
+    ) -> ConversationRecord:
+        async with self._lock:
+            conversation = self._require_conversation(conversation_id)
+            if conversation.archived_at is not None:
+                raise QAContractError("Conversation does not exist")
+            updated = replace(
+                conversation,
+                reasoning_effort=effort,
+                updated_at=max(
+                    datetime.now(UTC), conversation.updated_at + timedelta(microseconds=1)
+                ),
+            )
+            self._conversations[conversation_id] = updated
+            return updated
 
     async def list_conversations(
         self, space_id: UUID, owner_id: str

@@ -923,6 +923,9 @@
             "title": "Model Identity",
             "type": "string"
           },
+          "reasoning_profile": {
+            "$ref": "#/components/schemas/ReasoningProfileResponse"
+          },
           "run_id": {
             "format": "uuid",
             "title": "Run Id",
@@ -955,6 +958,7 @@
           "run_kind",
           "selection",
           "model_identity",
+          "reasoning_profile",
           "usage"
         ],
         "title": "ConversationRunResponse",
@@ -1695,6 +1699,54 @@
           "checks"
         ],
         "title": "ReadyResponse",
+        "type": "object"
+      },
+      "ReasoningProfileResponse": {
+        "properties": {
+          "downgrade_reason": {
+            "title": "Downgrade Reason",
+            "type": "string"
+          },
+          "effective_effort": {
+            "title": "Effective Effort",
+            "type": "string"
+          },
+          "mapping_version": {
+            "title": "Mapping Version",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "requested_effort": {
+            "title": "Requested Effort",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "requested_effort",
+          "effective_effort",
+          "provider",
+          "model",
+          "mapping_version",
+          "mode",
+          "downgrade_reason"
+        ],
+        "title": "ReasoningProfileResponse",
         "type": "object"
       },
       "RefusalResultResponse": {

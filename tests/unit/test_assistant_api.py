@@ -62,6 +62,16 @@ async def test_v2_turn_skeleton_persists_and_cancels_a_model_free_turn() -> None
         "error_code": None,
         "selection": {"source": "none", "skill": None},
         "model_identity": "unselected",
+        "reasoning_profile": {
+            "schema_version": "reasoning-profile-v1",
+            "requested_effort": "auto",
+            "effective_effort": "low",
+            "provider": "fake",
+            "model": "fake-fast-chat-v1",
+            "mapping_version": "reasoning-mapping-v1",
+            "mode": "native",
+            "downgrade_reason": "none",
+        },
         "assistant_message": None,
         "clarification": None,
         "usage": {
@@ -78,6 +88,46 @@ async def test_v2_turn_skeleton_persists_and_cancels_a_model_free_turn() -> None
     assert recovered.status_code == 200
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == ConversationRunStatus.CANCEL_REQUESTED.value
+
+
+@pytest.mark.asyncio
+async def test_v2_effort_command_updates_only_future_conversation_runs() -> None:
+    repository = InMemoryGroundedQARepository()
+    app = create_app(
+        model_gateway=FakeModelGateway(),
+        enable_qa_execution=False,
+        qa_repository=repository,
+        qa_event_store=QAEventLog(),
+        assistant_event_store=AssistantEventLog(),
+        skill_activation_store=InMemorySkillActivationStore(),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            f"/api/v1/spaces/{UUID(int=205)}/conversations", json={"owner_id": "local-user"}
+        )
+        conversation_id = created.json()["conversation_id"]
+        changed = await client.post(
+            f"/api/v2/conversations/{conversation_id}/turns",
+            json={"content": "/effort high", "idempotency_key": "effort-command-1"},
+        )
+        queried = await client.post(
+            f"/api/v2/conversations/{conversation_id}/turns",
+            json={"content": "/effort", "idempotency_key": "effort-command-2"},
+        )
+        turn = await client.post(
+            f"/api/v2/conversations/{conversation_id}/turns",
+            json={"content": "Use high effort.", "idempotency_key": "effort-turn-1"},
+        )
+
+    assert changed.status_code == 202
+    assert changed.json()["content"] == "Default reasoning effort: high."
+    assert queried.status_code == 202
+    assert queried.json()["content"] == "Current reasoning effort: high."
+    assert turn.status_code == 202
+    profile = turn.json()["reasoning_profile"]
+    assert profile["requested_effort"] == "high"
+    assert profile["effective_effort"] == "high"
+    assert profile["mode"] == "native"
 
 
 @pytest.mark.asyncio

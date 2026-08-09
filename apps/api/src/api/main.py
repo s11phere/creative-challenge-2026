@@ -19,6 +19,7 @@ from application.assistant import (
     ConversationContextService,
     ConversationReader,
     ConversationRunService,
+    ReasoningProfileResolver,
 )
 from application.qa import (
     CitationResolver,
@@ -145,6 +146,7 @@ def create_app(
 
     database = database or Database(settings.database_url)
     gateway = model_gateway or _create_configured_model_gateway()
+    reasoning = ReasoningProfileResolver(gateway=gateway)
     qa_repository = qa_repository or PostgresGroundedQARepository(database)
     if conversation_run_repository is None:
         parent_methods = (
@@ -175,6 +177,7 @@ def create_app(
     assistant_turn_service = ConversationRunService(
         conversations=cast(ConversationReader, qa_repository),
         runs=conversation_run_repository,
+        reasoning=reasoning,
     )
     assistant_metrics = AssistantMetrics()
     skill_registry = qa_skill_registry()
@@ -211,6 +214,7 @@ def create_app(
     conversation_context = ConversationContextService(
         data=cast(ConversationContextDataPort, qa_repository),
         runs=conversation_run_repository,
+        reasoning=reasoning,
     )
     qa_runtime = QAWorkerDispatcher(
         repository=qa_repository,

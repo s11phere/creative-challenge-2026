@@ -196,6 +196,7 @@ class AssistantAgentService:
                         if context is not None
                         else None
                     ),
+                    reasoning_profile=run.reasoning_profile,
                 ),
                 capability=CapabilityAlias.FAST_CHAT,
             )

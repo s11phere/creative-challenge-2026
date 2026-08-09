@@ -10,6 +10,7 @@ from typing import Protocol
 from uuid import UUID, uuid4
 
 from .qa_persistence import MessageRecord
+from .reasoning import ReasoningProfile
 
 
 class ConversationRunKind(StrEnum):
@@ -184,6 +185,7 @@ class ConversationRun:
     router_version: str = "assistant-router-decision-v1"
     core_prompt_version: str = "assistant-base-prompt-v1"
     model_identity: str = "unselected"
+    reasoning_profile: ReasoningProfile = field(default_factory=ReasoningProfile.unresolved)
     skill: FixedSkillIdentity | None = None
     usage: ConversationRunUsage = field(default_factory=ConversationRunUsage)
     result: AssistantResult | None = None
@@ -323,4 +325,5 @@ __all__ = [
     "ConversationRunUsage",
     "FixedSkillIdentity",
     "ResourceCandidate",
+    "ReasoningProfile",
 ]

@@ -199,6 +199,12 @@ Provider 在非流式响应体生成阶段超过 read timeout，而不是连接�
 `FAST_CHAT_REASONING_ENABLED=false` 会为 OpenAI-compatible Chat 显式发送
 `thinking.type=disabled`；只有确实需要推理模型且已单独配置足够的推理与回答预算时才应开启。
 
+`/effort` 仅修改当前 Conversation 后续 Run 的默认偏好，不会重写已接受 Run。OpenAI-compatible
+Chat 当前只能将 `none` 映射为 disabled、其他强度映射为 enabled 并记录 `coarse`；它不是
+Responses 原生 effort Adapter。对不支持 reasoning 的 Provider，显式强度会以
+`MODEL_REASONING_UNSUPPORTED` 拒绝，只有 `auto` 可保存为 disabled 的降级 profile。接入新的
+Responses Provider 前必须重新复核官方模型支持矩阵，不能从该兼容 Adapter 推断字段或模型支持。
+
 `QA_STRUCTURED_RESPONSE_INVALID` 表示模型响应不是可验证的 `grounded-answer-v1`。回答正文由服务端
 根据已校验、带 Evidence ID 的 `claims` 规范化生成；模型返回的冗余 `answer` 字段不会再因排版或
 连接文本差异导致整个 Run 失败。JSON schema、Claim ID 唯一性、Evidence ID 白名单和 Citation 完整性

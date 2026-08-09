@@ -38,6 +38,19 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _default_reasoning_profile() -> dict[str, str]:
+    return {
+        "schema_version": "reasoning-profile-v1",
+        "requested_effort": "auto",
+        "effective_effort": "none",
+        "provider": "unresolved",
+        "model": "unresolved",
+        "mapping_version": "reasoning-mapping-v1",
+        "mode": "disabled",
+        "downgrade_reason": "capability_unavailable",
+    }
+
+
 class Base(DeclarativeBase):
     """Shared declarative base for all ORM models."""
 
@@ -326,13 +339,21 @@ class ConversationModel(Base):
         UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
     )
     owner_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    reasoning_effort: Mapped[str] = mapped_column(String(16), nullable=False, default="auto")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    __table_args__ = (Index("idx_conversations_space_owner", "space_id", "owner_id"),)
+    __table_args__ = (
+        CheckConstraint(
+            "reasoning_effort IN "
+            "('auto', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')",
+            name="ck_conversations_reasoning_effort",
+        ),
+        Index("idx_conversations_space_owner", "space_id", "owner_id"),
+    )
 
 
 _QA_STATUS_CHECK = (
@@ -375,6 +396,9 @@ class ConversationRunModel(Base):
     router_version: Mapped[str] = mapped_column(String(100), nullable=False)
     core_prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
     model_identity: Mapped[str] = mapped_column(String(255), nullable=False)
+    reasoning_profile: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=_default_reasoning_profile
+    )
     skill_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     skill_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     skill_content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)

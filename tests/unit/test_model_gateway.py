@@ -20,6 +20,9 @@ from model_gateway import (
     ModelGatewayError,
     ModelProvider,
     OpenAICompatibleGateway,
+    ReasoningEffort,
+    ReasoningMode,
+    ReasoningProfile,
     RerankRequest,
     create_model_gateway,
 )
@@ -100,6 +103,42 @@ async def test_provider_sends_explicit_chat_reasoning_mode(enabled: bool, expect
     await gateway.chat(chat_request())
 
     assert payload["thinking"] == {"type": expected}
+    await client.aclose()
+
+
+async def test_provider_profile_preserves_coarse_reasoning_mapping() -> None:
+    payload: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = OpenAICompatibleGateway(
+        endpoint="http://localhost:11434/v1",
+        fast_chat_model="chat-model",
+        embedding_model="embedding-model",
+        client=client,
+    )
+    await gateway.chat(
+        ChatRequest(
+            messages=(ChatMessage(role=ChatRole.USER, content="synthetic prompt"),),
+            reasoning_profile=ReasoningProfile(
+                requested_effort=ReasoningEffort.HIGH,
+                effective_effort=ReasoningEffort.HIGH,
+                provider="openai-compatible",
+                model="chat-model",
+                mode=ReasoningMode.COARSE,
+            ),
+        )
+    )
+    assert payload["thinking"] == {"type": "enabled"}
     await client.aclose()
 
 

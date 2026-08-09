@@ -1,6 +1,6 @@
 # 项目架构概览
 
-## Current completion boundary (2026-08-07)
+## Current completion boundary (2026-08-09)
 
 The implemented Stage 4/5 boundary now includes feedback review persistence in `qa_feedback`,
 Space-scoped metadata-only review endpoints, and a separate privacy-safe candidate exporter. The
@@ -42,6 +42,16 @@ bounded untrusted output, timeout/cancellation cleanup, and no `EXTERNAL_NETWORK
 Both permissions require durable approval bound to the full invocation identity. The Registry
 serializes duplicate side-effect deliveries per Run/idempotency key in-process; cross-restart
 exactly-once requires a future durable invocation-result store.
+
+The Agent Loop Step 6 boundary adds provider-neutral `reasoning-profile-v1` audit state. A
+Conversation stores an `auto|none|minimal|low|medium|high|xhigh|max` default; `/effort` changes
+only that default and every future Assistant or context-compaction Run captures requested/effective
+effort, Provider/model, mapping version, mode, and downgrade reason. `ModelCapabilityRegistry`
+maps native-effort, boolean-thinking (`coarse`), and unsupported capabilities without putting a
+Provider SDK field in Domain. Explicit unavailable intensity requests fail closed; only `auto` may
+downgrade. The current OpenAI-compatible adapter remains boolean-thinking and preserves
+`fast_chat_reasoning_enabled=false` as disabled-by-default behavior. This is not a claim that a
+Responses native-effort adapter has been implemented.
 
 PR #4 corrected the online and evaluation retrieval path to `dense_rerank`: dense-exact candidates
 are reranked directly. `hybrid_rerank` remains an explicit compatibility mode, not the default for
@@ -281,6 +291,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/models.py` | 核心实体：`Space`、`Source`、`Document`、`DocumentVersion`、`Chunk`、`IngestionTask` 及其枚举、`RetrievalProfile` 值对象 |
 | `src/domain/agent_runtime.py` | AgentRun 状态/步骤、预算、权限、调用记录、检查点、恢复校验及 Runtime/Registry/审批 Port |
 | `src/domain/conversation_run.py` | 通用 `ConversationRun` 父身份、运行种类/选择来源、澄清、通用结果、实际用量和持久化 Port；不含模型或数据库依赖 |
+| `src/domain/reasoning.py` | Provider-neutral effort、mapping mode/downgrade reason 与 `reasoning-profile-v1` 可审计值对象 |
 | `src/domain/conversation_context.py` | Versioned rolling-summary identity, content digest, covered message range, and inherited sensitivity contracts |
 | `src/domain/assistant_sse.py` | `agent-run-sse-v2` 的内容安全事件、单调 sequence、唯一终态和 Event Store Port；payload 禁止用户/模型正文键 |
 | `src/domain/repositories.py` | 仓库接口定义（Protocol）：`SpaceRepository`、`SourceRepository`、`DocumentRepository`、`DocumentVersionRepository`、`ChunkRepository`、`IngestionTaskRepository` |
@@ -708,6 +719,7 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | `versions/d4e5f6a7b8c9_add_chunk_fts.py` | **阶段 3 迁移**：增加持久生成的 Chunk FTS 文档列和 GIN 索引，并保留 pgvector 索引 |
 | `versions/8f9a0b1c2d3e_add_conversation_run_parents.py` | 通用 `conversation_runs` 父身份；回填既有 QA UUID，并将 QA 消息、Runtime、审批和派生知识外键改指向父 Run；降级拒绝丢弃非 QA turn |
 | `versions/9a0b1c2d3e4f_add_assistant_run_execution.py` | 为 Assistant 父 Run 增加 lease/heartbeat 和 `assistant_events`；降级拒绝静默删除已创建的 direct-conversation turn |
+| `versions/0a1b2c3d4e5f_add_conversation_reasoning_profiles.py` | Persists Conversation effort defaults and per-Run `reasoning-profile-v1`; downgrade rejects changed preference or mapping data |
 | `versions/b1c2d3e4f5a6_add_conversation_context_summaries.py` | Adds rolling summaries plus standalone Skill request/sensitivity fields; downgrade removes only Step 5 schema |
 
 迁移链还包含 Grounded QA、attempt lease、Runtime checkpoint、审批、派生知识和生命周期 revision。

@@ -28,6 +28,7 @@ from domain.conversation_run import (
 )
 from domain.grounded_qa import QAContractError
 from domain.qa_persistence import ConversationRecord, MessageRecord, MessageRole
+from domain.reasoning import ReasoningEffort, ReasoningProfile
 from model_gateway import (
     CapabilityAlias,
     ChatContinuation,
@@ -40,6 +41,7 @@ from model_gateway import (
 )
 
 from .metrics import AssistantMetrics
+from .reasoning import ReasoningProfileResolver
 
 _SUMMARY_PROMPT_VERSION = "conversation-summary-prompt-v1"
 _SUMMARY_PROMPT = (
@@ -271,6 +273,7 @@ class ConversationContextService:
         *,
         data: ConversationContextDataPort,
         runs: ConversationRunRepository,
+        reasoning: ReasoningProfileResolver | None = None,
         recent_message_limit: int = 8,
         soft_token_limit: int = 12_000,
     ) -> None:
@@ -278,6 +281,7 @@ class ConversationContextService:
             raise ValueError("Conversation context bounds must be positive")
         self._data = data
         self._runs = runs
+        self._reasoning = reasoning
         self._recent_message_limit = recent_message_limit
         self._soft_token_limit = soft_token_limit
 
@@ -410,20 +414,19 @@ class ConversationContextService:
         snapshot = await self.snapshot(run)
         if not snapshot.soft_limit_exceeded:
             return None
+        conversation = await self._data.get_conversation(run.conversation_id)
+        if conversation is None or conversation.archived_at is not None:
+            raise QAContractError("Conversation does not exist")
         automatic = self._compaction_run(
-            conversation=ConversationRecord(
-                conversation_id=run.conversation_id,
-                space_id=run.space_id,
-                owner_id=run.caller_id,
-            ),
+            conversation=conversation,
             user_message_id=run.user_message_id,
             idempotency_key=f"context:auto:{run.user_message_id.hex}",
             now=datetime.now(UTC),
         )
         return await self._runs.create_context_compaction_run(automatic)
 
-    @staticmethod
     def _compaction_run(
+        self,
         *,
         conversation: ConversationRecord,
         user_message_id: UUID,
@@ -442,9 +445,17 @@ class ConversationContextService:
             router_version="conversation-context-v1",
             core_prompt_version=_SUMMARY_PROMPT_VERSION,
             model_identity="unselected",
+            reasoning_profile=self._resolve_reasoning(conversation),
             created_at=now,
             updated_at=now,
         )
+
+    def _resolve_reasoning(self, conversation: ConversationRecord) -> ReasoningProfile:
+        if self._reasoning is None:
+            if conversation.reasoning_effort not in {ReasoningEffort.AUTO, ReasoningEffort.NONE}:
+                raise QAContractError("Reasoning capability mapping is unavailable")
+            return ReasoningProfile.unresolved(conversation.reasoning_effort)
+        return self._reasoning.resolve(conversation.reasoning_effort)
 
 
 class ConversationCompactionService:
@@ -536,6 +547,7 @@ class ConversationCompactionService:
                 ),
                 temperature=0.0,
                 max_tokens=2_000,
+                reasoning_profile=run.reasoning_profile,
             ),
             capability=CapabilityAlias.FAST_CHAT,
         )

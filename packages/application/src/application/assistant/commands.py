@@ -16,6 +16,7 @@ from domain.conversation_run import (
     ConversationRunStatus,
 )
 from domain.qa_persistence import ConversationRecord, GroundedQARepository
+from domain.reasoning import ReasoningEffort
 
 from application.skills import SkillCatalogPort, SkillInvocationView
 
@@ -105,6 +106,14 @@ class CommandExecutionResult:
 
 
 _BASE_COMMANDS: tuple[CommandDescriptor, ...] = (
+    CommandDescriptor(
+        name="effort",
+        aliases=(),
+        kind=AssistantCommandKind.BASE,
+        description="Show or update the default reasoning effort for this conversation.",
+        argument_hint="[auto|none|minimal|low|medium|high|xhigh|max]",
+        input_mode="optional_effort",
+    ),
     CommandDescriptor(
         name="help",
         aliases=(),
@@ -254,6 +263,8 @@ class AssistantCommandParser:
     @staticmethod
     def _arguments(descriptor: CommandDescriptor, argument_text: str) -> dict[str, object]:
         if descriptor.kind is AssistantCommandKind.BASE:
+            if descriptor.name == "effort":
+                return {"effort": argument_text} if argument_text else {}
             return {}
         if descriptor.input_mode == "question":
             return {"question": argument_text}
@@ -269,6 +280,10 @@ class ConversationWriter(Protocol):
     async def get_conversation(self, conversation_id: UUID) -> ConversationRecord | None: ...
 
     async def create_conversation(self, conversation: ConversationRecord) -> ConversationRecord: ...
+
+    async def set_reasoning_effort(
+        self, conversation_id: UUID, effort: ReasoningEffort
+    ) -> ConversationRecord: ...
 
 
 class AssistantCommandService:
@@ -328,6 +343,35 @@ class AssistantCommandService:
             status="completed",
             content="已创建并切换到新会话。",
             conversation_id=created.conversation_id,
+        )
+
+    async def effort(
+        self, conversation_id: UUID, *, requested_effort: str | None
+    ) -> CommandExecutionResult:
+        self._record_command("effort")
+        current = await self._conversations.get_conversation(conversation_id)
+        if current is None or current.archived_at is not None:
+            raise CommandParseError("CONVERSATION_NOT_FOUND", "Conversation not found.")
+        if requested_effort is None:
+            return CommandExecutionResult(
+                command="effort",
+                status="completed",
+                content=f"Current reasoning effort: {current.reasoning_effort.value}.",
+                conversation_id=current.conversation_id,
+            )
+        try:
+            effort = ReasoningEffort(requested_effort.casefold())
+        except ValueError as exc:
+            raise CommandParseError(
+                "RUN_REASONING_EFFORT_INVALID",
+                "Reasoning effort is unsupported.",
+            ) from exc
+        updated = await self._conversations.set_reasoning_effort(conversation_id, effort)
+        return CommandExecutionResult(
+            command="effort",
+            status="completed",
+            content=f"Default reasoning effort: {updated.reasoning_effort.value}.",
+            conversation_id=updated.conversation_id,
         )
 
     async def compact(

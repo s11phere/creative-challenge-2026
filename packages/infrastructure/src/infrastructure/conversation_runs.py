@@ -22,6 +22,7 @@ from domain.conversation_run import (
 )
 from domain.grounded_qa import QAContractError
 from domain.qa_persistence import MessageRecord, MessageRole
+from domain.reasoning import reasoning_profile_from_dict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -592,6 +593,7 @@ def _model(run: ConversationRun) -> ConversationRunModel:
         router_version=run.router_version,
         core_prompt_version=run.core_prompt_version,
         model_identity=run.model_identity,
+        reasoning_profile=run.reasoning_profile.as_dict(),
         skill_name=run.skill.name if run.skill else None,
         skill_version=run.skill.version if run.skill else None,
         skill_content_sha256=run.skill.content_sha256 if run.skill else None,
@@ -631,6 +633,7 @@ def _run(model: ConversationRunModel) -> ConversationRun:
         router_version=model.router_version,
         core_prompt_version=model.core_prompt_version,
         model_identity=model.model_identity,
+        reasoning_profile=reasoning_profile_from_dict(model.reasoning_profile),
         skill=skill,
         usage=_usage(model.usage),
         result=_result(model.result),

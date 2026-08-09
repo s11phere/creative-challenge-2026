@@ -15,7 +15,18 @@ from threading import Lock
 logger = logging.getLogger(__name__)
 
 _SAFE_COMMANDS = frozenset(
-    {"ask", "cards", "compare", "compact", "help", "new", "skills", "stop", "summarize"}
+    {
+        "ask",
+        "cards",
+        "compare",
+        "compact",
+        "effort",
+        "help",
+        "new",
+        "skills",
+        "stop",
+        "summarize",
+    }
 )
 _SAFE_ACTIONS = frozenset({"respond", "clarify", "invoke_skill"})
 _SAFE_CLARIFICATION_KINDS = frozenset(

@@ -14,6 +14,9 @@ from domain.conversation_run import (
     ConversationRunSelectionSource,
 )
 from domain.qa_persistence import ConversationRecord, MessageRecord, MessageRole
+from domain.reasoning import ReasoningEffort, ReasoningProfile
+
+from .reasoning import ReasoningProfileResolver
 
 
 class ConversationReader(Protocol):
@@ -52,9 +55,11 @@ class ConversationRunService:
         *,
         conversations: ConversationReader,
         runs: ConversationRunRepository,
+        reasoning: ReasoningProfileResolver | None = None,
     ) -> None:
         self._conversations = conversations
         self._runs = runs
+        self._reasoning = reasoning
 
     async def submit(self, submission: AssistantTurnSubmission) -> ConversationRun:
         conversation = await self._conversations.get_conversation(submission.conversation_id)
@@ -80,10 +85,18 @@ class ConversationRunService:
             selection_source=submission.selection_source,
             run_kind=ConversationRunKind.ASSISTANT_TURN,
             core_prompt_version="assistant-base-prompt-v3",
+            reasoning_profile=self._resolve_reasoning(conversation),
             created_at=now,
             updated_at=now,
         )
         return await self._runs.create_turn(run, message)
+
+    def _resolve_reasoning(self, conversation: ConversationRecord) -> ReasoningProfile:
+        if self._reasoning is None:
+            if conversation.reasoning_effort not in {ReasoningEffort.AUTO, ReasoningEffort.NONE}:
+                raise ConversationRunApplicationError("Reasoning capability mapping is unavailable")
+            return ReasoningProfile.unresolved(conversation.reasoning_effort)
+        return self._reasoning.resolve(conversation.reasoning_effort)
 
     async def get(self, run_id: UUID) -> ConversationRun | None:
         return await self._runs.get_conversation_run(run_id)

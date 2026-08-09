@@ -34,6 +34,7 @@ from .metrics import (
     AssistantRoutingObservation,
     aggregate_assistant_metrics,
 )
+from .reasoning import ReasoningProfileResolver
 from .resources import (
     NaturalLanguageResourceResolver,
     ResolvedResource,
@@ -88,6 +89,7 @@ __all__ = [
     "ResourceResolutionErrorCode",
     "ResourceResolutionPort",
     "ResolvedResource",
+    "ReasoningProfileResolver",
     "AssistantSkillInvocationService",
     "SkillProjectionPort",
 ]

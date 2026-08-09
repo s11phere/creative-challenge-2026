@@ -1,6 +1,6 @@
 # Agent 驱动的个人知识仓库
 
-## 2026-08-07 实现状态
+## 2026-08-09 实现状态
 
 当前 Assistant 对话版本已完成临时工程契约。新的知识请求统一使用 `knowledge_agent 0.3.0`；
 `knowledge_qa` 仅保留用于历史 Run 的校验和恢复。Grounded Skill 结果只是参考材料，由一次独立的
@@ -72,6 +72,12 @@ Assistant v2 使用独立的活动调用目录，包含 `/ask`、`/summarize`、
 Assistant 对话演进 Step 5 增加有界多轮上下文。原始消息保持追加写入；版本化滚动摘要保留其覆盖范围、
 摘要指纹、prompt/模型版本和敏感度。路由、直接回答和 Skill 交接共享一个有界快照，而 QA 仍保持证据隔离。
 `/compact` 和软水位压缩通过现有 Worker 队列创建可持久化的后台 Run。这仍是 ADR-010/011 下的临时工程能力。
+
+Agent Loop Step 6 增加 `/effort`：不带参数时读取当前 Conversation 默认值，带
+`auto|none|minimal|low|medium|high|xhigh|max` 时只影响后续 Run。每个新 Assistant/压缩 Run 都保存
+provider-neutral 的 requested/effective effort、Provider/model、映射版本、模式和降级原因。显式不支持
+的强度请求会拒绝；仅 `auto` 可降级。当前 OpenAI-compatible Chat 仍使用布尔 `thinking` 映射，且保留
+`FAST_CHAT_REASONING_ENABLED=false` 的既有默认行为；这不代表 Responses 原生 effort 已接入或任何质量门禁已关闭。
 
 Assistant 对话演进 Step 6 将原 QA 工作区演进为通用对话工作区：输入 `/` 时显示可搜索、
 可键盘操作的命令面板，资源歧义在消息内显示安全候选。选择候选会重新校验当前 Space 并回到原 Run，

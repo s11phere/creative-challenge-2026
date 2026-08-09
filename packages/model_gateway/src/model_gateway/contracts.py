@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
+from domain.reasoning import ReasoningProfile
+
 
 class CapabilityAlias(StrEnum):
     FAST_CHAT = "fast_chat"
@@ -83,6 +85,7 @@ class ChatRequest:
     temperature: float = 0.0
     max_tokens: int | None = None
     continuation: ChatContinuation | None = None
+    reasoning_profile: ReasoningProfile | None = None
 
     def __post_init__(self) -> None:
         if not self.messages:
@@ -191,6 +194,8 @@ class GatewayStatus:
     provider: ModelProvider
     capabilities: tuple[CapabilityAlias, ...]
     capability_statuses: tuple[CapabilityStatus, ...] = ()
+    model_identity: str = "unconfigured"
+    reasoning_enabled_by_default: bool | None = None
 
     def for_capability(self, capability: CapabilityAlias) -> CapabilityStatus:
         for status in self.capability_statuses:

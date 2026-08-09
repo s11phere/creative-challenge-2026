@@ -860,12 +860,14 @@ name = "model-gateway"
 version = "0.1.0"
 source = { editable = "packages/model_gateway" }
 dependencies = [
+    { name = "domain" },
     { name = "httpx" },
     { name = "opentelemetry-api" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "domain", editable = "packages/domain" },
     { name = "httpx" },
     { name = "opentelemetry-api" },
 ]

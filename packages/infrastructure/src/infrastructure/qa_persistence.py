@@ -45,6 +45,7 @@ from domain.qa_persistence import (
     terminal_status_for_result,
 )
 from domain.qa_sse import QAEventType, QAStreamEvent
+from domain.reasoning import ReasoningEffort
 from pydantic import TypeAdapter
 from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -102,6 +103,7 @@ class PostgresGroundedQARepository:
                     id=conversation.conversation_id,
                     space_id=conversation.space_id,
                     owner_id=conversation.owner_id,
+                    reasoning_effort=conversation.reasoning_effort.value,
                     created_at=conversation.created_at,
                     updated_at=conversation.updated_at,
                     archived_at=conversation.archived_at,
@@ -113,6 +115,18 @@ class PostgresGroundedQARepository:
         async with self._database.session() as session:
             model = await session.get(ConversationModel, conversation_id)
             return _conversation(model) if model is not None else None
+
+    async def set_reasoning_effort(
+        self, conversation_id: UUID, effort: ReasoningEffort
+    ) -> ConversationRecord:
+        async with self._database.transaction() as session:
+            model = await session.get(ConversationModel, conversation_id, with_for_update=True)
+            if model is None or model.archived_at is not None:
+                raise QAContractError("Conversation does not exist")
+            model.reasoning_effort = effort.value
+            model.updated_at = datetime.now(UTC)
+            await session.flush()
+            return _conversation(model)
 
     async def list_conversations(
         self, space_id: UUID, owner_id: str
@@ -861,6 +875,7 @@ def _conversation(model: ConversationModel) -> ConversationRecord:
         created_at=model.created_at,
         updated_at=model.updated_at,
         archived_at=model.archived_at,
+        reasoning_effort=ReasoningEffort(model.reasoning_effort),
     )
 
 

@@ -20,6 +20,7 @@ from .grounded_qa import (
     QAResult,
     QAStatus,
 )
+from .reasoning import ReasoningEffort
 
 
 class MessageRole(StrEnum):
@@ -186,6 +187,7 @@ class ConversationRecord:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     archived_at: datetime | None = None
+    reasoning_effort: ReasoningEffort = ReasoningEffort.AUTO
 
     def __post_init__(self) -> None:
         if not self.owner_id:
@@ -345,6 +347,10 @@ class GroundedQARepository(Protocol):
     ) -> tuple[ConversationRecord, ...]: ...
 
     async def archive_conversation(self, conversation_id: UUID) -> ConversationRecord | None: ...
+
+    async def set_reasoning_effort(
+        self, conversation_id: UUID, effort: ReasoningEffort
+    ) -> ConversationRecord: ...
 
     async def append_message(self, message: MessageRecord) -> MessageRecord: ...
 

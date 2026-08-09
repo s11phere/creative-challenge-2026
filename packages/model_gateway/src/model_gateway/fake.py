@@ -76,6 +76,7 @@ class FakeModelGateway:
                     CapabilityAlias.RERANKER_MULTILINGUAL,
                 )
             ),
+            model_identity="fake-fast-chat-v1",
         )
 
     def _raise_scenario(self, capability: CapabilityAlias) -> None:

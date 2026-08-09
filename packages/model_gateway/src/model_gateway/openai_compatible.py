@@ -158,6 +158,8 @@ class OpenAICompatibleGateway:
             provider=self._provider,
             capabilities=capabilities,
             capability_statuses=statuses,
+            model_identity=self.fast_chat_model or "unconfigured",
+            reasoning_enabled_by_default=self.fast_chat_reasoning_enabled,
         )
 
     async def __aenter__(self) -> OpenAICompatibleGateway:
@@ -202,9 +204,7 @@ class OpenAICompatibleGateway:
                     **(
                         {"max_tokens": request.max_tokens} if request.max_tokens is not None else {}
                     ),
-                    "thinking": {
-                        "type": "enabled" if self.fast_chat_reasoning_enabled else "disabled"
-                    },
+                    "thinking": self._thinking_value(request),
                 },
                 capability=capability,
                 timeout_seconds=self.fast_chat_timeout_seconds,
@@ -229,6 +229,12 @@ class OpenAICompatibleGateway:
                 capability=capability,
                 latency_ms=latency_ms,
             )
+
+    def _thinking_value(self, request: ChatRequest) -> dict[str, str]:
+        profile = request.reasoning_profile
+        if profile is None:
+            return {"type": "enabled" if self.fast_chat_reasoning_enabled else "disabled"}
+        return {"type": "disabled" if profile.mode.value == "disabled" else "enabled"}
 
     async def embed(
         self,

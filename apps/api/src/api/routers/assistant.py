@@ -23,6 +23,7 @@ from domain.grounded_qa import QAContractError
 from domain.qa_persistence import MessageRole
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from model_gateway import ReasoningMappingError
 from pydantic import BaseModel, Field
 
 from ..errors import AppError, ErrorResponse
@@ -68,6 +69,17 @@ class UsageResponse(BaseModel):
     model_latency_ms: float
 
 
+class ReasoningProfileResponse(BaseModel):
+    schema_version: str
+    requested_effort: str
+    effective_effort: str
+    provider: str
+    model: str
+    mapping_version: str
+    mode: str
+    downgrade_reason: str
+
+
 class AssistantMessageResponse(BaseModel):
     message_id: UUID
     content: str
@@ -100,6 +112,7 @@ class ConversationRunResponse(BaseModel):
     error_code: str | None = None
     selection: SelectionResponse
     model_identity: str
+    reasoning_profile: ReasoningProfileResponse
     assistant_message: AssistantMessageResponse | None = None
     clarification: ClarificationResponse | None = None
     usage: UsageResponse
@@ -155,6 +168,15 @@ async def submit_turn(
                 return await _command_response(
                     await commands.new_conversation(conversation_id), request
                 )
+            if parsed.descriptor.name == "effort":
+                value = parsed.arguments.get("effort")
+                return await _command_response(
+                    await commands.effort(
+                        conversation_id,
+                        requested_effort=value if isinstance(value, str) else None,
+                    ),
+                    request,
+                )
             if parsed.descriptor.name == "compact":
                 executed = await commands.compact(
                     conversation_id, content=body.content, idempotency_key=body.idempotency_key
@@ -187,6 +209,10 @@ async def submit_turn(
         ) from exc
     except ConversationRunApplicationError as exc:
         raise AppError("CONVERSATION_NOT_FOUND", "Conversation not found", 404) from exc
+    except ReasoningMappingError as exc:
+        raise AppError(
+            "MODEL_REASONING_UNSUPPORTED", "Requested reasoning effort is unavailable.", 409
+        ) from exc
     except QAContractError as exc:
         raise AppError(
             "CONVERSATION_RUN_CONFLICT", "Turn conflicts with persisted state", 409
@@ -379,6 +405,7 @@ async def _response(run: ConversationRun, request: Request) -> ConversationRunRe
             ),
         ),
         model_identity=run.model_identity,
+        reasoning_profile=ReasoningProfileResponse(**run.reasoning_profile.as_dict()),
         assistant_message=assistant_message,
         clarification=clarification,
         usage=UsageResponse(

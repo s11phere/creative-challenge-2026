@@ -2,7 +2,7 @@
 name = "model-gateway"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["httpx", "opentelemetry-api"]
+dependencies = ["domain", "httpx", "opentelemetry-api"]
 
 [build-system]
 requires = ["setuptools"]
