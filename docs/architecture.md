@@ -15,10 +15,14 @@ Assistant selections pin a v2 `(name, version, content_sha256)` and project the 
 read-only and Space-scoped; only safe candidate labels cross the Assistant boundary.
 
 The Assistant Conversation Evolution Step 5 boundary adds `ConversationContextService` and the
-append-only `conversation_summaries` table. A bounded snapshot combines a rolling summary, recent
-messages, and the current request for routing and standalone Skill requests. `context_compaction`
-uses the existing `qa` Worker queue, shared run lease/recovery, and privacy-safe Assistant events.
-Grounded QA keeps its evidence-only `ContextBuilder`; it does not receive the full chat history.
+append-only `conversation_summaries` table. Its bounded snapshot now also carries the current Loop
+goal/subquestions, redacted Tool history, evidence-coverage counts, unresolved items, and
+cancellation/approval state for routing and standalone Skill requests. Conversation/Space ownership
+is revalidated while building every snapshot. Provider-neutral continuation metadata retains either
+an explicitly supported Responses continuation ID with replay items or a structured transcript
+replay; no Provider SDK object enters Domain state. `context_compaction` uses the existing `qa`
+Worker queue, shared run lease/recovery, and privacy-safe Assistant events. Grounded QA keeps its
+evidence-only `ContextBuilder`; it does not receive the full chat history.
 
 PR #4 corrected the online and evaluation retrieval path to `dense_rerank`: dense-exact candidates
 are reranked directly. `hybrid_rerank` remains an explicit compatibility mode, not the default for

@@ -49,10 +49,40 @@ class ChatMessage:
 
 
 @dataclass(frozen=True)
+class ChatContinuation:
+    """Provider-neutral continuation metadata for a bounded chat request.
+
+    A Provider that supports a native continuation can consume ``continuation_id``.
+    Other Providers receive the explicit, structured replay messages.  Neither field
+    is a Provider SDK object, so callers can persist this value safely with a Run.
+    """
+
+    provider: ModelProvider
+    continuation_id: str | None = None
+    replay_messages: tuple[ChatMessage, ...] = ()
+    context_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.continuation_id is not None and (
+            not self.continuation_id.strip() or len(self.continuation_id) > 1_024
+        ):
+            raise ValueError("Chat continuation ID must be bounded and non-empty")
+        if len(self.replay_messages) > 32:
+            raise ValueError("Chat continuation replay is too long")
+        if self.continuation_id is None and not self.replay_messages:
+            raise ValueError("Chat continuation requires a native ID or replay messages")
+        if self.context_digest is not None and (
+            not self.context_digest.startswith("sha256:") or len(self.context_digest) != 71
+        ):
+            raise ValueError("Chat continuation context digest is invalid")
+
+
+@dataclass(frozen=True)
 class ChatRequest:
     messages: tuple[ChatMessage, ...]
     temperature: float = 0.0
     max_tokens: int | None = None
+    continuation: ChatContinuation | None = None
 
     def __post_init__(self) -> None:
         if not self.messages:
@@ -61,6 +91,9 @@ class ChatRequest:
             raise ValueError("Chat temperature must be between 0 and 2")
         if self.max_tokens is not None and self.max_tokens < 1:
             raise ValueError("Chat max_tokens must be positive")
+
+
+ContinuationMetadata = ChatContinuation
 
 
 @dataclass(frozen=True)

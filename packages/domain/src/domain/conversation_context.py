@@ -75,9 +75,63 @@ class ConversationSummaryRepository(Protocol):
     ) -> ConversationSummary: ...
 
 
+@dataclass(frozen=True)
+class ConversationToolHistoryItem:
+    """Privacy-safe history for one observed Tool invocation."""
+
+    iteration: int
+    tool_name: str
+    tool_version: str
+    input_summary: str
+    output_summary: str
+    error_code: str | None = None
+    retry_count: int = 0
+    duration_ms: int = 0
+
+    def __post_init__(self) -> None:
+        if self.iteration < 1 or not self.tool_name.strip() or not self.tool_version.strip():
+            raise ValueError("Tool history identity is invalid")
+        if not self.input_summary.strip() or not self.output_summary.strip():
+            raise ValueError("Tool history must contain bounded summaries")
+        if len(self.input_summary) > 2_000 or len(self.output_summary) > 2_000:
+            raise ValueError("Tool history summaries are too long")
+        if self.retry_count < 0 or self.duration_ms < 0:
+            raise ValueError("Tool history counters cannot be negative")
+
+
+@dataclass(frozen=True)
+class ConversationEvidenceCoverage:
+    """Counts and safe identifiers describing evidence available to a Run."""
+
+    candidate_count: int = 0
+    covered_count: int = 0
+    required_count: int = 0
+    evidence_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if min(self.candidate_count, self.covered_count, self.required_count) < 0:
+            raise ValueError("Evidence coverage counts cannot be negative")
+        if self.covered_count > self.candidate_count:
+            raise ValueError("Covered evidence cannot exceed candidates")
+        if (
+            len(self.evidence_ids) > 100
+            or len(set(self.evidence_ids)) != len(self.evidence_ids)
+            or any(not item.strip() for item in self.evidence_ids)
+        ):
+            raise ValueError("Evidence identifiers must be unique and bounded")
+
+    @property
+    def ratio(self) -> float:
+        if self.required_count <= 0:
+            return 1.0
+        return min(1.0, self.covered_count / self.required_count)
+
+
 __all__ = [
     "ConversationSensitivity",
+    "ConversationEvidenceCoverage",
     "ConversationSummary",
     "ConversationSummaryRepository",
+    "ConversationToolHistoryItem",
     "most_restrictive_sensitivity",
 ]

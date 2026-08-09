@@ -191,6 +191,11 @@ class AssistantAgentService:
                     ),
                     temperature=0.0,
                     max_tokens=12000,
+                    continuation=(
+                        context.continuation_for(self._gateway.status.provider)
+                        if context is not None
+                        else None
+                    ),
                 ),
                 capability=CapabilityAlias.FAST_CHAT,
             )

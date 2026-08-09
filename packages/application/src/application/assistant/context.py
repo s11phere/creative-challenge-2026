@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -9,9 +10,12 @@ from importlib.resources import files
 from typing import Protocol
 from uuid import UUID, uuid4
 
+from domain.agent_loop import AgentLoopPhase, AgentLoopState
 from domain.conversation_context import (
+    ConversationEvidenceCoverage,
     ConversationSensitivity,
     ConversationSummary,
+    ConversationToolHistoryItem,
     most_restrictive_sensitivity,
 )
 from domain.conversation_run import (
@@ -26,11 +30,13 @@ from domain.grounded_qa import QAContractError
 from domain.qa_persistence import ConversationRecord, MessageRecord, MessageRole
 from model_gateway import (
     CapabilityAlias,
+    ChatContinuation,
     ChatMessage,
     ChatRequest,
     ChatRole,
     ModelGateway,
     ModelGatewayError,
+    ModelProvider,
 )
 
 from .metrics import AssistantMetrics
@@ -79,6 +85,24 @@ class ConversationContextSnapshot:
     sensitivity: ConversationSensitivity
     estimated_input_tokens: int
     soft_limit_exceeded: bool
+    current_goal: str = ""
+    subquestions: tuple[str, ...] = ()
+    tool_history: tuple[ConversationToolHistoryItem, ...] = ()
+    evidence_coverage: ConversationEvidenceCoverage = ConversationEvidenceCoverage()
+    unresolved_items: tuple[str, ...] = ()
+    cancellation_requested: bool = False
+    approval_pending: bool = False
+    approval_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.current_goal.strip():
+            object.__setattr__(self, "current_goal", self.current_content)
+        if len(self.subquestions) > 20 or len(self.unresolved_items) > 20:
+            raise ValueError("Conversation context task state is too large")
+        if len(self.tool_history) > 50:
+            raise ValueError("Conversation context Tool history is too large")
+        if self.approval_id is not None and not self.approval_id.strip():
+            raise ValueError("Conversation context approval ID must not be blank")
 
     def router_input(self) -> str:
         parts = [
@@ -94,6 +118,59 @@ class ConversationContextSnapshot:
                     "</rolling-summary>",
                 ]
             )
+        parts.extend(
+            [
+                "<loop-context>",
+                "<current-goal>",
+                self.current_goal,
+                "</current-goal>",
+            ]
+        )
+        if self.subquestions:
+            parts.append("<subquestions>")
+            parts.extend(f"<subquestion>{item}</subquestion>" for item in self.subquestions)
+            parts.append("</subquestions>")
+        if self.tool_history:
+            parts.append('<tool-history redacted="true">')
+            for item in self.tool_history:
+                status = item.error_code or "ok"
+                parts.append(
+                    "<tool-observation "
+                    f'iteration="{item.iteration}" name="{item.tool_name}" '
+                    f'version="{item.tool_version}" status="{status}" '
+                    f'retries="{item.retry_count}" duration_ms="{item.duration_ms}">'
+                )
+                parts.extend(
+                    [
+                        "<input-summary>",
+                        item.input_summary,
+                        "</input-summary>",
+                        "<output-summary>",
+                        item.output_summary,
+                        "</output-summary>",
+                        "</tool-observation>",
+                    ]
+                )
+            parts.append("</tool-history>")
+        parts.append(
+            "<evidence-coverage "
+            f'candidates="{self.evidence_coverage.candidate_count}" '
+            f'covered="{self.evidence_coverage.covered_count}" '
+            f'required="{self.evidence_coverage.required_count}" '
+            f'ratio="{self.evidence_coverage.ratio:.2f}" />'
+        )
+        if self.unresolved_items:
+            parts.append("<unresolved-items>")
+            parts.extend(f"<item>{item}</item>" for item in self.unresolved_items)
+            parts.append("</unresolved-items>")
+        parts.append(
+            "<execution-state "
+            f'cancellation_requested="{str(self.cancellation_requested).lower()}" '
+            f'approval_pending="{str(self.approval_pending).lower()}"'
+            + (f' approval_id="{self.approval_id}"' if self.approval_id else "")
+            + " />"
+        )
+        parts.append("</loop-context>")
         for message in self.recent_messages:
             parts.extend(
                 [
@@ -113,8 +190,77 @@ class ConversationContextSnapshot:
         return "\n".join(parts)
 
     def standalone_request(self) -> str:
-        """Make references explicit without handing QA the entire conversation."""
-        return self.router_input()
+        """A bounded Skill request that retains task state, not raw chat history."""
+        parts = [
+            '<standalone-skill-request trust="untrusted_user">',
+            "<current-goal>",
+            self.current_goal,
+            "</current-goal>",
+        ]
+        if self.subquestions:
+            parts.append("<subquestions>")
+            parts.extend(f"<subquestion>{item}</subquestion>" for item in self.subquestions)
+            parts.append("</subquestions>")
+        if self.unresolved_items:
+            parts.append("<unresolved-items>")
+            parts.extend(f"<item>{item}</item>" for item in self.unresolved_items)
+            parts.append("</unresolved-items>")
+        parts.extend(
+            [
+                "<current-user-request>",
+                self.current_content,
+                "</current-user-request>",
+                "</standalone-skill-request>",
+            ]
+        )
+        return "\n".join(parts)
+
+    def continuation_for(
+        self,
+        provider: ModelProvider,
+        *,
+        responses_continuation_id: str | None = None,
+        native_continuation_supported: bool = False,
+    ) -> ChatContinuation:
+        """Return native Responses metadata or a provider-neutral transcript replay."""
+        digest = f"sha256:{hashlib.sha256(self.router_input().encode('utf-8')).hexdigest()}"
+        if responses_continuation_id is not None:
+            if not native_continuation_supported:
+                raise ValueError("Responses continuation is not enabled for this Provider")
+            return ChatContinuation(
+                provider=provider,
+                continuation_id=responses_continuation_id,
+                replay_messages=self.transcript_messages(),
+                context_digest=digest,
+            )
+        return ChatContinuation(
+            provider=provider,
+            replay_messages=self.transcript_messages(),
+            context_digest=digest,
+        )
+
+    def transcript_messages(self) -> tuple[ChatMessage, ...]:
+        """Structured replay for Providers without native continuation support."""
+        messages: list[ChatMessage] = []
+        if self.summary is not None:
+            messages.append(
+                ChatMessage(
+                    role=ChatRole.USER,
+                    content=(
+                        '<rolling-summary trust="untrusted_user">\n'
+                        f"{self.summary.content}\n</rolling-summary>"
+                    ),
+                )
+            )
+        messages.extend(
+            ChatMessage(
+                role=ChatRole.USER if item.role is MessageRole.USER else ChatRole.ASSISTANT,
+                content=item.content,
+            )
+            for item in self.recent_messages
+        )
+        messages.append(ChatMessage(role=ChatRole.USER, content=self.standalone_request()))
+        return tuple(messages)
 
 
 class ConversationContextService:
@@ -135,7 +281,21 @@ class ConversationContextService:
         self._recent_message_limit = recent_message_limit
         self._soft_token_limit = soft_token_limit
 
-    async def snapshot(self, run: ConversationRun) -> ConversationContextSnapshot:
+    async def snapshot(
+        self,
+        run: ConversationRun,
+        *,
+        loop_state: AgentLoopState | None = None,
+        evidence_coverage: ConversationEvidenceCoverage | None = None,
+        unresolved_items: tuple[str, ...] = (),
+    ) -> ConversationContextSnapshot:
+        conversation = await self._data.get_conversation(run.conversation_id)
+        if (
+            conversation is None
+            or conversation.space_id != run.space_id
+            or conversation.owner_id != run.caller_id
+        ):
+            raise QAContractError("Conversation context Run crosses ownership boundary")
         messages = await self._data.list_messages(run.conversation_id)
         runs = {
             item.run_id: item
@@ -151,6 +311,11 @@ class ConversationContextService:
         )
         if current_index is None:
             raise QAContractError("Conversation context message is unavailable")
+        if any(
+            item.conversation_id != run.conversation_id or item.space_id != run.space_id
+            for item in messages
+        ):
+            raise QAContractError("Conversation context message crosses Space boundary")
         current = messages[current_index]
         if (
             current.role is not MessageRole.USER
@@ -160,6 +325,11 @@ class ConversationContextService:
             raise QAContractError("Conversation context message does not belong to the Run")
 
         summaries = await self._data.list_conversation_summaries(run.conversation_id)
+        if any(
+            item.conversation_id != run.conversation_id or item.space_id != run.space_id
+            for item in summaries
+        ):
+            raise QAContractError("Conversation context summary crosses Space boundary")
         summary, covered_index = _latest_usable_summary(summaries, messages, current_index)
         recent_start = max(covered_index + 1, current_index - self._recent_message_limit)
         recent = tuple(
@@ -180,6 +350,14 @@ class ConversationContextService:
             for item in messages[:current_index]
             if _is_user_visible_message(item, runs)
         )
+        (
+            loop_goal,
+            subquestions,
+            tool_history,
+            inferred_unresolved,
+            approval_pending,
+            approval_id,
+        ) = _loop_context(loop_state, current.content)
         return ConversationContextSnapshot(
             conversation_id=run.conversation_id,
             space_id=run.space_id,
@@ -191,6 +369,15 @@ class ConversationContextService:
             estimated_input_tokens=estimated,
             soft_limit_exceeded=prior_tokens + _token_count(current.content)
             > self._soft_token_limit,
+            current_goal=loop_goal,
+            subquestions=subquestions,
+            tool_history=tool_history,
+            evidence_coverage=evidence_coverage or _coverage_from_loop(loop_state, subquestions),
+            unresolved_items=unresolved_items or inferred_unresolved,
+            cancellation_requested=run.cancellation_requested,
+            approval_pending=approval_pending
+            or run.status is ConversationRunStatus.WAITING_APPROVAL,
+            approval_id=approval_id,
         )
 
     async def request_manual_compaction(
@@ -396,6 +583,66 @@ def _latest_usable_summary(
     if not usable:
         return None, -1
     return max(usable, key=lambda item: (item[1], item[0].created_at))
+
+
+def _loop_context(
+    loop_state: AgentLoopState | None, current_content: str
+) -> tuple[
+    str,
+    tuple[str, ...],
+    tuple[ConversationToolHistoryItem, ...],
+    tuple[str, ...],
+    bool,
+    str | None,
+]:
+    if loop_state is None:
+        return current_content, (), (), (), False, None
+    history = tuple(
+        ConversationToolHistoryItem(
+            iteration=item.iteration,
+            tool_name=item.tool_name,
+            tool_version=item.tool_version,
+            input_summary=_bounded_summary(item.input_summary),
+            output_summary=_bounded_summary(item.output_summary),
+            error_code=item.error_code,
+            retry_count=item.retry_count,
+            duration_ms=item.duration_ms,
+        )
+        for item in loop_state.observations[-50:]
+    )
+    approval_pending = loop_state.phase is AgentLoopPhase.WAITING_APPROVAL
+    unresolved = () if loop_state.completion.goal_complete else loop_state.task.subquestions
+    return (
+        loop_state.task.goal,
+        loop_state.task.subquestions,
+        history,
+        unresolved,
+        approval_pending,
+        loop_state.approval_id if approval_pending else None,
+    )
+
+
+def _coverage_from_loop(
+    loop_state: AgentLoopState | None, subquestions: tuple[str, ...]
+) -> ConversationEvidenceCoverage:
+    if loop_state is None:
+        return ConversationEvidenceCoverage()
+    required = len(subquestions)
+    successful = sum(item.error_code is None for item in loop_state.observations)
+    candidates = len(loop_state.observations)
+    if loop_state.completion.evidence_sufficient:
+        required = max(required, 1)
+        candidates = max(candidates, required)
+        successful = max(successful, required)
+    return ConversationEvidenceCoverage(
+        candidate_count=candidates,
+        covered_count=min(successful, candidates),
+        required_count=required,
+    )
+
+
+def _bounded_summary(value: str) -> str:
+    return value[:2_000] or "(empty)"
 
 
 def _compaction_input(

@@ -53,9 +53,11 @@ from .chunking import (
     compute_chunker_config_hash,
 )
 from .conversation_context import (
+    ConversationEvidenceCoverage,
     ConversationSensitivity,
     ConversationSummary,
     ConversationSummaryRepository,
+    ConversationToolHistoryItem,
     most_restrictive_sensitivity,
 )
 from .conversation_run import (
@@ -258,6 +260,8 @@ __all__ = [
     "ConversationSensitivity",
     "ConversationSummary",
     "ConversationSummaryRepository",
+    "ConversationEvidenceCoverage",
+    "ConversationToolHistoryItem",
     "ConversationRun",
     "ConversationRunKind",
     "ConversationRunRepository",
