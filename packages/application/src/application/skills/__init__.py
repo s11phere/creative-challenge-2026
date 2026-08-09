@@ -11,6 +11,7 @@ from .catalog import (
     SkillView,
 )
 from .knowledge_agent import KnowledgeAgentSkillAdapter, KnowledgeAgentSkillConfig
+from .knowledge_loop import KnowledgeLoopTools, KnowledgeLoopToolsConfig
 from .knowledge_qa import DerivedKnowledgeWriter, KnowledgeQASkillAdapter, KnowledgeQASkillConfig
 from .lifecycle import SkillLifecycleError, SkillLifecycleErrorCode, SkillLifecycleService
 from .organization import (
@@ -26,6 +27,8 @@ __all__ = [
     "DerivedKnowledgeWriter",
     "KnowledgeAgentSkillAdapter",
     "KnowledgeAgentSkillConfig",
+    "KnowledgeLoopTools",
+    "KnowledgeLoopToolsConfig",
     "KnowledgeOrganizationScopeService",
     "OrganizationScopeError",
     "OrganizationScopeErrorCode",

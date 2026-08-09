@@ -46,6 +46,14 @@ introduced incrementally.
    and Skill-package targets even when accidentally allowlisted. `shell_exec` uses an executable
    alias, fixed Space-scoped cwd, policy-owned minimal environment, argv-only execution, bounded
    output, timeout/cancellation cleanup, and no `EXTERNAL_NETWORK` grant.
+9. Knowledge Loop Tools are application-layer adapters, not retrieval implementations. The opt-in
+   `knowledge_agent 0.5.0` package exposes `knowledge_search`, `knowledge_inspect`,
+   `grounded_answer`, `verify_answer`, and `finalize_answer`. Search calls must use the
+   `SearchService.search(SearchRequest, RetrievalProfileV1)` port with the server-fixed Space and
+   retrieval scope. Only metadata and safe identifiers cross the Tool boundary. Grounded QA remains
+   the sole owner of context construction, claims, citations, refusal/conflict semantics, and the
+   user-visible Assistant publication; the Loop finalizer may return a routing projection but may
+   not publish a second message.
 
 ## Alternatives
 

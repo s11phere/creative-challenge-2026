@@ -9,8 +9,11 @@ from pathlib import Path
 from uuid import UUID
 
 from agent_runtime import (
+    AgentLoopExecutor,
+    AgentLoopResult,
     DeterministicWorkflowExecutor,
     FileSystemSkillRegistry,
+    RuntimeExecutionResult,
     SkillRegistryError,
     SkillRegistryErrorCode,
 )
@@ -32,6 +35,8 @@ from application.skills import (
     DerivedKnowledgeWriter,
     KnowledgeAgentSkillAdapter,
     KnowledgeAgentSkillConfig,
+    KnowledgeLoopTools,
+    KnowledgeLoopToolsConfig,
     KnowledgeQASkillAdapter,
     KnowledgeQASkillConfig,
 )
@@ -208,6 +213,70 @@ class StructuredAgentGateway:
 
     async def aclose(self) -> None:
         return None
+
+
+class StructuredKnowledgeLoopGateway(StructuredAgentGateway):
+    """Drive the opt-in generic knowledge Loop for the deterministic fake provider only."""
+
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        if not isinstance(self._delegate, FakeModelGateway):
+            return await self._delegate.chat(request, capability=capability)
+        payload = _knowledge_loop_decision(request.messages[-1].content)
+        text = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+        return ChatResponse(
+            text=text,
+            finish_reason="stop",
+            usage=ModelUsage(
+                input_tokens=sum(max(1, len(item.content.split())) for item in request.messages),
+                output_tokens=max(1, len(text.split())),
+            ),
+            capability=capability,
+            latency_ms=0.0,
+        )
+
+
+def _knowledge_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
+    """Return deterministic decisions for local FakeModelGateway development runs."""
+    try:
+        request = json.loads(content)
+        state = request.get("state", {})
+        input_data = request.get("input", {})
+        observations = state.get("observations", [])
+    except (TypeError, ValueError):
+        observations = []
+        input_data = {}
+    last = observations[-1] if observations else {}
+    last_tool = last.get("tool_name") if isinstance(last, dict) else None
+    if last_tool is None:
+        query = (
+            input_data.get("question", "knowledge request")
+            if isinstance(input_data, dict)
+            else "knowledge request"
+        )
+        return {
+            "action": "call_tool",
+            "tool_name": "knowledge_search",
+            "arguments": {"query": query},
+        }
+    next_tools = {
+        "knowledge_search": "knowledge_inspect",
+        "knowledge_inspect": "grounded_answer",
+        "grounded_answer": "verify_answer",
+        "verify_answer": "finalize_answer",
+    }
+    next_tool = next_tools.get(last_tool)
+    if next_tool is not None:
+        return {"action": "call_tool", "tool_name": next_tool, "arguments": {}}
+    output = last.get("output", {}) if isinstance(last, dict) else {}
+    outcome = output.get("outcome") if isinstance(output, dict) else None
+    if outcome in {"refuse", "conflict"}:
+        return {"action": "refuse", "reason": "Grounded QA verified a safe terminal refusal."}
+    return {"action": "complete", "reason": "Grounded QA verified the current Run."}
 
 
 def qa_execution_versions(
@@ -396,8 +465,27 @@ class GroundedQAExecutor:
             return await self._repository.transition_run(
                 run.run_id, QAEvent.FAIL, error_code="QA_RUNTIME_FAILED"
             )
+        use_generic_knowledge_loop = (
+            run.versions.skill_name == "knowledge_agent" and pin.version == "0.5.0"
+        )
         runtime_gateway: ModelGateway
-        if run.versions.skill_name == "knowledge_agent":
+        state_store = PostgresRuntimeStateStore(self._database)
+        if use_generic_knowledge_loop:
+            loop_tools = KnowledgeLoopTools(
+                qa=service,
+                search=DatabaseSearchService(self._database, self._gateway),
+                config=KnowledgeLoopToolsConfig(
+                    profile=self.profile,
+                    versions=run.versions,
+                    retrieval_scope=run.retrieval_scope,
+                ),
+            )
+            runtime_gateway = TracingModelGateway(
+                StructuredKnowledgeLoopGateway(self._gateway), trace, phase="agent_decision"
+            )
+            runtime_tool_registry = TracingToolRegistry(loop_tools.tool_registry, trace)
+            loop_tools.replace_tool_registry(runtime_tool_registry)
+        elif run.versions.skill_name == "knowledge_agent":
             agent_adapter = KnowledgeAgentSkillAdapter(
                 qa=service,
                 config=KnowledgeAgentSkillConfig(
@@ -448,21 +536,13 @@ class GroundedQAExecutor:
             ),
             budget=package.manifest.budgets,
         )
-        runtime_executor = DeterministicWorkflowExecutor(
-            skill_registry=registry,
-            model_gateway=runtime_gateway,
-            handlers=runtime_handlers,
-            tool_registry=runtime_tool_registry,
-            state_store=PostgresRuntimeStateStore(self._database),
-        )
         runtime_input = {
             "question": question.content,
             "conversation_id": str(run.conversation_id),
         }
-        state_store = PostgresRuntimeStateStore(self._database)
         persisted_runtime = await state_store.get_run(run.run_id)
         checkpoint = await state_store.get_latest(run.run_id)
-        if (
+        resumable = (
             persisted_runtime is not None
             and checkpoint is not None
             and persisted_runtime.status
@@ -472,17 +552,57 @@ class GroundedQAExecutor:
                 RunStatus.CANCELLED,
                 RunStatus.TIMED_OUT,
             }
-        ):
-            result = await runtime_executor.resume(
-                persisted_runtime,
-                pin,
-                checkpoint,
-                runtime_input,
-                caller_id=run.caller_id,
-                space_id=run.space_id,
+        )
+        result: AgentLoopResult | RuntimeExecutionResult
+        if use_generic_knowledge_loop:
+            assert runtime_tool_registry is not None
+            loop_executor = AgentLoopExecutor(
+                tool_registry=runtime_tool_registry,
+                allowed_tools=loop_tools.allowed_tools,
+                system_prompt=(package.root / package.manifest.prompts[0]).read_text(
+                    encoding="utf-8"
+                ),
+                model_gateway=runtime_gateway,
+                state_store=state_store,
+                finalizer=loop_tools.finalizer(),
             )
+            if resumable:
+                assert persisted_runtime is not None and checkpoint is not None
+                result = await loop_executor.resume(
+                    persisted_runtime,
+                    pin,
+                    checkpoint,
+                    runtime_input,
+                    caller_id=run.caller_id,
+                    space_id=run.space_id,
+                )
+            else:
+                result = await loop_executor.execute(
+                    runtime_run,
+                    pin,
+                    runtime_input,
+                    goal=question.content,
+                )
         else:
-            result = await runtime_executor.execute(runtime_run, pin, runtime_input)
+            runtime_executor = DeterministicWorkflowExecutor(
+                skill_registry=registry,
+                model_gateway=runtime_gateway,
+                handlers=runtime_handlers,
+                tool_registry=runtime_tool_registry,
+                state_store=state_store,
+            )
+            if resumable:
+                assert persisted_runtime is not None and checkpoint is not None
+                result = await runtime_executor.resume(
+                    persisted_runtime,
+                    pin,
+                    checkpoint,
+                    runtime_input,
+                    caller_id=run.caller_id,
+                    space_id=run.space_id,
+                )
+            else:
+                result = await runtime_executor.execute(runtime_run, pin, runtime_input)
         persisted = await self._repository.get_run(run.run_id)
         if persisted is None:
             raise RuntimeError("Grounded QA run disappeared during Skill execution")
