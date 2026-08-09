@@ -22,6 +22,14 @@ from .executor import (
     WorkflowNode,
     load_workflow,
 )
+from .file_tools import (
+    CancellationProbe,
+    FileToolPolicy,
+    ManifestAllowedFile,
+    ReadOnlyFileTools,
+    create_read_only_file_registry,
+    register_read_only_file_tools,
+)
 from .llm_decision import (
     AgentToolRegistry,
     BoundedLLMAgentNode,
@@ -60,8 +68,10 @@ from .tools import (
 
 __all__ = [
     "CHECKPOINT_SCHEMA_VERSION",
+    "CancellationProbe",
     "DeterministicWorkflowExecutor",
     "FileSystemSkillRegistry",
+    "FileToolPolicy",
     "JSONValue",
     "InMemoryToolRegistry",
     "InMemoryRuntimeStateStore",
@@ -71,11 +81,13 @@ __all__ = [
     "NodeHandler",
     "NodeOutcome",
     "NodeResult",
+    "ManifestAllowedFile",
     "PinnedSkill",
     "RuntimeAuditEvent",
     "RuntimeAuditEventType",
     "RuntimeAuditSink",
     "RuntimeExecutionResult",
+    "ReadOnlyFileTools",
     "SkillCompatibility",
     "SkillInvocation",
     "SkillManifest",
@@ -96,6 +108,7 @@ __all__ = [
     "WorkflowNode",
     "build_checkpoint",
     "checkpoint_state_sha256",
+    "create_read_only_file_registry",
     "load_workflow",
     "LLMDecision",
     "AgentToolRegistry",
@@ -105,6 +118,7 @@ __all__ = [
     "LLMDecisionError",
     "LLMDecisionNode",
     "parse_llm_decision",
+    "register_read_only_file_tools",
     "AgentLoopExecutor",
     "AgentLoopFinalizer",
     "AgentLoopResult",

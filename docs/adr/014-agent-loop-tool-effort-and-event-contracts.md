@@ -34,6 +34,11 @@ introduced incrementally.
 6. The `agent-loop-v1` development fixture is synthetic and provisional. It is contract evidence,
    not a formal holdout, and `formal_runs_enabled` is false. Current retrieval/answer quality
    claims remain unchanged.
+7. Read-only filesystem Tools use configured, non-link trusted roots plus a per-Space manifest
+   allowlist. They reject parent traversal, device paths, links/junctions, hash drift, oversized
+   files, malformed UTF-8, and cancellation. Their payloads are explicitly untrusted data and
+   Registry audit records retain digests only. Model-visible access defaults to `public_demo`;
+   private or restricted content requires an explicit deployment-policy decision.
 
 ## Alternatives
 
@@ -49,7 +54,8 @@ introduced incrementally.
 The next steps can add the loop state machine and read-only Tools against stable contracts. Existing
 v1/v2 API and SSE clients remain on their projections until an explicit feature flag enables v3.
 The synthetic fixture provides repeatable security and terminal-state cases without introducing
-controlled corpus content or formal evaluation results.
+controlled corpus content or formal evaluation results. File reads are idempotent within an
+in-memory Runtime registry; durable side-effect idempotency remains a separate Step 4 requirement.
 
 ## Reassessment Triggers
 

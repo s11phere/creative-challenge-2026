@@ -588,12 +588,20 @@ def _tool_error_category(code: ToolRegistryErrorCode) -> RunErrorCategory:
         ToolRegistryErrorCode.SPACE_MISMATCH,
         ToolRegistryErrorCode.APPROVAL_REQUIRED,
         ToolRegistryErrorCode.MODEL_OUTPUT_DENIED,
+        ToolRegistryErrorCode.PATH_DENIED,
     }:
         return RunErrorCategory.PERMISSION
-    if code in {ToolRegistryErrorCode.INPUT_INVALID, ToolRegistryErrorCode.OUTPUT_INVALID}:
+    if code in {
+        ToolRegistryErrorCode.INPUT_INVALID,
+        ToolRegistryErrorCode.OUTPUT_INVALID,
+        ToolRegistryErrorCode.ENCODING_INVALID,
+        ToolRegistryErrorCode.IDEMPOTENCY_CONFLICT,
+    }:
         return RunErrorCategory.SCHEMA
     if code is ToolRegistryErrorCode.BUDGET_EXCEEDED:
         return RunErrorCategory.BUDGET
+    if code is ToolRegistryErrorCode.CANCELLED:
+        return RunErrorCategory.CANCELLATION
     return RunErrorCategory.DEPENDENCY
 
 

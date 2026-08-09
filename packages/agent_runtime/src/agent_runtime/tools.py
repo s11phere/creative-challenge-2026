@@ -45,6 +45,12 @@ class ToolRegistryErrorCode(StrEnum):
     BUDGET_EXCEEDED = "TOOL_BUDGET_EXCEEDED"
     APPROVAL_REQUIRED = "TOOL_APPROVAL_REQUIRED"
     MODEL_OUTPUT_DENIED = "TOOL_MODEL_OUTPUT_DENIED"
+    IDEMPOTENCY_CONFLICT = "TOOL_IDEMPOTENCY_CONFLICT"
+    PATH_DENIED = "TOOL_PATH_DENIED"
+    FILE_TOO_LARGE = "TOOL_FILE_TOO_LARGE"
+    ENCODING_INVALID = "TOOL_ENCODING_INVALID"
+    SOURCE_CHANGED = "TOOL_SOURCE_CHANGED"
+    CANCELLED = "TOOL_CANCELLED"
     TIMEOUT = "TOOL_TIMEOUT"
     EXECUTION_FAILED = "TOOL_EXECUTION_FAILED"
 
@@ -171,6 +177,9 @@ class InMemoryToolRegistry:
         self._available_capabilities = available_capabilities
         self._approval_port = approval_port
         self._definitions: dict[ToolRef, ToolDefinition] = {}
+        self._idempotent_results: dict[
+            tuple[UUID, str], tuple[ToolRef, str, ToolInvocationResult]
+        ] = {}
 
     def register(self, definition: ToolDefinition) -> ToolDefinition:
         self._validate_schema(definition.input_schema)
@@ -217,6 +226,17 @@ class InMemoryToolRegistry:
         self._validate_instance(
             definition.input_schema, arguments, ToolRegistryErrorCode.INPUT_INVALID
         )
+        cache_key = (run.context.run_id, invocation.idempotency_key)
+        fingerprint = self._digest(arguments)
+        cached = self._idempotent_results.get(cache_key)
+        if cached is not None:
+            cached_ref, cached_fingerprint, cached_result = cached
+            if cached_ref != definition.ref or cached_fingerprint != fingerprint:
+                raise ToolRegistryError(
+                    ToolRegistryErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Tool idempotency key conflicts with an earlier invocation.",
+                )
+            return cached_result
         try:
             updated_run = run.consume(tool_calls=1)
         except BudgetExceededError as exc:
@@ -232,6 +252,16 @@ class InMemoryToolRegistry:
             output = await asyncio.wait_for(
                 handler(arguments, context), timeout=definition.timeout_seconds
             )
+        except ToolRegistryError as exc:
+            record = exc.record or self._record(
+                definition, invocation, started, error_code=exc.code
+            )
+            raise ToolRegistryError(
+                exc.code,
+                str(exc),
+                retryable=exc.retryable,
+                record=record,
+            ) from exc
         except TimeoutError as exc:
             record = self._record(
                 definition, invocation, started, error_code=ToolRegistryErrorCode.TIMEOUT
@@ -271,7 +301,10 @@ class InMemoryToolRegistry:
                 record=record,
             ) from exc
         record = self._record(definition, invocation, started, output=output)
-        return ToolInvocationResult(output=output, run=updated_run, record=record)
+        result = ToolInvocationResult(output=output, run=updated_run, record=record)
+        if definition.idempotent:
+            self._idempotent_results[cache_key] = (definition.ref, fingerprint, result)
+        return result
 
     def _validate_preconditions(
         self, run: AgentRun, definition: ToolDefinition, invocation: ToolInvocation

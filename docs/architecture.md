@@ -24,6 +24,14 @@ replay; no Provider SDK object enters Domain state. `context_compaction` uses th
 Worker queue, shared run lease/recovery, and privacy-safe Assistant events. Grounded QA keeps its
 evidence-only `ContextBuilder`; it does not receive the full chat history.
 
+The Agent Loop Step 3 boundary adds `fs_list` and `fs_read` as opt-in Runtime Tools. A
+`FileToolPolicy` resolves configured workspace/trusted roots and a per-Space manifest allowlist
+before any read. It rejects traversal, links/junctions, device paths, content-hash drift, large
+files, invalid UTF-8, cancellation, and cross-Space access. Tool output is bounded, structured,
+marked untrusted, and recorded by digest only. The default model-visible policy accepts only
+`public_demo` entries; private or restricted content remains local until a deployment policy and
+visible consent authorize a narrower exception.
+
 PR #4 corrected the online and evaluation retrieval path to `dense_rerank`: dense-exact candidates
 are reranked directly. `hybrid_rerank` remains an explicit compatibility mode, not the default for
 Search API or QA. The corrected GPU development runs are provisional evidence only; they do not
