@@ -9,6 +9,7 @@ from agent_runtime.skills import PinnedSkill
 from agent_runtime.tools import JSONValue, ToolDefinition, ToolExecutionContext, ToolRef
 from domain.agent_loop import AgentLoopFinalizationState, AgentLoopPhase
 from domain.agent_runtime import AgentRun, AgentRunContext, RunBudget, RunStatus, ToolPermission
+from domain.agent_sse import AgentRunEventLog, AgentRunEventType
 from model_gateway import (
     CapabilityAlias,
     ChatRequest,
@@ -150,11 +151,61 @@ async def test_loop_observes_multiple_tools_then_finalizes_once() -> None:
     assert result.state.phase is AgentLoopPhase.COMPLETED
     assert result.state.finalization is AgentLoopFinalizationState.PUBLISHED
     assert len(result.state.observations) == 2
-    assert result.run.checkpoint_sequence == 2
+    assert result.run.checkpoint_sequence == 5
     assert result.output == {"message": "final:verified synthetic result"}
     assert finalizer.calls == 1
     stored = await state_store.get_run(result.run.context.run_id)
     assert stored == result.run
+
+
+@pytest.mark.asyncio
+async def test_loop_persists_redacted_v3_history_with_one_terminal_event() -> None:
+    registry = InMemoryToolRegistry(handlers={"tool": search_handler})
+    definition = registry.register(tool())
+    events = AgentRunEventLog()
+    result = await AgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use only the registered synthetic Tool.",
+        model_gateway=cast(
+            ModelGateway,
+            DecisionGateway(
+                (
+                    '{"action":"call_tool","tool_name":"search_knowledge",'
+                    '"arguments":{"query":"secret synthetic query"}}'
+                ),
+                '{"action":"complete","reason":"verified synthetic result"}',
+            ),
+        ),
+        state_store=InMemoryRuntimeStateStore(),
+        event_store=events,
+    ).execute(
+        loop_run(permissions=definition.permissions),
+        cast(PinnedSkill, object()),
+        {"question": "synthetic"},
+        goal="Answer the synthetic request with evidence.",
+    )
+
+    history = await events.page(result.run.context.run_id, limit=200)
+
+    assert [event.event_type for event in history.events] == [
+        AgentRunEventType.ACCEPTED,
+        AgentRunEventType.ITERATION_STARTED,
+        AgentRunEventType.TOOL_REQUESTED,
+        AgentRunEventType.CHECKPOINT_SAVED,
+        AgentRunEventType.TOOL_STARTED,
+        AgentRunEventType.TOOL_OUTPUT,
+        AgentRunEventType.CHECKPOINT_SAVED,
+        AgentRunEventType.ITERATION_STARTED,
+        AgentRunEventType.FINALIZING,
+        AgentRunEventType.CHECKPOINT_SAVED,
+        AgentRunEventType.COMPLETED,
+    ]
+    assert history.events[-1].terminal
+    serialized = str([event.as_dict() for event in history.events])
+    assert "secret synthetic query" not in serialized
+    assert '"question"' not in serialized
+    assert history.events[-1].payload["publication_id"].startswith("assistant-publication:")
 
 
 @pytest.mark.asyncio
@@ -199,6 +250,7 @@ async def test_waiting_approval_checkpoints_and_resumes_the_pending_tool() -> No
     registry = InMemoryToolRegistry(handlers={"tool": search_handler}, approval_port=ApprovedPort())
     definition = registry.register(tool(write=True))
     state_store = InMemoryRuntimeStateStore()
+    events = AgentRunEventLog()
     gateway = cast(
         ModelGateway,
         DecisionGateway(
@@ -212,6 +264,7 @@ async def test_waiting_approval_checkpoints_and_resumes_the_pending_tool() -> No
         system_prompt="Use only the registered synthetic Tool.",
         model_gateway=gateway,
         state_store=state_store,
+        event_store=events,
     )
     started = loop_run(permissions=definition.permissions)
     waiting = await executor.execute(
@@ -228,7 +281,14 @@ async def test_waiting_approval_checkpoints_and_resumes_the_pending_tool() -> No
     assert checkpoint.space_id == waiting.run.context.space_id
     assert checkpoint.idempotency_key is not None
 
-    resumed = await executor.resume(
+    resumed = await AgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use only the registered synthetic Tool.",
+        model_gateway=gateway,
+        state_store=state_store,
+        event_store=events,
+    ).resume(
         waiting.run,
         cast(PinnedSkill, object()),
         checkpoint,
@@ -240,6 +300,9 @@ async def test_waiting_approval_checkpoints_and_resumes_the_pending_tool() -> No
     assert resumed.run.status is RunStatus.COMPLETED
     assert resumed.state.phase is AgentLoopPhase.COMPLETED
     assert len(resumed.state.observations) == 1
+    history = await events.page(started.context.run_id, limit=200)
+    assert AgentRunEventType.APPROVAL_REQUIRED in {event.event_type for event in history.events}
+    assert [event.event_type for event in history.events].count(AgentRunEventType.COMPLETED) == 1
 
 
 @pytest.mark.asyncio

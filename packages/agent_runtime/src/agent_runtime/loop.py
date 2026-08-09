@@ -32,6 +32,8 @@ from domain.agent_runtime import (
     RuntimeStateStore,
     validate_recovery,
 )
+from domain.agent_sse import AgentRunEventStore, AgentRunEventType
+from domain.reasoning import ReasoningProfile
 from model_gateway import ModelGateway
 
 from .checkpoints import build_checkpoint, checkpoint_state_sha256
@@ -106,6 +108,8 @@ class AgentLoopExecutor:
         system_prompt: str,
         model_gateway: ModelGateway,
         state_store: RuntimeStateStore | None = None,
+        event_store: AgentRunEventStore | None = None,
+        reasoning_profile: ReasoningProfile | None = None,
         finalizer: AgentLoopFinalizer | None = None,
         emergency_ceiling: int = 32,
         max_tokens_per_decision: int = 512,
@@ -124,6 +128,8 @@ class AgentLoopExecutor:
         self._system_prompt = system_prompt
         self._model_gateway = model_gateway
         self._state_store = state_store
+        self._event_store = event_store
+        self._reasoning_profile = reasoning_profile or ReasoningProfile.unresolved()
         self._finalizer = finalizer or _DefaultFinalizer()
         self._emergency_ceiling = emergency_ceiling
         self._max_tokens_per_decision = max_tokens_per_decision
@@ -212,6 +218,23 @@ class AgentLoopExecutor:
             for item in state.observations
         ]
         try:
+            await self._emit(
+                run,
+                AgentRunEventType.ACCEPTED,
+                {
+                    "status": "accepted",
+                    "reasoning_profile_schema_version": self._reasoning_profile.schema_version,
+                    "requested_effort": self._reasoning_profile.requested_effort.value,
+                    "effective_effort": self._reasoning_profile.effective_effort.value,
+                    "provider": self._reasoning_profile.provider,
+                    "model": self._reasoning_profile.model,
+                    "mapping_version": self._reasoning_profile.mapping_version,
+                    "mode": self._reasoning_profile.mode.value,
+                    "downgrade_reason": self._reasoning_profile.downgrade_reason.value,
+                    "continuation": "checkpoint",
+                },
+                event_key="accepted",
+            )
             run, state = self._activate(run, state, approval_id)
             if state.phase is AgentLoopPhase.WAITING_APPROVAL:
                 return AgentLoopResult(
@@ -220,6 +243,8 @@ class AgentLoopExecutor:
                     output={"status": "waiting_approval"},
                     waiting_approval=True,
                 )
+            if state.phase is AgentLoopPhase.FINALIZING:
+                return await self._resume_finalization(run, state, input_data)
             decision_node = LLMDecisionNode(
                 allowed_tools=frozenset(ref.name for ref in self._allowed_tools),
                 system_prompt=self._system_prompt,
@@ -268,6 +293,17 @@ class AgentLoopExecutor:
                     output_tokens=decision_usage.output_tokens,
                 )
                 state = state.begin_iteration(decision.as_json())
+                await self._emit(
+                    run,
+                    AgentRunEventType.ITERATION_STARTED,
+                    {
+                        "status": "planning",
+                        "iteration": state.iteration,
+                        "tool_call_count": run.usage.tool_calls,
+                        "observation_count": len(state.observations),
+                    },
+                    event_key=f"iteration:{state.iteration}:started",
+                )
                 if decision.action is not LLMDecisionAction.CALL_TOOL:
                     return await self._finalize_decision(run, state, input_data, decision)
 
@@ -296,10 +332,37 @@ class AgentLoopExecutor:
                         category=RunErrorCategory.BUDGET,
                         message="Agent Loop repeated a Tool request without progress.",
                     ) from exc
+                await self._emit(
+                    run,
+                    AgentRunEventType.TOOL_REQUESTED,
+                    {
+                        "status": "requested",
+                        "iteration": state.iteration,
+                        "tool_name": definition.name,
+                        "tool_version": definition.version,
+                        "input_summary": _summary_digest(decision.arguments),
+                        "retry_count": 0,
+                    },
+                    event_key=f"iteration:{state.iteration}:tool_requested",
+                )
                 run = _move_to_executing(run)
+                run = await self._persist(run, state)
                 if tool_requires_durable_approval(definition.permissions) and approval_id is None:
                     state = state.wait_for_approval()
                     run = run.transition(RunEvent.WAIT_APPROVAL)
+                    await self._emit(
+                        run,
+                        AgentRunEventType.APPROVAL_REQUIRED,
+                        {
+                            "status": "waiting_approval",
+                            "iteration": state.iteration,
+                            "tool_name": definition.name,
+                            "tool_version": definition.version,
+                            "input_summary": _summary_digest(decision.arguments),
+                            "retry_count": 0,
+                        },
+                        event_key=f"iteration:{state.iteration}:approval_required",
+                    )
                     run = await self._persist(run, state)
                     return AgentLoopResult(
                         run=run,
@@ -308,7 +371,9 @@ class AgentLoopExecutor:
                         waiting_approval=True,
                     )
                 state = state.start_tool()
-                result = await self._invoke_with_retry(run, invocation, definition)
+                result = await self._invoke_with_retry(
+                    run, invocation, definition, iteration=state.iteration
+                )
                 run = result.run
                 observation = AgentLoopToolObservation(
                     iteration=state.iteration,
@@ -373,8 +438,51 @@ class AgentLoopExecutor:
             evidence_sufficient=decision.action is LLMDecisionAction.COMPLETE,
             has_conflict=False,
         )
-        state = state.begin_finalization(completion=completion, stop_reason=stop_reason)
+        state = state.begin_finalization(
+            completion=completion,
+            stop_reason=stop_reason,
+            finalization_action=decision.action.value,
+            finalizer_publication_id=_publication_id(run),
+        )
         run = run.transition(RunEvent.FINALIZE)
+        await self._emit(
+            run,
+            AgentRunEventType.FINALIZING,
+            {
+                "status": "finalizing",
+                "iteration": state.iteration,
+                "stop_reason": stop_reason.value,
+                "goal_complete": completion.goal_complete,
+                "evidence_sufficient": completion.evidence_sufficient,
+                "has_conflict": completion.has_conflict,
+                "publication_id": state.finalizer_publication_id or _publication_id(run),
+            },
+            event_key="finalizing",
+        )
+        run = await self._persist(run, state)
+        return await self._publish_finalization(run, state, input_data, decision)
+
+    async def _resume_finalization(
+        self,
+        run: AgentRun,
+        state: AgentLoopState,
+        input_data: Mapping[str, JSONValue],
+    ) -> AgentLoopResult:
+        if state.finalization_action is None or state.finalizer_publication_id is None:
+            raise RecoveryRejectedError("Agent Loop finalization checkpoint is incomplete")
+        decision = LLMDecision(
+            action=LLMDecisionAction(state.finalization_action),
+            reason="checkpointed finalization",
+        )
+        return await self._publish_finalization(run, state, input_data, decision)
+
+    async def _publish_finalization(
+        self,
+        run: AgentRun,
+        state: AgentLoopState,
+        input_data: Mapping[str, JSONValue],
+        decision: LLMDecision,
+    ) -> AgentLoopResult:
         output = await self._finalizer.finalize(
             run=run,
             task=state.task,
@@ -382,9 +490,28 @@ class AgentLoopExecutor:
             state=state,
             input_data=input_data,
         )
-        state = state.publish(refused=decision.action is LLMDecisionAction.REFUSE)
+        state = state.publish(
+            refused=decision.action is LLMDecisionAction.REFUSE,
+            clarified=decision.action is LLMDecisionAction.CLARIFY,
+        )
         run = run.transition(RunEvent.COMPLETE)
         run = await self._finalize_run(run)
+        event_type = {
+            LLMDecisionAction.COMPLETE: AgentRunEventType.COMPLETED,
+            LLMDecisionAction.CLARIFY: AgentRunEventType.CLARIFYING,
+            LLMDecisionAction.REFUSE: AgentRunEventType.REFUSED,
+        }[decision.action]
+        await self._emit(
+            run,
+            event_type,
+            {
+                "status": run.status.value,
+                "stop_reason": state.stop_reason.value if state.stop_reason else "failed",
+                "iteration": state.iteration,
+                "publication_id": state.finalizer_publication_id or _publication_id(run),
+            },
+            event_key="terminal",
+        )
         return AgentLoopResult(
             run=run,
             state=state,
@@ -398,11 +525,50 @@ class AgentLoopExecutor:
         run: AgentRun,
         invocation: ToolInvocation,
         definition: ToolDefinition,
+        *,
+        iteration: int,
     ) -> ToolInvocationResult:
         while True:
+            await self._emit(
+                run,
+                AgentRunEventType.TOOL_STARTED,
+                {
+                    "status": "running",
+                    "iteration": iteration,
+                    "tool_name": definition.name,
+                    "tool_version": definition.version,
+                    "input_summary": _summary_digest(invocation.arguments),
+                    "retry_count": invocation.retry_count,
+                },
+                event_key=f"iteration:{iteration}:tool_started:{invocation.retry_count}",
+            )
             try:
-                return await self._tool_registry.invoke(run, invocation)
+                result = await self._tool_registry.invoke(run, invocation)
             except ToolRegistryError as exc:
+                record = exc.record
+                await self._emit(
+                    run,
+                    AgentRunEventType.TOOL_OUTPUT,
+                    _tool_event_payload(
+                        definition,
+                        iteration=iteration,
+                        status="failed",
+                        input_summary=(
+                            record.input_summary
+                            if record is not None
+                            else _summary_digest(invocation.arguments)
+                        ),
+                        output_summary=(
+                            record.output_summary if record is not None else "sha256:unavailable"
+                        ),
+                        error_code=exc.code.value,
+                        retry_count=(
+                            record.retry_count if record is not None else invocation.retry_count
+                        ),
+                        duration_ms=record.duration_ms if record is not None else 0,
+                    ),
+                    event_key=f"iteration:{iteration}:tool_output:{invocation.retry_count}",
+                )
                 if exc.code is ToolRegistryErrorCode.APPROVAL_REQUIRED:
                     raise
                 if not exc.retryable or invocation.retry_count >= definition.max_retries:
@@ -419,6 +585,23 @@ class AgentLoopExecutor:
                         f"{invocation.idempotency_key}:retry:{invocation.retry_count + 1}"
                     ),
                 )
+                continue
+            await self._emit(
+                result.run,
+                AgentRunEventType.TOOL_OUTPUT,
+                _tool_event_payload(
+                    definition,
+                    iteration=iteration,
+                    status="succeeded",
+                    input_summary=result.record.input_summary,
+                    output_summary=result.record.output_summary,
+                    error_code=result.record.error_code,
+                    retry_count=result.record.retry_count,
+                    duration_ms=result.record.duration_ms,
+                ),
+                event_key=f"iteration:{iteration}:tool_output:{invocation.retry_count}",
+            )
+            return result
 
     async def _execute_pending_tool(
         self,
@@ -443,7 +626,9 @@ class AgentLoopExecutor:
             approval_id=approval_id,
         )
         state = state.start_tool()
-        result = await self._invoke_with_retry(run, invocation, definition)
+        result = await self._invoke_with_retry(
+            run, invocation, definition, iteration=state.iteration
+        )
         observation = AgentLoopToolObservation(
             iteration=state.iteration,
             tool_name=definition.name,
@@ -466,7 +651,19 @@ class AgentLoopExecutor:
             next_step=RunStep.EXECUTING,
             next_node="agent_loop",
         )
-        persisted, _ = await self._state_store.commit(run, checkpoint)
+        persisted, saved_checkpoint = await self._state_store.commit(run, checkpoint)
+        await self._emit(
+            persisted,
+            AgentRunEventType.CHECKPOINT_SAVED,
+            {
+                "status": "checkpointed",
+                "iteration": state.iteration,
+                "checkpoint_sequence": saved_checkpoint.sequence,
+                "checkpoint_sha256": saved_checkpoint.state_sha256,
+                "continuation": saved_checkpoint.next_node or "none",
+            },
+            event_key=f"checkpoint:{saved_checkpoint.sequence}",
+        )
         return persisted
 
     async def _finalize_run(self, run: AgentRun) -> AgentRun:
@@ -480,6 +677,16 @@ class AgentLoopExecutor:
         run = run.transition(RunEvent.CANCEL)
         state = state.stop(AgentLoopPhase.CANCELLED, AgentLoopStopReason.CANCELLED)
         run = await self._finalize_run(run)
+        await self._emit(
+            run,
+            AgentRunEventType.CANCELLED,
+            {
+                "status": run.status.value,
+                "stop_reason": AgentLoopStopReason.CANCELLED.value,
+                "iteration": state.iteration,
+            },
+            event_key="terminal",
+        )
         return AgentLoopResult(run, state, None, error=None)
 
     async def _fail(
@@ -527,8 +734,36 @@ class AgentLoopExecutor:
         reason = AgentLoopStopReason.TIMED_OUT if timed_out else AgentLoopStopReason.FAILED
         state = state.stop(phase, reason)
         run = replace(run, last_error=error)
-        run = await self._finalize_run(run) if timed_out else run
+        run = await self._finalize_run(run)
+        await self._emit(
+            run,
+            AgentRunEventType.TIMED_OUT if timed_out else AgentRunEventType.FAILED,
+            {
+                "status": run.status.value,
+                "stop_reason": reason.value,
+                "iteration": state.iteration,
+                "error_code": error.code,
+            },
+            event_key="terminal",
+        )
         return AgentLoopResult(run, state, None, error=error)
+
+    async def _emit(
+        self,
+        run: AgentRun,
+        event_type: AgentRunEventType,
+        payload: Mapping[str, object],
+        *,
+        event_key: str,
+    ) -> None:
+        if self._event_store is None:
+            return
+        await self._event_store.append(
+            run.context.run_id,
+            event_type,
+            payload,
+            event_key=event_key,
+        )
 
     def _activate(
         self, run: AgentRun, state: AgentLoopState, approval_id: str | None
@@ -567,6 +802,43 @@ class AgentLoopExecutor:
     def _request_fingerprint(definition: ToolDefinition, decision: LLMDecision) -> str:
         encoded = json.dumps(decision.arguments, ensure_ascii=True, sort_keys=True).encode("utf-8")
         return f"{definition.name}:{definition.version}:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _summary_digest(value: Mapping[str, JSONValue]) -> str:
+    encoded = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _tool_event_payload(
+    definition: ToolDefinition,
+    *,
+    iteration: int,
+    status: str,
+    input_summary: str,
+    output_summary: str,
+    error_code: str | None,
+    retry_count: int,
+    duration_ms: int,
+) -> dict[str, str | int]:
+    payload: dict[str, str | int] = {
+        "status": status,
+        "iteration": iteration,
+        "tool_name": definition.name,
+        "tool_version": definition.version,
+        "input_summary": input_summary,
+        "output_summary": output_summary,
+        "retry_count": retry_count,
+        "duration_ms": duration_ms,
+    }
+    if error_code is not None:
+        payload["error_code"] = error_code
+    return payload
+
+
+def _publication_id(run: AgentRun) -> str:
+    return f"assistant-publication:{run.context.run_id.hex}"
 
 
 def _move_to_executing(run: AgentRun) -> AgentRun:

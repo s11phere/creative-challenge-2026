@@ -37,6 +37,17 @@ from .agent_runtime import (
     transition_run,
     validate_recovery,
 )
+from .agent_sse import (
+    AGENT_RUN_TERMINAL_EVENT_TYPES,
+    AgentRunEventConflictError,
+    AgentRunEventContractError,
+    AgentRunEventLog,
+    AgentRunEventPage,
+    AgentRunEventStore,
+    AgentRunEventType,
+    AgentRunEventVersionError,
+    AgentRunStreamEvent,
+)
 from .assistant_sse import (
     ASSISTANT_TERMINAL_EVENT_TYPES,
     AssistantEventLog,
@@ -230,6 +241,15 @@ __all__ = [
     "AgentLoopTask",
     "AgentLoopToolObservation",
     "AgentLoopTransitionError",
+    "AGENT_RUN_TERMINAL_EVENT_TYPES",
+    "AgentRunEventConflictError",
+    "AgentRunEventContractError",
+    "AgentRunEventLog",
+    "AgentRunEventPage",
+    "AgentRunEventStore",
+    "AgentRunEventType",
+    "AgentRunEventVersionError",
+    "AgentRunStreamEvent",
     "AgentRuntime",
     "ApprovalPort",
     "BudgetExceededError",

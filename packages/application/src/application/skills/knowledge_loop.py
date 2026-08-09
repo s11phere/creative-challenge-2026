@@ -7,7 +7,7 @@ the sole owner of Evidence, citations, answer publication, and refusal semantics
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -92,10 +92,12 @@ class KnowledgeLoopTools:
         qa: GroundedQAApplicationPort,
         search: SearchServicePort,
         config: KnowledgeLoopToolsConfig,
+        result_reader: Callable[[UUID], Awaitable[QARunRecord | None]] | None = None,
     ) -> None:
         self._qa = qa
         self._search = search
         self._config = config
+        self._result_reader = result_reader
         self._facts: dict[UUID, _RunFacts] = {}
         registry = InMemoryToolRegistry(
             handlers={
@@ -349,6 +351,22 @@ class KnowledgeLoopTools:
     def _facts_for(self, run_id: UUID) -> _RunFacts:
         return self._facts.setdefault(run_id, _RunFacts())
 
+    async def restore_finalization_facts(self, run_id: UUID) -> _RunFacts:
+        """Rehydrate the QA-owned terminal result before retrying a checkpointed finalizer."""
+        facts = self._facts_for(run_id)
+        if facts.finalization_ready or self._result_reader is None:
+            return facts
+        completed = await self._result_reader(run_id)
+        if (
+            completed is not None
+            and completed.status in {QAStatus.COMPLETED, QAStatus.REFUSED}
+            and completed.result is not None
+        ):
+            facts.answer_run = completed
+            facts.verified = True
+            facts.finalization_ready = True
+        return facts
+
 
 class _KnowledgeLoopFinalizer:
     """Permit a Loop terminal transition only after the QA-owned finalization signal."""
@@ -366,7 +384,7 @@ class _KnowledgeLoopFinalizer:
         input_data: Mapping[str, JSONValue],
     ) -> JSONValue:
         del task, state, input_data
-        facts = self._tools._facts_for(run.context.run_id)
+        facts = await self._tools.restore_finalization_facts(run.context.run_id)
         completed = facts.answer_run
         if not facts.finalization_ready or completed is None or completed.result is None:
             raise NodeExecutionError(

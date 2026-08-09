@@ -13,6 +13,7 @@ from domain.assistant_sse import AssistantEventType
 from domain.conversation_run import ConversationRun, ConversationRunKind, ConversationRunStatus
 from domain.grounded_qa import QAStatus
 from domain.qa_persistence import MessageRole, QARunRecord
+from infrastructure.agent_events import PostgresAgentRunEventStore
 from infrastructure.assistant_events import PostgresAssistantEventStore
 from infrastructure.config import settings
 from infrastructure.conversation_runs import PostgresConversationRunRepository
@@ -160,6 +161,7 @@ async def _run_qa_async(run_id: UUID, trace_id: str, gateway: ModelGateway) -> b
             gateway=gateway,
             repository=repository,
             events=PostgresQAEventStore(database),
+            agent_events=PostgresAgentRunEventStore(database),
         )
         execution = asyncio.create_task(
             executor.execute(run_id, trace_id=trace_id),

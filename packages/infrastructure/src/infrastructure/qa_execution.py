@@ -41,6 +41,7 @@ from application.skills import (
     KnowledgeQASkillConfig,
 )
 from domain.agent_runtime import AgentRun, AgentRunContext, ApprovalPort, RunStatus
+from domain.agent_sse import AgentRunEventStore
 from domain.grounded_qa import QAErrorCode, QAEvent, QAStatus
 from domain.qa_persistence import (
     GroundedQARepository,
@@ -49,6 +50,7 @@ from domain.qa_persistence import (
     QARunVersions,
 )
 from domain.qa_sse import QAEventStore, QAEventType
+from domain.reasoning import ReasoningProfile
 from domain.retrieval import RetrievalProfileV1
 from model_gateway import (
     CapabilityAlias,
@@ -65,6 +67,7 @@ from model_gateway import (
 )
 
 from .config import settings
+from .conversation_runs import PostgresConversationRunRepository
 from .database import Database
 from .qa import DatabaseSearchService, PostgresCitationTargetPort
 from .qa_debug_trace import QADebugTrace, TracingModelGateway, TracingToolRegistry
@@ -334,6 +337,7 @@ class GroundedQAExecutor:
         gateway: ModelGateway,
         repository: GroundedQARepository,
         events: QAEventStore,
+        agent_events: AgentRunEventStore | None = None,
         skill_registry: FileSystemSkillRegistry | None = None,
         approval_port: ApprovalPort | None = None,
         approval_id: str | None = None,
@@ -345,6 +349,7 @@ class GroundedQAExecutor:
         self._gateway = gateway
         self._repository = repository
         self._events = events
+        self._agent_events = agent_events
         self._skill_registry = skill_registry
         self._approval_port = approval_port
         self._approval_id = approval_id
@@ -479,6 +484,7 @@ class GroundedQAExecutor:
                     versions=run.versions,
                     retrieval_scope=run.retrieval_scope,
                 ),
+                result_reader=self._repository.get_run,
             )
             runtime_gateway = TracingModelGateway(
                 StructuredKnowledgeLoopGateway(self._gateway), trace, phase="agent_decision"
@@ -556,6 +562,12 @@ class GroundedQAExecutor:
         result: AgentLoopResult | RuntimeExecutionResult
         if use_generic_knowledge_loop:
             assert runtime_tool_registry is not None
+            parent = await PostgresConversationRunRepository(self._database).get_conversation_run(
+                run.run_id
+            )
+            reasoning_profile = (
+                parent.reasoning_profile if parent is not None else ReasoningProfile.unresolved()
+            )
             loop_executor = AgentLoopExecutor(
                 tool_registry=runtime_tool_registry,
                 allowed_tools=loop_tools.allowed_tools,
@@ -564,6 +576,8 @@ class GroundedQAExecutor:
                 ),
                 model_gateway=runtime_gateway,
                 state_store=state_store,
+                event_store=self._agent_events,
+                reasoning_profile=reasoning_profile,
                 finalizer=loop_tools.finalizer(),
             )
             if resumable:

@@ -10,6 +10,7 @@ from application.assistant import (
     ResourceResolutionErrorCode,
 )
 from application.qa import InMemoryGroundedQARepository
+from domain.agent_sse import AgentRunEventLog, AgentRunEventType
 from domain.assistant_sse import AssistantEventLog, AssistantEventType
 from domain.conversation_run import ConversationRunStatus, ResourceCandidate
 from domain.qa_persistence import QARetrievalScope
@@ -88,6 +89,75 @@ async def test_v2_turn_skeleton_persists_and_cancels_a_model_free_turn() -> None
     assert recovered.status_code == 200
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == ConversationRunStatus.CANCEL_REQUESTED.value
+
+
+@pytest.mark.asyncio
+async def test_v3_agent_event_page_and_sse_reconnect_are_redacted() -> None:
+    repository = InMemoryGroundedQARepository()
+    events = AgentRunEventLog()
+    app = create_app(
+        model_gateway=FakeModelGateway(),
+        enable_qa_execution=False,
+        qa_repository=repository,
+        qa_event_store=QAEventLog(),
+        assistant_event_store=AssistantEventLog(),
+        agent_event_store=events,
+        skill_activation_store=InMemorySkillActivationStore(),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        conversation = await client.post(
+            f"/api/v1/spaces/{UUID(int=203)}/conversations", json={"owner_id": "local-user"}
+        )
+        conversation_id = conversation.json()["conversation_id"]
+        created = await client.post(
+            f"/api/v2/conversations/{conversation_id}/turns",
+            json={"content": "Synthetic request.", "idempotency_key": "v3-events-1"},
+        )
+        run_id = UUID(created.json()["run_id"])
+        await events.append(
+            run_id,
+            AgentRunEventType.ACCEPTED,
+            {"status": "accepted"},
+            event_key="accepted",
+        )
+        await events.append(
+            run_id,
+            AgentRunEventType.TOOL_OUTPUT,
+            {
+                "status": "succeeded",
+                "iteration": 1,
+                "tool_name": "knowledge_search",
+                "tool_version": "1.0.0",
+                "input_summary": "sha256:input",
+                "output_summary": "sha256:output",
+                "retry_count": 0,
+                "duration_ms": 4,
+            },
+            event_key="tool-output",
+        )
+        await events.append(
+            run_id,
+            AgentRunEventType.COMPLETED,
+            {"status": "completed", "stop_reason": "goal_complete", "iteration": 1},
+            event_key="terminal",
+        )
+        first_page = await client.get(f"/api/v3/runs/{run_id}/events?limit=2")
+        reconnect = await client.get(
+            f"/api/v3/runs/{run_id}/events/stream",
+            headers={"Last-Event-ID": "2"},
+        )
+
+    assert first_page.status_code == 200
+    assert [event["event_type"] for event in first_page.json()["events"]] == [
+        "accepted",
+        "tool_output",
+    ]
+    assert first_page.json()["next_sequence"] == 2
+    assert first_page.json()["has_more"] is True
+    assert reconnect.status_code == 200
+    assert "event: completed" in reconnect.text
+    assert "Synthetic request." not in reconnect.text
+    assert "sha256:input" not in reconnect.text
 
 
 @pytest.mark.asyncio

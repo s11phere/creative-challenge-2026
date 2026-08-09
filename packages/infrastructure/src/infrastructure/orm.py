@@ -656,6 +656,29 @@ class AssistantEventModel(Base):
     )
 
 
+class AgentRunEventModel(Base):
+    """Append-only generic Agent Loop v3 event history."""
+
+    __tablename__ = "agent_run_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversation_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    __table_args__ = (
+        CheckConstraint("sequence >= 1", name="ck_agent_run_events_sequence_positive"),
+        UniqueConstraint("run_id", "sequence", name="uq_agent_run_events_run_sequence"),
+        UniqueConstraint("run_id", "event_key", name="uq_agent_run_events_run_key"),
+        Index("idx_agent_run_events_run_sequence", "run_id", "sequence"),
+    )
+
+
 class QAFeedbackModel(Base):
     __tablename__ = "qa_feedback"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

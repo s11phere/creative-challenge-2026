@@ -53,6 +53,17 @@ downgrade. The current OpenAI-compatible adapter remains boolean-thinking and pr
 `fast_chat_reasoning_enabled=false` as disabled-by-default behavior. This is not a claim that a
 Responses native-effort adapter has been implemented.
 
+The Agent Loop Step 7 boundary adds the independent `agent_run_events` append-only history and
+`agent-run-sse-v3` projection. `AgentLoopExecutor` records only flat, redacted lifecycle metadata:
+iteration counters, Tool name/version, digest summaries, duration/retry counts, stable error codes,
+reasoning profile metadata, checkpoints, stop reason, and finalizer publication identity. Event keys
+make retry/recovery idempotent and reject a second terminal outcome. Runtime checkpoint recovery can
+resume a persisted `finalizing` state without asking the model to plan again. `GET /api/v3/runs/{id}/events`
+is paginated and `GET /api/v3/runs/{id}/events/stream` reconnects from `Last-Event-ID`; unknown
+event schema versions fail closed. `assistant_events` and `/api/v2` remain the compatible v2
+projection. The v3 history intentionally does not contain prompts, answer text, document content,
+credentials, or raw Tool/shell output.
+
 PR #4 corrected the online and evaluation retrieval path to `dense_rerank`: dense-exact candidates
 are reranked directly. `hybrid_rerank` remains an explicit compatibility mode, not the default for
 Search API or QA. The corrected GPU development runs are provisional evidence only; they do not

@@ -11,10 +11,12 @@ from application.assistant import (
     AssistantTurnSubmission,
     ConversationRunService,
 )
+from domain.agent_sse import AgentRunEventConflictError, AgentRunEventType
 from domain.assistant_sse import AssistantEventType
 from domain.conversation_run import ConversationRunStatus
 from domain.models import Space
 from domain.qa_persistence import ConversationRecord
+from infrastructure.agent_events import PostgresAgentRunEventStore
 from infrastructure.assistant_events import PostgresAssistantEventStore
 from infrastructure.config import settings
 from infrastructure.conversation_runs import PostgresConversationRunRepository
@@ -98,6 +100,77 @@ async def test_direct_assistant_message_and_v2_events_survive_repository_restart
             AssistantEventType.ROUTING,
             AssistantEventType.COMPLETED,
         ]
+    finally:
+        async with database.transaction() as session:
+            await session.execute(delete(SpaceModel).where(SpaceModel.id == space_id))
+        await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_agent_v3_history_survives_store_restart_and_rejects_second_terminal() -> None:
+    database = Database(settings.database_url)
+    space_id = uuid4()
+    caller_id = "agent-v3-integration"
+    qa = PostgresGroundedQARepository(database)
+    runs = PostgresConversationRunRepository(database)
+    try:
+        async with database.transaction() as session:
+            await SpaceRepository(session).create(
+                Space(id=space_id, name="Agent v3 integration", owner_id=caller_id)
+            )
+        conversation = await qa.create_conversation(
+            ConversationRecord(space_id=space_id, owner_id=caller_id)
+        )
+        submitted = await ConversationRunService(conversations=qa, runs=runs).submit(
+            AssistantTurnSubmission(
+                conversation_id=conversation.conversation_id,
+                content="Synthetic Agent event fixture.",
+                idempotency_key=f"agent-v3-{uuid4()}",
+            )
+        )
+        events = PostgresAgentRunEventStore(database)
+        await events.append(
+            submitted.run_id,
+            AgentRunEventType.ACCEPTED,
+            {"status": "accepted"},
+            event_key="accepted",
+        )
+        await events.append(
+            submitted.run_id,
+            AgentRunEventType.TOOL_OUTPUT,
+            {
+                "status": "succeeded",
+                "iteration": 1,
+                "tool_name": "knowledge_search",
+                "tool_version": "1.0.0",
+                "input_summary": "sha256:input",
+                "output_summary": "sha256:output",
+                "retry_count": 0,
+                "duration_ms": 3,
+            },
+            event_key="iteration:1:tool_output:0",
+        )
+        await events.append(
+            submitted.run_id,
+            AgentRunEventType.COMPLETED,
+            {"status": "completed", "stop_reason": "goal_complete", "iteration": 1},
+            event_key="terminal",
+        )
+
+        restored = await PostgresAgentRunEventStore(database).page(submitted.run_id, limit=200)
+
+        assert [event.event_type for event in restored.events] == [
+            AgentRunEventType.ACCEPTED,
+            AgentRunEventType.TOOL_OUTPUT,
+            AgentRunEventType.COMPLETED,
+        ]
+        with pytest.raises(AgentRunEventConflictError):
+            await events.append(
+                submitted.run_id,
+                AgentRunEventType.FAILED,
+                {"status": "failed", "stop_reason": "failed", "error_code": "RUN_FAILED"},
+                event_key="terminal:duplicate",
+            )
     finally:
         async with database.transaction() as session:
             await session.execute(delete(SpaceModel).where(SpaceModel.id == space_id))

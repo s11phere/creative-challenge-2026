@@ -33,12 +33,14 @@ from application.skills import (
     SkillLifecycleService,
 )
 from domain.agent_runtime import ApprovalPort
+from domain.agent_sse import AgentRunEventLog, AgentRunEventStore
 from domain.assistant_sse import AssistantEventLog, AssistantEventStore
 from domain.conversation_run import ConversationRunRepository
 from domain.grounded_qa import CitationContentKind
 from domain.qa_persistence import GroundedQARepository, QARunVersions
 from domain.qa_sse import QAEventStore
 from fastapi import FastAPI, Response
+from infrastructure.agent_events import PostgresAgentRunEventStore
 from infrastructure.assistant_events import PostgresAssistantEventStore
 from infrastructure.assistant_resources import PostgresAssistantResourceResolver
 from infrastructure.assistant_skill_projection import AssistantQASkillProjection
@@ -76,7 +78,7 @@ from .assistant_runtime import AssistantWorkerDispatcher
 from .errors import ErrorResponse, register_error_handlers
 from .observability import TraceMiddleware
 from .qa_runtime import QAWorkerDispatcher
-from .routers import assistant, qa, search, skills, sources
+from .routers import agent_events, assistant, qa, search, skills, sources
 
 
 class LiveResponse(BaseModel):
@@ -135,6 +137,7 @@ def create_app(
     conversation_run_repository: ConversationRunRepository | None = None,
     qa_event_store: QAEventStore | None = None,
     assistant_event_store: AssistantEventStore | None = None,
+    agent_event_store: AgentRunEventStore | None = None,
     assistant_runtime: AssistantWorkerDispatcher | None = None,
     qa_citation_service: PublishedCitationApplicationPort | None = None,
     skill_catalog: SkillCatalogPort | None = None,
@@ -208,6 +211,12 @@ def create_app(
         assistant_event_log = AssistantEventLog()
     else:
         assistant_event_log = PostgresAssistantEventStore(database)
+    if agent_event_store is not None:
+        agent_event_log = agent_event_store
+    elif id(conversation_run_repository) == id(qa_repository):
+        agent_event_log = AgentRunEventLog()
+    else:
+        agent_event_log = PostgresAgentRunEventStore(database)
     assistant_runtime = assistant_runtime or AssistantWorkerDispatcher(
         repository=conversation_run_repository
     )
@@ -308,6 +317,7 @@ def create_app(
     app.state.assistant_skill_invoker = assistant_skill_invoker
     app.state.conversation_context_service = conversation_context
     app.state.assistant_event_log = assistant_event_log
+    app.state.agent_event_log = agent_event_log
     app.state.assistant_metrics = assistant_metrics
     app.state.assistant_runtime = assistant_runtime
     app.state.qa_event_log = qa_event_log
@@ -335,6 +345,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(search.router)
     app.include_router(qa.router)
     app.include_router(assistant.router)
+    app.include_router(agent_events.router)
     app.include_router(skills.router)
 
     @app.get(

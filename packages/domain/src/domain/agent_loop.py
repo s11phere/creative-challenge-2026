@@ -129,6 +129,8 @@ class AgentLoopState:
     iterations: tuple[AgentLoopIteration, ...] = ()
     stop_reason: AgentLoopStopReason | None = None
     finalization: AgentLoopFinalizationState = AgentLoopFinalizationState.NOT_STARTED
+    finalization_action: str | None = None
+    finalizer_publication_id: str | None = None
     approval_id: str | None = None
     lease_id: str | None = None
     last_idempotency_key: str | None = None
@@ -150,6 +152,22 @@ class AgentLoopState:
             self.finalization is not AgentLoopFinalizationState.PUBLISHED
         ):
             raise AgentLoopContractError("Terminal loop must have a published finalization")
+        finalization_identity = (self.finalization_action, self.finalizer_publication_id)
+        if any(value is not None for value in finalization_identity) and not all(
+            value is not None for value in finalization_identity
+        ):
+            raise AgentLoopContractError("Finalization publication identity is incomplete")
+        if self.finalization_action is not None and self.finalization_action not in {
+            "complete",
+            "clarify",
+            "refuse",
+        }:
+            raise AgentLoopContractError("Finalization action is invalid")
+        if (
+            self.finalizer_publication_id is not None
+            and not self.finalizer_publication_id.startswith("assistant-publication:")
+        ):
+            raise AgentLoopContractError("Finalizer publication identity is invalid")
         if (
             self.phase
             in {
@@ -245,6 +263,8 @@ class AgentLoopState:
         *,
         completion: AgentLoopCompletionCheck,
         stop_reason: AgentLoopStopReason,
+        finalization_action: str | None = None,
+        finalizer_publication_id: str | None = None,
     ) -> AgentLoopState:
         if self.phase not in {AgentLoopPhase.PLANNING, AgentLoopPhase.OBSERVING}:
             raise AgentLoopTransitionError("Loop can finalize only after planning or observation")
@@ -254,13 +274,23 @@ class AgentLoopState:
             completion=completion,
             stop_reason=stop_reason,
             finalization=AgentLoopFinalizationState.IN_PROGRESS,
+            finalization_action=finalization_action,
+            finalizer_publication_id=finalizer_publication_id,
         )
 
-    def publish(self, *, refused: bool = False) -> AgentLoopState:
+    def publish(self, *, refused: bool = False, clarified: bool = False) -> AgentLoopState:
         self._require_phase(AgentLoopPhase.FINALIZING)
+        if refused and clarified:
+            raise AgentLoopContractError("Loop finalization cannot refuse and clarify together")
         return replace(
             self,
-            phase=AgentLoopPhase.REFUSED if refused else AgentLoopPhase.COMPLETED,
+            phase=(
+                AgentLoopPhase.REFUSED
+                if refused
+                else AgentLoopPhase.CLARIFYING
+                if clarified
+                else AgentLoopPhase.COMPLETED
+            ),
             finalization=AgentLoopFinalizationState.PUBLISHED,
         )
 
@@ -312,6 +342,8 @@ class AgentLoopState:
             ],
             "stop_reason": self.stop_reason.value if self.stop_reason else None,
             "finalization": self.finalization.value,
+            "finalization_action": self.finalization_action,
+            "finalizer_publication_id": self.finalizer_publication_id,
             "approval_id": self.approval_id,
             "lease_id": self.lease_id,
             "last_idempotency_key": self.last_idempotency_key,
@@ -371,6 +403,14 @@ class AgentLoopState:
                 AgentLoopStopReason(str(value["stop_reason"])) if value.get("stop_reason") else None
             ),
             finalization=AgentLoopFinalizationState(str(value.get("finalization", "not_started"))),
+            finalization_action=(
+                str(value["finalization_action"]) if value.get("finalization_action") else None
+            ),
+            finalizer_publication_id=(
+                str(value["finalizer_publication_id"])
+                if value.get("finalizer_publication_id")
+                else None
+            ),
             approval_id=str(value["approval_id"]) if value.get("approval_id") else None,
             lease_id=str(value["lease_id"]) if value.get("lease_id") else None,
             last_idempotency_key=(
