@@ -348,6 +348,48 @@ class KnowledgeLoopTools:
     def finalizer(self) -> AgentLoopFinalizer:
         return _KnowledgeLoopFinalizer(self)
 
+    def decision_policy(
+        self, run: AgentRun, _state: AgentLoopState, decision: LLMDecision
+    ) -> LLMDecision:
+        """Enforce the QA-owned post-answer sequence regardless of model drift."""
+        facts = self._facts_for(run.context.run_id)
+        completed = facts.answer_run
+        if completed is None:
+            return decision
+        if not facts.verified:
+            if (
+                decision.action is LLMDecisionAction.CALL_TOOL
+                and decision.tool_name == "verify_answer"
+            ):
+                return decision
+            return LLMDecision(
+                action=LLMDecisionAction.CALL_TOOL,
+                tool_name="verify_answer",
+                arguments={},
+                reason="server-required QA verification",
+            )
+        if not facts.finalization_ready:
+            if (
+                decision.action is LLMDecisionAction.CALL_TOOL
+                and decision.tool_name == "finalize_answer"
+            ):
+                return decision
+            return LLMDecision(
+                action=LLMDecisionAction.CALL_TOOL,
+                tool_name="finalize_answer",
+                arguments={},
+                reason="server-required QA finalization",
+            )
+        expected = (
+            LLMDecisionAction.REFUSE
+            if completed.result is not None
+            and completed.result.outcome in {QAOutcome.REFUSE, QAOutcome.CONFLICT}
+            else LLMDecisionAction.COMPLETE
+        )
+        if decision.action is expected:
+            return decision
+        return LLMDecision(action=expected, reason="server-verified QA terminal outcome")
+
     def _facts_for(self, run_id: UUID) -> _RunFacts:
         return self._facts.setdefault(run_id, _RunFacts())
 

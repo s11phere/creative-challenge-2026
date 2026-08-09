@@ -282,9 +282,14 @@ async def _finalize_parent_completion(
             if result_message is not None
             else "Skill returned no answer text."
         )
+        grounded_material = _grounded_material(qa_run, tool_result)
         finalized = await ConversationFinalizer(runs=parent_runs, gateway=gateway).execute(
             claimed,
-            input=FinalizationInput(question=question.content, skill_result=tool_result),
+            input=FinalizationInput(
+                question=question.content,
+                skill_result=grounded_material,
+                fallback_content=tool_result,
+            ),
         )
         if finalized.status not in {ConversationRunStatus.COMPLETED, ConversationRunStatus.REFUSED}:
             if finalized.status in {
@@ -308,6 +313,19 @@ async def _finalize_parent_completion(
             )
     finally:
         await parent_runs.release_conversation_run_lease(run_id, lease_owner=lease_owner)
+
+
+def _grounded_material(qa_run: QARunRecord, fallback: str) -> str:
+    """Render only verified claims and server-owned evidence identities for synthesis."""
+    result = qa_run.result
+    if result is None or result.answer is None or not result.answer.claims:
+        return fallback
+    return "\n\n".join(
+        f"[verified claim {claim.claim_id}; "
+        f"evidence_ids={','.join(str(item) for item in claim.evidence_ids)}]\n"
+        f"{claim.text}"
+        for claim in result.answer.claims
+    )
 
 
 async def _ensure_finalizer_terminal_event(

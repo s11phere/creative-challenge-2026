@@ -1,5 +1,39 @@
 # 阶段 4/5 收尾看板
 
+## 2026-08-09 Agent Loop Tools/Effort Step 9
+
+Step 9 adds a body-free synthetic Agent Loop evaluator and a fail-closed v5 release control.
+`agent-loop-v1` remains a hash-pinned `synthetic_only` development fixture with
+`formal_runs_enabled=false`; `scripts/evaluate_agent_loop.py` reports only safe action, count,
+coverage, approval/security, recovery, token, latency, and stop-reason aggregates. It neither calls
+a Provider nor reads the controlled corpus, and its output remains `provisional`.
+
+`knowledge_agent 0.5.0` is the default fake/local provisional path for new Runs. Setting
+`AGENT_LOOP_V5_ENABLED=false` and recreating API/Worker rolls future Runs back to `0.3.0` without
+changing persisted Run identities, pins, v3 history, or v1/v2 compatibility projections.
+ADR-010/ADR-011 formal quality boundaries and the current holdout prohibition remain unchanged.
+
+Verification completed on 2026-08-09: the body-free evaluator's `--validate-only` mode confirmed
+eight development cases and `formal_run_eligible=false`; focused Agent Loop/API/config coverage
+passed (`40 passed`); repository format, Ruff, and mypy checks passed; and the default Python suite
+passed (`803 passed, 53 skipped`). The only warning was the sandbox's inability to write
+`.pytest_cache`, which does not affect test execution. A separately migrated, temporary pgvector
+PostgreSQL and Redis pair ran all isolated integration tests with fake Providers (`52 passed`) and
+was removed immediately afterwards. No formal holdout ran, no controlled corpus content was read,
+and no external Provider was called; all Step 9 evidence remains provisional.
+
+## 2026-08-10 v5 default startup verification
+
+The default configuration now sets `KNOWLEDGE_AGENT_SKILL_VERSION=0.5.0` and
+`AGENT_LOOP_V5_ENABLED=true` in `Settings`, Compose, `.env.example`, and
+`scripts/start-local.ps1`. The startup script completed a GPU Compose rebuild with these effective
+values; API, Worker, Web, PostgreSQL, Redis, Embedding TEI, and Reranker TEI were healthy.
+`GET /api/v1/skills` reported `knowledge_agent` active version `0.5.0` at revision `1`.
+
+`./scripts/start-local.ps1 -LegacyKnowledgeAgent` is the explicit local rollback path and starts
+new Runs with `0.3.0` and the v5 loop disabled. This operational default neither changes persisted
+Run pins nor alters the ADR-010/ADR-011 provisional quality boundary.
+
 ## 2026-08-06 更新：LLM 查询改写落地并验证（R4-04）
 
 **R4-04 决策：开启查询改写（`rewrite_enabled=true`，`max_subqueries=4`）**，证据来自 context 覆盖率实测。
@@ -267,7 +301,7 @@ lint、typecheck、Vitest 27 项、production build，以及隔离 Web 首页、
 | --- | --- | --- | --- | --- | --- |
 | 阶段 3 检索 | `retrieval-v1.yaml` + dataset `knowledge-qa-v0`；另有 `retrieval-v1-knowledge-qa-v1.yaml` + dataset `knowledge-qa-v1` | v1 schema/locator/hash 校验和 GPU development 消融已通过；两者仍 `provisional`，formal runs disabled；正式门未通过但满足 ADR-011 continuation gate | 可在 v1 上继续阶段 4/5 provisional 工程；正式线仍需新 dataset/config、代表性覆盖、claim-aware evaluator、development 达标、配置 hash 冻结后才可一次性运行 retrieval holdout | 仅使用 manifest 允许来源；默认本地；私有语料不得外发 | 待认领 |
 | 阶段 4 QA 评测 | `qa-continuation-v1.yaml` + `qa-profile-continuation-v1.yaml`；dataset `knowledge-qa-v0`；prompt `grounded-qa-v1-provisional` | provisional continuation 配置已 pin `retrieval-v1-knowledge-qa-v1`，validate-only 和受影响单测通过；正式配置未冻结 | 在 continuation gate 下继续 QA/E2E 工程；正式线仍需代表性 QA dataset、真实模型 development、answer config hash 和一次性 holdout | 题目、回答、引用原文和 Provider 响应不得写日志/报告；外部 Chat 需显式策略和同意 | 待认领 |
-| 阶段 5 Skill 评测 | 新知识入口 `knowledge_agent 0.3.0`（保留 0.1/0.2 旧包）；`knowledge_qa` 仅历史 Run 恢复；`summarize_document 0.1.0`、`compare_sources 0.1.0`、`create_review_cards 0.1.0` | 工程实现完成、质量 provisional；整理 Skill 已支持预览/审批/派生写入，正式 Eval 未关闭 | 为每个 Skill 固定 workflow/manifest/prompt/schema/eval 版本和摘要；现有 Runtime 恢复、审批、派生写入、回滚/清理引用检查已实现，之后再做正式 Skill Eval | 受信根加载；运行固定 Skill identity；派生写入前必须持久审批，所有输入继承来源敏感度 | 待认领 |
+| 阶段 5 Skill 评测 | 新知识入口默认 `knowledge_agent 0.5.0`（`0.3.0` 为显式回滚，保留 0.1/0.2 旧包）；`knowledge_qa` 仅历史 Run 恢复；`summarize_document 0.1.0`、`compare_sources 0.1.0`、`create_review_cards 0.1.0` | 工程实现完成、质量 provisional；整理 Skill 已支持预览/审批/派生写入，正式 Eval 未关闭 | 为每个 Skill 固定 workflow/manifest/prompt/schema/eval 版本和摘要；现有 Runtime 恢复、审批、派生写入、回滚/清理引用检查已实现，之后再做正式 Skill Eval | 受信根加载；运行固定 Skill identity；派生写入前必须持久审批，所有输入继承来源敏感度 | 待认领 |
 
 ### 2.1 版本冻结顺序
 

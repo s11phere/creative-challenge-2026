@@ -116,6 +116,16 @@ def test_unknown_query_instruction_version_is_rejected() -> None:
         s.active_embedding_identity()
 
 
+def test_agent_loop_v5_is_the_default_and_the_release_flag_rolls_back() -> None:
+    default = Settings(_env_file=None)
+    disabled = Settings(knowledge_agent_skill_version="0.5.0", agent_loop_v5_enabled=False)
+    enabled = Settings(knowledge_agent_skill_version="0.5.0", agent_loop_v5_enabled=True)
+
+    assert default.active_knowledge_agent_skill_version == "0.5.0"
+    assert disabled.active_knowledge_agent_skill_version == "0.3.0"
+    assert enabled.active_knowledge_agent_skill_version == "0.5.0"
+
+
 async def test_application_lifespan_rejects_missing_production_secrets(
     monkeypatch: MonkeyPatch,
 ) -> None:

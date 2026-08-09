@@ -63,6 +63,14 @@ type CitationMetadata = {
 
 type CommandNotice = Pick<AssistantCommandResult, 'command' | 'content' | 'commands'>
 
+const reasoningEfforts = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+const initialReasoningEffort = 'medium'
+
+function reportedReasoningEffort(content: string | null): typeof reasoningEfforts[number] | null {
+  const match = /^(?:Current|Default) reasoning effort:\s*(low|medium|high|xhigh|max)\b/i.exec(content ?? '')
+  return match ? reasoningEfforts.find((effort) => effort === match[1].toLocaleLowerCase()) ?? null : null
+}
+
 const activeStatuses = new Set(['created', 'queued', 'running', 'cancel_requested'])
 
 function statusLabel(status: string): string {
@@ -354,6 +362,8 @@ export function QAWorkspace({
   const [evidenceRunId, setEvidenceRunId] = useState<string | null>(null)
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null)
   const [commandIndex, setCommandIndex] = useState(0)
+  const [defaultReasoningEffort, setDefaultReasoningEffort] = useState<typeof reasoningEfforts[number]>(initialReasoningEffort)
+  const [effortIndex, setEffortIndex] = useState(reasoningEfforts.indexOf(initialReasoningEffort))
   const [commandMenuDismissed, setCommandMenuDismissed] = useState(false)
   const [commandNotice, setCommandNotice] = useState<CommandNotice | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -478,7 +488,12 @@ export function QAWorkspace({
     && !trimmed.startsWith('//')
     && !commandHasArguments
     && !commandMenuDismissed
+  const effortMenuOpen = !usingLegacyV1
+    && /^\/effort\s*$/i.test(trimmed)
+    && !commandMenuDismissed
+  const commandMenuVisible = commandMenuOpen || effortMenuOpen
   const activeCommand = commandOptions[commandIndex]
+  const activeReasoningEffort = reasoningEfforts[effortIndex]
   const commandPrefix = useMemo(
     () => validCommandPrefix(draft, commandsQuery.data ?? []),
     [commandsQuery.data, draft],
@@ -493,6 +508,10 @@ export function QAWorkspace({
   useEffect(() => {
     if (commandIndex >= commandOptions.length) setCommandIndex(0)
   }, [commandIndex, commandOptions.length])
+
+  useEffect(() => {
+    if (effortIndex >= reasoningEfforts.length) setEffortIndex(0)
+  }, [effortIndex])
 
   useEffect(() => {
     if (selectedConversationId === undefined) {
@@ -578,6 +597,13 @@ export function QAWorkspace({
       } else {
         // Skill commands already have a durable Run card; base-command notices are
         // useful for commands such as /help and /skills, but would duplicate a Skill turn.
+        if (result.command === 'effort') {
+          const reported = reportedReasoningEffort(result.content)
+          if (reported) {
+            setDefaultReasoningEffort(reported)
+            setEffortIndex(reasoningEfforts.indexOf(reported))
+          }
+        }
         setCommandNotice(result.run ? null : { command: result.command, content: result.content, commands: result.commands })
         const nextConversationId = result.conversation_id ?? targetConversationId
         if (result.run) {
@@ -647,6 +673,13 @@ export function QAWorkspace({
     })
   }
 
+  const chooseReasoningEffort = (effort: typeof reasoningEfforts[number]) => {
+    setDefaultReasoningEffort(effort)
+    setEffortIndex(reasoningEfforts.indexOf(effort))
+    setCommandMenuDismissed(true)
+    submitMutation.mutate(`/effort ${effort}`)
+  }
+
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const content = draft.trim()
@@ -664,6 +697,24 @@ export function QAWorkspace({
       setDraft(`${draft.slice(0, start)}\n${draft.slice(end)}`)
       requestAnimationFrame(() => textareaRef.current?.setSelectionRange(start + 1, start + 1))
       return
+    }
+    if (effortMenuOpen) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        const delta = event.key === 'ArrowDown' ? 1 : -1
+        setEffortIndex((index) => (index + delta + reasoningEfforts.length) % reasoningEfforts.length)
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setCommandMenuDismissed(true)
+        return
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        chooseReasoningEffort(activeReasoningEffort)
+        return
+      }
     }
     if (commandMenuOpen && commandOptions.length) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -722,6 +773,23 @@ export function QAWorkspace({
               <div>
                 <strong>/{commandNotice.command}</strong>
                 {commandNotice.content && <p>{commandNotice.content}</p>}
+                {commandNotice.command === 'effort' && !usingLegacyV1 && (
+                  <div className="chat-effort-options chat-command-notice-effort-options" role="group" aria-label="Reasoning effort">
+                    {reasoningEfforts.map((effort) => (
+                      <button
+                        key={effort}
+                        type="button"
+                        role="option"
+                        aria-selected={effort === defaultReasoningEffort}
+                        disabled={submitMutation.isPending}
+                        onClick={() => chooseReasoningEffort(effort)}
+                      >
+                        <span>{effort}</span>
+                        {effort === defaultReasoningEffort && <small>(default)</small>}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {commandNotice.commands.length > 0 && (
                   <ul className="chat-command-results" aria-label="可用指令">
                     {commandNotice.commands.map((command) => (
@@ -837,9 +905,15 @@ export function QAWorkspace({
             value={draft}
             role={usingLegacyV1 ? undefined : 'combobox'}
             aria-autocomplete={usingLegacyV1 ? undefined : 'list'}
-            aria-expanded={usingLegacyV1 ? undefined : commandMenuOpen}
+            aria-expanded={usingLegacyV1 ? undefined : commandMenuVisible}
             aria-controls={usingLegacyV1 ? undefined : 'assistant-command-listbox'}
-            aria-activedescendant={usingLegacyV1 || !activeCommand ? undefined : `assistant-command-${activeCommand.name}`}
+            aria-activedescendant={usingLegacyV1
+              ? undefined
+              : effortMenuOpen
+                ? `assistant-effort-${activeReasoningEffort}`
+                : !commandMenuOpen || !activeCommand
+                  ? undefined
+                  : `assistant-command-${activeCommand.name}`}
             onChange={(event) => { setDraft(event.target.value); setCommandMenuDismissed(false) }}
             onCompositionStart={() => { isComposingRef.current = true }}
             onCompositionEnd={() => { isComposingRef.current = false }}
@@ -855,7 +929,7 @@ export function QAWorkspace({
             disabled={submitMutation.isPending}
             />
           </div>
-          {commandMenuOpen && commandOptions.length > 0 && (
+          {commandMenuOpen && !effortMenuOpen && commandOptions.length > 0 && (
             <div className="chat-command-menu" id="assistant-command-listbox" role="listbox" aria-label="可用指令">
               {commandOptions.map((command, index) => (
                 <button
@@ -870,6 +944,27 @@ export function QAWorkspace({
                   <span>/{command.name}</span><small>{command.description}</small>
                 </button>
               ))}
+            </div>
+          )}
+          {effortMenuOpen && (
+            <div className="chat-command-menu chat-effort-menu" id="assistant-command-listbox" role="listbox" aria-label="推理强度选项">
+              <div className="chat-effort-menu-heading">选择默认推理强度</div>
+              <div className="chat-effort-options" role="group" aria-label="推理强度">
+                {reasoningEfforts.map((effort) => (
+                  <button
+                    id={`assistant-effort-${effort}`}
+                    key={effort}
+                    type="button"
+                    role="option"
+                    aria-selected={effort === activeReasoningEffort}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => chooseReasoningEffort(effort)}
+                  >
+                    <span>{effort}</span>
+                    {effort === defaultReasoningEffort && <small>(default)</small>}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           <div className="qa-composer-actions">

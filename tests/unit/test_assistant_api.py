@@ -16,6 +16,7 @@ from domain.conversation_run import ConversationRunStatus, ResourceCandidate
 from domain.qa_persistence import QARetrievalScope
 from domain.qa_sse import QAEventLog
 from httpx import ASGITransport, AsyncClient
+from infrastructure.config import settings
 from infrastructure.skill_lifecycle import InMemorySkillActivationStore
 from model_gateway import FakeModelGateway
 
@@ -435,12 +436,16 @@ async def test_v2_resource_clarification_resumes_the_same_run() -> None:
 
 
 @pytest.mark.asyncio
-async def test_v2_explicit_skill_command_bypasses_model_and_is_idempotent() -> None:
+async def test_v2_explicit_skill_command_bypasses_model_and_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class NoChatGateway(FakeModelGateway):
         async def chat(self, *_args: object, **_kwargs: object) -> object:
             raise AssertionError("Explicit command must not use the Assistant router model")
 
     repository = InMemoryGroundedQARepository()
+    monkeypatch.setattr(settings, "knowledge_agent_skill_version", "0.5.0")
+    monkeypatch.setattr(settings, "agent_loop_v5_enabled", True)
     events = AssistantEventLog()
     app = create_app(
         model_gateway=NoChatGateway(),
@@ -468,7 +473,7 @@ async def test_v2_explicit_skill_command_bypasses_model_and_is_idempotent() -> N
     assert first.json()["command"] == "ask"
     assert first.json()["run"]["run_kind"] == "skill"
     assert first.json()["run"]["selection"]["source"] == "command"
-    assert first.json()["run"]["selection"]["skill"]["version"] == "0.3.0"
+    assert first.json()["run"]["selection"]["skill"]["version"] == "0.5.0"
     assert second.json()["run"]["run_id"] == first.json()["run"]["run_id"]
     replayed = await events.replay(UUID(first.json()["run"]["run_id"]))
     assert [event.event_type for event in replayed] == [

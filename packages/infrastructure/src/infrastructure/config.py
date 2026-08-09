@@ -121,7 +121,15 @@ class Settings(BaseSettings):
 
     # --- Skill Registry ---
     skill_root_path: str = "./skills"
-    knowledge_agent_skill_version: str = "0.3.0"
+    knowledge_agent_skill_version: str = "0.5.0"
+    agent_loop_v5_enabled: bool = True
+
+    @property
+    def active_knowledge_agent_skill_version(self) -> str:
+        """Use the default Agent Loop path unless its rollback flag is disabled."""
+        if self.knowledge_agent_skill_version == "0.5.0" and not self.agent_loop_v5_enabled:
+            return "0.3.0"
+        return self.knowledge_agent_skill_version
 
     def active_embedding_identity(self, *, allow_unconfigured: bool = False) -> EmbeddingIdentity:
         """Return the one identity shared by ingestion and online retrieval."""

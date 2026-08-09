@@ -1,6 +1,6 @@
 # 项目架构概览
 
-## Current completion boundary (2026-08-09)
+## Current completion boundary (2026-08-10)
 
 The implemented Stage 4/5 boundary now includes feedback review persistence in `qa_feedback`,
 Space-scoped metadata-only review endpoints, and a separate privacy-safe candidate exporter. The
@@ -43,10 +43,13 @@ Both permissions require durable approval bound to the full invocation identity.
 serializes duplicate side-effect deliveries per Run/idempotency key in-process; cross-restart
 exactly-once requires a future durable invocation-result store.
 
-The Agent Loop Step 6 boundary adds provider-neutral `reasoning-profile-v1` audit state. A
-Conversation stores an `auto|none|minimal|low|medium|high|xhigh|max` default; `/effort` changes
-only that default and every future Assistant or context-compaction Run captures requested/effective
-effort, Provider/model, mapping version, mode, and downgrade reason. `ModelCapabilityRegistry`
+The Agent Loop Step 6 boundary adds provider-neutral `reasoning-profile-v1` audit state. The
+public `/effort` command accepts only `low|medium|high|xhigh|max` and changes the default for
+future Runs. Persisted `auto|none|minimal` values are retained only for compatible historical and
+internal profiles; they are presented as one of the five selectable values with `(default)` (falling
+back to `medium` when the provider has no selectable default). Every future Assistant or
+context-compaction Run captures requested/effective effort, Provider/model, mapping version, mode,
+and downgrade reason. `ModelCapabilityRegistry`
 maps native-effort, boolean-thinking (`coarse`), and unsupported capabilities without putting a
 Provider SDK field in Domain. Explicit unavailable intensity requests fail closed; only `auto` may
 downgrade. The current OpenAI-compatible adapter remains boolean-thinking and preserves
@@ -64,14 +67,24 @@ event schema versions fail closed. `assistant_events` and `/api/v2` remain the c
 projection. The v3 history intentionally does not contain prompts, answer text, document content,
 credentials, or raw Tool/shell output.
 
+The Agent Loop Step 9 boundary adds a hash-verified `agent-loop-v1` synthetic development evaluator.
+It consumes only body-free prediction metadata and reports explicit denominators for first/terminal
+action, goal/subquestion/evidence/citation coverage, unsupported claims, correct refusals, Tool
+selection/repetition, approval gating, security assertions, recovery, token usage, latency, and stop
+reasons. `knowledge_agent 0.5.0` is the default fake/local provisional path for new Runs.
+`AGENT_LOOP_V5_ENABLED=false` is its fail-closed release rollback and activates `0.3.0` instead;
+persisted Run pins and v1/v2 projections remain unaffected. This default changes no formal quality
+boundary or external-provider policy.
+
 PR #4 corrected the online and evaluation retrieval path to `dense_rerank`: dense-exact candidates
 are reranked directly. `hybrid_rerank` remains an explicit compatibility mode, not the default for
 Search API or QA. The corrected GPU development runs are provisional evidence only; they do not
 reopen Stage 3 or authorize the existing holdout.
 
 The current Assistant v2 boundary is also closed for this development phase. New turns enter
-`AssistantAgentService`; the active catalog uses `knowledge_agent 0.3.0` for every new knowledge
-request, while `knowledge_qa` remains a legacy adapter for fixed historical Runs only. After a
+`AssistantAgentService`; the active catalog uses `knowledge_agent 0.5.0` for every new knowledge
+request, while `knowledge_agent 0.3.0` and `knowledge_qa` remain legacy adapters for fixed historical
+Runs or explicit rollback only. After a
 grounded Skill reaches a business-terminal state, the Worker invokes `ConversationFinalizer` once.
 Its independently persisted Assistant message is the user-facing answer; the grounded Skill
 result remains an internal reference with its own trace and evidence projection.
@@ -202,9 +215,9 @@ Agent Runtime → Domain + ModelGateway
 │
 ├── skills/
 │   ├── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
-│   ├── knowledge_agent_v3/         # active knowledge invocation (0.3.0)
+│   ├── knowledge_agent_v3/         # legacy knowledge invocation (0.3.0, rollback)
 │   ├── knowledge_agent_v4/         # provisional generic-loop candidate (0.4.0, opt-in)
-│   ├── knowledge_agent_v5/         # provisional knowledge-loop Tools (0.5.0, opt-in)
+│   ├── knowledge_agent_v5/         # default knowledge-loop Tools (0.5.0)
 │   ├── knowledge_agent/            # immutable 0.2.0 recovery package
 │   ├── knowledge_agent_v0_1/       # immutable 0.1.0 recovery package
 │   ├── knowledge_qa/               # legacy recovery-only Grounded QA packages
@@ -484,20 +497,22 @@ published version，避免排队期间跟随新版本或扩大范围。比较结
 则拒答；复习卡在审批前只返回预览并报告 `side_effects=0`，批准后才通过派生知识 Port 写入。
 
 `knowledge_agent` 是当前 LLM Agent 业务入口。它通过现有 `fast_chat` 能力产生严格的
-`call_tool/complete/refuse` 决策。`knowledge_agent 0.3.0` 最多三次调用
-`inspect_retrieval 1.0.0` 调整多查询和上下文预算，最后调用一次 `grounded_qa 1.0.0`；Tool
-Registry 在服务端重验
-版本、权限、Space、预算和输入/输出 schema。`grounded_qa` 仍是回答、引用、终态发布和恢复的唯一
-权威，不向外层模型回传回答正文或引用原文。通用 Runtime 决策历史尚未单独持久化，写 Tool 在持久
-审批和幂等事实源落地前禁止进入 LLM 循环。
+`call_tool/complete/refuse` 决策。默认 `knowledge_agent 0.5.0` 只可调用服务端注册的
+`knowledge_search`、`knowledge_inspect`、`grounded_answer`、`verify_answer` 和
+`finalize_answer`；Tool Registry 在服务端重验版本、权限、Space、预算和输入/输出 schema。
+`grounded_answer` 仍通过唯一 QA Application Port 保持回答、引用、终态发布和恢复权威，
+不向外层模型回传回答正文或引用原文。通用 Runtime 决策历史尚未单独持久化，写 Tool 在持久审批
+和幂等事实源落地前禁止进入 LLM 循环。
 
 Step 1 additionally provides the provider-neutral `AgentLoopState` domain state machine and
 `AgentLoopExecutor`. It records goal/subquestions, iteration and redacted Tool observations,
 detects repeated request fingerprints, checkpoints after each observation, pauses write Tools for
-approval, and enters a finalization-only gate before publishing. The existing 0.3.0 Skill and v1/v2
-projections remain the default; `knowledge_agent_v4` carries the dynamic-loop prompt for a later
-feature-flagged rollout. `knowledge_agent_v5` adds the five knowledge-loop Tools and is also opt-in;
-its Application adapter calls only `SearchService.search(SearchRequest, RetrievalProfileV1)` and
+approval, and enters a finalization-only gate before publishing. The 0.3.0 Skill and v1/v2
+projections remain available for historical recovery and explicit rollback; `knowledge_agent_v4`
+carries the dynamic-loop prompt for a later feature-flagged rollout. `knowledge_agent_v5` adds the
+five knowledge-loop Tools and is the default fake/local provisional path, with
+`AGENT_LOOP_V5_ENABLED=false` activating the 0.3.0 rollback. Its Application adapter calls only
+`SearchService.search(SearchRequest, RetrievalProfileV1)` and
 the existing Grounded QA Application Port. Search observations never contain source text, and its
 finalizer returns only a safe routing projection after QA-owned verification.
 
@@ -933,7 +948,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 2** | **✅ 正式完成** | **Step 0～9 完成；冻结 manifest 的 74 个 P0 来源成功率 100%，退出记录见 `docs/stage-2-acceptance.md`** |
 | **阶段 3** | **⏹️ 已终止** | **工程 Step 0～10 已完成；正式质量门禁未通过，因当前评测集代表性局限终止，未运行正式 holdout，配置保持 provisional（ADR-010）** |
 | 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、PostgreSQL QA 持久化、SSE/API/Web、Worker lease/重启恢复、原文解析和回答评测门禁已落地；默认配置和 holdout 未落地 |
-| **阶段 5** | **🟡 provisional Skills** | **Step 0～10 工程功能已实现；新知识入口为 `knowledge_agent 0.3.0`（保留 0.1/0.2 回滚包），`knowledge_qa` 仅用于历史 Run 恢复，另有三个知识整理 `0.1.0` Skill，质量状态仍受 Stage 3/4 正式 Eval 门禁约束** |
+| **阶段 5** | **🟡 provisional Skills** | **Step 0～10 工程功能已实现；新知识入口默认为 `knowledge_agent 0.5.0`（`0.3.0` 保留为显式回滚，另有 0.1/0.2 历史包），`knowledge_qa` 仅用于历史 Run 恢复，另有三个知识整理 `0.1.0` Skill，质量状态仍受 Stage 3/4 正式 Eval 门禁约束** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 

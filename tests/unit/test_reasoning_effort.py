@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import UUID
 
 import pytest
@@ -8,6 +9,7 @@ from application.assistant import (
     AssistantCommandParser,
     AssistantCommandService,
     AssistantTurnSubmission,
+    CommandParseError,
     ConversationRunService,
     ReasoningProfileResolver,
 )
@@ -20,6 +22,7 @@ from domain.reasoning import (
 )
 from model_gateway import (
     FakeModelGateway,
+    GatewayStatus,
     ModelProvider,
     ReasoningMappingError,
     default_model_capability_registry,
@@ -35,6 +38,12 @@ class EmptySkillCatalog:
 
     def list_versions(self, _name: str) -> tuple[object, ...]:
         return ()
+
+
+class ReasoningDisabledFakeGateway(FakeModelGateway):
+    @property
+    def status(self) -> GatewayStatus:
+        return replace(super().status, reasoning_enabled_by_default=False)
 
 
 def test_capability_registry_maps_native_coarse_and_unsupported_effort() -> None:
@@ -92,7 +101,11 @@ async def test_effort_command_persists_conversation_default_and_next_run_profile
         runs=repository,
         conversations=repository,
         qa=repository,
+        reasoning=ReasoningProfileResolver(gateway=FakeModelGateway()),
     )
+
+    initial = await service.effort(conversation.conversation_id, requested_effort=None)
+    assert initial.content == "Current reasoning effort: low (default)."
 
     parsed = service.parser.parse("/effort high")
     assert parsed.arguments == {"effort": "high"}
@@ -105,6 +118,13 @@ async def test_effort_command_persists_conversation_default_and_next_run_profile
     queried = await service.effort(conversation.conversation_id, requested_effort=None)
     assert queried.content == "Current reasoning effort: high."
 
+    with pytest.raises(CommandParseError) as invalid:
+        await service.effort(
+            conversation.conversation_id,
+            requested_effort="auto",
+        )
+    assert invalid.value.code == "RUN_REASONING_EFFORT_INVALID"
+
     run = await turns.submit(
         AssistantTurnSubmission(
             conversation_id=conversation.conversation_id,
@@ -116,3 +136,30 @@ async def test_effort_command_persists_conversation_default_and_next_run_profile
     assert run.reasoning_profile.effective_effort is ReasoningEffort.HIGH
     assert run.reasoning_profile.provider == "fake"
     assert run.reasoning_profile.mode is ReasoningMode.NATIVE
+
+
+@pytest.mark.asyncio
+async def test_effort_command_keeps_legacy_default_in_the_selectable_menu() -> None:
+    repository = InMemoryGroundedQARepository()
+    conversation = ConversationRecord(
+        conversation_id=UUID(int=911), space_id=UUID(int=912), owner_id="effort-user"
+    )
+    await repository.create_conversation(conversation)
+    catalog = AssistantCommandCatalog(EmptySkillCatalog())
+    service = AssistantCommandService(
+        catalog=catalog,
+        parser=AssistantCommandParser(catalog),
+        turns=ConversationRunService(
+            conversations=repository,
+            runs=repository,
+            reasoning=ReasoningProfileResolver(gateway=FakeModelGateway()),
+        ),
+        runs=repository,
+        conversations=repository,
+        qa=repository,
+        reasoning=ReasoningProfileResolver(gateway=ReasoningDisabledFakeGateway()),
+    )
+
+    result = await service.effort(conversation.conversation_id, requested_effort=None)
+
+    assert result.content == "Current reasoning effort: medium (default)."

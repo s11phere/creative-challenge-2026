@@ -57,6 +57,7 @@ from .tools import (
 )
 
 type CancellationCheck = Callable[[AgentRun], Awaitable[bool]]
+type DecisionPolicy = Callable[[AgentRun, AgentLoopState, LLMDecision], LLMDecision]
 type ClockMilliseconds = Callable[[], int]
 
 
@@ -114,6 +115,7 @@ class AgentLoopExecutor:
         emergency_ceiling: int = 32,
         max_tokens_per_decision: int = 512,
         cancellation_check: CancellationCheck | None = None,
+        decision_policy: DecisionPolicy | None = None,
         clock_ms: ClockMilliseconds | None = None,
     ) -> None:
         names = tuple(ref.name for ref in allowed_tools)
@@ -134,6 +136,7 @@ class AgentLoopExecutor:
         self._emergency_ceiling = emergency_ceiling
         self._max_tokens_per_decision = max_tokens_per_decision
         self._cancellation_check = cancellation_check or _not_cancelled
+        self._decision_policy = decision_policy
         self._clock_ms = clock_ms or _monotonic_ms
 
     async def execute(
@@ -287,6 +290,8 @@ class AgentLoopExecutor:
                     model_gateway=self._model_gateway,
                 )
                 decision, decision_usage = await decision_node.decide(context)
+                if self._decision_policy is not None:
+                    decision = self._decision_policy(run, state, decision)
                 run = run.consume(
                     steps=1,
                     input_tokens=decision_usage.input_tokens,

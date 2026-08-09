@@ -318,6 +318,27 @@ async def test_knowledge_loop_requires_verified_qa_before_one_finalization() -> 
 
 
 @pytest.mark.asyncio
+async def test_knowledge_loop_server_policy_forces_verify_and_finalize_sequence() -> None:
+    adapter, _search, _qa = tools()
+    state = AgentLoopState.accepted(AgentLoopTask("Answer the question."))
+    premature = LLMDecision(LLMDecisionAction.COMPLETE, reason="model stopped early")
+
+    await adapter.grounded_answer({}, tool_context())
+    forced_verify = adapter.decision_policy(runtime_run(), state, premature)
+    assert forced_verify.action is LLMDecisionAction.CALL_TOOL
+    assert forced_verify.tool_name == "verify_answer"
+
+    await adapter.verify_answer({}, tool_context())
+    forced_finalize = adapter.decision_policy(runtime_run(), state, premature)
+    assert forced_finalize.action is LLMDecisionAction.CALL_TOOL
+    assert forced_finalize.tool_name == "finalize_answer"
+
+    await adapter.finalize_answer({}, tool_context())
+    forced_complete = adapter.decision_policy(runtime_run(), state, premature)
+    assert forced_complete.action is LLMDecisionAction.COMPLETE
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("outcome", "expected_reason"),
     [

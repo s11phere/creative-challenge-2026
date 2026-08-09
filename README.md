@@ -1,8 +1,8 @@
 # Agent 驱动的个人知识仓库
 
-## 2026-08-09 实现状态
+## 2026-08-10 实现状态
 
-当前 Assistant 对话版本已完成临时工程契约。新的知识请求统一使用 `knowledge_agent 0.3.0`；
+当前 Assistant 对话版本已完成临时工程契约。新的知识请求默认使用 `knowledge_agent 0.5.0`；
 `knowledge_qa` 仅保留用于历史 Run 的校验和恢复。Grounded Skill 结果只是参考材料，由一次独立的
 `ConversationFinalizer` 生成面向用户的 Assistant 消息，并且只发布一次。
 
@@ -33,7 +33,7 @@ Assistant 输出支持 GFM Markdown 和 LaTeX 渲染。这些改动不改变阶�
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
 | 阶段 3 ⏹️ 已终止（工程完成，质量门禁未通过） | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；API/QA 默认 `dense_rerank`，PR #4 GPU 开发集在 v0/v1 Claim Recall@10 为 82.37%/78.75%，但评测集代表性仍不足，正式留出集尚未执行，配置保持临时状态 |
 | 阶段 4 🟡 临时 Step 0-10 | 在 ADR-011 继续门禁下继续；ADR-007、唯一临时 QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测仅校验流程均已完成；默认配置与正式留出集尚未完成 |
-| 阶段 5 🟡 临时 Skills | Assistant 对话演进 Step 3-8 的 v2 调用目录、自动/显式路由、上下文、指标、最终回答生成器、调用记录卡和 Web 展示已完成；新知识请求统一 `knowledge_agent 0.3.0`，`knowledge_qa` 仅历史恢复；正式质量仍为临时状态 |
+| 阶段 5 🟡 临时 Skills | Assistant 对话演进 Step 3-8 的 v2 调用目录、自动/显式路由、上下文、指标、最终回答生成器、调用记录卡和 Web 展示已完成；新知识请求默认 `knowledge_agent 0.5.0`，`knowledge_qa` 仅历史恢复；正式质量仍为临时状态 |
 
 当前 Web 展示系统健康、数据来源和临时知识问答工作区；HTTP API 可创建持久会话、提交
 问题，由 API 仅向 Redis 投递 Run ID，再由独立 Worker 调用唯一 `GroundedQAApplicationPort`、
@@ -46,7 +46,7 @@ Chat Provider 仍走相同结构化生成与引用校验路径。Web 会展示�
 Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL；API/Worker 重启可恢复
 未完成运行，重复投递不会重复发布终态；Citation 原文解析不会接受客户端伪造的版本、locator 或 Blob 路径；
 阶段 3 默认检索配置和质量门禁也尚未冻结。
-新建知识问答统一固定为 `knowledge_agent 0.3.0`：v1 提问入口、`/api/v1/runs` 默认值、Web
+新建知识问答默认固定为 `knowledge_agent 0.5.0`：v1 提问入口、`/api/v1/runs` 默认值、Web
 兼容入口和 Assistant v2 的 `/ask`/`/qa` 都只会创建该 Skill 的 Run。API 在提交时固定名称、版本和
 内容摘要，Worker 恢复时按该固定身份校验声明式 workflow，再经唯一 QA Application Port 执行。
 `knowledge_qa` 包仅保留给已固定的历史 Run 校验和恢复，不在任何新调用目录或 Skill 管理 catalog 中
@@ -58,12 +58,14 @@ Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL
 扩大检索范围。比较结果必须引用至少两个来源，否则按证据不足拒答。复习卡当前只返回带引用预览，
 并以 `SKILL_WRITE_REQUIRES_APPROVAL` 明确报告审批前 `side_effects=0`；批准后通过持久化
 Derived Knowledge Port 幂等写入，并可查询或撤销。
-`knowledge_agent 0.3.0` 提供真实的受约束 LLM/Tool 循环：模型可先调用只读
-`inspect_retrieval 1.0.0` 调整多查询、候选数和上下文预算，再调用一次 `grounded_qa 1.0.0`，
-由现有 QA Run、Worker、SSE、Grounded QA Port 和 Citation 链路完成问答。动态数值由服务端
-profile 封顶，Space/版本边界不能由模型扩大；规划失败会降级到原问题的 Grounded QA，而不是
-把 Run 变成基础设施失败。Tool 仅向外层模型返回状态和覆盖计数，不返回回答或原文。旧 Agent
-版本和 `knowledge_qa` 包保留用于固定 Run 恢复。默认 fake 可跑通流程，配置允许的
+`knowledge_agent 0.5.0` 提供当前默认的受约束 LLM/Tool 循环：模型仅可调用服务端注册的
+`knowledge_search`、`knowledge_inspect`、`grounded_answer`、`verify_answer` 和 `finalize_answer`。
+`grounded_answer` 继续通过现有 QA Run、Worker、SSE、Grounded QA Port 和 Citation 链路完成问答。
+动态数值由服务端 profile 封顶，Space/版本边界不能由模型扩大；规划失败会降级到原问题的
+Grounded QA，而不是把 Run 变成基础设施失败。Tool 仅向外层模型返回状态和覆盖计数，不返回回答
+或原文。旧 Agent
+版本和 `knowledge_qa` 包保留用于固定 Run 恢复；设置 `AGENT_LOOP_V5_ENABLED=false` 并重建
+API/Worker 时，新 Run fail-closed 回退到 `knowledge_agent 0.3.0`。默认 fake 可跑通流程，配置允许的
 OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。写 Tool 仍被明确拒绝。
 Assistant v2 使用独立的活动调用目录，包含 `/ask`、`/summarize`、`/compare`、`/cards`
 对应的 v2 Skill 元数据；模型只能返回 Skill 意图，服务端负责当前 Space 资源解析、版本 pin、
@@ -74,7 +76,8 @@ Assistant 对话演进 Step 5 增加有界多轮上下文。原始消息保持�
 `/compact` 和软水位压缩通过现有 Worker 队列创建可持久化的后台 Run。这仍是 ADR-010/011 下的临时工程能力。
 
 Agent Loop Step 6 增加 `/effort`：不带参数时读取当前 Conversation 默认值，带
-`auto|none|minimal|low|medium|high|xhigh|max` 时只影响后续 Run。每个新 Assistant/压缩 Run 都保存
+`low|medium|high|xhigh|max` 时只影响后续 Run。菜单只提供这五个值；服务端会将旧的内部默认值
+解析为这五个值之一（无法解析时为 `medium`），并标记为 `(default)`。每个新 Assistant/压缩 Run 都保存
 provider-neutral 的 requested/effective effort、Provider/model、映射版本、模式和降级原因。显式不支持
 的强度请求会拒绝；仅 `auto` 可降级。当前 OpenAI-compatible Chat 仍使用布尔 `thinking` 映射，且保留
 `FAST_CHAT_REASONING_ENABLED=false` 的既有默认行为；这不代表 Responses 原生 effort 已接入或任何质量门禁已关闭。
@@ -94,6 +97,16 @@ Assistant 对话演进 Step 8 将 Web 入口切换到临时 API v2 对话工作�
 内开放现有 v1 QA 路径（`VITE_ASSISTANT_V1_COMPATIBILITY_UNTIL`，默认值为
 `2026-09-30T23:59:59Z`）。窗口到期后选择器会失效关闭；v1 端点、历史 Run 和已安装 Skill 包仍可读取，
 用于恢复和单独审查的客户端。
+
+Agent Loop v5 是 fake/local 的默认 provisional 路径。新 Run 默认固定到
+`knowledge_agent 0.5.0`；设置 `AGENT_LOOP_V5_ENABLED=false` 并重建 API/Worker 会 fail-closed
+回退至 `0.3.0`，既有 Run 的 pin、事件和 v1/v2 投影不变。先执行只读取 hash 固定合成 fixture 的检查：
+
+```powershell
+uv run --frozen python scripts/evaluate_agent_loop.py --validate-only
+```
+
+该命令不调用 Provider、不读取受控语料，也不会启用 formal holdout；其所有报告均为 development / provisional。
 
 发布 v2 时应先使用 `MODEL_PROVIDER=fake` 或获批准的本地 Chat stub。启用外部 Chat Provider 仍需满足现有的
 `MODEL_ALLOW_EXTERNAL`、来源策略、部署策略和用户可见同意检查；Web 发布配置不会绕过这些边界。如需回滚 Web
@@ -193,8 +206,9 @@ API、Worker 和 Web 达到各自完成或健康条件。
 ```
 
 脚本会检查 Docker GPU 透传，启动 `embedding` 和 `reranker` profile，将生效的 reranker 配置强制为
-使用 `BAAI/bge-reranker-v2-m3` 的 `inherit`，并检查 Web、API、Embedding 和 Reranker 健康状态。脚本不会
-修改 `.env` 或打印密钥。配置的外部 Chat 端点可能接收问题和检索片段；没有完成必要的策略审批时，
+使用 `BAAI/bge-reranker-v2-m3` 的 `inherit`，并将新 Run 固定到 `knowledge_agent 0.5.0`，然后检查 Web、API、
+Embedding 和 Reranker 健康状态。执行 `./scripts/start-local.ps1 -LegacyKnowledgeAgent` 可临时回退到 `0.3.0`。
+脚本不会修改 `.env` 或打印密钥。配置的外部 Chat 端点可能接收问题和检索片段；没有完成必要的策略审批时，
 不要将私有或受限来源用于该路径。
 
 如果本地已有预热完成的 Reranker 模型缓存，请将 `.env` 中的 `RERANKER_VOLUME_NAME` 设置为现有 Docker

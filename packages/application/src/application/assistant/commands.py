@@ -22,6 +22,7 @@ from application.skills import SkillCatalogPort, SkillInvocationView
 
 from .context import ConversationContextService, ConversationContextSnapshot
 from .metrics import AssistantMetrics
+from .reasoning import ReasoningProfileResolver
 from .runs import AssistantTurnApplicationPort, AssistantTurnSubmission
 
 
@@ -111,7 +112,7 @@ _BASE_COMMANDS: tuple[CommandDescriptor, ...] = (
         aliases=(),
         kind=AssistantCommandKind.BASE,
         description="Show or update the default reasoning effort for this conversation.",
-        argument_hint="[auto|none|minimal|low|medium|high|xhigh|max]",
+        argument_hint="[low|medium|high|xhigh|max]",
         input_mode="optional_effort",
     ),
     CommandDescriptor(
@@ -154,6 +155,16 @@ _BASE_COMMANDS: tuple[CommandDescriptor, ...] = (
         argument_hint="",
         input_mode="none",
     ),
+)
+
+_SELECTABLE_REASONING_EFFORTS = frozenset(
+    {
+        ReasoningEffort.LOW,
+        ReasoningEffort.MEDIUM,
+        ReasoningEffort.HIGH,
+        ReasoningEffort.XHIGH,
+        ReasoningEffort.MAX,
+    }
 )
 
 
@@ -301,6 +312,7 @@ class AssistantCommandService:
         skill_invoker: SkillCommandInvoker | None = None,
         context: ConversationContextService | None = None,
         metrics: AssistantMetrics | None = None,
+        reasoning: ReasoningProfileResolver | None = None,
     ) -> None:
         self.catalog = catalog
         self.parser = parser
@@ -311,6 +323,7 @@ class AssistantCommandService:
         self._skill_invoker = skill_invoker
         self._context = context
         self._metrics = metrics
+        self._reasoning = reasoning
 
     async def help(self) -> CommandExecutionResult:
         self._record_command("help")
@@ -353,10 +366,18 @@ class AssistantCommandService:
         if current is None or current.archived_at is not None:
             raise CommandParseError("CONVERSATION_NOT_FOUND", "Conversation not found.")
         if requested_effort is None:
+            current_effort = current.reasoning_effort
+            default_marker = ""
+            if current_effort not in _SELECTABLE_REASONING_EFFORTS:
+                if self._reasoning is not None:
+                    current_effort = self._reasoning.resolve(current_effort).effective_effort
+                if current_effort not in _SELECTABLE_REASONING_EFFORTS:
+                    current_effort = ReasoningEffort.MEDIUM
+                default_marker = " (default)"
             return CommandExecutionResult(
                 command="effort",
                 status="completed",
-                content=f"Current reasoning effort: {current.reasoning_effort.value}.",
+                content=f"Current reasoning effort: {current_effort.value}{default_marker}.",
                 conversation_id=current.conversation_id,
             )
         try:
@@ -366,6 +387,11 @@ class AssistantCommandService:
                 "RUN_REASONING_EFFORT_INVALID",
                 "Reasoning effort is unsupported.",
             ) from exc
+        if effort not in _SELECTABLE_REASONING_EFFORTS:
+            raise CommandParseError(
+                "RUN_REASONING_EFFORT_INVALID",
+                "Choose one of low, medium, high, xhigh, or max.",
+            )
         updated = await self._conversations.set_reasoning_effort(conversation_id, effort)
         return CommandExecutionResult(
             command="effort",

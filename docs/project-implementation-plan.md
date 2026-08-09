@@ -4,12 +4,13 @@
 > 适用阶段：从方案验证到可演示版本，再到可持续扩展产品  
 > 核心原则：先闭环、可评测、可追溯；后扩展、多 Agent、规模化
 
-## Current implementation sync (2026-08-07)
+## Current implementation sync (2026-08-10)
 
 The current development cut has completed the planned Assistant conversation evolution through
 Step 8 on top of the Stage 4/5 provisional contracts. The v2 Web workspace provides direct
 conversation, server-authoritative automatic routing, explicit slash commands, bounded context,
-and durable Skill invocation trace cards. New knowledge requests use `knowledge_agent 0.3.0`;
+and durable Skill invocation trace cards. New knowledge requests default to `knowledge_agent 0.5.0`;
+`AGENT_LOOP_V5_ENABLED=false` is the explicit fail-closed rollback to `0.3.0`, while
 `knowledge_qa` is retained only for historical fixed Run recovery.
 
 Grounded Skill output is an internal reference. The Worker invokes a one-shot

@@ -13,6 +13,7 @@ const conversation = {
 }
 
 const commands = [
+  { name: 'effort', aliases: [], kind: 'base', description: 'Set reasoning effort', argument_hint: '[low|medium|high|xhigh|max]', input_mode: 'optional_effort' },
   { name: 'help', aliases: [], kind: 'base', description: 'Show active Skills and commands', argument_hint: '', input_mode: 'none' },
   { name: 'summarize', aliases: ['summary'], kind: 'skill', description: 'Summarize one document', argument_hint: '<document>', input_mode: 'document' },
 ]
@@ -330,6 +331,124 @@ describe('assistant conversation workspace', () => {
     expect(screen.getByText('Architecture answer.')).toBeInTheDocument()
   })
 
+  it('offers the five reasoning effort choices and submits the selected value', async () => {
+    const fetchMock = baseFetch()
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
+        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [], runs: [] }] }))
+      }
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [] }))
+      if (url.endsWith('/api/v2/conversations/conversation-1/turns')) {
+        expect(JSON.parse(String(init?.body)).content).toBe('/effort medium')
+        return Promise.resolve(response({
+          command: 'effort',
+          status: 'completed',
+          content: 'Default reasoning effort: medium.',
+          conversation_id: 'conversation-1',
+          run: null,
+          commands: [],
+        }, 202))
+      }
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'effort-idempotency-1' })
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox', { name: '消息' })
+    fireEvent.change(composer, { target: { value: '/effort' } })
+    expect(await screen.findByRole('option', { name: 'medium (default)' })).toBeInTheDocument()
+    expect(screen.getAllByRole('option')).toHaveLength(5)
+    expect(screen.queryByRole('option', { name: 'auto' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('option', { name: 'medium (default)' }))
+    await waitFor(() => expect(screen.getByText('Default reasoning effort: medium.')).toBeInTheDocument())
+  })
+
+  it('uses Enter to submit the highlighted effort instead of selecting only the command', async () => {
+    const fetchMock = baseFetch()
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
+        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [], runs: [] }] }))
+      }
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [] }))
+      if (url.endsWith('/api/v2/conversations/conversation-1/turns')) {
+        expect(JSON.parse(String(init?.body)).content).toBe('/effort medium')
+        return Promise.resolve(response({
+          command: 'effort',
+          status: 'completed',
+          content: 'Default reasoning effort: medium.',
+          conversation_id: 'conversation-1',
+          run: null,
+          commands: [],
+        }, 202))
+      }
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'effort-enter-idempotency-1' })
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox')
+    fireEvent.change(composer, { target: { value: '/effort' } })
+    await screen.findByRole('option', { name: 'medium (default)' })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => expect(screen.getByText('Default reasoning effort: medium.')).toBeInTheDocument())
+  })
+
+  it('keeps effort choices available after submitting /effort', async () => {
+    const fetchMock = baseFetch()
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
+        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [], runs: [] }] }))
+      }
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [] }))
+      if (url.endsWith('/api/v2/conversations/conversation-1/turns')) {
+        const content = JSON.parse(String(init?.body)).content
+        if (content === '/effort') {
+          return Promise.resolve(response({
+            command: 'effort',
+            status: 'completed',
+            content: 'Current reasoning effort: medium (default).',
+            conversation_id: 'conversation-1',
+            run: null,
+            commands: [],
+          }, 202))
+        }
+        expect(content).toBe('/effort high')
+        return Promise.resolve(response({
+          command: 'effort',
+          status: 'completed',
+          content: 'Default reasoning effort: high.',
+          conversation_id: 'conversation-1',
+          run: null,
+          commands: [],
+        }, 202))
+      }
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'effort-result-idempotency-1' })
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox')
+    fireEvent.change(composer, { target: { value: '/effort' } })
+    fireEvent.submit(composer.closest('form')!)
+
+    await waitFor(() => expect(screen.getByText('Current reasoning effort: medium (default).')).toBeInTheDocument())
+    expect(screen.getAllByRole('option')).toHaveLength(5)
+    fireEvent.click(screen.getByRole('option', { name: 'high' }))
+
+    await waitFor(() => expect(screen.getByText('Default reasoning effort: high.')).toBeInTheDocument())
+    expect(screen.getByRole('option', { name: /^high/ })).toHaveAttribute('aria-selected', 'true')
+  })
+
   it('recovers paged v3 history into a collapsed Agent timeline before the final answer', async () => {
     const completed = assistantRun({
       run_kind: 'skill',
@@ -478,7 +597,7 @@ describe('assistant conversation workspace', () => {
           content: 'Current active Skills.',
           conversation_id: 'conversation-1',
           run: null,
-          commands: [commands[1]],
+          commands: [commands[2]],
         }, 202))
       }
       return Promise.resolve(response({}))

@@ -308,7 +308,7 @@ def qa_skill_registry() -> FileSystemSkillRegistry:
     """Load all trusted Skills and activate the sole new knowledge entry point."""
     registry = FileSystemSkillRegistry(Path(settings.skill_root_path))
     registry.reload()
-    registry.activate("knowledge_agent", settings.knowledge_agent_skill_version)
+    registry.activate("knowledge_agent", settings.active_knowledge_agent_skill_version)
     return registry
 
 
@@ -579,6 +579,7 @@ class GroundedQAExecutor:
                 event_store=self._agent_events,
                 reasoning_profile=reasoning_profile,
                 finalizer=loop_tools.finalizer(),
+                decision_policy=loop_tools.decision_policy,
             )
             if resumable:
                 assert persisted_runtime is not None and checkpoint is not None

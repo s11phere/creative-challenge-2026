@@ -32,11 +32,13 @@ class SynthesisGateway(FakeModelGateway):
         super().__init__(scenario=scenario)
         self.response = response
         self.calls = 0
+        self.requests: list[ChatRequest] = []
 
     async def chat(
         self, _request: ChatRequest, *, capability: CapabilityAlias = CapabilityAlias.FAST_CHAT
     ) -> ChatResponse:
         self.calls += 1
+        self.requests.append(_request)
         if self.scenario is not FakeScenario.NORMAL:
             return await super().chat(_request, capability=capability)
         return ChatResponse(
@@ -71,10 +73,10 @@ async def _skill_run(repository: InMemoryGroundedQARepository):
 
 
 @pytest.mark.asyncio
-async def test_finalizer_publishes_skill_result_directly_without_second_generation() -> None:
+async def test_finalizer_publishes_llm_synthesized_answer_once() -> None:
     repository = InMemoryGroundedQARepository()
     run = await _skill_run(repository)
-    gateway = SynthesisGateway(response="unused")
+    gateway = SynthesisGateway(response="LLM synthesized answer.")
     finalizer = ConversationFinalizer(runs=repository, gateway=gateway)
     skill_result = "Synthetic evidence supports this answer. [citation]"
 
@@ -96,9 +98,11 @@ async def test_finalizer_publishes_skill_result_directly_without_second_generati
     message = await repository.get_message(completed.result.message_id)
     assert message is not None
     assert message.role is MessageRole.ASSISTANT
-    assert message.content == skill_result
+    assert message.content == "LLM synthesized answer."
     assert repeated == completed
-    assert gateway.calls == 0
+    assert gateway.calls == 1
+    assert "How do I use the architecture document?" in gateway.requests[0].messages[-1].content
+    assert skill_result in gateway.requests[0].messages[-1].content
     assert len(await repository.list_messages(run.conversation_id)) == 2
 
 

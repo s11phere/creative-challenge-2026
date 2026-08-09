@@ -167,8 +167,10 @@ fake/local 索引误判为缺少外部 Embedding revision。
 `RUN_LLM_DECISION_INVALID` 表示 Provider 没有返回严格的单个 JSON 决策；检查模型是否遵循
 `call_tool/complete/refuse` schema。`RUN_LLM_MAX_ITERATIONS` 表示模型在五轮内未终止；
 `TOOL_NOT_ALLOWED`、`TOOL_MODEL_OUTPUT_DENIED` 或 `TOOL_APPROVAL_REQUIRED` 表示服务端安全边界拒绝
-模型选择。当前允许的 Agent Tool 是只读 `inspect_retrieval 1.0.0` 和 `grounded_qa 1.0.0`，写 Tool
-不可通过 prompt 开启。
+模型选择。默认 `knowledge_agent 0.5.0` 只允许受信的知识 Tool：`knowledge_search`、
+`knowledge_inspect`、`grounded_answer`、`verify_answer` 和 `finalize_answer`；写 Tool 不可通过 prompt
+开启。若出现意外 v5 行为，设置 `AGENT_LOOP_V5_ENABLED=false` 并重建 API/Worker 即会回落到 `0.3.0`，
+历史 Run 身份不变。`start-local.ps1 -LegacyKnowledgeAgent` 提供相同的本地回退。
 
 ### 开发环境记录完整 QA 运行轨迹
 
@@ -291,15 +293,18 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 - 需要检索时先确认 Space 存在、Document 有当前 published version，且查询模式所需的 Embedding/Reranker 能力已配置；无命中是成功的空列表，不是系统故障。
 - 模型服务不可用不会阻断 PostgreSQL/Redis 管理面 ready；Dense 会返回明确 Provider 错误，Hybrid 只有 profile 明确允许时才可降级为 Keyword。
 - 已有 Agent Runtime、Tool/Skill Registry、声明式执行器、内存与 PostgreSQL 检查点恢复和 Skill 模板；
-  新建 QA HTTP/Web Run 首次由 `knowledge_agent 0.3.0` 初始化，随后以 PostgreSQL active pointer 为准，
+  新建 QA HTTP/Web Run 默认由 `knowledge_agent 0.5.0` 初始化，随后以 PostgreSQL active pointer 为准，
   每个 Run 都固定包摘要，Worker 校验后才调用唯一 QA Application Port。可用 `GET /api/v1/skills` 和
   `GET /api/v1/skills/knowledge_agent/versions` 检查安装摘要、active 版本和 manifest 预算。
-- `knowledge_agent 0.3.0` 通过 `fast_chat` 执行受约束 LLM 决策，可在同一持久 QA Run 中调用
-  `inspect_retrieval` 后调用一次 `grounded_qa`；旧 Agent 与 `knowledge_qa` 包仅保留用于固定 Run 恢复。外层模型只看到
-  Tool 状态/计数，不看到回答或引用原文；Runtime checkpoint 快照与 append-only checkpoint 已持久化，
+- `knowledge_agent 0.5.0` 通过 `fast_chat` 执行当前默认的受约束 LLM 决策，可调用
+  `knowledge_search`、`knowledge_inspect`、`grounded_answer`、`verify_answer` 和 `finalize_answer`；
+  旧 Agent 与 `knowledge_qa` 包仅保留用于固定 Run 恢复。外层模型只看到 Tool 状态/计数，不看到
+  回答或引用原文；Runtime checkpoint 快照与 append-only checkpoint 已持久化，
   当前恢复和最终结果仍以 QA PostgreSQL 状态为准。
 - 若 Run 以 `QA_SKILL_INVALID` 失败，检查 API 与 Worker 的 `SKILL_ROOT_PATH`、
-  `KNOWLEDGE_AGENT_SKILL_VERSION` 和镜像内 `skills/knowledge_agent_v3` 内容是否一致。不要就地修改已被 Run
+  `KNOWLEDGE_AGENT_SKILL_VERSION`、`AGENT_LOOP_V5_ENABLED` 和镜像内 `skills/knowledge_agent_v5` 内容是否一致。
+  需要回退时，设置 `AGENT_LOOP_V5_ENABLED=false` 并重建 API/Worker，或以
+  `./scripts/start-local.ps1 -LegacyKnowledgeAgent` 启动；不要就地修改已被 Run
   引用的同名版本；发布新 semver 并保留旧包供排队/恢复 Run 校验。
 - Registry active pointer 已持久化到 `skill_activations`；激活或回滚出现
   `SKILL_ACTIVATION_CONFLICT` 时，应刷新 Catalog 的 `active_revision` 后重试，不能绕过 CAS。

@@ -121,7 +121,7 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 def _active_skill_versions() -> dict[str, str]:
     """Return the Skills that may receive new durable activations."""
     return {
-        "knowledge_agent": settings.knowledge_agent_skill_version,
+        "knowledge_agent": settings.active_knowledge_agent_skill_version,
         "summarize_document": "0.1.0",
         "compare_sources": "0.1.0",
         "create_review_cards": "0.1.0",
@@ -259,6 +259,7 @@ def create_app(
         skill_invoker=assistant_skill_invoker,
         context=conversation_context,
         metrics=assistant_metrics,
+        reasoning=reasoning,
     )
     assistant_agent_service = AssistantAgentService(
         runs=conversation_run_repository,

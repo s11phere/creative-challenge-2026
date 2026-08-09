@@ -238,6 +238,33 @@ v2 data, historical Runs, or Skill packages. The selector is hidden after the de
 or expired deadlines fail closed to v2. Deploy fake/local Chat first; an external Chat endpoint still
 requires the existing `MODEL_ALLOW_EXTERNAL` and source/deployment/consent policy checks.
 
+## Agent Loop v5 Release Control
+
+The generic Agent Loop is the default synthetic/fake or reviewed local provisional path. API and
+Worker default to the following aligned values:
+
+```dotenv
+KNOWLEDGE_AGENT_SKILL_VERSION=0.5.0
+AGENT_LOOP_V5_ENABLED=true
+```
+
+The flag remains a fail-closed rollback: `AGENT_LOOP_V5_ENABLED=false` activates
+`knowledge_agent 0.3.0` for new Runs. Recreate API/Worker after changing it. This preserves all
+persisted Run/Skill pins and keeps v1/v2 API and SSE projections readable. `start-local.ps1` uses
+v5 by default; pass `-LegacyKnowledgeAgent` for a local v3 rollback. Do not use an external Provider
+without the existing sensitivity, deployment-policy, and visible-consent checks.
+
+Validate the hash-pinned synthetic development fixture without invoking a model or reading the
+controlled corpus:
+
+```powershell
+uv run --frozen python scripts/evaluate_agent_loop.py --validate-only
+```
+
+Predictions, when supplied to the evaluator, may contain only safe action/count/coverage/latency/
+token/recovery metadata. Reports are always `development` and `provisional`; this is not a formal
+retrieval, answer, or Skill holdout.
+
 `host.docker.internal` is an explicitly allowed local endpoint name. This pattern is specific to
 Docker Desktop; use a reviewed reachable host address on other platforms. Recreate `api` and
 `worker` after changing either endpoint, then verify the Web proxy and an actual `dense_rerank`

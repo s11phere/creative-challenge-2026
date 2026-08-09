@@ -9,6 +9,7 @@ from domain.qa_persistence import QARetrievalScope
 from domain.qa_sse import QAEventLog
 from domain.retrieval import LocatorKind, SearchLocator
 from httpx import ASGITransport, AsyncClient
+from infrastructure.config import settings
 from infrastructure.skill_lifecycle import InMemorySkillActivationStore
 from model_gateway import FakeModelGateway
 
@@ -48,9 +49,15 @@ class FakeOrganizationScope:
         return QARetrievalScope(source_ids=source_ids)
 
 
+@pytest.fixture(autouse=True)
+def enable_default_agent_loop_v5(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "knowledge_agent_skill_version", "0.5.0")
+    monkeypatch.setattr(settings, "agent_loop_v5_enabled", True)
+
+
 def test_active_skill_versions_exclude_legacy_recovery_package() -> None:
     assert _active_skill_versions() == {
-        "knowledge_agent": "0.3.0",
+        "knowledge_agent": "0.5.0",
         "summarize_document": "0.1.0",
         "compare_sources": "0.1.0",
         "create_review_cards": "0.1.0",
@@ -83,7 +90,7 @@ async def test_provisional_qa_api_creates_run_cancels_and_replays_events() -> No
         run_id = UUID(submitted.json()["run_id"])
         assert submitted.json()["status"] == "queued"
         assert submitted.json()["skill"]["name"] == "knowledge_agent"
-        assert submitted.json()["skill"]["version"] == "0.3.0"
+        assert submitted.json()["skill"]["version"] == "0.5.0"
         assert len(submitted.json()["skill"]["content_sha256"]) == 64
         parent = await repository.get_conversation_run(run_id)
         assert parent is not None
@@ -231,20 +238,20 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
     knowledge_agent = next(item for item in listed.json() if item["name"] == "knowledge_agent")
     assert knowledge_agent == {
         "name": "knowledge_agent",
-        "active_version": "0.3.0",
+        "active_version": "0.5.0",
         "active_revision": 1,
         "versions": ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0"],
     }
     assert legacy.status_code == 404
     assert legacy.json()["code"] == "SKILL_NOT_FOUND"
     assert versions.status_code == 200
-    payload = next(item for item in versions.json() if item["version"] == "0.3.0")
+    payload = next(item for item in versions.json() if item["version"] == "0.5.0")
     assert payload["active"] is True
     assert payload["content_sha256"]
     assert payload["permissions"] == ["model", "read_knowledge"]
     assert payload["budget"] == {
-        "max_steps": 4,
-        "max_tool_calls": 4,
+        "max_steps": 8,
+        "max_tool_calls": 5,
         "max_input_tokens": 32768,
         "max_output_tokens": 8192,
         "timeout_seconds": 240,
@@ -407,7 +414,7 @@ async def test_knowledge_agent_uses_the_shared_qa_run_and_fixed_skill_identity()
 
     assert submitted.status_code == 202
     assert submitted.json()["skill"]["name"] == "knowledge_agent"
-    assert submitted.json()["skill"]["version"] == "0.3.0"
+    assert submitted.json()["skill"]["version"] == "0.5.0"
     assert submitted.json()["fixed_scope"] == {
         "source_ids": [],
         "document_ids": [],

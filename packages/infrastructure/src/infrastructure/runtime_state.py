@@ -67,7 +67,7 @@ class PostgresRuntimeStateStore:
                             (run.context.run_id, run.checkpoint_sequence),
                         )
                         if replay is not None:
-                            return _run(stored), _checkpoint(replay)
+                            return _run(stored), _checkpoint(replay, parent=stored)
                     raise RecoveryRejectedError("checkpoint sequence is not contiguous")
                 if _usage_decreased(stored, run):
                     raise RecoveryRejectedError("stored run usage cannot decrease")
@@ -156,7 +156,12 @@ class PostgresRuntimeStateStore:
                 .limit(1)
             )
             stored = result.scalar_one_or_none()
-            return _checkpoint(stored) if stored is not None else None
+            if stored is None:
+                return None
+            parent = await session.get(RuntimeRunModel, run_id)
+            if parent is None:
+                raise RecoveryRejectedError("checkpoint parent Runtime run is missing")
+            return _checkpoint(stored, parent=parent)
 
 
 def _validate_commit(run: AgentRun, checkpoint: RunCheckpoint) -> None:
@@ -263,7 +268,14 @@ def _run(value: RuntimeRunModel) -> AgentRun:
     )
 
 
-def _checkpoint(value: RuntimeCheckpointModel) -> RunCheckpoint:
+def _checkpoint(value: RuntimeCheckpointModel, *, parent: RuntimeRunModel) -> RunCheckpoint:
+    if (
+        value.run_id != parent.run_id
+        or value.skill_name != parent.skill_name
+        or value.skill_version != parent.skill_version
+        or value.skill_content_sha256 != parent.skill_content_sha256
+    ):
+        raise RecoveryRejectedError("stored checkpoint identity does not match Runtime run")
     state = cast(Mapping[str, Any], value.state)
     if value.state_sha256 != checkpoint_state_sha256(state):
         raise RecoveryRejectedError("stored checkpoint state digest is invalid")
@@ -280,8 +292,17 @@ def _checkpoint(value: RuntimeCheckpointModel) -> RunCheckpoint:
         next_step=RunStep(value.next_step),
         next_node=value.next_node,
         verified=value.verified,
+        caller_id=parent.caller_id,
+        space_id=parent.space_id,
+        approval_id=_optional_string(state.get("approval_id")),
+        lease_id=_optional_string(state.get("lease_id")),
+        idempotency_key=_optional_string(state.get("last_idempotency_key")),
         created_at=value.created_at,
     )
+
+
+def _optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _usage_decreased(previous: RuntimeRunModel, current: AgentRun) -> bool:
