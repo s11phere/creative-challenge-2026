@@ -535,6 +535,7 @@ def test_provisional_package_is_bulk_installed_but_activation_is_explicit() -> N
     loaded = registry.reload()
     package = next(package for package in loaded if package.manifest.name == "knowledge_qa")
     assert registry.names() == (
+        "assistant_agent",
         "compare_sources",
         "create_review_cards",
         "knowledge_agent",

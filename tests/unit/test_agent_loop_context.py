@@ -16,7 +16,12 @@ from domain.agent_loop import (
     AgentLoopToolObservation,
 )
 from domain.conversation_context import ConversationEvidenceCoverage, ConversationSummary
-from domain.conversation_run import ConversationRun
+from domain.conversation_run import (
+    Clarification,
+    ClarificationKind,
+    ConversationRun,
+    ConversationRunUsage,
+)
 from domain.grounded_qa import QAContractError
 from domain.qa_persistence import ConversationRecord, MessageRecord
 from model_gateway import ModelProvider
@@ -115,6 +120,54 @@ async def test_loop_snapshot_preserves_task_state_without_replaying_raw_history(
             ModelProvider.FAKE,
             responses_continuation_id="resp_123",
         )
+
+
+@pytest.mark.asyncio
+async def test_decision_request_exposes_the_previous_user_request() -> None:
+    repository, conversation, _first = await _turn()
+    second = await ConversationRunService(conversations=repository, runs=repository).submit(
+        AssistantTurnSubmission(
+            conversation_id=conversation.conversation_id,
+            content="What was my previous question?",
+            idempotency_key="loop-context-previous-question",
+        )
+    )
+    snapshot = await ConversationContextService(data=repository, runs=repository).snapshot(second)
+
+    decision_request = snapshot.decision_request()
+    assert "<previous-user-request>" in decision_request
+    assert "Compare the two approved approaches and identify the open risk." in decision_request
+    assert "What was my previous question?" in decision_request
+    assert "previous-server-clarification" not in decision_request
+    # Nested Skills keep their original isolated input contract.
+    assert "<previous-user-request>" not in snapshot.standalone_request()
+
+
+@pytest.mark.asyncio
+async def test_decision_request_exposes_the_previous_server_clarification() -> None:
+    repository, conversation, first = await _turn()
+    await repository.publish_clarification(
+        run_id=first.run_id,
+        clarification=Clarification(
+            clarification_id=f"clarify:{first.run_id.hex}",
+            kind=ClarificationKind.INPUT_REQUIRED,
+            message="Please provide the exact published document name.",
+        ),
+        usage=ConversationRunUsage(),
+        model_identity="fake",
+    )
+    second = await ConversationRunService(conversations=repository, runs=repository).submit(
+        AssistantTurnSubmission(
+            conversation_id=conversation.conversation_id,
+            content="What information do I need to provide?",
+            idempotency_key="loop-context-clarification-followup",
+        )
+    )
+    snapshot = await ConversationContextService(data=repository, runs=repository).snapshot(second)
+
+    assert "<previous-server-clarification>" in snapshot.decision_request()
+    assert "exact published document name" in snapshot.decision_request()
+    assert "<previous-server-clarification>" not in snapshot.standalone_request()
 
 
 @pytest.mark.asyncio

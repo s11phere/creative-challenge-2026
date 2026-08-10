@@ -21,7 +21,7 @@ from application.assistant import (
     ConversationRunService,
 )
 from application.qa import InMemoryGroundedQARepository
-from domain.agent_loop import AgentLoopState, AgentLoopTask
+from domain.agent_loop import AgentLoopState, AgentLoopTask, AgentLoopToolObservation
 from domain.agent_runtime import AgentRun, AgentRunContext, RunBudget, ToolPermission
 from domain.agent_sse import AgentRunEventLog
 from domain.assistant_sse import AssistantEventLog
@@ -185,6 +185,12 @@ async def test_top_level_loop_observes_one_skill_adapter_before_selecting_anothe
                 description="Synthetic trusted Skill context.",
                 instructions="Use this adapter only when its result advances the task.",
             ),
+            AssistantSkillContext(
+                name="summary_skill",
+                version="2.0.0",
+                description="Synthetic summary Skill context.",
+                instructions="Summarize only when the user explicitly asks.",
+            ),
         ),
     )
 
@@ -199,6 +205,10 @@ async def test_top_level_loop_observes_one_skill_adapter_before_selecting_anothe
     assert len(gateway.requests) == 3
     system_prompt = gateway.requests[0].messages[0].content
     assert "Synthetic trusted Skill context." in system_prompt
+    assert "Synthetic summary Skill context." in system_prompt
+    assert "<active_skill_catalog" in system_prompt
+    assert "- research_skill v1.0.0" in system_prompt
+    assert "- summary_skill v2.0.0" in system_prompt
     assert '"name":"research_skill"' in system_prompt
     assert '"name":"review_skill"' in system_prompt
     history = await agent_events.page(submitted.run_id, limit=200)
@@ -258,6 +268,84 @@ async def test_top_level_loop_publishes_a_safe_direct_refusal() -> None:
     message = await repository.get_message(refused.result.message_id)
     assert message is not None
     assert message.content == "I cannot help with that request."
+
+
+@pytest.mark.asyncio
+async def test_clarification_keeps_document_resolution_reason_actionable() -> None:
+    repository = InMemoryGroundedQARepository()
+    conversation = ConversationRecord(
+        conversation_id=UUID(int=1201), space_id=UUID(int=1202), owner_id="loop-user"
+    )
+    await repository.create_conversation(conversation)
+    submitted = await ConversationRunService(conversations=repository, runs=repository).submit(
+        AssistantTurnSubmission(
+            conversation_id=conversation.conversation_id,
+            content="Summarize the document.",
+            idempotency_key="autonomous-loop-clarification-1",
+        )
+    )
+    runtime = AgentRun(
+        context=AgentRunContext(
+            run_id=submitted.run_id,
+            space_id=conversation.space_id,
+            skill_name="assistant_agent",
+            skill_version="0.1.0",
+            skill_content_sha256="a" * 64,
+            trace_id="c" * 32,
+            caller_id="loop-user",
+            granted_permissions=frozenset({ToolPermission.MODEL}),
+        ),
+        budget=RunBudget(),
+    )
+    finalizer = AssistantConversationLoopFinalizer(
+        runs=repository,
+        qa_results=_no_qa_result,
+        model_identity="fake",
+    )
+    state = AgentLoopState.accepted(AgentLoopTask("Summarize the document.")).start()
+    state = (
+        state.begin_iteration({"action": "call_tool"})
+        .request_tool(
+            name="summarize_document",
+            version="1.1.0",
+            arguments={"document_reference": "CLAUDE.md"},
+            idempotency_key="summary-1",
+            request_fingerprint="summary-1",
+        )
+        .start_tool()
+        .observe(
+            AgentLoopToolObservation(
+                iteration=1,
+                tool_name="summarize_document",
+                tool_version="1.1.0",
+                idempotency_key="summary-1",
+                input_summary="sha256:input",
+                output_summary="sha256:output",
+                model_output={
+                    "trust": "untrusted",
+                    "status": "not_found",
+                    "candidate_count": 0,
+                    "hit_count": 0,
+                    "matched_count": 0,
+                    "context_only_count": 0,
+                    "evidence_ids": [],
+                    "source_versions": [],
+                },
+            )
+        )
+    )
+
+    await finalizer.finalize(
+        run=runtime,
+        task=state.task,
+        decision=LLMDecision(LLMDecisionAction.CLARIFY, reason="Need more information."),
+        state=state,
+        input_data={},
+    )
+    clarified = await repository.get_conversation_run(submitted.run_id)
+    assert clarified is not None and clarified.result is not None
+    assert clarified.result.clarification is not None
+    assert "exact name" in clarified.result.clarification.message
 
 
 async def _no_qa_result(_run_id: UUID) -> QARunRecord | None:

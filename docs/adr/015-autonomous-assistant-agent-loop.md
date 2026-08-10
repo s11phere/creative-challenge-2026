@@ -63,8 +63,9 @@ recoverable execution.
 The loop can make multiple serial Tool/Skill calls and can answer ordinary conversation without
 activating knowledge retrieval. Tool schemas and local next-step guidance improve model behavior,
 while server checks remain deliberately narrow. The current production adapter exposes the v7
-knowledge Tools; additional Skill adapters can be registered without changing the outer Loop
-contract. This rollout is provisional and must not be described as a formal quality acceptance.
+knowledge Tools plus the read-only `summarize_document` adapter when the server resource resolver
+is available; additional Skill adapters can be registered without changing the outer Loop contract.
+This rollout is provisional and must not be described as a formal quality acceptance.
 
 ## Reassessment Triggers
 

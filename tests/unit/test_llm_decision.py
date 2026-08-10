@@ -64,6 +64,21 @@ def test_parse_decision_requires_reason_for_terminal_actions() -> None:
         parse_llm_decision("not json", allowed_tools=frozenset())
 
 
+def test_parse_decision_ignores_empty_server_authored_response_on_clarification() -> None:
+    decision = parse_llm_decision(
+        '{"action":"clarify","reason":"Need one detail.","final_response":""}',
+        allowed_tools=frozenset(),
+    )
+    assert decision.action is LLMDecisionAction.CLARIFY
+    assert decision.final_response is None
+
+    with pytest.raises(LLMDecisionError):
+        parse_llm_decision(
+            '{"action":"complete","reason":"done","final_response":""}',
+            allowed_tools=frozenset(),
+        )
+
+
 class DecisionGateway:
     def __init__(self, *responses: str) -> None:
         self._delegate = FakeModelGateway()

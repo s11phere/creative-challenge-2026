@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from importlib.resources import files
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID, uuid4
 
 from agent_runtime import (
@@ -155,7 +156,7 @@ class AssistantConversationLoopFinalizer:
                 clarification=Clarification(
                     clarification_id=f"clarify:{parent.run_id.hex}",
                     kind=ClarificationKind.INPUT_REQUIRED,
-                    message="Please provide the missing detail needed to continue.",
+                    message=_clarification_message(decision, state),
                 ),
                 usage=usage,
                 model_identity=self._model_identity,
@@ -263,7 +264,7 @@ class AutonomousAssistantLoopService:
         snapshot = await self._context.snapshot(parent) if self._context is not None else None
         input_data = {
             "question": user_message.content,
-            "conversation": snapshot.standalone_request()
+            "conversation": snapshot.decision_request()
             if snapshot is not None
             else user_message.content,
         }
@@ -350,6 +351,21 @@ class AutonomousAssistantLoopService:
 
     def _system_prompt(self) -> str:
         sections = [_BASE_PROMPT_V5]
+        if self._skill_contexts:
+            sections.append(
+                '\n<active_skill_catalog trust="trusted_configuration">\n'
+                "Every entry below is active in Skill Management for this workspace. "
+                "When the user asks which Skills are available, list every entry using "
+                "its exact name and version. Active Skills with a matching registered Tool "
+                "adapter are callable in this loop; select that Tool directly and continue "
+                "planning after its observation. Skills without a registered adapter remain "
+                "available for their explicit entry points, but are not callable here.\n"
+                + "\n".join(
+                    f"- {skill.name} v{skill.version}: {skill.description}"
+                    for skill in self._skill_contexts
+                )
+                + "\n</active_skill_catalog>"
+            )
         for skill in self._skill_contexts:
             sections.append(
                 f"\n<active_skill name={skill.name!r} version={skill.version!r}>\n"
@@ -402,6 +418,50 @@ def _qa_result_text(qa_run: QARunRecord) -> str | None:
     if result.refusal is not None:
         return result.refusal.message
     return None
+
+
+_INTERNAL_CLARIFICATION_MARKERS = re.compile(
+    r"(?:\btool\b|knowledge_search|knowledge_inspect|summarize_document|"
+    r"grounded_answer|verify_answer|finalize_answer|\bRUN_[A-Z_]+\b|sha256:|<[^>]+>)",
+    re.IGNORECASE,
+)
+
+
+def _clarification_message(decision: LLMDecision, state: AgentLoopState) -> str:
+    """Return a useful server-authored prompt without leaking runtime vocabulary."""
+    for observation in reversed(state.observations):
+        if observation.tool_name != "summarize_document" or not isinstance(
+            observation.model_output, dict
+        ):
+            continue
+        output = cast(dict[str, object], observation.model_output)
+        status = output.get("status")
+        if status == "ambiguous":
+            labels = output.get("candidate_labels")
+            if isinstance(labels, list):
+                safe_labels = [
+                    value.strip()[:280]
+                    for value in labels[:3]
+                    if isinstance(value, str) and value.strip()
+                ]
+                if safe_labels:
+                    return (
+                        "More than one published document matches. Please specify one of: "
+                        + ", ".join(safe_labels)
+                        + "."
+                    )
+            return "More than one published document matches. Please provide a more specific name."
+        if status == "not_found":
+            return (
+                "I could not find that published document in this workspace. "
+                "Please provide its exact name."
+            )
+        if status == "unavailable":
+            return "Please provide a published document name available in this workspace."
+    reason = " ".join((decision.reason or "").split())
+    if reason and len(reason) <= 1_000 and not _INTERNAL_CLARIFICATION_MARKERS.search(reason):
+        return reason
+    return "Please specify the document, source, or task detail needed to continue."
 
 
 def _combined_usage(parent: ConversationRun, runtime: AgentRun) -> ConversationRunUsage:

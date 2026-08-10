@@ -168,7 +168,8 @@ fake/local 索引误判为缺少外部 Embedding revision。
 `call_tool/complete/refuse` schema。`RUN_LLM_MAX_ITERATIONS` 表示模型在五轮内未终止；
 `TOOL_NOT_ALLOWED`、`TOOL_MODEL_OUTPUT_DENIED` 或 `TOOL_APPROVAL_REQUIRED` 表示服务端安全边界拒绝
 模型选择。默认 `knowledge_agent 0.7.0` 只允许受信的知识 Tool：`knowledge_search`、
-`knowledge_inspect`、`grounded_answer`、`verify_answer` 和 `finalize_answer`；写 Tool 不可通过 prompt
+`knowledge_inspect`、`summarize_document`、`grounded_answer`、`verify_answer` 和 `finalize_answer`；文档 Tool 只有在资源
+解析器注册时可用，写 Tool 不可通过 prompt
 开启。若出现意外 v6 行为，设置 `AGENT_LOOP_V5_ENABLED=false` 并重建 API/Worker 即会回落到 `0.3.0`，
 历史 Run 身份不变。`start-local.ps1 -LegacyKnowledgeAgent` 提供相同的本地回退。
 
@@ -300,7 +301,8 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
   `GET /api/v1/skills/knowledge_agent/versions` 检查安装摘要、active 版本和 manifest 预算。
 - `knowledge_agent 0.7.0` 通过 `fast_chat` 执行当前默认的受约束 LLM 决策，可在同一顶层 Loop 中串行调用
   注册 Tool；可调用
-  `knowledge_search`、`knowledge_inspect`、`grounded_answer`、`verify_answer` 和 `finalize_answer`；
+  `knowledge_search`、`knowledge_inspect`、`summarize_document`、`grounded_answer`、`verify_answer` 和
+  `finalize_answer`；
   旧 Agent 与 `knowledge_qa` 包仅保留用于固定 Run 恢复。外层模型只看到 Tool 状态/计数，不看到
   回答或引用原文；Runtime checkpoint 快照与 append-only checkpoint 已持久化，
   当前恢复和最终结果仍以 QA PostgreSQL 状态为准。

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from typing import Protocol, cast
 from uuid import UUID
 
 from agent_runtime import (
@@ -27,7 +28,7 @@ from domain.agent_loop import AgentLoopState, AgentLoopTask
 from domain.agent_runtime import AgentRun, RunErrorCategory, ToolPermission
 from domain.grounded_qa import QAOutcome, QAStatus
 from domain.qa_persistence import QARetrievalScope, QARunRecord, QARunVersions
-from domain.retrieval import SearchFilters, SearchRequest
+from domain.retrieval import SearchFilters, SearchHit, SearchRequest
 
 from application.qa.query_planning import SearchServicePort
 from application.qa.service import (
@@ -38,7 +39,13 @@ from application.qa.service import (
 
 from .knowledge_qa import qa_failure
 
-type EnsureQARun = Callable[[ToolExecutionContext], Awaitable[QARunRecord]]
+type EnsureQARun = Callable[[ToolExecutionContext, QARetrievalScope], Awaitable[QARunRecord]]
+
+
+class ResourceScopeResolver(Protocol):
+    """Minimal resource port needed by a model-visible document Skill adapter."""
+
+    async def resolve(self, *, space_id: UUID, resource_type: str, reference: str) -> object: ...
 
 
 @dataclass(frozen=True)
@@ -50,6 +57,7 @@ class KnowledgeLoopToolsConfig:
     retrieval_scope: QARetrievalScope = QARetrievalScope()
     max_search_observations: int = 8
     tool_version: str = "1.0.0"
+    resource_resolver: ResourceScopeResolver | None = None
 
     def __post_init__(self) -> None:
         if self.max_search_observations < 1:
@@ -71,6 +79,7 @@ class _SearchObservation:
     source_count: int
     evidence_ids: tuple[str, ...]
     source_versions: tuple[tuple[str, str, str], ...]
+    scope: QARetrievalScope = QARetrievalScope()
 
 
 @dataclass
@@ -83,6 +92,9 @@ class _RunFacts:
     answer_run: QARunRecord | None = None
     verified: bool = False
     finalization_ready: bool = False
+    document_skill_used: bool = False
+    document_scopes: list[QARetrievalScope] = field(default_factory=list)
+    clarification_needed: bool = False
 
 
 class KnowledgeLoopTools:
@@ -115,6 +127,11 @@ class KnowledgeLoopTools:
                 "grounded_answer": self.grounded_answer,
                 "verify_answer": self.verify_answer,
                 "finalize_answer": self.finalize_answer,
+                **(
+                    {"summarize_document": self.summarize_document}
+                    if config.resource_resolver is not None
+                    else {}
+                ),
             }
         )
         self.search_tool = registry.register(_knowledge_search_definition(config.tool_version))
@@ -122,16 +139,128 @@ class KnowledgeLoopTools:
         self.answer_tool = registry.register(_grounded_answer_definition(config.tool_version))
         self.verify_tool = registry.register(_verify_answer_definition(config.tool_version))
         self.finalize_tool = registry.register(_finalize_answer_definition(config.tool_version))
+        self.summary_tool = (
+            registry.register(_summarize_document_definition(config.tool_version))
+            if config.resource_resolver is not None
+            else None
+        )
         self.tool_registry: AgentToolRegistry = registry
 
     @property
     def allowed_tools(self) -> tuple[ToolRef, ...]:
-        return (
+        tools = [
             self.search_tool.ref,
             self.inspect_tool.ref,
             self.answer_tool.ref,
             self.verify_tool.ref,
             self.finalize_tool.ref,
+        ]
+        if self.summary_tool is not None:
+            tools.insert(2, self.summary_tool.ref)
+        return tuple(tools)
+
+    async def summarize_document(
+        self, arguments: dict[str, JSONValue], context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        reference, focus = _document_arguments(arguments)
+        facts = self._facts_for(context.run.run_id)
+        facts.started = True
+        facts.document_skill_used = True
+        resolver = self._config.resource_resolver
+        if resolver is None:
+            return self._with_guidance(
+                {
+                    "trust": "untrusted",
+                    "status": "unavailable",
+                    "candidate_count": 0,
+                    "hit_count": 0,
+                    "matched_count": 0,
+                    "context_only_count": 0,
+                    "evidence_ids": [],
+                    "source_versions": [],
+                },
+                recommended_next="clarify",
+            )
+        try:
+            resolved = await resolver.resolve(
+                space_id=context.run.space_id, resource_type="document", reference=reference
+            )
+            scope = getattr(resolved, "scope", None)
+            if not isinstance(scope, QARetrievalScope):
+                raise ValueError("RESOURCE_SCOPE_INVALID")
+        except ValueError as exc:
+            facts.clarification_needed = True
+            code = str(getattr(exc, "code", ""))
+            candidates = getattr(exc, "candidates", ())
+            labels = cast(
+                list[JSONValue],
+                [
+                    str(getattr(candidate, "label", ""))[:280]
+                    for candidate in candidates
+                    if getattr(candidate, "label", "")
+                ][:20],
+            )
+            status = "ambiguous" if code.endswith("CONFLICT") else "not_found"
+            return self._with_guidance(
+                {
+                    "trust": "untrusted",
+                    "status": status,
+                    "candidate_count": len(labels),
+                    "candidate_labels": labels,
+                    "hit_count": 0,
+                    "matched_count": 0,
+                    "context_only_count": 0,
+                    "evidence_ids": [],
+                    "source_versions": [],
+                },
+                recommended_next="clarify",
+            )
+        facts.document_scopes.append(scope)
+        query = _document_query(reference, focus)
+        return await self._search_with_scope(query, scope, facts, context)
+
+    async def _search_with_scope(
+        self,
+        query: str,
+        scope: QARetrievalScope,
+        facts: _RunFacts,
+        context: ToolExecutionContext,
+    ) -> dict[str, JSONValue]:
+        result = await self._search.search(
+            SearchRequest(
+                query=query,
+                space_id=context.run.space_id,
+                filters=SearchFilters(
+                    source_ids=scope.source_ids,
+                    document_ids=scope.document_ids,
+                    version_ids=scope.version_ids,
+                ),
+            ),
+            self._config.profile.retrieval,
+        )
+        hits = result.hits
+        if len(facts.searches) < self._config.max_search_observations:
+            facts.searches.append(_observation(query, hits, scope=scope))
+        return self._with_guidance(
+            {
+                "trust": "untrusted",
+                "status": "resolved",
+                "candidate_count": 1,
+                "hit_count": len(hits),
+                "matched_count": sum(not hit.context_only for hit in hits),
+                "context_only_count": sum(hit.context_only for hit in hits),
+                "evidence_ids": [str(hit.chunk_id) for hit in hits],
+                "source_versions": [
+                    {
+                        "source_id": str(hit.source_id),
+                        "document_id": str(hit.document_id),
+                        "version_id": str(hit.version_id),
+                    }
+                    for hit in hits
+                ],
+                "profile_version": result.diagnostics.profile_version,
+            },
+            recommended_next="knowledge_inspect",
         )
 
     def replace_tool_registry(self, registry: AgentToolRegistry) -> None:
@@ -144,40 +273,22 @@ class KnowledgeLoopTools:
         query = _required_query(arguments)
         facts = self._facts_for(context.run.run_id)
         facts.started = True
+        scope = self._qa_scope(facts)
         result = await self._search.search(
             SearchRequest(
                 query=query,
                 space_id=context.run.space_id,
                 filters=SearchFilters(
-                    source_ids=self._config.retrieval_scope.source_ids,
-                    document_ids=self._config.retrieval_scope.document_ids,
-                    version_ids=self._config.retrieval_scope.version_ids,
+                    source_ids=scope.source_ids,
+                    document_ids=scope.document_ids,
+                    version_ids=scope.version_ids,
                 ),
             ),
             self._config.profile.retrieval,
         )
         hits = result.hits
         if len(facts.searches) < self._config.max_search_observations:
-            source_versions = tuple(
-                (
-                    str(hit.source_id),
-                    str(hit.document_id),
-                    str(hit.version_id),
-                )
-                for hit in hits
-            )
-            facts.searches.append(
-                _SearchObservation(
-                    query=query,
-                    hit_count=len(hits),
-                    matched_count=sum(not hit.context_only for hit in hits),
-                    context_only_count=sum(hit.context_only for hit in hits),
-                    document_count=len({hit.document_id for hit in hits}),
-                    source_count=len({hit.source_id for hit in hits}),
-                    evidence_ids=tuple(str(hit.chunk_id) for hit in hits),
-                    source_versions=source_versions,
-                )
-            )
+            facts.searches.append(_observation(query, hits))
         return self._with_guidance(
             {
                 "trust": "untrusted",
@@ -283,7 +394,7 @@ class KnowledgeLoopTools:
         if facts.answer_run is None and self._result_reader is not None:
             facts.answer_run = await self._result_reader(context.run.run_id)
         if facts.answer_run is None and self._ensure_qa_run is not None:
-            facts.answer_run = await self._ensure_qa_run(context)
+            facts.answer_run = await self._ensure_qa_run(context, self._qa_scope(facts))
         if facts.answer_run is None or facts.answer_run.status not in {
             QAStatus.COMPLETED,
             QAStatus.REFUSED,
@@ -445,6 +556,7 @@ class KnowledgeLoopTools:
                 in {
                     "knowledge_search",
                     "knowledge_inspect",
+                    "summarize_document",
                     "grounded_answer",
                     "verify_answer",
                     "finalize_answer",
@@ -454,6 +566,13 @@ class KnowledgeLoopTools:
                 facts.started = True
             if not facts.started:
                 return decision
+            if facts.clarification_needed:
+                if decision.action is LLMDecisionAction.CLARIFY:
+                    return decision
+                return LLMDecision(
+                    action=LLMDecisionAction.CLARIFY,
+                    reason="A document selection is needed before the request can continue.",
+                )
             previous_search_was_checkpointed = (
                 any(
                     observation.tool_name == "knowledge_search"
@@ -600,6 +719,18 @@ class KnowledgeLoopTools:
     def _facts_for(self, run_id: UUID) -> _RunFacts:
         return self._facts.setdefault(run_id, _RunFacts())
 
+    def _qa_scope(self, facts: _RunFacts) -> QARetrievalScope:
+        """Pin any document Skill observations before creating the shared QA projection."""
+        if not facts.document_skill_used:
+            return self._config.retrieval_scope
+        scopes = [self._config.retrieval_scope, *facts.document_scopes]
+        scopes.extend(item.scope for item in facts.searches)
+        return QARetrievalScope(
+            source_ids=frozenset(value for scope in scopes for value in scope.source_ids),
+            document_ids=frozenset(value for scope in scopes for value in scope.document_ids),
+            version_ids=frozenset(value for scope in scopes for value in scope.version_ids),
+        )
+
     async def restore_finalization_facts(self, run_id: UUID) -> _RunFacts:
         """Rehydrate the QA-owned terminal result before retrying a checkpointed finalizer."""
         facts = self._facts_for(run_id)
@@ -715,6 +846,80 @@ def _knowledge_search_definition(version: str) -> ToolDefinition:
         ),
         permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
         handler_name="knowledge_search",
+        model_visible=True,
+        max_retries=1,
+    )
+
+
+def _summarize_document_definition(version: str) -> ToolDefinition:
+    return ToolDefinition(
+        name="summarize_document",
+        version=version,
+        description=(
+            "Resolve one named published document in the current Space and search it for a "
+            "grounded summary; returns metadata only."
+        ),
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["document_reference"],
+            "properties": {
+                "document_reference": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 280,
+                },
+                "focus": {"type": "string", "maxLength": 256},
+            },
+        },
+        output_schema=_with_guidance_schema(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "trust",
+                    "status",
+                    "candidate_count",
+                    "hit_count",
+                    "matched_count",
+                    "context_only_count",
+                    "evidence_ids",
+                    "source_versions",
+                ],
+                "properties": {
+                    "trust": {"const": "untrusted"},
+                    "status": {"enum": ["resolved", "not_found", "ambiguous", "unavailable"]},
+                    "candidate_count": {"type": "integer", "minimum": 0},
+                    "candidate_labels": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 280},
+                    },
+                    "hit_count": {"type": "integer", "minimum": 0},
+                    "matched_count": {"type": "integer", "minimum": 0},
+                    "context_only_count": {"type": "integer", "minimum": 0},
+                    "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                    "source_versions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["source_id", "document_id", "version_id"],
+                            "properties": {
+                                "source_id": {"type": "string"},
+                                "document_id": {"type": "string"},
+                                "version_id": {"type": "string"},
+                            },
+                        },
+                    },
+                    "profile_version": {"type": "string", "minLength": 1},
+                },
+            },
+            version=version,
+            next_actions=("knowledge_inspect", "knowledge_search", "clarify"),
+        ),
+        permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
+        handler_name="summarize_document",
         model_visible=True,
         max_retries=1,
     )
@@ -923,6 +1128,72 @@ def _required_query(arguments: dict[str, JSONValue]) -> str:
             "SKILL_INPUT_INVALID", RunErrorCategory.INPUT, "Knowledge search query is required."
         )
     return query
+
+
+def _document_arguments(arguments: Mapping[str, JSONValue]) -> tuple[str, str | None]:
+    reference = arguments.get("document_reference")
+    focus = arguments.get("focus")
+    if (
+        set(arguments) - {"document_reference", "focus"}
+        or not isinstance(reference, str)
+        or not reference.strip()
+        or len(reference) > 280
+        or (focus is not None and (not isinstance(focus, str) or len(focus) > 256))
+    ):
+        raise NodeExecutionError(
+            "SKILL_INPUT_INVALID",
+            RunErrorCategory.INPUT,
+            "A bounded document name is required for document summarization.",
+        )
+    return reference.strip(), focus.strip() if isinstance(focus, str) and focus.strip() else None
+
+
+def _document_query(reference: str, focus: str | None) -> str:
+    query = f"Summarize {reference}"
+    if focus:
+        query += f" with focus on {focus}"
+    return query[:512]
+
+
+def _observation(
+    query: str,
+    hits: tuple[SearchHit, ...],
+    *,
+    scope: QARetrievalScope | None = None,
+) -> _SearchObservation:
+    # SearchHit is intentionally kept behind the SearchService port; this helper only projects
+    # its stable identities and safe counters into the model-visible loop facts.
+    source_ids = frozenset(hit.source_id for hit in hits)
+    document_ids = frozenset(hit.document_id for hit in hits)
+    version_ids = frozenset(hit.version_id for hit in hits)
+    observed_scope = QARetrievalScope(
+        source_ids=source_ids,
+        document_ids=document_ids,
+        version_ids=version_ids,
+    )
+    fixed_scope = scope or QARetrievalScope()
+    return _SearchObservation(
+        query=query,
+        hit_count=len(hits),
+        matched_count=sum(not hit.context_only for hit in hits),
+        context_only_count=sum(hit.context_only for hit in hits),
+        document_count=len(document_ids),
+        source_count=len(source_ids),
+        evidence_ids=tuple(str(hit.chunk_id) for hit in hits),
+        source_versions=tuple(
+            (
+                str(hit.source_id),
+                str(hit.document_id),
+                str(hit.version_id),
+            )
+            for hit in hits
+        ),
+        scope=QARetrievalScope(
+            source_ids=observed_scope.source_ids | fixed_scope.source_ids,
+            document_ids=observed_scope.document_ids | fixed_scope.document_ids,
+            version_ids=observed_scope.version_ids | fixed_scope.version_ids,
+        ),
+    )
 
 
 def _needs_followup_search(facts: _RunFacts) -> bool:

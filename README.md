@@ -60,7 +60,9 @@ Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL
 Derived Knowledge Port 幂等写入，并可查询或撤销。
 `knowledge_agent 0.7.0` 提供当前默认的受约束 LLM/Tool 循环：顶层 Agent 会在每轮观察 Tool
 结果后自主选择下一步；模型仅可调用服务端注册的
-`knowledge_search`、`knowledge_inspect`、`grounded_answer`、`verify_answer` 和 `finalize_answer`。
+`knowledge_search`、`knowledge_inspect`、`summarize_document`、`grounded_answer`、`verify_answer` 和
+`finalize_answer`。`summarize_document` 只在服务端资源解析器可用时注册，先固定当前 Space 的已发布
+DocumentVersion，再回到同一 Grounded QA Run；复合请求可在一个 Loop 中串行组合这些 Tool。
 `grounded_answer` 继续通过现有 QA Run、Worker、SSE、Grounded QA Port 和 Citation 链路完成问答。
 动态数值由服务端 profile 封顶，Space/版本边界不能由模型扩大；规划失败会降级到原问题的
 Grounded QA，而不是把 Run 变成基础设施失败。Tool 仅向外层模型返回状态和覆盖计数，不返回回答

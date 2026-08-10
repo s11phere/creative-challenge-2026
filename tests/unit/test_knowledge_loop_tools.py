@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
@@ -132,6 +133,39 @@ class FakeGroundedQA:
         self.execute_calls.append(run_id)
         self.agent_plans.append(agent_plan)
         return qa_run(self.outcome, run_id=run_id)
+
+
+@dataclass
+class FakeResolvedResource:
+    scope: QARetrievalScope
+
+
+class FakeResourceResolver:
+    def __init__(self, *, conflict: bool = False) -> None:
+        self.conflict = conflict
+        self.calls: list[tuple[UUID, str, str]] = []
+
+    async def resolve(self, *, space_id: UUID, resource_type: str, reference: str) -> object:
+        self.calls.append((space_id, resource_type, reference))
+        if self.conflict:
+            from application.assistant.resources import (
+                ResourceResolutionError,
+                ResourceResolutionErrorCode,
+            )
+            from domain.conversation_run import ResourceCandidate
+
+            raise ResourceResolutionError(
+                ResourceResolutionErrorCode.CONFLICT,
+                "ambiguous",
+                (ResourceCandidate("candidate:one", "document", "CLAUDE.md"),),
+            )
+        return FakeResolvedResource(
+            QARetrievalScope(
+                source_ids=frozenset({SOURCE_ID}),
+                document_ids=frozenset({DOCUMENT_ID}),
+                version_ids=frozenset({VERSION_ID}),
+            )
+        )
 
 
 def versions(*, skill_version: str = "0.5.0") -> QARunVersions:
@@ -280,6 +314,111 @@ async def test_knowledge_search_uses_only_search_service_and_hides_source_text()
         }
     ]
     assert "private source text" not in json.dumps(inspected)
+
+
+@pytest.mark.asyncio
+async def test_document_summary_resolves_and_searches_a_fixed_published_scope() -> None:
+    resolver = FakeResourceResolver()
+    search = FakeSearchService()
+    qa = FakeGroundedQA()
+    adapter = KnowledgeLoopTools(
+        qa=cast(GroundedQAApplicationPort, qa),
+        search=search,
+        config=KnowledgeLoopToolsConfig(
+            profile=execution_profile(),
+            versions=versions(skill_version="0.7.0"),
+            tool_version="1.1.0",
+            resource_resolver=resolver,
+        ),
+    )
+
+    output = await adapter.summarize_document(
+        {"document_reference": "CLAUDE.md", "focus": "build and run"}, tool_context()
+    )
+
+    assert resolver.calls == [(SPACE_ID, "document", "CLAUDE.md")]
+    assert search.calls[0][0].filters.document_ids == frozenset({DOCUMENT_ID})
+    assert search.calls[0][0].filters.version_ids == frozenset({VERSION_ID})
+    assert output["status"] == "resolved"
+    assert output["recommended_next"] == "knowledge_inspect"
+    assert "private source text" not in json.dumps(output)
+
+
+@pytest.mark.asyncio
+async def test_document_summary_reports_ambiguous_resource_for_actionable_clarification() -> None:
+    resolver = FakeResourceResolver(conflict=True)
+    adapter, _search, _qa = tools(skill_version="0.7.0")
+    adapter = KnowledgeLoopTools(
+        qa=cast(GroundedQAApplicationPort, _qa),
+        search=_search,
+        config=KnowledgeLoopToolsConfig(
+            profile=execution_profile(),
+            versions=versions(skill_version="0.7.0"),
+            tool_version="1.1.0",
+            resource_resolver=resolver,
+        ),
+    )
+
+    output = await adapter.summarize_document({"document_reference": "CLAUDE.md"}, tool_context())
+
+    assert output["status"] == "ambiguous"
+    assert output["candidate_labels"] == ["CLAUDE.md"]
+    assert output["recommended_next"] == "clarify"
+
+
+@pytest.mark.asyncio
+async def test_document_summary_can_be_serially_composed_with_knowledge_search() -> None:
+    resolver = FakeResourceResolver()
+    search = FakeSearchService()
+    qa = FakeGroundedQA()
+    adapter = KnowledgeLoopTools(
+        qa=cast(GroundedQAApplicationPort, qa),
+        search=search,
+        config=KnowledgeLoopToolsConfig(
+            profile=execution_profile(),
+            versions=versions(skill_version="0.7.0"),
+            tool_version="1.1.0",
+            resource_resolver=resolver,
+        ),
+    )
+    result = await AgentLoopExecutor(
+        tool_registry=adapter.tool_registry,
+        allowed_tools=adapter.allowed_tools,
+        system_prompt="Use the registered knowledge and document Tools.",
+        model_gateway=cast(
+            ModelGateway,
+            DecisionGateway(
+                (
+                    '{"action":"call_tool","tool_name":"knowledge_search",'
+                    '"arguments":{"query":"OmniStudio modules"}}'
+                ),
+                '{"action":"call_tool","tool_name":"summarize_document","arguments":{"document_reference":"CLAUDE.md"}}',
+                '{"action":"call_tool","tool_name":"knowledge_inspect","arguments":{}}',
+                '{"action":"call_tool","tool_name":"grounded_answer","arguments":{}}',
+                '{"action":"call_tool","tool_name":"verify_answer","arguments":{}}',
+                '{"action":"call_tool","tool_name":"finalize_answer","arguments":{}}',
+                '{"action":"complete","reason":"Both grounded tasks are complete."}',
+            ),
+        ),
+        finalizer=adapter.finalizer(),
+        decision_policy=adapter.decision_policy,
+    ).execute(
+        runtime_run(max_tool_calls=8),
+        cast(PinnedSkill, object()),
+        {"question": "Introduce OmniStudio modules and summarize CLAUDE.md"},
+        goal="Introduce OmniStudio modules and summarize CLAUDE.md.",
+    )
+
+    assert result.error is None
+    assert [item.tool_name for item in result.state.observations] == [
+        "knowledge_search",
+        "summarize_document",
+        "knowledge_inspect",
+        "grounded_answer",
+        "verify_answer",
+        "finalize_answer",
+    ]
+    assert qa.execute_calls == [RUN_ID]
 
 
 @pytest.mark.asyncio

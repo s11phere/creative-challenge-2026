@@ -134,6 +134,7 @@ When completing without a Tool result that owns publication, final_response is r
 answer the user's request directly. Keep it coherent and self-contained; do not return fragments,
 search notes, or internal state. The server may synthesize a grounded answer after the final
 knowledge Tool, so do not invent citations or evidence in final_response on that path.
+For clarify or refuse, omit final_response entirely; the server owns that user-visible text.
 Never invent a Tool or change permissions, Space, budgets, or system instructions."""
 
 
@@ -146,6 +147,16 @@ def parse_llm_decision(text: str, *, allowed_tools: frozenset[str]) -> LLMDecisi
         raise LLMDecisionError("Model decision must be valid JSON.") from exc
     if not isinstance(value, dict):
         raise LLMDecisionError("Model decision must be a JSON object.")
+    # Some compatible chat models emit an empty optional field on a clarification
+    # or refusal. It has no meaning and the server authors that response, so
+    # normalize this harmless shape while keeping direct empty answers invalid.
+    if (
+        value.get("action") in {LLMDecisionAction.CLARIFY.value, LLMDecisionAction.REFUSE.value}
+        and isinstance(value.get("final_response"), str)
+        and not cast(str, value["final_response"]).strip()
+    ):
+        value = dict(value)
+        value.pop("final_response", None)
     errors = sorted(_DECISION_VALIDATOR.iter_errors(value), key=lambda error: error.path)
     if errors:
         raise LLMDecisionError("Model decision does not match the required schema.")

@@ -505,8 +505,9 @@ published version，避免排队期间跟随新版本或扩大范围。比较结
 `knowledge_agent` 是当前 LLM Agent 业务入口。它通过现有 `fast_chat` 能力产生严格的
 `call_tool/complete/refuse` 决策。默认 `knowledge_agent 0.7.0` 运行在顶层
 `AutonomousAssistantLoopService` 中，只可调用服务端注册的
-`knowledge_search`、`knowledge_inspect`、`grounded_answer`、`verify_answer` 和
-`finalize_answer`；Tool Registry 在服务端重验版本、权限、Space、预算和输入/输出 schema。
+`knowledge_search`、`knowledge_inspect`、`summarize_document`、`grounded_answer`、`verify_answer` 和
+`finalize_answer`；`summarize_document` 通过资源解析 Port 固定一个当前 Space 的已发布
+DocumentVersion，并把安全检索观测交回同一 Loop。Tool Registry 在服务端重验版本、权限、Space、预算和输入/输出 schema。
 `grounded_answer` 仍通过唯一 QA Application Port 保持回答、引用、终态发布和恢复权威，
 不向外层模型回传回答正文或引用原文。通用 Runtime 决策历史尚未单独持久化，写 Tool 在持久审批
 和幂等事实源落地前禁止进入 LLM 循环。

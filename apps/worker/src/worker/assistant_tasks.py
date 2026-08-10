@@ -143,6 +143,7 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
     async def _versions(skill_name: str) -> QARunVersions:
         return qa_execution_versions(registry, skill_name=skill_name)
 
+    resources = PostgresAssistantResourceResolver(database)
     projection = AssistantQASkillProjection(
         repository=qa_repository,
         parent_runs=runs,
@@ -154,7 +155,7 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
         catalog=FileSystemSkillCatalog(registry, include_manifest_v2=True),
         registry=registry,
         projection=projection,
-        resources=PostgresAssistantResourceResolver(database),
+        resources=resources,
     )
     legacy_service = AssistantAgentService(
         runs=runs,
@@ -241,20 +242,42 @@ async def _autonomous_loop_service(
     trace_id: str,
 ) -> AutonomousAssistantLoopService:
     """Build the top-level Loop from existing QA ports and trusted Skill packages."""
-    from agent_runtime import FileSystemSkillRegistry
+    from agent_runtime import FileSystemSkillRegistry, SkillRegistryError
 
     skill_registry = registry
     assert isinstance(skill_registry, FileSystemSkillRegistry)
+    resources = PostgresAssistantResourceResolver(database)
     assistant_pin = skill_registry.pin("assistant_agent", "0.1.0")
     assistant_package = skill_registry.validate_pin(assistant_pin)
     knowledge_pin = skill_registry.pin("knowledge_agent")
-    knowledge_package = skill_registry.validate_pin(knowledge_pin)
+    active_skill_contexts: list[AssistantSkillContext] = []
+    for skill_name in skill_registry.names():
+        try:
+            active_pin = skill_registry.pin(skill_name)
+        except SkillRegistryError:
+            # The assistant package is pinned explicitly and is not an active
+            # user-facing Skill; only expose activated catalog entries.
+            continue
+        active_package = skill_registry.validate_pin(active_pin)
+        active_instructions = "\n\n".join(
+            (active_package.root / prompt).read_text(encoding="utf-8")
+            for prompt in active_package.manifest.prompts
+        )
+        active_skill_contexts.append(
+            AssistantSkillContext(
+                name=active_pin.name,
+                version=active_pin.version,
+                description=active_package.manifest.description,
+                instructions=active_instructions,
+            )
+        )
     trace = QADebugTrace.from_settings(run_id=run_id, trace_id=trace_id, settings=settings)
     await trace.record(
         "run_started",
         skill_name=assistant_pin.name,
         skill_version=assistant_pin.version,
         knowledge_skill_version=knowledge_pin.version,
+        active_skill_names=tuple(context.name for context in active_skill_contexts),
     )
     qa_executor = GroundedQAExecutor(
         database=database,
@@ -272,7 +295,7 @@ async def _autonomous_loop_service(
     )
     versions = qa_execution_versions(skill_registry, skill_name="knowledge_agent")
 
-    async def ensure_qa_run(tool_context: object) -> QARunRecord:
+    async def ensure_qa_run(tool_context: object, retrieval_scope: QARetrievalScope) -> QARunRecord:
         from agent_runtime import ToolExecutionContext
 
         assert isinstance(tool_context, ToolExecutionContext)
@@ -292,7 +315,7 @@ async def _autonomous_loop_service(
                 caller_id=parent.caller_id,
                 idempotency_key=parent.idempotency_key,
                 versions=versions,
-                retrieval_scope=QARetrievalScope(),
+                retrieval_scope=retrieval_scope,
             )
         )
         if created.status is QAStatus.CREATED:
@@ -306,15 +329,12 @@ async def _autonomous_loop_service(
             profile=qa_executor.profile,
             versions=versions,
             tool_version="1.1.0",
+            resource_resolver=resources,
         ),
         result_reader=qa_repository.get_run,
         ensure_qa_run=ensure_qa_run,
     )
     tools.replace_tool_registry(TracingToolRegistry(tools.tool_registry, trace))
-    instructions = "\n\n".join(
-        (knowledge_package.root / prompt).read_text(encoding="utf-8")
-        for prompt in knowledge_package.manifest.prompts
-    )
     return AutonomousAssistantLoopService(
         runs=runs,
         messages=qa_repository,
@@ -334,14 +354,7 @@ async def _autonomous_loop_service(
             gateway=TracingModelGateway(gateway, trace, phase="assistant_finalization"),
         ),
         decision_policy=tools.decision_policy,
-        skill_contexts=(
-            AssistantSkillContext(
-                name=knowledge_pin.name,
-                version=knowledge_pin.version,
-                description=knowledge_package.manifest.description,
-                instructions=instructions,
-            ),
-        ),
+        skill_contexts=tuple(active_skill_contexts),
         context=context,
         metrics=metrics,
     )
@@ -468,8 +481,11 @@ def recover_assistant_runs_sync() -> tuple[UUID, ...]:
     asyncio.set_event_loop(loop)
     try:
         runs = PostgresConversationRunRepository(database)
-        run_ids = loop.run_until_complete(runs.prepare_assistant_recovery())
-        run_ids += loop.run_until_complete(runs.prepare_context_compaction_recovery())
+        run_ids: tuple[UUID, ...] = loop.run_until_complete(runs.prepare_assistant_recovery())
+        context_run_ids: tuple[UUID, ...] = loop.run_until_complete(
+            runs.prepare_context_compaction_recovery()
+        )
+        run_ids = (*run_ids, *context_run_ids)
     finally:
         loop.close()
     for run_id in run_ids:
