@@ -6,4 +6,5 @@ logic remain authoritative. Event payloads are summaries only and must not conta
 bodies, document excerpts, credentials, or complete command output.
 
 The contracts are independently versioned so the existing Assistant v1/v2 and QA projections can
-remain readable during staged rollout. Changes require a new schema version and a manifest hash.
+remain readable during staged rollout. Incompatible changes require a new schema version; compatible
+additions update the frozen manifest hash.

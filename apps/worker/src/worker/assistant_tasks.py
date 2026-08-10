@@ -8,6 +8,7 @@ from contextlib import suppress
 from uuid import UUID, uuid4
 
 import dramatiq
+from agent_runtime import ToolRef
 from application.assistant import (
     AssistantAgentService,
     AssistantMetrics,
@@ -335,6 +336,24 @@ async def _autonomous_loop_service(
         ensure_qa_run=ensure_qa_run,
     )
     tools.replace_tool_registry(TracingToolRegistry(tools.tool_registry, trace))
+    knowledge_tool_skill = ToolRef(knowledge_pin.name, knowledge_pin.version)
+    tool_skill_refs = {
+        tools.search_tool.ref: knowledge_tool_skill,
+        tools.inspect_tool.ref: knowledge_tool_skill,
+        tools.answer_tool.ref: knowledge_tool_skill,
+        tools.verify_tool.ref: knowledge_tool_skill,
+        tools.finalize_tool.ref: knowledge_tool_skill,
+    }
+    summary_context = next(
+        (context for context in active_skill_contexts if context.name == "summarize_document"),
+        None,
+    )
+    if tools.summary_tool is not None:
+        tool_skill_refs[tools.summary_tool.ref] = (
+            ToolRef(summary_context.name, summary_context.version)
+            if summary_context is not None
+            else knowledge_tool_skill
+        )
     return AutonomousAssistantLoopService(
         runs=runs,
         messages=qa_repository,
@@ -354,6 +373,7 @@ async def _autonomous_loop_service(
             gateway=TracingModelGateway(gateway, trace, phase="assistant_finalization"),
         ),
         decision_policy=tools.decision_policy,
+        tool_skill_refs=tool_skill_refs,
         skill_contexts=tuple(active_skill_contexts),
         context=context,
         metrics=metrics,

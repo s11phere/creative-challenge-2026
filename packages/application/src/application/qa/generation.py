@@ -247,49 +247,55 @@ class GroundedAnswerGenerator:
         await self._check_cancelled()
 
         responses: list[ChatResponse] = []
-        draft: StructuredQADraft | None = None
-        candidate_text: str | None = None
-        for attempt in range(self._profile.max_repair_attempts + 1):
-            request = (
-                self._initial_request(context)
-                if attempt == 0
-                else self._repair_request(candidate_text or "")
-            )
+        request = self._initial_request(context)
+        while len(responses) < self._profile.max_model_calls:
             await self._check_cancelled()
             response = await self._chat(request)
             responses.append(response)
             await self._check_cancelled()
-            candidate_text = response.text
             try:
                 if response.finish_reason not in {None, "stop"}:
                     raise StructuredOutputError("Model output did not finish normally")
                 draft = self._parser.parse(response.text)
-                break
             except StructuredOutputError:
-                if attempt == self._profile.max_repair_attempts:
+                if len(responses) == self._profile.max_model_calls:
                     raise QAError(
                         QAErrorCode.STRUCTURED_RESPONSE_INVALID,
                         "The model returned an invalid structured response.",
                     ) from None
-        assert draft is not None
+                request = self._repair_request(response.text)
+                continue
 
-        await self._check_cancelled()
-        result, verification = await self._materialize(
-            draft=draft,
-            space_id=question.space_id,
-            evidence=evidence,
-        )
-        return GenerationResult(
-            result=result,
-            identity=self._identity,
-            verification=verification,
-            usage=GenerationUsage(
-                model_calls=len(responses),
-                repair_attempts=len(responses) - 1,
-                input_tokens=sum(response.usage.input_tokens for response in responses),
-                output_tokens=sum(response.usage.output_tokens for response in responses),
-                model_latency_ms=sum(response.latency_ms for response in responses),
-            ),
+            await self._check_cancelled()
+            try:
+                result, verification = await self._materialize(
+                    draft=draft,
+                    space_id=question.space_id,
+                    evidence=evidence,
+                )
+            except QAError as exc:
+                if (
+                    exc.code is QAErrorCode.CITATION_INVALID
+                    and _references_unknown_evidence(draft, evidence)
+                    and len(responses) < self._profile.max_model_calls
+                ):
+                    request = self._citation_repair_request(context)
+                    continue
+                raise
+            return GenerationResult(
+                result=result,
+                identity=self._identity,
+                verification=verification,
+                usage=GenerationUsage(
+                    model_calls=len(responses),
+                    repair_attempts=len(responses) - 1,
+                    input_tokens=sum(response.usage.input_tokens for response in responses),
+                    output_tokens=sum(response.usage.output_tokens for response in responses),
+                    model_latency_ms=sum(response.latency_ms for response in responses),
+                ),
+            )
+        raise QAError(
+            QAErrorCode.STRUCTURED_RESPONSE_INVALID, "QA generation exhausted its budget."
         )
 
     async def _chat(self, request: ChatRequest) -> ChatResponse:
@@ -515,6 +521,31 @@ class GroundedAnswerGenerator:
             max_tokens=self._profile.max_output_tokens,
         )
 
+    def _citation_repair_request(self, context: ContextBundle) -> ChatRequest:
+        system = "\n".join(
+            (
+                *context.system_rules,
+                self._prompt_contract,
+                self._parser.format_instruction,
+                "Regenerate the complete answer. Every cited evidence_id must exactly match an "
+                "evidence block supplied below. Do not invent, transform, or retain any other ID.",
+            )
+        )
+        user_sections = [f"<question>\n{context.question}\n</question>"]
+        user_sections.extend(
+            f'<history role="{turn.role.value}">\n{turn.content}\n</history>'
+            for turn in context.history
+        )
+        user_sections.extend(item.rendered_block for item in context.evidence)
+        return ChatRequest(
+            messages=(
+                ChatMessage(ChatRole.SYSTEM, system),
+                ChatMessage(ChatRole.USER, "\n".join(user_sections)),
+            ),
+            temperature=self._profile.temperature,
+            max_tokens=self._profile.max_output_tokens,
+        )
+
 
 def _decode_claim(value: Any) -> StructuredClaimDraft:
     assert isinstance(value, dict)
@@ -523,6 +554,20 @@ def _decode_claim(value: Any) -> StructuredClaimDraft:
         text=str(value["text"]),
         evidence_ids=tuple(_uuid_list(value["evidence_ids"])),
     )
+
+
+def _references_unknown_evidence(
+    draft: StructuredQADraft, evidence: tuple[EvidenceCandidate, ...]
+) -> bool:
+    if isinstance(draft, StructuredRefusalDraft):
+        return False
+    referenced = (
+        draft.evidence_ids
+        if isinstance(draft, StructuredConflictDraft)
+        else tuple(evidence_id for claim in draft.claims for evidence_id in claim.evidence_ids)
+    )
+    allowed = {candidate.evidence_id for candidate in evidence}
+    return bool(set(referenced) - allowed)
 
 
 def _string_list(value: Any) -> list[str]:

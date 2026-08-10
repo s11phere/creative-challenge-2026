@@ -11,7 +11,7 @@
     "sequence": {"type": "integer", "minimum": 1},
     "event_type": {
       "enum": [
-        "iteration_started", "tool_requested", "tool_started", "tool_output",
+        "skill_activated", "iteration_started", "tool_requested", "tool_started", "tool_output",
         "approval_required", "checkpoint_saved", "finalizing", "accepted", "completed",
         "clarifying", "refused", "failed", "cancelled", "timed_out"
       ]
@@ -25,6 +25,22 @@
           "maxLength": 512,
           "pattern": "^[^\\u0000-\\u001F]*$",
           "description": "Bounded caller retrieval question; emitted only for knowledge_search."
+        },
+        "resource_reference": {
+          "type": "string",
+          "maxLength": 280,
+          "pattern": "^[^\\u0000-\\u001F]*$",
+          "description": "Bounded named document; emitted only for summarize_document."
+        },
+        "skill_name": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Pinned Skill name emitted with a skill_activated event."
+        },
+        "skill_version": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Pinned Skill version emitted with a skill_activated event."
         }
       },
       "propertyNames": {

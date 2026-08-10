@@ -110,3 +110,48 @@ def test_agent_run_event_contract_accepts_bounded_query_preview_and_rejects_cont
             },
             event_key="generic-preview",
         )
+
+
+def test_agent_run_event_contract_accepts_safe_skill_and_document_details() -> None:
+    run_id = UUID("00000000-0000-4000-8000-000000000094")
+    activation = AgentRunStreamEvent(
+        run_id=run_id,
+        sequence=1,
+        event_type=AgentRunEventType.SKILL_ACTIVATED,
+        payload={
+            "status": "activated",
+            "iteration": 0,
+            "skill_name": "assistant_agent",
+            "skill_version": "0.1.0",
+        },
+        event_key="skill-activated",
+    )
+    assert activation.payload["skill_name"] == "assistant_agent"
+    document = AgentRunStreamEvent(
+        run_id=run_id,
+        sequence=2,
+        event_type=AgentRunEventType.TOOL_REQUESTED,
+        payload={
+            "status": "requested",
+            "iteration": 1,
+            "tool_name": "summarize_document",
+            "tool_version": "1.1.0",
+            "resource_reference": "CLAUDE.md",
+        },
+        event_key="document-reference",
+    )
+    assert document.payload["resource_reference"] == "CLAUDE.md"
+    with pytest.raises(AgentRunEventContractError):
+        AgentRunStreamEvent(
+            run_id=run_id,
+            sequence=3,
+            event_type=AgentRunEventType.TOOL_OUTPUT,
+            payload={
+                "status": "succeeded",
+                "iteration": 1,
+                "tool_name": "knowledge_search",
+                "tool_version": "1.1.0",
+                "resource_reference": "CLAUDE.md",
+            },
+            event_key="invalid-document-reference",
+        )

@@ -24,6 +24,7 @@ class AgentRunEventConflictError(AgentRunEventContractError):
 
 class AgentRunEventType(StrEnum):
     ACCEPTED = "accepted"
+    SKILL_ACTIVATED = "skill_activated"
     ITERATION_STARTED = "iteration_started"
     TOOL_REQUESTED = "tool_requested"
     TOOL_STARTED = "tool_started"
@@ -73,11 +74,14 @@ _PAYLOAD_KEYS = frozenset(
         "provider",
         "publication_id",
         "query_preview",
+        "resource_reference",
         "reasoning_profile_schema_version",
         "requested_effort",
         "retry_count",
         "status",
         "stop_reason",
+        "skill_name",
+        "skill_version",
         "tool_call_count",
         "tool_name",
         "tool_version",
@@ -249,6 +253,28 @@ def _validate_payload(event_type: AgentRunEventType, payload: Mapping[str, Any])
         raise AgentRunEventContractError(
             "Agent Run query preview is restricted to knowledge_search Tool events"
         )
+    if "resource_reference" in keys and (
+        event_type
+        not in {
+            AgentRunEventType.TOOL_REQUESTED,
+            AgentRunEventType.TOOL_STARTED,
+            AgentRunEventType.TOOL_OUTPUT,
+            AgentRunEventType.APPROVAL_REQUIRED,
+        }
+        or payload.get("tool_name") != "summarize_document"
+    ):
+        raise AgentRunEventContractError(
+            "Agent Run resource reference is restricted to summarize_document Tool events"
+        )
+    if event_type is AgentRunEventType.SKILL_ACTIVATED and (
+        payload.get("status") != "activated"
+        or not isinstance(payload.get("iteration"), int)
+        or not isinstance(payload.get("skill_name"), str)
+        or not isinstance(payload.get("skill_version"), str)
+    ):
+        raise AgentRunEventContractError(
+            "Skill activation events require a status, iteration, name, and version"
+        )
     if event_type in AGENT_RUN_TERMINAL_EVENT_TYPES and not isinstance(payload.get("status"), str):
         raise AgentRunEventContractError("terminal Agent Run events require a safe status")
     for key, value in payload.items():
@@ -258,14 +284,14 @@ def _validate_payload(event_type: AgentRunEventType, payload: Mapping[str, Any])
         elif key in _BOOLEAN_PAYLOAD_KEYS:
             if not isinstance(value, bool):
                 raise AgentRunEventContractError("Agent Run event completion flag is invalid")
-        elif key == "query_preview":
+        elif key in {"query_preview", "resource_reference"}:
             if (
                 not isinstance(value, str)
                 or not value
-                or len(value) > 512
+                or len(value) > (512 if key == "query_preview" else 280)
                 or any(not character.isprintable() for character in value)
             ):
-                raise AgentRunEventContractError("Agent Run query preview is invalid")
+                raise AgentRunEventContractError("Agent Run event preview is invalid")
         elif not isinstance(value, str) or not value or len(value) > 512 or "\n" in value:
             raise AgentRunEventContractError("Agent Run event summary is invalid")
 

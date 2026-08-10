@@ -325,16 +325,35 @@ async def test_second_invalid_response_fails_without_a_partial_result() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unknown_evidence_id_is_a_citation_failure_and_is_not_repaired() -> None:
+async def test_unknown_evidence_id_is_repaired_once_with_current_run_evidence_only() -> None:
     evidence = (_candidate(1),)
-    gateway = ScriptedChatGateway((_answer_payload(UNKNOWN_EVIDENCE_ID),))
+    gateway = ScriptedChatGateway(
+        (_answer_payload(UNKNOWN_EVIDENCE_ID), _answer_payload(evidence[0].evidence_id))
+    )
+    generator, _targets = _generator(gateway=gateway, evidence=evidence)
+
+    generated = await generator.generate(question=_question(), context=_context(evidence))
+
+    assert generated.result.outcome is QAOutcome.ANSWER
+    assert generated.usage.model_calls == 2
+    assert generated.usage.repair_attempts == 1
+    assert "Every cited evidence_id must exactly match" in gateway.requests[1].messages[0].content
+    assert str(evidence[0].evidence_id) in gateway.requests[1].messages[1].content
+
+
+@pytest.mark.asyncio
+async def test_repeated_unknown_evidence_ids_remain_a_citation_failure() -> None:
+    evidence = (_candidate(1),)
+    gateway = ScriptedChatGateway(
+        (_answer_payload(UNKNOWN_EVIDENCE_ID), _answer_payload(UNKNOWN_EVIDENCE_ID))
+    )
     generator, _targets = _generator(gateway=gateway, evidence=evidence)
 
     with pytest.raises(QAError) as error:
         await generator.generate(question=_question(), context=_context(evidence))
 
     assert error.value.code is QAErrorCode.CITATION_INVALID
-    assert len(gateway.requests) == 1
+    assert len(gateway.requests) == 2
 
 
 @pytest.mark.asyncio

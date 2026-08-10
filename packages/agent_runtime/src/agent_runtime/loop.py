@@ -116,6 +116,7 @@ class AgentLoopExecutor:
         max_tokens_per_decision: int = 512,
         cancellation_check: CancellationCheck | None = None,
         decision_policy: DecisionPolicy | None = None,
+        tool_skill_refs: Mapping[ToolRef, ToolRef] | None = None,
         clock_ms: ClockMilliseconds | None = None,
     ) -> None:
         names = tuple(ref.name for ref in allowed_tools)
@@ -137,6 +138,7 @@ class AgentLoopExecutor:
         self._max_tokens_per_decision = max_tokens_per_decision
         self._cancellation_check = cancellation_check or _not_cancelled
         self._decision_policy = decision_policy
+        self._tool_skill_refs = dict(tool_skill_refs or {})
         self._clock_ms = clock_ms or _monotonic_ms
 
     async def execute(
@@ -203,8 +205,21 @@ class AgentLoopExecutor:
         base_elapsed_ms = run.usage.elapsed_ms
         definitions = tuple(self._tool_registry.get(ref) for ref in self._allowed_tools)
         by_name = {definition.name: definition for definition in definitions}
-        for definition in definitions:
-            if not definition.model_visible:
+        activated_skill_refs: set[ToolRef] = {
+            ToolRef(run.context.skill_name, run.context.skill_version)
+        }
+        activated_skill_refs.update(
+            skill_ref
+            for observation in state.observations
+            if (
+                skill_ref := self._tool_skill_refs.get(
+                    ToolRef(observation.tool_name, observation.tool_version)
+                )
+            )
+            is not None
+        )
+        for tool_definition in definitions:
+            if not tool_definition.model_visible:
                 raise NodeExecutionError(
                     code=ToolRegistryErrorCode.MODEL_OUTPUT_DENIED.value,
                     category=RunErrorCategory.PERMISSION,
@@ -245,6 +260,14 @@ class AgentLoopExecutor:
                     "continuation": "checkpoint",
                 },
                 event_key="accepted",
+            )
+            await self._emit_skill_activated(
+                run,
+                ToolRef(run.context.skill_name, run.context.skill_version),
+                iteration=0,
+                event_key=(
+                    f"skill_activated:root:{run.context.skill_name}:{run.context.skill_version}"
+                ),
             )
             run, state = self._activate(run, state, approval_id)
             if state.phase is AgentLoopPhase.WAITING_APPROVAL:
@@ -322,7 +345,13 @@ class AgentLoopExecutor:
                     return await self._finalize_decision(run, state, input_data, decision)
 
                 assert decision.tool_name is not None
-                definition = by_name[decision.tool_name]
+                definition = by_name.get(decision.tool_name)
+                if definition is None:
+                    raise NodeExecutionError(
+                        code="RUN_LLM_DECISION_INVALID",
+                        category=RunErrorCategory.SCHEMA,
+                        message="Server policy selected an unregistered Tool.",
+                    )
                 invocation = ToolInvocation(
                     ref=definition.ref,
                     arguments=decision.arguments,
@@ -346,6 +375,15 @@ class AgentLoopExecutor:
                         category=RunErrorCategory.BUDGET,
                         message="Agent Loop repeated a Tool request without progress.",
                     ) from exc
+                skill_ref = self._tool_skill_refs.get(definition.ref)
+                if skill_ref is not None and skill_ref not in activated_skill_refs:
+                    await self._emit_skill_activated(
+                        run,
+                        skill_ref,
+                        iteration=state.iteration,
+                        event_key=f"skill_activated:{skill_ref.name}:{skill_ref.version}",
+                    )
+                    activated_skill_refs.add(skill_ref)
                 await self._emit(
                     run,
                     AgentRunEventType.TOOL_REQUESTED,
@@ -357,6 +395,7 @@ class AgentLoopExecutor:
                         "input_summary": _summary_digest(decision.arguments),
                         "retry_count": 0,
                         **_query_preview_payload(definition, decision.arguments),
+                        **_resource_reference_payload(definition, decision.arguments),
                     },
                     event_key=f"iteration:{state.iteration}:tool_requested",
                 )
@@ -376,6 +415,7 @@ class AgentLoopExecutor:
                             "input_summary": _summary_digest(decision.arguments),
                             "retry_count": 0,
                             **_query_preview_payload(definition, decision.arguments),
+                            **_resource_reference_payload(definition, decision.arguments),
                         },
                         event_key=f"iteration:{state.iteration}:approval_required",
                     )
@@ -559,6 +599,7 @@ class AgentLoopExecutor:
                     "input_summary": _summary_digest(invocation.arguments),
                     "retry_count": invocation.retry_count,
                     **_query_preview_payload(definition, invocation.arguments),
+                    **_resource_reference_payload(definition, invocation.arguments),
                 },
                 event_key=f"iteration:{iteration}:tool_started:{invocation.retry_count}",
             )
@@ -587,6 +628,7 @@ class AgentLoopExecutor:
                         ),
                         duration_ms=record.duration_ms if record is not None else 0,
                         query_preview=_query_preview(definition, invocation.arguments),
+                        resource_reference=_resource_reference(definition, invocation.arguments),
                     ),
                     event_key=f"iteration:{iteration}:tool_output:{invocation.retry_count}",
                 )
@@ -620,6 +662,7 @@ class AgentLoopExecutor:
                     retry_count=result.record.retry_count,
                     duration_ms=result.record.duration_ms,
                     query_preview=_query_preview(definition, invocation.arguments),
+                    resource_reference=_resource_reference(definition, invocation.arguments),
                 ),
                 event_key=f"iteration:{iteration}:tool_output:{invocation.retry_count}",
             )
@@ -788,6 +831,26 @@ class AgentLoopExecutor:
             event_key=event_key,
         )
 
+    async def _emit_skill_activated(
+        self,
+        run: AgentRun,
+        skill: ToolRef,
+        *,
+        iteration: int,
+        event_key: str,
+    ) -> None:
+        await self._emit(
+            run,
+            AgentRunEventType.SKILL_ACTIVATED,
+            {
+                "status": "activated",
+                "iteration": iteration,
+                "skill_name": skill.name,
+                "skill_version": skill.version,
+            },
+            event_key=event_key,
+        )
+
     def _activate(
         self, run: AgentRun, state: AgentLoopState, approval_id: str | None
     ) -> tuple[AgentRun, AgentLoopState]:
@@ -854,6 +917,28 @@ def _query_preview_payload(
     return {"query_preview": preview} if preview is not None else {}
 
 
+def _resource_reference(
+    definition: ToolDefinition, arguments: Mapping[str, JSONValue]
+) -> str | None:
+    """Return the bounded named document selected for the summary Tool only."""
+    if definition.name != "summarize_document":
+        return None
+    value = arguments.get("document_reference")
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(
+        "".join(character if character.isprintable() else " " for character in value).split()
+    )
+    return normalized[:280] or None
+
+
+def _resource_reference_payload(
+    definition: ToolDefinition, arguments: Mapping[str, JSONValue]
+) -> dict[str, str]:
+    reference = _resource_reference(definition, arguments)
+    return {"resource_reference": reference} if reference is not None else {}
+
+
 def _tool_event_payload(
     definition: ToolDefinition,
     *,
@@ -865,6 +950,7 @@ def _tool_event_payload(
     retry_count: int,
     duration_ms: int,
     query_preview: str | None = None,
+    resource_reference: str | None = None,
 ) -> dict[str, str | int]:
     payload: dict[str, str | int] = {
         "status": status,
@@ -880,6 +966,8 @@ def _tool_event_payload(
         payload["error_code"] = error_code
     if query_preview is not None:
         payload["query_preview"] = query_preview
+    if resource_reference is not None:
+        payload["resource_reference"] = resource_reference
     return payload
 
 

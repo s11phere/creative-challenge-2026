@@ -436,6 +436,9 @@ describe('assistant conversation workspace', () => {
       { schema_version: 'agent-run-sse-v3', event_id: 'event-14', run_id: 'run-1', sequence: 14, occurred_at: '2026-08-09T10:00:14Z', event_type: 'tool_output', payload: { status: 'failed', iteration: 4, tool_name: 'write_file', tool_version: '1.0.0', input_summary: 'sha256:input-4', output_summary: 'sha256:unavailable', error_code: 'APPROVAL_REJECTED', retry_count: 0, duration_ms: 0 } },
       { schema_version: 'agent-run-sse-v3', event_id: 'event-15', run_id: 'run-1', sequence: 15, occurred_at: '2026-08-09T10:00:15Z', event_type: 'finalizing', payload: { status: 'finalizing', iteration: 4, stop_reason: 'goal_complete', goal_complete: true, evidence_sufficient: true, has_conflict: false, publication_id: 'publication-1' } },
       { schema_version: 'agent-run-sse-v3', event_id: 'event-16', run_id: 'run-1', sequence: 16, occurred_at: '2026-08-09T10:00:16Z', event_type: 'completed', payload: { status: 'completed', iteration: 4, stop_reason: 'goal_complete', publication_id: 'publication-1' } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-17', run_id: 'run-1', sequence: 17, occurred_at: '2026-08-09T10:00:17Z', event_type: 'skill_activated', payload: { status: 'activated', iteration: 0, skill_name: 'assistant_agent', skill_version: '0.1.0' } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-18', run_id: 'run-1', sequence: 18, occurred_at: '2026-08-09T10:00:18Z', event_type: 'tool_requested', payload: { status: 'requested', iteration: 5, tool_name: 'summarize_document', tool_version: '1.1.0', input_summary: 'sha256:input-5', resource_reference: 'CLAUDE.md', retry_count: 0 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-19', run_id: 'run-1', sequence: 19, occurred_at: '2026-08-09T10:00:19Z', event_type: 'tool_output', payload: { status: 'succeeded', iteration: 5, tool_name: 'summarize_document', tool_version: '1.1.0', input_summary: 'sha256:input-5', resource_reference: 'CLAUDE.md', output_summary: 'sha256:output-5', retry_count: 0, duration_ms: 126 } },
     ]
     const fetchMock = baseFetch({
       conversations: [{
@@ -453,7 +456,7 @@ describe('assistant conversation workspace', () => {
       if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) return Promise.resolve(response({ conversations: [{ ...conversation, messages: [{ message_id: 'message-1', role: 'user', content: 'Explain the architecture.', run_id: null, created_at: '2026-08-09T10:00:00Z' }, { message_id: 'assistant-1', role: 'assistant', content: 'Architecture answer.', run_id: 'run-1', created_at: '2026-08-09T10:01:00Z' }], runs: [] }] }))
       if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [completed] }))
       if (url.includes('/api/v3/runs/run-1/events?after_sequence=0')) return Promise.resolve(response({ schema_version: 'agent-run-event-page-v1', events: events.slice(0, 8), next_sequence: 8, has_more: true }))
-      if (url.includes('/api/v3/runs/run-1/events?after_sequence=8')) return Promise.resolve(response({ schema_version: 'agent-run-event-page-v1', events: events.slice(8), next_sequence: 16, has_more: false }))
+      if (url.includes('/api/v3/runs/run-1/events?after_sequence=8')) return Promise.resolve(response({ schema_version: 'agent-run-event-page-v1', events: events.slice(8), next_sequence: 19, has_more: false }))
       if (url.endsWith('/api/v2/runs/run-1/events')) return Promise.resolve(eventStream([]))
       return Promise.resolve(response({}))
     })
@@ -477,6 +480,12 @@ describe('assistant conversation workspace', () => {
     expect(retrievalTool.querySelector('.chat-agent-tool-details')).toBeVisible()
     expect(screen.getByText('检索问题')).toBeInTheDocument()
     expect(screen.getByText('How is the architecture indexed?')).toBeInTheDocument()
+    expect(screen.getByText(/Skill 已激活/)).toBeInTheDocument()
+    const summaryTool = screen.getByText('summarize_document').closest('details')
+    if (!summaryTool) throw new Error('summary Tool card not rendered')
+    fireEvent.click(screen.getByText('summarize_document'))
+    expect(screen.getByText('目标文档')).toBeInTheDocument()
+    expect(screen.getByText('CLAUDE.md')).toBeInTheDocument()
     const answer = screen.getByText('Architecture answer.')
     expect(timeline.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
   })

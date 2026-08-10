@@ -177,6 +177,10 @@ async def test_top_level_loop_observes_one_skill_adapter_before_selecting_anothe
             ToolRef(research.name, research.version),
             ToolRef(review.name, review.version),
         ),
+        tool_skill_refs={
+            research.ref: ToolRef("research_skill", "1.0.0"),
+            review.ref: ToolRef("summary_skill", "2.0.0"),
+        },
         qa_results=_no_qa_result,
         skill_contexts=(
             AssistantSkillContext(
@@ -214,6 +218,14 @@ async def test_top_level_loop_observes_one_skill_adapter_before_selecting_anothe
     history = await agent_events.page(submitted.run_id, limit=200)
     assert history.events[0].event_type.value == "accepted"
     assert any(event.event_type.value == "tool_output" for event in history.events)
+    activations = [event for event in history.events if event.event_type.value == "skill_activated"]
+    assert [
+        (event.payload["skill_name"], event.payload["skill_version"]) for event in activations
+    ] == [
+        ("assistant_agent", "0.1.0"),
+        ("research_skill", "1.0.0"),
+        ("summary_skill", "2.0.0"),
+    ]
 
 
 @pytest.mark.asyncio

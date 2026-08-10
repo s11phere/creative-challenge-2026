@@ -6,7 +6,7 @@
     "agent-loop-v1.schema.json": "3710dc24335509d3ff8ce352cb4c33e3a2b595686ec9fe9f30c576ec776eda1f",
     "tool-invocation-v1.schema.json": "3d351c0eb550df351e5b1e820d71888f514b53fcf7a3e0592c71d8530ef79d5e",
     "reasoning-profile-v1.schema.json": "05b01f0857450e65cc03c4b75f33ae68d451cfd2b04c42dc3f79e92aee8833dc",
-    "agent-run-sse-v3.schema.json": "edc6d13492e0de52622494bf898193b8fdb85a91c9b3f808fd78e2cdc914d301",
+    "agent-run-sse-v3.schema.json": "4ac1ab8ecb4579da7fc48986ef77effcc7bb59be2fc7ebfa3c75ec1559f697b9",
     "assistant-final-answer-v2.schema.json": "13319de5b7d3dd4bd54fab066849ce2361236bcbe50415d6a584ca00af3fbc35"
   }
 }

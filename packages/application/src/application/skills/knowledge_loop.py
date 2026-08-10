@@ -7,6 +7,7 @@ the sole owner of Evidence, citations, answer publication, and refusal semantics
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol, cast
@@ -549,6 +550,27 @@ class KnowledgeLoopTools:
         facts = self._facts_for(run.context.run_id)
         completed = facts.answer_run
         if self._config.versions.skill_version == "0.7.0":
+            required_document = _explicit_document_summary_reference(state.task.goal)
+            if required_document is not None and not facts.document_skill_used:
+                if self.summary_tool is None:
+                    return LLMDecision(
+                        action=LLMDecisionAction.CLARIFY,
+                        reason="The named document summary capability is unavailable.",
+                    )
+                if decision.action is LLMDecisionAction.CALL_TOOL and (
+                    decision.tool_name in {"knowledge_search", "knowledge_inspect"}
+                    or (
+                        decision.tool_name == "summarize_document"
+                        and _valid_document_summary_arguments(decision.arguments, required_document)
+                    )
+                ):
+                    return decision
+                return LLMDecision(
+                    action=LLMDecisionAction.CALL_TOOL,
+                    tool_name="summarize_document",
+                    arguments={"document_reference": required_document},
+                    reason="server-required explicit document summary",
+                )
             # The outer Assistant shares these Tools with ordinary conversation. Until a
             # knowledge Tool is actually selected, leave direct/clarification decisions alone.
             if not facts.started and any(
@@ -1219,6 +1241,38 @@ def _valid_search_arguments(arguments: Mapping[str, JSONValue]) -> bool:
         and bool(query.strip())
         and len(query) <= 512
     )
+
+
+def _valid_document_summary_arguments(
+    arguments: Mapping[str, JSONValue], required_reference: str
+) -> bool:
+    reference = arguments.get("document_reference")
+    focus = arguments.get("focus")
+    return (
+        set(arguments) <= {"document_reference", "focus"}
+        and isinstance(reference, str)
+        and reference.strip() == required_reference
+        and (focus is None or isinstance(focus, str))
+    )
+
+
+_DOCUMENT_REFERENCE_PATTERN = re.compile(
+    r"(?<![\w.-])([\w][\w.-]{0,255}\.(?:md|markdown|txt|pdf|docx?))(?![\w-]|\.(?=\w))",
+    re.IGNORECASE,
+)
+_DOCUMENT_SUMMARY_INTENT_PATTERN = re.compile(
+    r"摘要|总结|概述|summari[sz]e|summary|recap", re.IGNORECASE
+)
+
+
+def _explicit_document_summary_reference(goal: str) -> str | None:
+    """Find a named file only when nearby request text explicitly asks for a summary."""
+    for match in _DOCUMENT_REFERENCE_PATTERN.finditer(goal):
+        start = max(0, match.start() - 120)
+        end = min(len(goal), match.end() + 120)
+        if _DOCUMENT_SUMMARY_INTENT_PATTERN.search(goal[start:end]):
+            return match.group(1)
+    return None
 
 
 def _require_empty(arguments: dict[str, JSONValue]) -> None:

@@ -214,6 +214,7 @@ class AutonomousAssistantLoopService:
         metrics: AssistantMetrics | None = None,
         conversation_finalizer: ConversationFinalizer | None = None,
         decision_policy: DecisionPolicy | None = None,
+        tool_skill_refs: Mapping[ToolRef, ToolRef] | None = None,
     ) -> None:
         self._runs = runs
         self._messages = messages
@@ -233,6 +234,7 @@ class AutonomousAssistantLoopService:
         self._context = context
         self._metrics = metrics
         self._decision_policy = decision_policy
+        self._tool_skill_refs = dict(tool_skill_refs or {})
 
     async def execute(self, run_id: UUID, *, trace_id: str) -> ConversationRun | None:
         parent = await self._runs.get_conversation_run(run_id)
@@ -290,6 +292,7 @@ class AutonomousAssistantLoopService:
             finalizer=finalizer,
             cancellation_check=self._cancel_requested,
             decision_policy=self._decision_policy,
+            tool_skill_refs=self._tool_skill_refs,
         )
         persisted = await self._runtime_state.get_run(run_id)
         checkpoint = await self._runtime_state.get_latest(run_id)

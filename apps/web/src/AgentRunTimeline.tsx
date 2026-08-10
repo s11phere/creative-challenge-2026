@@ -31,6 +31,13 @@ type ToolTimelineItem = {
   events: AgentRunEvent[]
 }
 
+type SkillActivationItem = {
+  iteration: number
+  skillName: string
+  skillVersion: string
+  event: AgentRunEvent
+}
+
 const terminalEventTypes = new Set([
   'completed', 'clarifying', 'refused', 'failed', 'cancelled', 'timed_out',
 ])
@@ -103,6 +110,21 @@ function mergeToolEvents(events: AgentRunEvent[]): ToolTimelineItem[] {
     .sort((left, right) => left.iteration - right.iteration)
 }
 
+function skillActivations(events: AgentRunEvent[]): SkillActivationItem[] {
+  return events
+    .filter((event) => event.event_type === 'skill_activated')
+    .map((event) => ({
+      iteration: getNumber(event.payload, 'iteration'),
+      skillName: getText(event.payload, 'skill_name'),
+      skillVersion: getText(event.payload, 'skill_version'),
+      event,
+    }))
+    .filter((item): item is SkillActivationItem => (
+      item.iteration !== null && item.skillName !== null && item.skillVersion !== null
+    ))
+    .sort((left, right) => left.event.sequence - right.event.sequence)
+}
+
 function toolStatus(item: ToolTimelineItem): { label: string; state: string; errorCode: string | null } {
   const output = item.events.findLast((event) => event.event_type === 'tool_output')
   const started = item.events.findLast((event) => event.event_type === 'tool_started')
@@ -128,10 +150,12 @@ function toolDetails(item: ToolTimelineItem) {
   const entries: Array<[string, string]> = []
   const inputSummary = getText(source.payload, 'input_summary')
   const queryPreview = getText(source.payload, 'query_preview')
+  const resourceReference = getText(source.payload, 'resource_reference')
   const outputSummary = getText(source.payload, 'output_summary')
   const duration = getNumber(source.payload, 'duration_ms')
   const retryCount = getNumber(source.payload, 'retry_count')
   const errorCode = getText(source.payload, 'error_code')
+  if (resourceReference) entries.push(['目标文档', resourceReference])
   if (queryPreview) entries.push(['检索问题', queryPreview])
   if (inputSummary) entries.push(['输入摘要', inputSummary])
   if (outputSummary) entries.push(['结果摘要', outputSummary])
@@ -191,12 +215,15 @@ export function AgentRunTimeline({
 }: AgentRunTimelineProps) {
   const accepted = events.find((event) => event.event_type === 'accepted')
   const tools = mergeToolEvents(events)
+  const activations = skillActivations(events)
+  const rootActivations = activations.filter((item) => item.iteration === 0)
   const iterations = [...new Set([
     ...events
       .filter((event) => event.event_type === 'iteration_started')
       .map((event) => getNumber(event.payload, 'iteration'))
       .filter((iteration): iteration is number => iteration !== null),
     ...tools.map((tool) => tool.iteration),
+    ...activations.filter((item) => item.iteration > 0).map((item) => item.iteration),
   ])].sort((left, right) => left - right)
   const stopReason = terminalStopReason(events)
   const model = getText(accepted?.payload ?? {}, 'model') ?? run.model_identity
@@ -226,12 +253,26 @@ export function AgentRunTimeline({
         {stopReason && <div><dt>停止原因</dt><dd>{stopReason}</dd></div>}
       </dl>
 
+      {rootActivations.map((activation) => (
+        <p key={activation.event.event_id} className="chat-agent-skill-activation">
+          <BookOpenText size={15} aria-hidden="true" />
+          <span>Skill 已激活：<strong>{activation.skillName}</strong> v{activation.skillVersion}</span>
+        </p>
+      ))}
+
       <ol className="chat-agent-iterations" aria-label="Agent 迭代记录">
         {iterations.map((iteration) => {
           const iterationTools = tools.filter((tool) => tool.iteration === iteration)
+          const iterationActivations = activations.filter((item) => item.iteration === iteration)
           return (
             <li key={iteration} className="chat-agent-iteration">
               <div className="chat-agent-iteration-heading"><Clock3 size={15} aria-hidden="true" /><strong>第 {iteration} 轮</strong></div>
+              {iterationActivations.map((activation) => (
+                <p key={activation.event.event_id} className="chat-agent-skill-activation">
+                  <BookOpenText size={15} aria-hidden="true" />
+                  <span>Skill 已激活：<strong>{activation.skillName}</strong> v{activation.skillVersion}</span>
+                </p>
+              ))}
               {iterationTools.length > 0 ? (
                 <div className="chat-agent-tools">
                   {iterationTools.map((tool) => {

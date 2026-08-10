@@ -171,6 +171,7 @@ export type AssistantRunEvent = {
 
 export type AgentRunEventType =
   | 'accepted'
+  | 'skill_activated'
   | 'iteration_started'
   | 'tool_requested'
   | 'tool_started'
@@ -604,7 +605,7 @@ function parseAgentRunEvent(value: unknown): AgentRunEvent | null {
 
 function isAgentRunEventType(value: unknown): value is AgentRunEventType {
   return typeof value === 'string' && [
-    'accepted', 'iteration_started', 'tool_requested', 'tool_started', 'tool_output',
+    'accepted', 'skill_activated', 'iteration_started', 'tool_requested', 'tool_started', 'tool_output',
     'approval_required', 'checkpoint_saved', 'finalizing', 'completed', 'clarifying',
     'refused', 'failed', 'cancelled', 'timed_out',
   ].includes(value)

@@ -2033,6 +2033,28 @@
   list-style: none;
 }
 
+.chat-agent-skill-activation {
+  min-width: 0;
+  margin: 10px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #356b61;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.chat-agent-skill-activation svg {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+}
+
+.chat-agent-skill-activation strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-weight: 650;
+}
+
 .chat-agent-iteration {
   min-width: 0;
   padding-top: 10px;

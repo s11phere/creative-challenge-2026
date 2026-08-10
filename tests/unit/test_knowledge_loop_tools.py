@@ -392,7 +392,7 @@ async def test_document_summary_can_be_serially_composed_with_knowledge_search()
                     '{"action":"call_tool","tool_name":"knowledge_search",'
                     '"arguments":{"query":"OmniStudio modules"}}'
                 ),
-                '{"action":"call_tool","tool_name":"summarize_document","arguments":{"document_reference":"CLAUDE.md"}}',
+                '{"action":"call_tool","tool_name":"grounded_answer","arguments":{}}',
                 '{"action":"call_tool","tool_name":"knowledge_inspect","arguments":{}}',
                 '{"action":"call_tool","tool_name":"grounded_answer","arguments":{}}',
                 '{"action":"call_tool","tool_name":"verify_answer","arguments":{}}',

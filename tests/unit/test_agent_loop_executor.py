@@ -132,6 +132,7 @@ async def test_loop_observes_multiple_tools_then_finalizes_once() -> None:
     definition = registry.register(tool())
     finalizer = RecordingFinalizer()
     state_store = InMemoryRuntimeStateStore()
+    events = AgentRunEventLog()
     result = await AgentLoopExecutor(
         tool_registry=registry,
         allowed_tools=(ToolRef(definition.name, definition.version),),
@@ -145,7 +146,9 @@ async def test_loop_observes_multiple_tools_then_finalizes_once() -> None:
             ),
         ),
         state_store=state_store,
+        event_store=events,
         finalizer=finalizer,
+        tool_skill_refs={definition.ref: ToolRef("knowledge_agent", "0.7.0")},
     ).execute(
         loop_run(permissions=definition.permissions),
         cast(PinnedSkill, object()),
@@ -162,6 +165,14 @@ async def test_loop_observes_multiple_tools_then_finalizes_once() -> None:
     assert finalizer.calls == 1
     stored = await state_store.get_run(result.run.context.run_id)
     assert stored == result.run
+    history = await events.page(result.run.context.run_id, limit=200)
+    activations = [
+        event for event in history.events if event.event_type is AgentRunEventType.SKILL_ACTIVATED
+    ]
+    assert [(event.payload["skill_name"], event.payload["iteration"]) for event in activations] == [
+        ("loop_fixture", 0),
+        ("knowledge_agent", 1),
+    ]
 
 
 @pytest.mark.asyncio
@@ -196,6 +207,7 @@ async def test_loop_persists_redacted_v3_history_with_one_terminal_event() -> No
 
     assert [event.event_type for event in history.events] == [
         AgentRunEventType.ACCEPTED,
+        AgentRunEventType.SKILL_ACTIVATED,
         AgentRunEventType.ITERATION_STARTED,
         AgentRunEventType.TOOL_REQUESTED,
         AgentRunEventType.CHECKPOINT_SAVED,
