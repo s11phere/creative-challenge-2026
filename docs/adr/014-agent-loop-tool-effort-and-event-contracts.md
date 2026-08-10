@@ -30,7 +30,12 @@ introduced incrementally.
    output are forbidden. v1/v2 projections remain readable during migration.
 5. Reasoning effort is a provider-neutral persisted profile. `auto` may be downgraded by a
    capability mapping; explicit requests are fail-closed when unsupported. Requested and effective
-   values plus the mapping version and downgrade reason are auditable.
+   values plus the mapping version and downgrade reason are auditable. The exact
+   `openai-compatible/deepseek-v4-flash` capability uses `reasoning-mapping-v2` and sends the
+   native DeepSeek Chat Completion `reasoning_effort` field; documented provider reductions such as
+   `xhigh -> high` are reflected in `effective_effort`. Generic OpenAI-compatible capabilities
+   remain `coarse`. Provider `reasoning_content` is transient request-chain data and must not enter
+   Conversation persistence, Run state, SSE, logs, traces, fixtures, or Web responses.
 6. The `agent-loop-v1` development fixture is synthetic and provisional. It is contract evidence,
    not a formal holdout, and `formal_runs_enabled` is false. Current retrieval/answer quality
    claims remain unchanged.

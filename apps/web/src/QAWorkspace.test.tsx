@@ -331,7 +331,7 @@ describe('assistant conversation workspace', () => {
     expect(screen.getByText('Architecture answer.')).toBeInTheDocument()
   })
 
-  it('offers the five reasoning effort choices and submits the selected value', async () => {
+  it('opens one temporary effort picker and leaves only the confirmed result', async () => {
     const fetchMock = baseFetch()
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -345,7 +345,7 @@ describe('assistant conversation workspace', () => {
         return Promise.resolve(response({
           command: 'effort',
           status: 'completed',
-          content: 'Default reasoning effort: medium.',
+          content: 'Model: fake-reasoner | reasoning effort: medium.',
           conversation_id: 'conversation-1',
           run: null,
           commands: [],
@@ -359,14 +359,22 @@ describe('assistant conversation workspace', () => {
 
     const composer = await screen.findByRole('combobox', { name: '消息' })
     fireEvent.change(composer, { target: { value: '/effort' } })
-    expect(await screen.findByRole('option', { name: 'medium (default)' })).toBeInTheDocument()
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(await screen.findByRole('listbox', { name: 'Reasoning effort options' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'medium (default)' })).toBeInTheDocument()
     expect(screen.getAllByRole('option')).toHaveLength(5)
     expect(screen.queryByRole('option', { name: 'auto' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('option', { name: 'medium (default)' }))
-    await waitFor(() => expect(screen.getByText('Default reasoning effort: medium.')).toBeInTheDocument())
+    const mediumOption = screen.getByRole('option', { name: 'medium (default)' })
+    fireEvent.click(mediumOption)
+    fireEvent.click(mediumOption)
+    await waitFor(() => expect(screen.getByText('Model: fake-reasoner | reasoning effort: medium.')).toBeInTheDocument())
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/v2/conversations/conversation-1/turns'))).toHaveLength(1)
+    expect(screen.queryByRole('listbox', { name: 'Reasoning effort options' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'medium (default)' })).not.toBeInTheDocument()
   })
 
-  it('uses Enter to submit the highlighted effort instead of selecting only the command', async () => {
+  it('uses left and right arrows plus Enter to confirm the effort picker', async () => {
     const fetchMock = baseFetch()
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -376,11 +384,11 @@ describe('assistant conversation workspace', () => {
       }
       if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [] }))
       if (url.endsWith('/api/v2/conversations/conversation-1/turns')) {
-        expect(JSON.parse(String(init?.body)).content).toBe('/effort medium')
+        expect(JSON.parse(String(init?.body)).content).toBe('/effort high')
         return Promise.resolve(response({
           command: 'effort',
           status: 'completed',
-          content: 'Default reasoning effort: medium.',
+          content: 'Model: fake-reasoner | reasoning effort: high.',
           conversation_id: 'conversation-1',
           run: null,
           commands: [],
@@ -394,59 +402,14 @@ describe('assistant conversation workspace', () => {
 
     const composer = await screen.findByRole('combobox')
     fireEvent.change(composer, { target: { value: '/effort' } })
-    await screen.findByRole('option', { name: 'medium (default)' })
-    fireEvent.keyDown(composer, { key: 'Enter' })
-
-    await waitFor(() => expect(screen.getByText('Default reasoning effort: medium.')).toBeInTheDocument())
-  })
-
-  it('keeps effort choices available after submitting /effort', async () => {
-    const fetchMock = baseFetch()
-    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input)
-      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
-      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
-        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [], runs: [] }] }))
-      }
-      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [] }))
-      if (url.endsWith('/api/v2/conversations/conversation-1/turns')) {
-        const content = JSON.parse(String(init?.body)).content
-        if (content === '/effort') {
-          return Promise.resolve(response({
-            command: 'effort',
-            status: 'completed',
-            content: 'Current reasoning effort: medium (default).',
-            conversation_id: 'conversation-1',
-            run: null,
-            commands: [],
-          }, 202))
-        }
-        expect(content).toBe('/effort high')
-        return Promise.resolve(response({
-          command: 'effort',
-          status: 'completed',
-          content: 'Default reasoning effort: high.',
-          conversation_id: 'conversation-1',
-          run: null,
-          commands: [],
-        }, 202))
-      }
-      return Promise.resolve(response({}))
-    })
-    vi.stubGlobal('fetch', fetchMock)
-    vi.stubGlobal('crypto', { randomUUID: () => 'effort-result-idempotency-1' })
-    renderWorkspace()
-
-    const composer = await screen.findByRole('combobox')
-    fireEvent.change(composer, { target: { value: '/effort' } })
     fireEvent.submit(composer.closest('form')!)
+    const picker = await screen.findByRole('listbox', { name: 'Reasoning effort options' })
+    fireEvent.keyDown(picker, { key: 'ArrowRight' })
+    expect(screen.getByRole('option', { name: 'high' })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.keyDown(picker, { key: 'Enter' })
 
-    await waitFor(() => expect(screen.getByText('Current reasoning effort: medium (default).')).toBeInTheDocument())
-    expect(screen.getAllByRole('option')).toHaveLength(5)
-    fireEvent.click(screen.getByRole('option', { name: 'high' }))
-
-    await waitFor(() => expect(screen.getByText('Default reasoning effort: high.')).toBeInTheDocument())
-    expect(screen.getByRole('option', { name: /^high/ })).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() => expect(screen.getByText('Model: fake-reasoner | reasoning effort: high.')).toBeInTheDocument())
+    expect(screen.queryByRole('listbox', { name: 'Reasoning effort options' })).not.toBeInTheDocument()
   })
 
   it('recovers paged v3 history into a collapsed Agent timeline before the final answer', async () => {
@@ -616,6 +579,72 @@ describe('assistant conversation workspace', () => {
     expect(screen.getByText('/summarize')).toBeInTheDocument()
     expect(screen.getByText('Summarize one document')).toBeInTheDocument()
     expect(screen.getByText('<document>')).toBeInTheDocument()
+  })
+
+  it('keeps command notices in chronological order and scrolls to new timeline items', async () => {
+    const fetchMock = baseFetch({
+      conversations: [{
+        ...conversation,
+        messages: [{ message_id: 'message-1', role: 'user', content: 'Earlier question.', run_id: null, created_at: '2026-08-06T10:00:00Z' }],
+        runs: [],
+      }],
+    })
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
+        return Promise.resolve(response({ conversations: [{
+          ...conversation,
+          messages: [{ message_id: 'message-1', role: 'user', content: 'Earlier question.', run_id: null, created_at: '2026-08-06T10:00:00Z' }],
+          runs: [],
+        }] }))
+      }
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [] }))
+      if (url.endsWith('/api/v2/conversations/conversation-1/turns')) {
+        const content = JSON.parse(String(init?.body)).content
+        if (content !== '/skills') {
+          return Promise.resolve(response(assistantRun({
+            run_id: 'run-2',
+            user_message_id: 'message-2',
+            assistant_message: { message_id: 'assistant-2', content: 'Later answer.' },
+          }), 202))
+        }
+        return Promise.resolve(response({
+          command: 'skills',
+          status: 'completed',
+          content: 'Current active Skills.',
+          conversation_id: 'conversation-1',
+          run: null,
+          commands: [],
+        }, 202))
+      }
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'command-order-idempotency-1' })
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox')
+    const thread = document.querySelector('.chat-thread')
+    if (!thread) throw new Error('thread not rendered')
+    Object.defineProperty(thread, 'scrollHeight', { configurable: true, value: 777 })
+
+    fireEvent.change(composer, { target: { value: '/skills' } })
+    fireEvent.submit(composer.closest('form')!)
+    await waitFor(() => expect(screen.getByText('Current active Skills.')).toBeInTheDocument())
+    await waitFor(() => expect(thread.scrollTop).toBe(777))
+    expect(thread.lastElementChild).toHaveClass('chat-command-notice')
+
+    fireEvent.change(composer, { target: { value: 'Later question.' } })
+    fireEvent.submit(composer.closest('form')!)
+    await screen.findByText('Later question.')
+    const timelineItems = [...thread.children]
+    const commandNoticeIndex = timelineItems.findIndex((item) => item.classList.contains('chat-command-notice'))
+    const laterMessageIndex = timelineItems.findIndex((item) => item.textContent?.includes('Later question.'))
+    expect(document.querySelectorAll('.chat-command-notice')).toHaveLength(1)
+    expect(commandNoticeIndex).toBeGreaterThanOrEqual(0)
+    expect(laterMessageIndex).toBeGreaterThan(commandNoticeIndex)
+    expect(thread.lastElementChild).toBe(timelineItems[laterMessageIndex])
   })
 
   it('uses v1 only when the compatibility mode is explicitly selected', async () => {

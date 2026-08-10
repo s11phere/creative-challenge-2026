@@ -191,9 +191,9 @@ async def test_v2_effort_command_updates_only_future_conversation_runs() -> None
         )
 
     assert changed.status_code == 202
-    assert changed.json()["content"] == "Default reasoning effort: high."
+    assert changed.json()["content"] == "Model: fake-fast-chat-v1 | reasoning effort: high."
     assert queried.status_code == 202
-    assert queried.json()["content"] == "Current reasoning effort: high."
+    assert queried.json()["content"] == "Model: fake-fast-chat-v1 | reasoning effort: high."
     assert turn.status_code == 202
     profile = turn.json()["reasoning_profile"]
     assert profile["requested_effort"] == "high"

@@ -61,13 +61,34 @@ type CitationMetadata = {
   uri: string | null
 }
 
-type CommandNotice = Pick<AssistantCommandResult, 'command' | 'content' | 'commands'>
+type CommandNotice = Pick<AssistantCommandResult, 'command' | 'content' | 'commands'> & {
+  notice_id: string
+  created_at: string
+  order: number
+}
+
+type EffortPicker = {
+  picker_id: string
+  created_at: string
+  order: number
+}
+
+type ConversationMessage = ConversationHistoryItem['messages'][number]
+
+type TimelineItem =
+  | { kind: 'message'; id: string; created_at: string; order: number; message: ConversationMessage }
+  | { kind: 'command_notice'; id: string; created_at: string; order: number; notice: CommandNotice }
+  | { kind: 'effort_picker'; id: string; created_at: string; order: number; picker: EffortPicker }
 
 const reasoningEfforts = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const initialReasoningEffort = 'medium'
 
 function reportedReasoningEffort(content: string | null): typeof reasoningEfforts[number] | null {
-  const match = /^(?:Current|Default) reasoning effort:\s*(low|medium|high|xhigh|max)\b/i.exec(content ?? '')
+  const requested = /requested effort:\s*(low|medium|high|xhigh|max)\b/i.exec(content ?? '')
+  if (requested) {
+    return reasoningEfforts.find((effort) => effort === requested[1].toLocaleLowerCase()) ?? null
+  }
+  const match = /reasoning effort:\s*(low|medium|high|xhigh|max)\b/i.exec(content ?? '')
   return match ? reasoningEfforts.find((effort) => effort === match[1].toLocaleLowerCase()) ?? null : null
 }
 
@@ -365,13 +386,19 @@ export function QAWorkspace({
   const [defaultReasoningEffort, setDefaultReasoningEffort] = useState<typeof reasoningEfforts[number]>(initialReasoningEffort)
   const [effortIndex, setEffortIndex] = useState(reasoningEfforts.indexOf(initialReasoningEffort))
   const [commandMenuDismissed, setCommandMenuDismissed] = useState(false)
-  const [commandNotice, setCommandNotice] = useState<CommandNotice | null>(null)
+  const [commandNotices, setCommandNotices] = useState<CommandNotice[]>([])
+  const [pendingEffortPicker, setPendingEffortPicker] = useState<EffortPicker | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const commandHighlightRef = useRef<HTMLDivElement>(null)
+  const threadRef = useRef<HTMLDivElement>(null)
+  const effortPickerRef = useRef<HTMLElement>(null)
   const isComposingRef = useRef(false)
   const excerptRef = useRef<HTMLDivElement>(null)
   const historyInitializedRef = useRef(false)
   const evidenceUserClosedRef = useRef(false)
+  const timelineSequenceRef = useRef(0)
+  const localMessageOrdersRef = useRef(new Map<string, number>())
+  const effortPickerConsumedRef = useRef(false)
   const queryClient = useQueryClient()
   const usingLegacyV1 = apiMode === 'v1'
 
@@ -488,10 +515,6 @@ export function QAWorkspace({
     && !trimmed.startsWith('//')
     && !commandHasArguments
     && !commandMenuDismissed
-  const effortMenuOpen = !usingLegacyV1
-    && /^\/effort\s*$/i.test(trimmed)
-    && !commandMenuDismissed
-  const commandMenuVisible = commandMenuOpen || effortMenuOpen
   const activeCommand = commandOptions[commandIndex]
   const activeReasoningEffort = reasoningEfforts[effortIndex]
   const commandPrefix = useMemo(
@@ -532,7 +555,9 @@ export function QAWorkspace({
       evidenceUserClosedRef.current = false
       setEvidenceRunId(null)
       setSelectedEvidenceId(null)
-      setCommandNotice(null)
+      setCommandNotices([])
+      setPendingEffortPicker(null)
+      localMessageOrdersRef.current.clear()
     }
   }, [conversationId, historyQuery.data, onConversationSelected, selectedConversationId])
 
@@ -543,9 +568,17 @@ export function QAWorkspace({
     evidenceUserClosedRef.current = false
     setEvidenceRunId(null)
     setSelectedEvidenceId(null)
-    setCommandNotice(null)
+    setCommandNotices([])
+    setPendingEffortPicker(null)
+    localMessageOrdersRef.current.clear()
     setCommandMenuDismissed(false)
   }, [apiMode])
+
+  useEffect(() => {
+    if (!pendingEffortPicker) return
+    const frame = requestAnimationFrame(() => effortPickerRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [pendingEffortPicker])
 
   useEffect(() => {
     if (currentRun && !activeStatuses.has(currentRun.status)) {
@@ -564,6 +597,11 @@ export function QAWorkspace({
     }
   }, [currentQARunQuery.data?.citations, currentLegacyRun?.citations, currentRun?.run_id, evidenceRunId])
 
+  const nextTimelinePosition = () => ({
+    created_at: new Date().toISOString(),
+    order: timelineSequenceRef.current++,
+  })
+
   const submitMutation = useMutation({
     mutationFn: async (content: string) => {
       let targetConversationId = conversationId
@@ -580,8 +618,10 @@ export function QAWorkspace({
     },
     onSuccess: ({ content, result, targetConversationId }) => {
       if (isAssistantRun(result)) {
+        const position = nextTimelinePosition()
         setLocalRuns((current) => [...current.filter((run) => run.run_id !== result.run_id), result])
         setActiveRunId(result.run_id)
+        localMessageOrdersRef.current.set(result.user_message_id, position.order)
         setLocalMessages((current) => [
           ...current.filter((message) => message.message_id !== result.user_message_id),
           {
@@ -589,7 +629,7 @@ export function QAWorkspace({
             role: 'user',
             content,
             run_id: null,
-            created_at: new Date().toISOString(),
+            created_at: position.created_at,
           },
         ])
         setConversationId(targetConversationId)
@@ -604,14 +644,29 @@ export function QAWorkspace({
             setEffortIndex(reasoningEfforts.indexOf(reported))
           }
         }
-        setCommandNotice(result.run ? null : { command: result.command, content: result.content, commands: result.commands })
+        if (!result.run) {
+          const position = nextTimelinePosition()
+          setCommandNotices((current) => [
+            ...current,
+            {
+              notice_id: `command-${position.order}`,
+              created_at: position.created_at,
+              order: position.order,
+              command: result.command,
+              content: result.content,
+              commands: result.commands,
+            },
+          ])
+        }
         const nextConversationId = result.conversation_id ?? targetConversationId
         if (result.run) {
           const run = result.run
+          const position = nextTimelinePosition()
           setLocalRuns((current) => [
             ...current.filter((item) => item.run_id !== run.run_id),
             run,
           ])
+          localMessageOrdersRef.current.set(run.user_message_id, position.order)
           setLocalMessages((current) => [
             ...current.filter((message) => message.message_id !== run.user_message_id),
             {
@@ -619,7 +674,7 @@ export function QAWorkspace({
               role: 'user',
               content,
               run_id: null,
-              created_at: new Date().toISOString(),
+              created_at: position.created_at,
             },
           ])
           setActiveRunId(run.run_id)
@@ -673,10 +728,23 @@ export function QAWorkspace({
     })
   }
 
-  const chooseReasoningEffort = (effort: typeof reasoningEfforts[number]) => {
-    setDefaultReasoningEffort(effort)
+  const openEffortPicker = () => {
+    if (pendingEffortPicker) return
+    const position = nextTimelinePosition()
+    effortPickerConsumedRef.current = false
+    setEffortIndex(reasoningEfforts.indexOf(defaultReasoningEffort))
+    setPendingEffortPicker({
+      picker_id: `effort-picker-${position.order}`,
+      created_at: position.created_at,
+      order: position.order,
+    })
+  }
+
+  const confirmReasoningEffort = (effort: typeof reasoningEfforts[number]) => {
+    if (!pendingEffortPicker || submitMutation.isPending || effortPickerConsumedRef.current) return
+    effortPickerConsumedRef.current = true
     setEffortIndex(reasoningEfforts.indexOf(effort))
-    setCommandMenuDismissed(true)
+    setPendingEffortPicker(null)
     submitMutation.mutate(`/effort ${effort}`)
   }
 
@@ -684,7 +752,31 @@ export function QAWorkspace({
     event.preventDefault()
     const content = draft.trim()
     if (!content || submitMutation.isPending) return
+    if (!usingLegacyV1 && /^\/effort$/i.test(content)) {
+      setDraft('')
+      setCommandMenuDismissed(false)
+      openEffortPicker()
+      return
+    }
     submitMutation.mutate(content)
+  }
+
+  const onEffortPickerKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault()
+      const delta = event.key === 'ArrowRight' ? 1 : -1
+      setEffortIndex((index) => (index + delta + reasoningEfforts.length) % reasoningEfforts.length)
+      return
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      confirmReasoningEffort(activeReasoningEffort)
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      setPendingEffortPicker(null)
+    }
   }
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -698,23 +790,10 @@ export function QAWorkspace({
       requestAnimationFrame(() => textareaRef.current?.setSelectionRange(start + 1, start + 1))
       return
     }
-    if (effortMenuOpen) {
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        event.preventDefault()
-        const delta = event.key === 'ArrowDown' ? 1 : -1
-        setEffortIndex((index) => (index + delta + reasoningEfforts.length) % reasoningEfforts.length)
-        return
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setCommandMenuDismissed(true)
-        return
-      }
-      if (event.key === 'Enter') {
-        event.preventDefault()
-        chooseReasoningEffort(activeReasoningEffort)
-        return
-      }
+    if (!usingLegacyV1 && event.key === 'Enter' && /^\/effort\s*$/i.test(draft)) {
+      event.preventDefault()
+      event.currentTarget.form?.requestSubmit()
+      return
     }
     if (commandMenuOpen && commandOptions.length) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -750,6 +829,49 @@ export function QAWorkspace({
       .filter((message) => message.role !== 'assistant' || message.run_id === null)
       .sort((left, right) => left.created_at.localeCompare(right.created_at))
   }, [localMessages, selectedConversation?.messages])
+
+  const timeline = useMemo<TimelineItem[]>(() => [
+    ...messages.map((message, index) => ({
+      kind: 'message' as const,
+      id: message.message_id,
+      created_at: message.created_at,
+      order: localMessageOrdersRef.current.get(message.message_id) ?? index,
+      message,
+    })),
+    ...commandNotices.map((notice) => ({
+      kind: 'command_notice' as const,
+      id: notice.notice_id,
+      created_at: notice.created_at,
+      order: notice.order,
+      notice,
+    })),
+    ...(pendingEffortPicker
+      ? [{
+          kind: 'effort_picker' as const,
+          id: pendingEffortPicker.picker_id,
+          created_at: pendingEffortPicker.created_at,
+          order: pendingEffortPicker.order,
+          picker: pendingEffortPicker,
+        }]
+      : []),
+  ].sort((left, right) => (
+    left.created_at.localeCompare(right.created_at) || left.order - right.order
+  )), [commandNotices, messages, pendingEffortPicker])
+
+  useEffect(() => {
+    if (timeline.length === 0) return
+    const frame = requestAnimationFrame(() => {
+      const thread = threadRef.current
+      if (!thread) return
+      thread.scrollTop = thread.scrollHeight
+      const last = thread.lastElementChild
+      if (last instanceof HTMLElement && typeof last.scrollIntoView === 'function') {
+        last.scrollIntoView({ block: 'end' })
+      }
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [error, timeline.length])
+
   const currentRunIsActive = currentRun ? activeStatuses.has(currentRun.status) : false
   const visibleCitations = evidenceRun?.citations ?? []
   const openEvidence = (runId: string) => {
@@ -766,50 +888,71 @@ export function QAWorkspace({
   return (
     <section className={`qa-layout chat-layout${evidenceRunId ? ' chat-layout-with-evidence' : ''}`} aria-label="对话工作区">
       <div className="qa-conversation chat-conversation">
-        <div className="qa-thread chat-thread" data-empty={messages.length === 0 && !commandNotice} aria-live="polite">
-          {commandNotice && (
-            <article className="chat-command-notice" role="status">
-              <CircleHelp size={17} aria-hidden="true" />
-              <div>
-                <strong>/{commandNotice.command}</strong>
-                {commandNotice.content && <p>{commandNotice.content}</p>}
-                {commandNotice.command === 'effort' && !usingLegacyV1 && (
-                  <div className="chat-effort-options chat-command-notice-effort-options" role="group" aria-label="Reasoning effort">
-                    {reasoningEfforts.map((effort) => (
-                      <button
-                        key={effort}
-                        type="button"
-                        role="option"
-                        aria-selected={effort === defaultReasoningEffort}
-                        disabled={submitMutation.isPending}
-                        onClick={() => chooseReasoningEffort(effort)}
-                      >
-                        <span>{effort}</span>
-                        {effort === defaultReasoningEffort && <small>(default)</small>}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {commandNotice.commands.length > 0 && (
-                  <ul className="chat-command-results" aria-label="可用指令">
-                    {commandNotice.commands.map((command) => (
-                      <li key={command.name}>
-                        <div className="chat-command-result-heading">
-                          <code>/{command.name}</code>
-                          {command.aliases.map((alias) => <code key={alias}>/{alias}</code>)}
-                        </div>
-                        <span>{command.description}</span>
-                        {command.argument_hint && <small>{command.argument_hint}</small>}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </article>
-          )}
-          {messages.length === 0 && !commandNotice ? (
+        <div ref={threadRef} className="qa-thread chat-thread" data-empty={timeline.length === 0} aria-live="polite">
+          {timeline.length === 0 ? (
             <div className="qa-empty"><MessageSquareText size={28} aria-hidden="true" /><strong>开始对话</strong></div>
-          ) : messages.map((message) => {
+          ) : timeline.map((item) => {
+            if (item.kind === 'command_notice') {
+              const commandNotice = item.notice
+              return (
+                <article key={item.id} className="chat-command-notice" role="status">
+                  <CircleHelp size={17} aria-hidden="true" />
+                  <div>
+                    <strong>/{commandNotice.command}</strong>
+                    {commandNotice.content && <p>{commandNotice.content}</p>}
+                    {commandNotice.commands.length > 0 && (
+                      <ul className="chat-command-results" aria-label="Available commands">
+                        {commandNotice.commands.map((command) => (
+                          <li key={command.name}>
+                            <div className="chat-command-result-heading">
+                              <code>/{command.name}</code>
+                              {command.aliases.map((alias) => <code key={alias}>/{alias}</code>)}
+                            </div>
+                            <span>{command.description}</span>
+                            {command.argument_hint && <small>{command.argument_hint}</small>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </article>
+              )
+            }
+            if (item.kind === 'effort_picker') {
+              return (
+                <article
+                  ref={effortPickerRef}
+                  key={item.id}
+                  className="chat-command-notice chat-effort-picker"
+                  role="listbox"
+                  aria-label="Reasoning effort options"
+                  tabIndex={-1}
+                  onKeyDown={onEffortPickerKeyDown}
+                >
+                  <CircleHelp size={17} aria-hidden="true" />
+                  <div>
+                    <strong>/effort</strong>
+                    <p>选择默认推理强度</p>
+                    <div className="chat-effort-options chat-effort-picker-options" role="group" aria-label="Reasoning effort">
+                      {reasoningEfforts.map((effort) => (
+                        <button
+                          key={effort}
+                          id={`assistant-effort-${effort}`}
+                          type="button"
+                          role="option"
+                          aria-selected={effort === activeReasoningEffort}
+                          onClick={() => confirmReasoningEffort(effort)}
+                        >
+                          <span>{effort}</span>
+                          {effort === defaultReasoningEffort && <small>(default)</small>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </article>
+              )
+            }
+            const message = item.message
             const run = message.role === 'user' ? runsByMessage.get(message.message_id) : undefined
             const legacyRun = run ? legacyRunsById.get(run.run_id) : undefined
             const qaRun = run?.run_id === currentRun?.run_id ? currentQARunQuery.data ?? legacyRun : legacyRun
@@ -905,15 +1048,13 @@ export function QAWorkspace({
             value={draft}
             role={usingLegacyV1 ? undefined : 'combobox'}
             aria-autocomplete={usingLegacyV1 ? undefined : 'list'}
-            aria-expanded={usingLegacyV1 ? undefined : commandMenuVisible}
+            aria-expanded={usingLegacyV1 ? undefined : commandMenuOpen}
             aria-controls={usingLegacyV1 ? undefined : 'assistant-command-listbox'}
             aria-activedescendant={usingLegacyV1
               ? undefined
-              : effortMenuOpen
-                ? `assistant-effort-${activeReasoningEffort}`
-                : !commandMenuOpen || !activeCommand
-                  ? undefined
-                  : `assistant-command-${activeCommand.name}`}
+              : !commandMenuOpen || !activeCommand
+                ? undefined
+                : `assistant-command-${activeCommand.name}`}
             onChange={(event) => { setDraft(event.target.value); setCommandMenuDismissed(false) }}
             onCompositionStart={() => { isComposingRef.current = true }}
             onCompositionEnd={() => { isComposingRef.current = false }}
@@ -929,7 +1070,7 @@ export function QAWorkspace({
             disabled={submitMutation.isPending}
             />
           </div>
-          {commandMenuOpen && !effortMenuOpen && commandOptions.length > 0 && (
+          {commandMenuOpen && commandOptions.length > 0 && (
             <div className="chat-command-menu" id="assistant-command-listbox" role="listbox" aria-label="可用指令">
               {commandOptions.map((command, index) => (
                 <button
@@ -944,27 +1085,6 @@ export function QAWorkspace({
                   <span>/{command.name}</span><small>{command.description}</small>
                 </button>
               ))}
-            </div>
-          )}
-          {effortMenuOpen && (
-            <div className="chat-command-menu chat-effort-menu" id="assistant-command-listbox" role="listbox" aria-label="推理强度选项">
-              <div className="chat-effort-menu-heading">选择默认推理强度</div>
-              <div className="chat-effort-options" role="group" aria-label="推理强度">
-                {reasoningEfforts.map((effort) => (
-                  <button
-                    id={`assistant-effort-${effort}`}
-                    key={effort}
-                    type="button"
-                    role="option"
-                    aria-selected={effort === activeReasoningEffort}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => chooseReasoningEffort(effort)}
-                  >
-                    <span>{effort}</span>
-                    {effort === defaultReasoningEffort && <small>(default)</small>}
-                  </button>
-                ))}
-              </div>
             </div>
           )}
           <div className="qa-composer-actions">

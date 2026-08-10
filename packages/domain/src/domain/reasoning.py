@@ -55,7 +55,7 @@ class ReasoningProfile:
             raise ValueError("Reasoning effective effort cannot be auto")
         if not self.provider.strip() or not self.model.strip():
             raise ValueError("Reasoning provider and model are required")
-        if self.mapping_version != "reasoning-mapping-v1":
+        if self.mapping_version not in {"reasoning-mapping-v1", "reasoning-mapping-v2"}:
             raise ValueError("Unsupported reasoning mapping version")
         if (
             self.mode is ReasoningMode.DISABLED

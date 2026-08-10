@@ -80,7 +80,19 @@ Agent Loop Step 6 增加 `/effort`：不带参数时读取当前 Conversation �
 解析为这五个值之一（无法解析时为 `medium`），并标记为 `(default)`。每个新 Assistant/压缩 Run 都保存
 provider-neutral 的 requested/effective effort、Provider/model、映射版本、模式和降级原因。显式不支持
 的强度请求会拒绝；仅 `auto` 可降级。当前 OpenAI-compatible Chat 仍使用布尔 `thinking` 映射，且保留
-`FAST_CHAT_REASONING_ENABLED=false` 的既有默认行为；这不代表 Responses 原生 effort 已接入或任何质量门禁已关闭。
+`FAST_CHAT_REASONING_ENABLED=false` 仍只影响没有解析出会话 profile 的兼容调用；Conversation 默认 `auto`
+会按当前 Provider 能力表解析为 medium。这不代表 Responses 原生 effort 已接入或任何质量门禁已关闭。
+
+配置 `FAST_CHAT_MODEL=deepseek-v4-flash` 时，`reasoning-mapping-v2` 使用 DeepSeek Chat
+Completion 原生 `reasoning_effort` 字段，Run 显示 `mode=native`。`xhigh` 依照 DeepSeek 的公开映射
+审计为实际 `high`，但请求仍保留用户选择的 `xhigh`；`reasoning_content` 不写入 Conversation、Run、SSE、
+日志或前端。DeepSeek 当前公开的 Chat Completion 参数表列出 `low`、`high` 和 `max`，映射表另列
+`xhigh`；当前配置端点已实测接受 `medium` 并返回非空 `reasoning_content`，但应在 Provider 升级后重新
+验证该兼容性。其他 OpenAI-compatible 模型继续使用布尔 `thinking` 兼容映射。
+
+Web 中提交不带参数的 `/effort` 会在当前对话位置打开一次性选择面板。可用左右方向键切换、Enter
+确认或点击选项；确认后面板移除，并在该位置留下 `Model: <model> | reasoning effort: <effort>` 的固定结果。
+命令结果与消息按照发生顺序渲染。
 
 Assistant 对话演进 Step 6 将原 QA 工作区演进为通用对话工作区：输入 `/` 时显示可搜索、
 可键盘操作的命令面板，资源歧义在消息内显示安全候选。选择候选会重新校验当前 Space 并回到原 Run，

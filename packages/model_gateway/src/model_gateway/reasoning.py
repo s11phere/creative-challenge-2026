@@ -40,6 +40,8 @@ class ModelCapabilities:
     default_effort: ReasoningEffort
     reasoning_mode: ReasoningMode
     supports_continuation: bool
+    effort_mappings: tuple[tuple[ReasoningEffort, ReasoningEffort], ...] = ()
+    mapping_version: str = _MAPPING_VERSION
 
     def __post_init__(self) -> None:
         if self.default_effort is ReasoningEffort.AUTO:
@@ -50,6 +52,19 @@ class ModelCapabilities:
             {ReasoningEffort.NONE}
         ):
             raise ValueError("Disabled reasoning capabilities may only support none")
+        requested_efforts = tuple(item[0] for item in self.effort_mappings)
+        if len(requested_efforts) != len(set(requested_efforts)):
+            raise ValueError("Reasoning effort mappings must not duplicate a requested effort")
+        if any(
+            requested not in self.supported_efforts or effective not in self.supported_efforts
+            for requested, effective in self.effort_mappings
+        ):
+            raise ValueError("Reasoning effort mappings must use supported efforts")
+        if self.mapping_version not in {"reasoning-mapping-v1", "reasoning-mapping-v2"}:
+            raise ValueError("Unsupported reasoning mapping version")
+
+    def effective_effort_for(self, requested_effort: ReasoningEffort) -> ReasoningEffort:
+        return dict(self.effort_mappings).get(requested_effort, requested_effort)
 
     def matches(self, provider: ModelProvider, model: str) -> bool:
         return self.provider is provider and (
@@ -104,19 +119,19 @@ class ModelCapabilityRegistry:
                 effective_effort=ReasoningEffort.NONE,
                 provider=provider.value,
                 model=model,
-                mapping_version=_MAPPING_VERSION,
+                mapping_version=capability.mapping_version,
                 mode=ReasoningMode.DISABLED,
             )
 
         if requested_effort is ReasoningEffort.AUTO:
-            effective = capability.default_effort
+            effective = capability.effective_effort_for(capability.default_effort)
             if capability.reasoning_mode is ReasoningMode.DISABLED:
                 return ReasoningProfile(
                     requested_effort=requested_effort,
                     effective_effort=ReasoningEffort.NONE,
                     provider=provider.value,
                     model=model,
-                    mapping_version=_MAPPING_VERSION,
+                    mapping_version=capability.mapping_version,
                     mode=ReasoningMode.DISABLED,
                     downgrade_reason=ReasoningDowngradeReason.PROVIDER_UNSUPPORTED,
                 )
@@ -126,7 +141,7 @@ class ModelCapabilityRegistry:
                     effective_effort=ReasoningEffort.NONE,
                     provider=provider.value,
                     model=model,
-                    mapping_version=_MAPPING_VERSION,
+                    mapping_version=capability.mapping_version,
                     mode=ReasoningMode.DISABLED,
                     downgrade_reason=ReasoningDowngradeReason.CAPABILITY_UNAVAILABLE,
                 )
@@ -135,7 +150,7 @@ class ModelCapabilityRegistry:
                 effective_effort=effective,
                 provider=provider.value,
                 model=model,
-                mapping_version=_MAPPING_VERSION,
+                mapping_version=capability.mapping_version,
                 mode=capability.reasoning_mode,
             )
 
@@ -145,12 +160,13 @@ class ModelCapabilityRegistry:
             raise ReasoningMappingError(
                 f"Provider {provider.value} cannot honor explicit {requested_effort.value} effort."
             )
+        effective = capability.effective_effort_for(requested_effort)
         return ReasoningProfile(
             requested_effort=requested_effort,
-            effective_effort=requested_effort,
+            effective_effort=effective,
             provider=provider.value,
             model=model,
-            mapping_version=_MAPPING_VERSION,
+            mapping_version=capability.mapping_version,
             mode=capability.reasoning_mode,
         )
 
@@ -168,6 +184,19 @@ def default_model_capability_registry() -> ModelCapabilityRegistry:
                 default_effort=ReasoningEffort.LOW,
                 reasoning_mode=ReasoningMode.NATIVE,
                 supports_continuation=True,
+            ),
+            ModelCapabilities(
+                provider=ModelProvider.OPENAI_COMPATIBLE,
+                model_pattern="deepseek-v4-flash",
+                supported_efforts=all_efforts,
+                default_effort=ReasoningEffort.MEDIUM,
+                reasoning_mode=ReasoningMode.NATIVE,
+                supports_continuation=False,
+                effort_mappings=(
+                    (ReasoningEffort.MINIMAL, ReasoningEffort.LOW),
+                    (ReasoningEffort.XHIGH, ReasoningEffort.HIGH),
+                ),
+                mapping_version="reasoning-mapping-v2",
             ),
             ModelCapabilities(
                 provider=ModelProvider.OPENAI_COMPATIBLE,

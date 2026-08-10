@@ -139,6 +139,58 @@ async def test_provider_profile_preserves_coarse_reasoning_mapping() -> None:
         )
     )
     assert payload["thinking"] == {"type": "enabled"}
+    assert "reasoning_effort" not in payload
+    await client.aclose()
+
+
+@pytest.mark.parametrize(
+    ("requested_effort", "effective_effort"),
+    (
+        (ReasoningEffort.LOW, ReasoningEffort.LOW),
+        (ReasoningEffort.MEDIUM, ReasoningEffort.MEDIUM),
+        (ReasoningEffort.HIGH, ReasoningEffort.HIGH),
+        (ReasoningEffort.XHIGH, ReasoningEffort.HIGH),
+        (ReasoningEffort.MAX, ReasoningEffort.MAX),
+    ),
+)
+async def test_provider_sends_native_deepseek_reasoning_effort(
+    requested_effort: ReasoningEffort,
+    effective_effort: ReasoningEffort,
+) -> None:
+    payload: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = OpenAICompatibleGateway(
+        endpoint="http://localhost:11434/v1",
+        fast_chat_model="deepseek-v4-flash",
+        embedding_model="embedding-model",
+        client=client,
+    )
+    await gateway.chat(
+        ChatRequest(
+            messages=(ChatMessage(role=ChatRole.USER, content="synthetic prompt"),),
+            reasoning_profile=ReasoningProfile(
+                requested_effort=requested_effort,
+                effective_effort=effective_effort,
+                provider="openai-compatible",
+                model="deepseek-v4-flash",
+                mapping_version="reasoning-mapping-v2",
+                mode=ReasoningMode.NATIVE,
+            ),
+        )
+    )
+    assert payload["thinking"] == {"type": "enabled"}
+    assert payload["reasoning_effort"] == requested_effort.value
     await client.aclose()
 
 

@@ -40,10 +40,15 @@ class EmptySkillCatalog:
         return ()
 
 
-class ReasoningDisabledFakeGateway(FakeModelGateway):
+class ReasoningDisabledOpenAICompatibleGateway(FakeModelGateway):
     @property
     def status(self) -> GatewayStatus:
-        return replace(super().status, reasoning_enabled_by_default=False)
+        return replace(
+            super().status,
+            provider=ModelProvider.OPENAI_COMPATIBLE,
+            model_identity="chat-model",
+            reasoning_enabled_by_default=False,
+        )
 
 
 def test_capability_registry_maps_native_coarse_and_unsupported_effort() -> None:
@@ -56,6 +61,15 @@ def test_capability_registry_maps_native_coarse_and_unsupported_effort() -> None
     )
     assert native.effective_effort is ReasoningEffort.HIGH
     assert native.mode is ReasoningMode.NATIVE
+
+    deepseek = registry.map(
+        provider=ModelProvider.OPENAI_COMPATIBLE,
+        model="deepseek-v4-flash",
+        requested_effort=ReasoningEffort.XHIGH,
+    )
+    assert deepseek.effective_effort is ReasoningEffort.HIGH
+    assert deepseek.mode is ReasoningMode.NATIVE
+    assert deepseek.mapping_version == "reasoning-mapping-v2"
 
     coarse = registry.map(
         provider=ModelProvider.OPENAI_COMPATIBLE,
@@ -79,6 +93,39 @@ def test_capability_registry_maps_native_coarse_and_unsupported_effort() -> None
             model="disabled",
             requested_effort=ReasoningEffort.HIGH,
         )
+
+
+def test_deepseek_capability_maps_every_selectable_effort() -> None:
+    registry = default_model_capability_registry()
+
+    expected = {
+        ReasoningEffort.LOW: ReasoningEffort.LOW,
+        ReasoningEffort.MEDIUM: ReasoningEffort.MEDIUM,
+        ReasoningEffort.HIGH: ReasoningEffort.HIGH,
+        ReasoningEffort.XHIGH: ReasoningEffort.HIGH,
+        ReasoningEffort.MAX: ReasoningEffort.MAX,
+    }
+
+    for requested_effort, effective_effort in expected.items():
+        profile = registry.map(
+            provider=ModelProvider.OPENAI_COMPATIBLE,
+            model="deepseek-v4-flash",
+            requested_effort=requested_effort,
+        )
+
+        assert profile.effective_effort is effective_effort
+        assert profile.mode is ReasoningMode.NATIVE
+        assert profile.mapping_version == "reasoning-mapping-v2"
+
+
+def test_auto_effort_uses_provider_default_even_when_legacy_flag_is_disabled() -> None:
+    profile = ReasoningProfileResolver(gateway=ReasoningDisabledOpenAICompatibleGateway()).resolve(
+        ReasoningEffort.AUTO
+    )
+
+    assert profile.requested_effort is ReasoningEffort.AUTO
+    assert profile.effective_effort is ReasoningEffort.MEDIUM
+    assert profile.mode is ReasoningMode.COARSE
 
 
 @pytest.mark.asyncio
@@ -105,7 +152,7 @@ async def test_effort_command_persists_conversation_default_and_next_run_profile
     )
 
     initial = await service.effort(conversation.conversation_id, requested_effort=None)
-    assert initial.content == "Current reasoning effort: low (default)."
+    assert initial.content == "Model: fake-fast-chat-v1 | reasoning effort: low (default)."
 
     parsed = service.parser.parse("/effort high")
     assert parsed.arguments == {"effort": "high"}
@@ -113,10 +160,10 @@ async def test_effort_command_persists_conversation_default_and_next_run_profile
         conversation.conversation_id,
         requested_effort=str(parsed.arguments["effort"]),
     )
-    assert updated.content == "Default reasoning effort: high."
+    assert updated.content == "Model: fake-fast-chat-v1 | reasoning effort: high."
 
     queried = await service.effort(conversation.conversation_id, requested_effort=None)
-    assert queried.content == "Current reasoning effort: high."
+    assert queried.content == "Model: fake-fast-chat-v1 | reasoning effort: high."
 
     with pytest.raises(CommandParseError) as invalid:
         await service.effort(
@@ -157,9 +204,9 @@ async def test_effort_command_keeps_legacy_default_in_the_selectable_menu() -> N
         runs=repository,
         conversations=repository,
         qa=repository,
-        reasoning=ReasoningProfileResolver(gateway=ReasoningDisabledFakeGateway()),
+        reasoning=ReasoningProfileResolver(gateway=ReasoningDisabledOpenAICompatibleGateway()),
     )
 
     result = await service.effort(conversation.conversation_id, requested_effort=None)
 
-    assert result.content == "Current reasoning effort: medium (default)."
+    assert result.content == "Model: chat-model | reasoning effort: medium (default)."

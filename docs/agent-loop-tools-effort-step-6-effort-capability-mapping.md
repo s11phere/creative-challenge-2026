@@ -11,9 +11,15 @@
 - `ModelCapabilityRegistry` maps a Provider/model to native, coarse boolean-thinking, or disabled
   reasoning. Explicit intensity requests fail closed when unsupported. Only `auto` can map to
   disabled reasoning with a stable downgrade reason.
-- `OpenAICompatibleGateway` consumes the generic profile as its existing boolean `thinking` mode.
-  It does not claim to be a Responses reasoning Adapter. Native effort remains a registry-level,
-  provider-neutral contract until the official Responses model matrix can be revalidated.
+- `deepseek-v4-flash` is an exact `OpenAICompatibleGateway` capability: it receives the native
+  Chat Completion `reasoning_effort` field with `thinking` enabled and records
+  `reasoning-mapping-v2`/`native`. Its documented `xhigh -> high` provider mapping is recorded in
+  `effective_effort`; the configured endpoint has also been verified to accept `medium` and return
+  non-empty `reasoning_content`, although `medium` is not listed in the current public Chat
+  Completion parameter table. Other OpenAI-compatible models retain boolean `thinking`/`coarse`
+  mapping.
+- Provider `reasoning_content` is transient and is not persisted, logged, included in SSE, or
+  exposed to the Web client.
 - The existing `fast_chat_reasoning_enabled` setting is retained. When it is false, an `auto`
   preference remains disabled for the current OpenAI-compatible Chat path.
 

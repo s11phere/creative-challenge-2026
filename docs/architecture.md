@@ -52,9 +52,12 @@ context-compaction Run captures requested/effective effort, Provider/model, mapp
 and downgrade reason. `ModelCapabilityRegistry`
 maps native-effort, boolean-thinking (`coarse`), and unsupported capabilities without putting a
 Provider SDK field in Domain. Explicit unavailable intensity requests fail closed; only `auto` may
-downgrade. The current OpenAI-compatible adapter remains boolean-thinking and preserves
-`fast_chat_reasoning_enabled=false` as disabled-by-default behavior. This is not a claim that a
-Responses native-effort adapter has been implemented.
+downgrade. `deepseek-v4-flash` is an exact OpenAI-compatible capability with
+`reasoning-mapping-v2`: the adapter sends the native `reasoning_effort` request field and records
+`mode=native`; its documented `xhigh -> high` mapping is reflected in `effective_effort`. Other
+OpenAI-compatible models remain boolean-thinking, and `fast_chat_reasoning_enabled=false` is only
+the fallback for profile-less compatibility calls. DeepSeek `reasoning_content` remains transient
+Provider data and is excluded from persistence, SSE, logs, and the Web response.
 
 The Agent Loop Step 7 boundary adds the independent `agent_run_events` append-only history and
 `agent-run-sse-v3` projection. `AgentLoopExecutor` records only flat, redacted lifecycle metadata:

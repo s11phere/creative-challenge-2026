@@ -10,6 +10,7 @@ from time import perf_counter
 from typing import Any
 
 import httpx
+from domain.reasoning import ReasoningEffort, ReasoningMode
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 
@@ -192,20 +193,22 @@ class OpenAICompatibleGateway:
                 "model.capability": capability.value,
             },
         ) as span:
+            payload: dict[str, Any] = {
+                "model": config.model,
+                "messages": [
+                    {"role": message.role.value, "content": message.content}
+                    for message in request.messages
+                ],
+                "temperature": request.temperature,
+                **({"max_tokens": request.max_tokens} if request.max_tokens is not None else {}),
+                "thinking": self._thinking_value(request),
+            }
+            reasoning_effort = self._native_reasoning_effort(request)
+            if reasoning_effort is not None:
+                payload["reasoning_effort"] = reasoning_effort
             data, retries = await self._request_json(
                 "chat/completions",
-                {
-                    "model": config.model,
-                    "messages": [
-                        {"role": message.role.value, "content": message.content}
-                        for message in request.messages
-                    ],
-                    "temperature": request.temperature,
-                    **(
-                        {"max_tokens": request.max_tokens} if request.max_tokens is not None else {}
-                    ),
-                    "thinking": self._thinking_value(request),
-                },
+                payload,
                 capability=capability,
                 timeout_seconds=self.fast_chat_timeout_seconds,
                 retry_read_timeouts=False,
@@ -235,6 +238,21 @@ class OpenAICompatibleGateway:
         if profile is None:
             return {"type": "enabled" if self.fast_chat_reasoning_enabled else "disabled"}
         return {"type": "disabled" if profile.mode.value == "disabled" else "enabled"}
+
+    @staticmethod
+    def _native_reasoning_effort(request: ChatRequest) -> str | None:
+        profile = request.reasoning_profile
+        if profile is None or profile.mode is not ReasoningMode.NATIVE:
+            return None
+        if profile.requested_effort in {
+            ReasoningEffort.LOW,
+            ReasoningEffort.MEDIUM,
+            ReasoningEffort.HIGH,
+            ReasoningEffort.XHIGH,
+            ReasoningEffort.MAX,
+        }:
+            return profile.requested_effort.value
+        return profile.effective_effort.value
 
     async def embed(
         self,

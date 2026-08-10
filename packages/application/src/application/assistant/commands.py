@@ -377,7 +377,7 @@ class AssistantCommandService:
             return CommandExecutionResult(
                 command="effort",
                 status="completed",
-                content=f"Current reasoning effort: {current_effort.value}{default_marker}.",
+                content=self._effort_status(current_effort, default_marker=default_marker),
                 conversation_id=current.conversation_id,
             )
         try:
@@ -396,8 +396,20 @@ class AssistantCommandService:
         return CommandExecutionResult(
             command="effort",
             status="completed",
-            content=f"Default reasoning effort: {updated.reasoning_effort.value}.",
+            content=self._effort_status(updated.reasoning_effort),
             conversation_id=updated.conversation_id,
+        )
+
+    def _effort_status(self, effort: ReasoningEffort, *, default_marker: str = "") -> str:
+        if self._reasoning is None:
+            return f"Model: unresolved | reasoning effort: {effort.value}{default_marker}."
+        profile = self._reasoning.resolve(effort)
+        requested_marker = (
+            f" (requested effort: {effort.value})" if profile.effective_effort is not effort else ""
+        )
+        return (
+            f"Model: {profile.model} | reasoning effort: "
+            f"{profile.effective_effort.value}{requested_marker}{default_marker}."
         )
 
     async def compact(
