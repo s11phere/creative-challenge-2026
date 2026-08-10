@@ -79,6 +79,16 @@ def test_unknown_command_returns_candidates_and_empty_skill_args_are_clarifiable
     assert empty.arguments == {"question": ""}
 
 
+def test_workspace_command_accepts_its_alias_and_requires_a_folder() -> None:
+    parser = AssistantCommandParser(AssistantCommandCatalog(FakeSkillCatalog(skill())))
+    parsed = parser.parse("/ws project/src")
+    assert parsed.descriptor is not None
+    assert parsed.descriptor.name == "workspace"
+    assert parsed.arguments == {"workspace_path": "project/src"}
+    with pytest.raises(CommandParseError, match="Workspace path is required"):
+        parser.parse("/workspace")
+
+
 def test_base_and_skill_alias_collision_is_rejected() -> None:
     catalog = AssistantCommandCatalog(FakeSkillCatalog(skill(command="help")))
     with pytest.raises(CommandCatalogError):

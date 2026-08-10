@@ -458,6 +458,11 @@ def tool_requires_durable_approval(permissions: frozenset[ToolPermission]) -> bo
     )
 
 
+def tool_input_summary(value: JSONValue | Mapping[str, JSONValue]) -> str:
+    """Return the exact digest bound into a durable Tool approval."""
+    return InMemoryToolRegistry._digest(value)
+
+
 __all__ = [
     "InMemoryToolRegistry",
     "JSONValue",
@@ -470,4 +475,5 @@ __all__ = [
     "ToolRegistryError",
     "ToolRegistryErrorCode",
     "tool_requires_durable_approval",
+    "tool_input_summary",
 ]

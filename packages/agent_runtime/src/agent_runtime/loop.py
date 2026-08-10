@@ -21,6 +21,7 @@ from domain.agent_loop import (
 )
 from domain.agent_runtime import (
     AgentRun,
+    AgentRunContext,
     BudgetExceededError,
     RecoveryRejectedError,
     RunCheckpoint,
@@ -30,6 +31,7 @@ from domain.agent_runtime import (
     RunStatus,
     RunStep,
     RuntimeStateStore,
+    ToolCallRecord,
     validate_recovery,
 )
 from domain.agent_sse import AgentRunEventStore, AgentRunEventType
@@ -53,12 +55,14 @@ from .tools import (
     ToolRef,
     ToolRegistryError,
     ToolRegistryErrorCode,
+    tool_input_summary,
     tool_requires_durable_approval,
 )
 
 type CancellationCheck = Callable[[AgentRun], Awaitable[bool]]
 type DecisionPolicy = Callable[[AgentRun, AgentLoopState, LLMDecision], LLMDecision]
 type ClockMilliseconds = Callable[[], int]
+type ApprovalRequest = Callable[[AgentRunContext, ToolCallRecord], Awaitable[str]]
 
 
 class AgentLoopFinalizer(Protocol):
@@ -118,6 +122,7 @@ class AgentLoopExecutor:
         decision_policy: DecisionPolicy | None = None,
         tool_skill_refs: Mapping[ToolRef, ToolRef] | None = None,
         clock_ms: ClockMilliseconds | None = None,
+        approval_request: ApprovalRequest | None = None,
     ) -> None:
         names = tuple(ref.name for ref in allowed_tools)
         if not allowed_tools or len(names) != len(set(names)):
@@ -140,6 +145,7 @@ class AgentLoopExecutor:
         self._decision_policy = decision_policy
         self._tool_skill_refs = dict(tool_skill_refs or {})
         self._clock_ms = clock_ms or _monotonic_ms
+        self._approval_request = approval_request
 
     async def execute(
         self,
@@ -402,7 +408,18 @@ class AgentLoopExecutor:
                 run = _move_to_executing(run)
                 run = await self._persist(run, state)
                 if tool_requires_durable_approval(definition.permissions) and approval_id is None:
-                    state = state.wait_for_approval()
+                    if self._approval_request is not None:
+                        approval_id = await self._approval_request(
+                            run.context,
+                            ToolCallRecord(
+                                tool_name=definition.name,
+                                tool_version=definition.version,
+                                permissions=definition.permissions,
+                                idempotency_key=invocation.idempotency_key,
+                                input_summary=tool_input_summary(decision.arguments),
+                            ),
+                        )
+                    state = state.wait_for_approval(approval_id)
                     run = run.transition(RunEvent.WAIT_APPROVAL)
                     await self._emit(
                         run,

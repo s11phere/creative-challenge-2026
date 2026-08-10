@@ -4,11 +4,30 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
+import sys
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from pathlib import Path
+from typing import cast
 from uuid import UUID, uuid4
 
 import dramatiq
-from agent_runtime import ToolRef
+from agent_runtime import (
+    FileToolPolicy,
+    FileWritePolicy,
+    InMemoryToolRegistry,
+    JSONValue,
+    ReadOnlyFileTools,
+    ShellExecutionPolicy,
+    SideEffectTools,
+    ToolDefinition,
+    ToolExecutionContext,
+    ToolHandler,
+    ToolRef,
+    register_read_only_file_tools,
+    register_side_effect_tools,
+)
 from application.assistant import (
     AssistantAgentService,
     AssistantMetrics,
@@ -20,6 +39,7 @@ from application.assistant import (
     ConversationFinalizer,
 )
 from application.skills import KnowledgeLoopTools, KnowledgeLoopToolsConfig
+from domain.agent_runtime import ToolPermission
 from domain.assistant_sse import AssistantEventType
 from domain.conversation_run import ConversationRunKind, ConversationRunStatus
 from domain.grounded_qa import QAAttempt, QAEvent, QAStatus
@@ -41,6 +61,7 @@ from infrastructure.qa_execution import (
     qa_execution_versions,
 )
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
+from infrastructure.runtime_approval import PostgresApprovalPort
 from infrastructure.runtime_state import PostgresRuntimeStateStore
 from infrastructure.skill_catalog import FileSystemSkillCatalog
 from infrastructure.telemetry_context import (
@@ -49,6 +70,7 @@ from infrastructure.telemetry_context import (
     normalize_trace_id,
     trace_parent_context,
 )
+from infrastructure.workspaces import WorkspacePathError, WorkspaceRoot
 from model_gateway import ModelGateway
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
@@ -70,6 +92,13 @@ _TERMINAL = frozenset(
         ConversationRunStatus.WAITING_CLARIFICATION,
     }
 )
+
+
+def _workspace_model_visibility_allowed(gateway: ModelGateway) -> bool:
+    """Allow workspace Tools only for fake models or explicit user consent."""
+    return (
+        gateway.status.provider.value == "fake" or settings.agent_workspace_model_visibility_consent
+    )
 
 
 @dramatiq.actor(
@@ -295,6 +324,89 @@ async def _autonomous_loop_service(
         ),
     )
     versions = qa_execution_versions(skill_registry, skill_name="knowledge_agent")
+    parent = await runs.get_conversation_run(run_id)
+    if parent is None:
+        raise ValueError("RUN_ASSISTANT_PARENT_MISSING")
+    conversation = await qa_repository.get_conversation(parent.conversation_id)
+    if conversation is None:
+        raise ValueError("CONVERSATION_NOT_FOUND")
+    extra_handlers: dict[str, ToolHandler] | None = None
+    extra_tool_registrar: Callable[[InMemoryToolRegistry], tuple[ToolDefinition, ...]] | None = None
+    extra_permissions: frozenset[ToolPermission] = frozenset()
+    workspace_context: dict[str, JSONValue] = {"selected": False, "tools_enabled": False}
+    if conversation.workspace_path is not None:
+        workspace = None
+        try:
+            workspace = WorkspaceRoot(settings.agent_workspace_root).resolve(
+                conversation.workspace_path
+            )
+        except WorkspacePathError:
+            workspace_context = {
+                "selected": True,
+                "path": conversation.workspace_path,
+                "tools_enabled": False,
+                "status": "unavailable",
+            }
+        if workspace is not None and _workspace_model_visibility_allowed(gateway):
+            cancellation_probe = _workspace_cancellation_probe(runs)
+            file_tools = ReadOnlyFileTools(
+                FileToolPolicy(
+                    roots={"workspace": workspace.root},
+                    files_by_space={},
+                    workspace_root_by_space={parent.space_id: "workspace"},
+                ),
+                cancellation_probe=cancellation_probe,
+            )
+            aliases = _workspace_executables(settings.agent_workspace_command_aliases)
+            side_effect_tools = SideEffectTools(
+                FileWritePolicy(
+                    roots={"workspace": workspace.root},
+                    allowed_paths_by_space={},
+                    workspace_root_by_space={parent.space_id: "workspace"},
+                ),
+                ShellExecutionPolicy(
+                    executables=aliases,
+                    cwd_roots={"workspace": workspace.root},
+                    allowed_cwds_by_space={},
+                    workspace_root_by_space={parent.space_id: "workspace"},
+                    environment={"PYTHONIOENCODING": "utf-8"},
+                ),
+                cancellation_probe=cancellation_probe,
+            )
+            extra_handlers = {**file_tools.handlers(), **side_effect_tools.handlers()}
+
+            def register_workspace_tools(
+                registry: InMemoryToolRegistry,
+            ) -> tuple[ToolDefinition, ...]:
+                return (
+                    *register_read_only_file_tools(registry),
+                    *register_side_effect_tools(registry),
+                )
+
+            extra_tool_registrar = register_workspace_tools
+            extra_permissions = frozenset(
+                {
+                    ToolPermission.READ_KNOWLEDGE,
+                    ToolPermission.WRITE_KNOWLEDGE,
+                    ToolPermission.EXECUTE_PROCESS,
+                }
+            )
+            workspace_context = {
+                "selected": True,
+                "path": workspace.path,
+                "tools_enabled": True,
+                "path_convention": (
+                    "All file paths and command working directories are relative to this workspace."
+                ),
+                "command_aliases": cast(list[JSONValue], sorted(aliases)),
+            }
+        elif workspace is not None:
+            workspace_context = {
+                "selected": True,
+                "path": conversation.workspace_path,
+                "tools_enabled": False,
+                "status": "model_visibility_consent_required",
+            }
 
     async def ensure_qa_run(tool_context: object, retrieval_scope: QARetrievalScope) -> QARunRecord:
         from agent_runtime import ToolExecutionContext
@@ -334,6 +446,9 @@ async def _autonomous_loop_service(
         ),
         result_reader=qa_repository.get_run,
         ensure_qa_run=ensure_qa_run,
+        extra_handlers=extra_handlers,
+        extra_tool_registrar=extra_tool_registrar,
+        approval_port=PostgresApprovalPort(database),
     )
     tools.replace_tool_registry(TracingToolRegistry(tools.tool_registry, trace))
     knowledge_tool_skill = ToolRef(knowledge_pin.name, knowledge_pin.version)
@@ -377,7 +492,37 @@ async def _autonomous_loop_service(
         skill_contexts=tuple(active_skill_contexts),
         context=context,
         metrics=metrics,
+        workspace_context=workspace_context,
+        additional_permissions=extra_permissions,
+        approval_port=PostgresApprovalPort(database),
     )
+
+
+def _workspace_cancellation_probe(
+    runs: PostgresConversationRunRepository,
+) -> Callable[[ToolExecutionContext], Awaitable[bool]]:
+    async def is_cancelled(context: ToolExecutionContext) -> bool:
+        parent = await runs.get_conversation_run(context.run.run_id)
+        return parent is None or parent.cancellation_requested
+
+    return is_cancelled
+
+
+def _workspace_executables(configured_aliases: str) -> dict[str, Path]:
+    aliases: dict[str, Path] = {}
+    for alias in (item.strip() for item in configured_aliases.split(",")):
+        if not alias or alias in aliases:
+            continue
+        executable = Path(sys.executable) if alias == "python" else shutil.which(alias)
+        if executable is None:
+            continue
+        try:
+            resolved = Path(executable).resolve(strict=True)
+        except OSError:
+            continue
+        if resolved.is_file():
+            aliases[alias] = resolved
+    return aliases
 
 
 async def _run_compaction_with_lease(

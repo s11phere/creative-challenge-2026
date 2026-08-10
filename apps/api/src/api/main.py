@@ -19,8 +19,10 @@ from application.assistant import (
     ConversationContextService,
     ConversationReader,
     ConversationRunService,
+    ConversationWorkspaceService,
     ReasoningProfileResolver,
 )
+from application.assistant.workspace import ConversationWorkspaceRepository
 from application.qa import (
     CitationResolver,
     PublishedCitationApplicationPort,
@@ -64,6 +66,7 @@ from infrastructure.skill_lifecycle import (
 )
 from infrastructure.skill_references import PostgresSkillReferenceChecker
 from infrastructure.telemetry import configure_observability
+from infrastructure.workspaces import WorkspaceRoot
 from model_gateway import (
     GatewayConfig,
     ModelGateway,
@@ -225,6 +228,11 @@ def create_app(
         runs=conversation_run_repository,
         reasoning=reasoning,
     )
+    workspace_service = ConversationWorkspaceService(
+        conversations=cast(ConversationWorkspaceRepository, qa_repository),
+        resolve_path=WorkspaceRoot(settings.agent_workspace_root),
+        list_runs=conversation_run_repository.list_conversation_runs,
+    )
     qa_runtime = QAWorkerDispatcher(
         repository=qa_repository,
         skill_registry=skill_registry,
@@ -260,6 +268,7 @@ def create_app(
         context=conversation_context,
         metrics=assistant_metrics,
         reasoning=reasoning,
+        workspace=workspace_service,
     )
     assistant_agent_service = AssistantAgentService(
         runs=conversation_run_repository,
@@ -317,6 +326,7 @@ def create_app(
     app.state.assistant_agent_service = assistant_agent_service
     app.state.assistant_skill_invoker = assistant_skill_invoker
     app.state.conversation_context_service = conversation_context
+    app.state.workspace_service = workspace_service
     app.state.assistant_event_log = assistant_event_log
     app.state.agent_event_log = agent_event_log
     app.state.assistant_metrics = assistant_metrics

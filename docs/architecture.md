@@ -182,7 +182,9 @@ Agent Runtime → Domain + ModelGateway
 关键约束：
 - `domain` 不依赖 FastAPI、SQLAlchemy、Redis、Dramatiq、OpenTelemetry 或具体模型 SDK
 - `application` 编排用例，不承载供应商实现细节
-- `agent_runtime` 实现声明式、确定性的通用执行与 Registry；当前尚未接入 API/Application
+- `agent_runtime` implements the declarative, deterministic executor and Registry. The top-level
+  Assistant Loop composes it through an Application adapter; transport only schedules or projects
+  the persisted Run.
 - 传输层 (`api`) 只做协议、校验和响应映射，不直接实现领域规则
 
 ---
@@ -509,8 +511,9 @@ published version，避免排队期间跟随新版本或扩大范围。比较结
 `finalize_answer`；`summarize_document` 通过资源解析 Port 固定一个当前 Space 的已发布
 DocumentVersion，并把安全检索观测交回同一 Loop。Tool Registry 在服务端重验版本、权限、Space、预算和输入/输出 schema。
 `grounded_answer` 仍通过唯一 QA Application Port 保持回答、引用、终态发布和恢复权威，
-不向外层模型回传回答正文或引用原文。通用 Runtime 决策历史尚未单独持久化，写 Tool 在持久审批
-和幂等事实源落地前禁止进入 LLM 循环。
+不向外层模型回传回答正文或引用原文。通用 Runtime 决策、审批和检查点现已持久化；默认知识 Tool
+保持 advisory-only，而已选本地 fake-model 工作区可额外注册读写文件与命令 Tool。写入和命令会先进入
+持久审批，只有绑定到同一 Run、Tool、版本、幂等键和输入摘要的批准才能恢复执行。
 
 Step 1 additionally provides the provider-neutral `AgentLoopState` domain state machine and
 `AgentLoopExecutor`. It records goal/subquestions, iteration and redacted Tool observations,

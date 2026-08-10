@@ -72,6 +72,7 @@ from .tools import (
     ToolRef,
     ToolRegistryError,
     ToolRegistryErrorCode,
+    tool_input_summary,
     tool_requires_durable_approval,
 )
 
@@ -117,6 +118,7 @@ __all__ = [
     "ToolRegistryError",
     "ToolRegistryErrorCode",
     "tool_requires_durable_approval",
+    "tool_input_summary",
     "WorkflowDefinition",
     "WorkflowNode",
     "WritableFile",

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -90,6 +91,57 @@ async def test_v2_turn_skeleton_persists_and_cancels_a_model_free_turn() -> None
     assert recovered.status_code == 200
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == ConversationRunStatus.CANCEL_REQUESTED.value
+
+
+@pytest.mark.asyncio
+async def test_v2_workspace_endpoints_and_command_use_a_logical_relative_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "workspaces"
+    (root / "project").mkdir(parents=True)
+    monkeypatch.setattr(settings, "agent_workspace_root_path", str(root))
+    repository = InMemoryGroundedQARepository()
+    app = create_app(
+        model_gateway=FakeModelGateway(),
+        enable_qa_execution=False,
+        qa_repository=repository,
+        qa_event_store=QAEventLog(),
+        assistant_event_store=AssistantEventLog(),
+        skill_activation_store=InMemorySkillActivationStore(),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        conversation = await client.post(
+            f"/api/v1/spaces/{UUID(int=202)}/conversations", json={"owner_id": "local-user"}
+        )
+        conversation_id = conversation.json()["conversation_id"]
+        selected = await client.put(
+            f"/api/v2/conversations/{conversation_id}/workspace", json={"path": "project"}
+        )
+        queried = await client.get(f"/api/v2/conversations/{conversation_id}/workspace")
+        changed = await client.post(
+            f"/api/v2/conversations/{conversation_id}/turns",
+            json={"content": "/ws project", "idempotency_key": "workspace-command"},
+        )
+        active = await client.post(
+            f"/api/v2/conversations/{conversation_id}/turns",
+            json={
+                "content": "Inspect the selected workspace.",
+                "idempotency_key": "workspace-turn",
+            },
+        )
+        blocked = await client.put(
+            f"/api/v2/conversations/{conversation_id}/workspace", json={"path": "."}
+        )
+
+    assert selected.status_code == 200
+    assert selected.json() == {"workspace_path": "project"}
+    assert queried.status_code == 200
+    assert queried.json() == {"workspace_path": "project"}
+    assert changed.status_code == 202
+    assert changed.json()["content"] == "Workspace: project."
+    assert active.status_code == 202
+    assert blocked.status_code == 409
+    assert blocked.json()["code"] == "WORKSPACE_RUN_ACTIVE"
 
 
 @pytest.mark.asyncio

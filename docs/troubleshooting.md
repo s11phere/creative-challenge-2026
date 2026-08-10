@@ -369,6 +369,32 @@ fail-closed in the Web and requires a separately reviewed release decision; do n
 force a rollback. For rollout diagnosis, use the Step 7 aggregate counters and inspect only safe
 labels for routing misfires, clarification loops, cancellation, recovery, token usage, and latency.
 
+## Workspace Tool unavailable
+
+The Assistant registers local filesystem and command Tools when a conversation has selected a
+workspace and either `MODEL_PROVIDER=fake` or
+`AGENT_WORKSPACE_MODEL_VISIBILITY_CONSENT=true`. With a non-fake Provider and consent disabled,
+`workspace.tools_enabled=false` and `workspace.status=model_visibility_consent_required` are
+expected; do not bypass this restriction by placing local files in a prompt or enabling the Tools
+manually. `scripts/start-local.ps1 -AllowExternalWorkspaceTools` is the reviewed one-process opt-in
+and warns about the external data boundary.
+
+For `WORKSPACE_PATH_DENIED`, confirm that the folder already exists below
+`AGENT_WORKSPACE_ROOT_PATH` and that no selected path component is a symlink or Windows junction.
+Use paths relative to the selected workspace in Tool calls: `.` for the root and `src/main.py` for a
+child. Absolute paths, backslashes, drive prefixes, and `..` are denied.
+
+Under Compose, API and Worker must both mount the same `AGENT_WORKSPACE_HOST_PATH` at
+`/data/agent-workspaces`. Recreate both services after changing either mount or workspace settings.
+If a saved logical path no longer resolves in Worker, the Run fails closed without workspace Tools;
+restore the directory or select a new workspace after active Runs have completed or been cancelled.
+
+`waiting_approval` is normal for `fs_write` and `shell_exec`. Query
+`GET /api/v2/runs/{run_id}/approvals`, then make exactly one decision on the matching approval ID.
+An `APPROVAL_NOT_FOUND` response means the ID does not belong to that Run; an
+`APPROVAL_CONFLICT` response means it is no longer pending. Approval resumes the same checkpoint;
+rejection cancels it without running the requested operation.
+
 ## `start-local.ps1` Count error
 
 If PowerShell reports that the `Count` property is missing, use the current

@@ -69,7 +69,8 @@ Grounded QA，而不是把 Run 变成基础设施失败。Tool 仅向外层模�
 或原文。旧 Agent
 版本和 `knowledge_qa` 包保留用于固定 Run 恢复；设置 `AGENT_LOOP_V5_ENABLED=false` 并重建
 API/Worker 时，新 Run fail-closed 回退到 `knowledge_agent 0.3.0`。默认 fake 可跑通流程，配置允许的
-OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。写 Tool 仍被明确拒绝。
+OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。非 fake Provider 仍不会注册本地工作区
+读写或命令 Tool；仅 fake Provider 的已选工作区可使用这些 Tool，且写入和命令必须经过持久审批。
 Assistant v2 使用独立的活动调用目录，包含 `/ask`、`/summarize`、`/compare`、`/cards`
 对应的 v2 Skill 元数据；模型只能返回 Skill 意图，服务端负责当前 Space 资源解析、版本 pin、
 权限和 QA Worker 投影。历史固定 Skill 身份仍可恢复旧 Run。普通聊天不会强制进入
@@ -366,3 +367,21 @@ docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml --env-file .env
 - 阶段 0 语料仅在 manifest 允许列表内使用；未确认外部授权的来源仍限于组员本地，禁止 Git 上传、公开演示和外部 Provider 外发。
 
 问题恢复步骤和当前限制见[故障排查文档](docs/troubleshooting.md)。
+
+## Local Agent Workspaces
+
+Assistant conversations may select a pre-existing folder with `/workspace <folder>` or `/ws`. The
+selected path is constrained below `AGENT_WORKSPACE_ROOT_PATH`, stored as a logical relative path,
+and included in the Agent context so file paths and command cwd values are interpreted relative to
+that workspace. `fs_list` and `fs_read` are available only in a selected local workspace;
+`fs_write` and `shell_exec` require a durable approval before execution.
+
+The Tools are registered for `MODEL_PROVIDER=fake` by default. A non-fake Chat Provider requires
+explicit `AGENT_WORKSPACE_MODEL_VISIBILITY_CONSENT=true`. Run
+`.\scripts\start-local.ps1 -AllowExternalWorkspaceTools` to enable that consent for one process;
+the script warns that selected workspace content may be sent to the configured endpoint. In Compose,
+set `AGENT_WORKSPACE_HOST_PATH` and keep its `/data/agent-workspaces` mount shared by API and Worker.
+See
+[development environment](docs/development-environment.md#local-agent-workspaces) and
+[ADR-016](docs/adr/016-conversation-workspace-tools.md) for configuration, approval endpoints, and
+security constraints.

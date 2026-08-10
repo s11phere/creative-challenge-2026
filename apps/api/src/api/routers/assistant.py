@@ -16,6 +16,7 @@ from application.assistant import (
     CommandExecutionResult,
     CommandParseError,
     ConversationRunApplicationError,
+    ConversationWorkspaceError,
 )
 from domain.assistant_sse import AssistantEventStore, AssistantEventType
 from domain.conversation_run import ConversationRun, ConversationRunKind, ConversationRunStatus
@@ -35,6 +36,26 @@ class AssistantTurnRequest(BaseModel):
     content: str = Field(min_length=1, max_length=12000)
     idempotency_key: str = Field(min_length=1, max_length=200)
     command: str | None = Field(default=None, min_length=1, max_length=32)
+
+
+class WorkspaceSelectionRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=2048)
+
+
+class WorkspaceSelectionResponse(BaseModel):
+    workspace_path: str | None
+
+
+class AgentApprovalResponse(BaseModel):
+    approval_id: UUID
+    tool_name: str
+    tool_version: str
+    status: str
+
+
+class AgentApprovalDecisionRequest(BaseModel):
+    approved: bool
+    decided_by: str = Field(default="local", min_length=1, max_length=255)
 
 
 class AssistantCommandResponse(BaseModel):
@@ -177,6 +198,14 @@ async def submit_turn(
                     ),
                     request,
                 )
+            if parsed.descriptor.name == "workspace":
+                value = parsed.arguments.get("workspace_path")
+                return await _command_response(
+                    await commands.workspace(
+                        conversation_id, requested_path=value if isinstance(value, str) else ""
+                    ),
+                    request,
+                )
             if parsed.descriptor.name == "compact":
                 executed = await commands.compact(
                     conversation_id, content=body.content, idempotency_key=body.idempotency_key
@@ -226,6 +255,102 @@ async def submit_turn(
         request.app.state.assistant_runtime.start(run.run_id)
     await _schedule_context_compaction(run, request)
     return await _response(run, request)
+
+
+@router.get(
+    "/conversations/{conversation_id}/workspace",
+    response_model=WorkspaceSelectionResponse,
+    responses=_ERROR_RESPONSES,
+)
+async def get_workspace(conversation_id: UUID, request: Request) -> WorkspaceSelectionResponse:
+    try:
+        selected = await request.app.state.workspace_service.get(conversation_id)
+    except ConversationWorkspaceError as exc:
+        raise AppError("CONVERSATION_NOT_FOUND", "Conversation not found", 404) from exc
+    return WorkspaceSelectionResponse(workspace_path=selected.path)
+
+
+@router.put(
+    "/conversations/{conversation_id}/workspace",
+    response_model=WorkspaceSelectionResponse,
+    responses=_ERROR_RESPONSES,
+)
+async def select_workspace(
+    conversation_id: UUID,
+    body: WorkspaceSelectionRequest,
+    request: Request,
+) -> WorkspaceSelectionResponse:
+    try:
+        selected = await request.app.state.workspace_service.select(conversation_id, body.path)
+    except ConversationWorkspaceError as exc:
+        code = str(exc)
+        status = (
+            404
+            if code == "CONVERSATION_NOT_FOUND"
+            else 409
+            if code == "WORKSPACE_RUN_ACTIVE"
+            else 400
+        )
+        raise AppError(code, "Workspace could not be selected.", status) from exc
+    return WorkspaceSelectionResponse(workspace_path=selected.path)
+
+
+@router.get(
+    "/runs/{run_id}/approvals",
+    response_model=list[AgentApprovalResponse],
+    responses=_ERROR_RESPONSES,
+)
+async def list_agent_approvals(run_id: UUID, request: Request) -> list[AgentApprovalResponse]:
+    run = await request.app.state.conversation_run_repository.get_conversation_run(run_id)
+    if run is None:
+        raise AppError("RUN_NOT_FOUND", "Run not found", 404)
+    records = await request.app.state.approval_port.list_for_run(run_id)
+    return [
+        AgentApprovalResponse(
+            approval_id=record.approval_id,
+            tool_name=record.tool_name,
+            tool_version=record.tool_version,
+            status=record.status,
+        )
+        for record in records
+    ]
+
+
+@router.post(
+    "/runs/{run_id}/approvals/{approval_id}/decision",
+    response_model=AgentApprovalResponse,
+    responses=_ERROR_RESPONSES,
+)
+async def decide_agent_approval(
+    run_id: UUID,
+    approval_id: UUID,
+    body: AgentApprovalDecisionRequest,
+    request: Request,
+) -> AgentApprovalResponse:
+    run = await request.app.state.conversation_run_repository.get_conversation_run(run_id)
+    if run is None:
+        raise AppError("RUN_NOT_FOUND", "Run not found", 404)
+    existing = await request.app.state.approval_port.get(str(approval_id), run_id=run_id)
+    if existing is None:
+        raise AppError("APPROVAL_NOT_FOUND", "Approval not found", 404)
+    decided = await request.app.state.approval_port.decide(
+        str(approval_id), approved=body.approved, decided_by=body.decided_by
+    )
+    if not decided:
+        raise AppError("APPROVAL_CONFLICT", "Approval cannot be decided.", 409)
+    record = await request.app.state.approval_port.get(str(approval_id), run_id=run_id)
+    if record is None:
+        raise AppError("APPROVAL_NOT_FOUND", "Approval not found", 404)
+    if body.approved and request.app.state.qa_execution_enabled:
+        request.app.state.assistant_runtime.start(run_id)
+    elif run.status.value == "waiting_approval":
+        await request.app.state.assistant_turn_service.cancel(run_id)
+    return AgentApprovalResponse(
+        approval_id=record.approval_id,
+        tool_name=record.tool_name,
+        tool_version=record.tool_version,
+        status=record.status,
+    )
 
 
 @router.get("/commands", response_model=CommandCatalogResponse)

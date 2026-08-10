@@ -42,6 +42,7 @@ class ConversationResponse(BaseModel):
     conversation_id: UUID
     space_id: UUID
     owner_id: str
+    workspace_path: str | None = None
 
 
 class QuestionRequest(BaseModel):
@@ -458,7 +459,10 @@ async def create_conversation(
         ConversationRecord(space_id=space_id, owner_id=body.owner_id)
     )
     return ConversationResponse(
-        conversation_id=record.conversation_id, space_id=record.space_id, owner_id=record.owner_id
+        conversation_id=record.conversation_id,
+        space_id=record.space_id,
+        owner_id=record.owner_id,
+        workspace_path=record.workspace_path,
     )
 
 
@@ -489,6 +493,7 @@ async def list_conversations(
                 conversation_id=conversation.conversation_id,
                 space_id=conversation.space_id,
                 owner_id=conversation.owner_id,
+                workspace_path=conversation.workspace_path,
                 created_at=conversation.created_at,
                 updated_at=last_activity,
                 messages=[

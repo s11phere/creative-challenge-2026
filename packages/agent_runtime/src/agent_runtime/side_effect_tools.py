@@ -56,6 +56,7 @@ class WritableFile:
 class FileWritePolicy:
     roots: Mapping[str, Path]
     allowed_paths_by_space: Mapping[UUID, tuple[WritableFile, ...]]
+    workspace_root_by_space: Mapping[UUID, str] = MappingProxyType({})
     max_write_bytes: int = 256 * 1024
 
     def __post_init__(self) -> None:
@@ -79,18 +80,33 @@ class FileWritePolicy:
                 _validate_relative_target(checked_roots[entry.root_name], entry.relative_path)
                 paths.add(entry.tool_path)
             checked[space_id] = tuple(entries)
+        checked_workspace_roots: dict[UUID, str] = {}
+        for space_id, root_name in self.workspace_root_by_space.items():
+            if not isinstance(space_id, UUID) or root_name not in checked_roots:
+                raise ValueError("Workspace write root is invalid")
+            checked_workspace_roots[space_id] = root_name
         object.__setattr__(self, "roots", MappingProxyType(checked_roots))
         object.__setattr__(self, "allowed_paths_by_space", MappingProxyType(checked))
+        object.__setattr__(
+            self, "workspace_root_by_space", MappingProxyType(checked_workspace_roots)
+        )
 
     def resolve(self, *, space_id: UUID, path: str) -> Path:
-        root_name, relative = _tool_path(path)
-        entries = self.allowed_paths_by_space.get(space_id, ())
-        if not any(entry.tool_path == f"{root_name}/{relative}" for entry in entries):
-            raise _error(ToolRegistryErrorCode.PATH_DENIED, "Path is not write-authorized")
+        root_name, relative = self._resolve_identity(space_id=space_id, path=path)
         if _is_protected(relative):
             raise _error(ToolRegistryErrorCode.PATH_DENIED, "Protected target cannot be written")
         root = self.roots[root_name]
         return _validate_relative_target(root, relative)
+
+    def _resolve_identity(self, *, space_id: UUID, path: str) -> tuple[str, str]:
+        workspace_root = self.workspace_root_by_space.get(space_id)
+        if workspace_root is not None:
+            return workspace_root, _workspace_relative_path(workspace_root, path)
+        root_name, relative = _tool_path(path)
+        entries = self.allowed_paths_by_space.get(space_id, ())
+        if not any(entry.tool_path == f"{root_name}/{relative}" for entry in entries):
+            raise _error(ToolRegistryErrorCode.PATH_DENIED, "Path is not write-authorized")
+        return root_name, relative
 
     def write(
         self,
@@ -103,7 +119,10 @@ class FileWritePolicy:
         raw = content.encode("utf-8")
         if len(raw) > self.max_write_bytes:
             raise _error(ToolRegistryErrorCode.FILE_TOO_LARGE, "Content exceeds the write limit")
-        target = self.resolve(space_id=space_id, path=path)
+        root_name, relative = self._resolve_identity(space_id=space_id, path=path)
+        if _is_protected(relative):
+            raise _error(ToolRegistryErrorCode.PATH_DENIED, "Protected target cannot be written")
+        target = _validate_relative_target(self.roots[root_name], relative)
         _check_expected(target, expected_sha256)
         parent = target.parent
         _validate_directory(parent)
@@ -115,7 +134,7 @@ class FileWritePolicy:
                 temporary.flush()
                 os.fsync(temporary.fileno())
             # Re-check the target and parent immediately before replacement.
-            _validate_relative_target(self.roots[_tool_path(path)[0]], _tool_path(path)[1])
+            _validate_relative_target(self.roots[root_name], relative)
             _check_expected(target, expected_sha256)
             os.replace(temp_name, target)
             temp_name = None
@@ -144,6 +163,7 @@ class ShellExecutionPolicy:
     executables: Mapping[str, Path]
     cwd_roots: Mapping[str, Path]
     allowed_cwds_by_space: Mapping[UUID, tuple[str, ...]]
+    workspace_root_by_space: Mapping[UUID, str] = MappingProxyType({})
     environment: Mapping[str, str] = MappingProxyType({})
     max_output_bytes: int = 64 * 1024
 
@@ -166,11 +186,13 @@ class ShellExecutionPolicy:
                 root_name, relative = _tool_path(path, allow_root=True)
                 if root_name not in checked_roots:
                     raise ValueError("Shell cwd references an unknown root")
-                cwd = checked_roots[root_name]
-                if relative:
-                    cwd = cwd / Path(*_relative_parts(relative))
-                _validate_directory(cwd)
+                _validate_relative_directory(checked_roots[root_name], relative)
             checked_cwds[space_id] = tuple(paths)
+        checked_workspace_roots: dict[UUID, str] = {}
+        for space_id, root_name in self.workspace_root_by_space.items():
+            if not isinstance(space_id, UUID) or root_name not in checked_roots:
+                raise ValueError("Workspace command root is invalid")
+            checked_workspace_roots[space_id] = root_name
         if any(
             not isinstance(key, str) or not isinstance(value, str)
             for key, value in self.environment.items()
@@ -179,6 +201,9 @@ class ShellExecutionPolicy:
         object.__setattr__(self, "executables", MappingProxyType(checked_executables))
         object.__setattr__(self, "cwd_roots", MappingProxyType(checked_roots))
         object.__setattr__(self, "allowed_cwds_by_space", MappingProxyType(checked_cwds))
+        object.__setattr__(
+            self, "workspace_root_by_space", MappingProxyType(checked_workspace_roots)
+        )
         object.__setattr__(self, "environment", MappingProxyType(dict(self.environment)))
 
     def resolve_executable(self, name: str) -> Path:
@@ -190,14 +215,15 @@ class ShellExecutionPolicy:
             ) from exc
 
     def resolve_cwd(self, *, space_id: UUID, path: str) -> Path:
+        workspace_root = self.workspace_root_by_space.get(space_id)
+        if workspace_root is not None:
+            relative = _workspace_relative_path(workspace_root, path, allow_root=True)
+            return _validate_relative_directory(self.cwd_roots[workspace_root], relative)
         allowed = self.allowed_cwds_by_space.get(space_id, ())
         if path not in allowed:
             raise _error(ToolRegistryErrorCode.PATH_DENIED, "Working directory is not allowlisted")
         root_name, relative = _tool_path(path, allow_root=True)
-        target = self.cwd_roots[root_name]
-        if relative:
-            target = target / Path(*_relative_parts(relative))
-        return _validate_directory(target)
+        return _validate_relative_directory(self.cwd_roots[root_name], relative)
 
 
 class SideEffectTools:
@@ -379,7 +405,7 @@ def _shell_exec_definition(*, timeout_seconds: float) -> ToolDefinition:
     return ToolDefinition(
         name="shell_exec",
         version="1.0.0",
-        description="Run one allowlisted local executable without a shell or network grant.",
+        description="Run one allowlisted local executable without a shell.",
         input_schema={
             "type": "object",
             "additionalProperties": False,
@@ -461,6 +487,36 @@ def _tool_path(path: str, *, allow_root: bool = False) -> tuple[str, str]:
     return parts[0], "/".join(parts[1:])
 
 
+def _workspace_relative_path(root_name: str, path: str, *, allow_root: bool = False) -> str:
+    if (
+        not isinstance(path, str)
+        or not path
+        or path.startswith("/")
+        or "\\" in path
+        or ":" in path
+        or "\x00" in path
+    ):
+        raise _error(ToolRegistryErrorCode.PATH_DENIED, "Path is not allowed")
+    normalized = path.strip()
+    if normalized in {"", "."}:
+        if allow_root:
+            return ""
+        raise _error(ToolRegistryErrorCode.PATH_DENIED, "Path is not a file")
+    parts = tuple(normalized.split("/"))
+    if parts and parts[0] == root_name:
+        parts = parts[1:]
+    if not parts and allow_root:
+        return ""
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise _error(ToolRegistryErrorCode.PATH_DENIED, "Path is not allowed")
+    relative = "/".join(parts)
+    try:
+        _relative_parts(relative)
+    except ValueError as exc:
+        raise _error(ToolRegistryErrorCode.PATH_DENIED, "Path is not allowed") from exc
+    return relative
+
+
 def _relative_parts(relative: str) -> tuple[str, ...]:
     parts = tuple(PurePosixPath(relative).parts)
     if not parts or any(part in {"", ".", ".."} for part in parts):
@@ -498,6 +554,23 @@ def _validate_directory(path: Path) -> Path:
     if _is_link_or_junction(path) or not path.is_dir():
         raise _error(ToolRegistryErrorCode.PATH_DENIED, "Working directory is not trusted")
     return path.resolve(strict=True)
+
+
+def _validate_relative_directory(root: Path, relative: str) -> Path:
+    """Return a real directory below ``root`` while rejecting link components."""
+    current = _validate_directory(root)
+    if not relative:
+        return current
+    for part in _relative_parts(relative):
+        current = current / part
+        current = _validate_directory(current)
+    try:
+        current.relative_to(root)
+    except ValueError as exc:
+        raise _error(
+            ToolRegistryErrorCode.PATH_DENIED, "Working directory is outside its trusted root"
+        ) from exc
+    return current
 
 
 def _validated_executable(path: Path) -> Path:

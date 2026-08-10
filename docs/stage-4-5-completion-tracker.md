@@ -1,5 +1,23 @@
 # 阶段 4/5 收尾看板
 
+## 2026-08-11 conversation-scoped local workspace Tools
+
+Assistant conversations can now select an existing directory below a configured workspace root with
+`/workspace <folder>` (or `/ws`) or the v2 workspace endpoint. The persisted value is a logical
+relative path, revalidated by Worker before every Run; traversal, symlinks, Windows junctions, and
+workspace changes during an active Run are denied. The top-level Loop explicitly receives the
+selected workspace, relative-path convention, and command aliases in its bounded input context.
+
+With `MODEL_PROVIDER=fake`, the default Assistant Loop registers the existing bounded
+`fs_list`, `fs_read`, `fs_write`, and `shell_exec` Tools for that workspace. A non-fake Chat Provider
+requires explicit `AGENT_WORKSPACE_MODEL_VISIBILITY_CONSENT=true`; the local startup script exposes
+this as the one-process `-AllowExternalWorkspaceTools` opt-in and warns about the data boundary.
+Reads remain untrusted and bounded; protected file paths remain denied. Writes and commands create a durable approval
+bound to the invocation identity, move the same ConversationRun to `waiting_approval`, and resume
+only after a run-scoped v2 approval decision. API and Worker share one Compose bind mount. This is
+provisional local engineering capability under ADR-016; it does not change ADR-010/ADR-011 formal
+quality boundaries or authorize a formal holdout.
+
 ## 2026-08-10 autonomous Assistant Loop and knowledge_agent 0.7.0
 
 New Assistant turns now enter one recoverable top-level Agent Loop. The model receives the active

@@ -26,6 +26,7 @@ _SAFE_COMMANDS = frozenset(
         "skills",
         "stop",
         "summarize",
+        "workspace",
     }
 )
 _SAFE_ACTIONS = frozenset({"respond", "clarify", "invoke_skill"})

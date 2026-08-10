@@ -23,10 +23,11 @@ from agent_runtime import (
     NodeExecutionError,
     ToolDefinition,
     ToolExecutionContext,
+    ToolHandler,
     ToolRef,
 )
 from domain.agent_loop import AgentLoopState, AgentLoopTask
-from domain.agent_runtime import AgentRun, RunErrorCategory, ToolPermission
+from domain.agent_runtime import AgentRun, ApprovalPort, RunErrorCategory, ToolPermission
 from domain.grounded_qa import QAOutcome, QAStatus
 from domain.qa_persistence import QARetrievalScope, QARunRecord, QARunVersions
 from domain.retrieval import SearchFilters, SearchHit, SearchRequest
@@ -41,6 +42,7 @@ from application.qa.service import (
 from .knowledge_qa import qa_failure
 
 type EnsureQARun = Callable[[ToolExecutionContext, QARetrievalScope], Awaitable[QARunRecord]]
+type AdditionalToolRegistrar = Callable[[InMemoryToolRegistry], tuple[ToolDefinition, ...]]
 
 
 class ResourceScopeResolver(Protocol):
@@ -114,6 +116,9 @@ class KnowledgeLoopTools:
         config: KnowledgeLoopToolsConfig,
         result_reader: Callable[[UUID], Awaitable[QARunRecord | None]] | None = None,
         ensure_qa_run: EnsureQARun | None = None,
+        extra_handlers: Mapping[str, ToolHandler] | None = None,
+        extra_tool_registrar: AdditionalToolRegistrar | None = None,
+        approval_port: ApprovalPort | None = None,
     ) -> None:
         self._qa = qa
         self._search = search
@@ -121,20 +126,25 @@ class KnowledgeLoopTools:
         self._result_reader = result_reader
         self._ensure_qa_run = ensure_qa_run
         self._facts: dict[UUID, _RunFacts] = {}
-        registry = InMemoryToolRegistry(
-            handlers={
-                "knowledge_search": self.knowledge_search,
-                "knowledge_inspect": self.knowledge_inspect,
-                "grounded_answer": self.grounded_answer,
-                "verify_answer": self.verify_answer,
-                "finalize_answer": self.finalize_answer,
-                **(
-                    {"summarize_document": self.summarize_document}
-                    if config.resource_resolver is not None
-                    else {}
-                ),
-            }
-        )
+        handlers: dict[str, ToolHandler] = {
+            "knowledge_search": self.knowledge_search,
+            "knowledge_inspect": self.knowledge_inspect,
+            "grounded_answer": self.grounded_answer,
+            "verify_answer": self.verify_answer,
+            "finalize_answer": self.finalize_answer,
+            **(
+                {"summarize_document": self.summarize_document}
+                if config.resource_resolver is not None
+                else {}
+            ),
+        }
+        if extra_handlers is not None:
+            if set(handlers).intersection(extra_handlers):
+                raise ValueError("Additional Tool handlers conflict with knowledge Tools")
+            handlers.update(extra_handlers)
+        if (extra_handlers is None) != (extra_tool_registrar is None):
+            raise ValueError("Additional Tool handlers and definitions must be supplied together")
+        registry = InMemoryToolRegistry(handlers=handlers, approval_port=approval_port)
         self.search_tool = registry.register(_knowledge_search_definition(config.tool_version))
         self.inspect_tool = registry.register(_knowledge_inspect_definition(config.tool_version))
         self.answer_tool = registry.register(_grounded_answer_definition(config.tool_version))
@@ -144,6 +154,9 @@ class KnowledgeLoopTools:
             registry.register(_summarize_document_definition(config.tool_version))
             if config.resource_resolver is not None
             else None
+        )
+        self.additional_tools = (
+            extra_tool_registrar(registry) if extra_tool_registrar is not None else ()
         )
         self.tool_registry: AgentToolRegistry = registry
 
@@ -158,6 +171,7 @@ class KnowledgeLoopTools:
         ]
         if self.summary_tool is not None:
             tools.insert(2, self.summary_tool.ref)
+        tools.extend(tool.ref for tool in self.additional_tools)
         return tuple(tools)
 
     async def summarize_document(

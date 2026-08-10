@@ -254,6 +254,43 @@ persisted Run/Skill pins and keeps v1/v2 API and SSE projections readable. `star
 v6 by default; pass `-LegacyKnowledgeAgent` for a local v3 rollback. Do not use an external Provider
 without the existing sensitivity, deployment-policy, and visible-consent checks.
 
+## Local Agent Workspaces
+
+An Assistant conversation may select a pre-existing folder with `/workspace <folder>` (or `/ws`) or
+with `PUT /api/v2/conversations/{conversation_id}/workspace` and `{"path":"<folder>"}`. The API
+stores only a logical POSIX path below `AGENT_WORKSPACE_ROOT_PATH`; an absolute client path is
+resolved before storage and is never persisted. Use `GET` on the same endpoint to inspect the
+selection. A workspace cannot be changed while its conversation has an active Run.
+
+For a selected workspace, `fs_list`, `fs_read`, `fs_write`, and `shell_exec` use paths and command
+`cwd` values relative to that folder. `.` names the root. The legacy `workspace/...` form is also
+accepted by the Tool schema. The model receives the selected logical path, this convention, and the
+available command aliases in its bounded workspace context.
+
+Set the following values consistently in API and Worker processes:
+
+```dotenv
+AGENT_WORKSPACE_ROOT_PATH=./data/workspaces
+AGENT_WORKSPACE_COMMAND_ALIASES=python,git,uv,node,pnpm,npm
+```
+
+Compose maps `AGENT_WORKSPACE_HOST_PATH` to `/data/agent-workspaces` in both containers and sets
+the root there. Do not use different mounts: selection occurs in API, but all Tool execution occurs
+in Worker. The directory must already exist inside the configured root; traversal, symlinks, and
+Windows junctions are rejected.
+
+The local workspace Tools are registered for `MODEL_PROVIDER=fake` without extra consent. For any
+non-fake Chat Provider, set `AGENT_WORKSPACE_MODEL_VISIBILITY_CONSENT=true` only after the user and
+deployment policy explicitly allow selected workspace content to reach that endpoint. The
+`start-local.ps1 -AllowExternalWorkspaceTools` switch enables this setting for one process and emits
+a warning; it does not modify `.env`. `fs_write` and `shell_exec` always create a durable approval
+request, place the Run in `waiting_approval`, and bind
+approval to the exact Tool invocation. List pending records with
+`GET /api/v2/runs/{run_id}/approvals`, then decide with
+`POST /api/v2/runs/{run_id}/approvals/{approval_id}/decision` and
+`{"approved":true,"decided_by":"local"}`. Rejection cancels the waiting Run without executing the
+side effect.
+
 Validate the hash-pinned synthetic development fixture without invoking a model or reading the
 controlled corpus:
 

@@ -104,6 +104,23 @@ class InMemoryGroundedQARepository:
             self._conversations[conversation_id] = updated
             return updated
 
+    async def set_workspace_path(
+        self, conversation_id: UUID, workspace_path: str | None
+    ) -> ConversationRecord:
+        async with self._lock:
+            conversation = self._require_conversation(conversation_id)
+            if conversation.archived_at is not None:
+                raise QAContractError("Conversation does not exist")
+            updated = replace(
+                conversation,
+                workspace_path=workspace_path,
+                updated_at=max(
+                    datetime.now(UTC), conversation.updated_at + timedelta(microseconds=1)
+                ),
+            )
+            self._conversations[conversation_id] = updated
+            return updated
+
     async def list_conversations(
         self, space_id: UUID, owner_id: str
     ) -> tuple[ConversationRecord, ...]:
@@ -644,6 +661,30 @@ class InMemoryGroundedQARepository:
             self._conversation_runs[run_id] = clarified
             self._conversation_run_leases.pop(run_id, None)
             return clarified
+
+    async def wait_for_approval(self, run_id: UUID) -> ConversationRun:
+        async with self._lock:
+            run = self._require_assistant_conversation_run(run_id)
+            if run.status in {
+                ConversationRunStatus.COMPLETED,
+                ConversationRunStatus.REFUSED,
+                ConversationRunStatus.FAILED,
+                ConversationRunStatus.CANCELLED,
+                ConversationRunStatus.TIMED_OUT,
+                ConversationRunStatus.WAITING_APPROVAL,
+            }:
+                return run
+            if run.cancellation_requested:
+                return self._cancel_assistant_conversation_run(run)
+            waiting = replace(
+                run,
+                status=ConversationRunStatus.WAITING_APPROVAL,
+                error_code=None,
+                updated_at=datetime.now(UTC),
+            )
+            self._conversation_runs[run_id] = waiting
+            self._conversation_run_leases.pop(run_id, None)
+            return waiting
 
     async def fail_conversation_run(self, run_id: UUID, *, error_code: str) -> ConversationRun:
         if not error_code.strip():

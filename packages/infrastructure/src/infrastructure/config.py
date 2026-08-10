@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from domain.embedding import EmbeddingIdentity
@@ -104,6 +105,8 @@ class Settings(BaseSettings):
     embedding_normalization: str = "none"
     embedding_precision: str = "float32"
     model_allow_external: bool = False
+    # Explicit opt-in for sending selected workspace content to a non-fake Chat provider.
+    agent_workspace_model_visibility_consent: bool = False
     model_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     fast_chat_timeout_seconds: float = Field(default=120.0, gt=0, le=300)
     fast_chat_reasoning_enabled: bool = False
@@ -123,6 +126,14 @@ class Settings(BaseSettings):
     skill_root_path: str = "./skills"
     knowledge_agent_skill_version: str = "0.7.0"
     agent_loop_v5_enabled: bool = True
+
+    # Workspace Tools are rooted here. The API and Worker must see the same mounted path.
+    agent_workspace_root_path: str = "./data/workspaces"
+    agent_workspace_command_aliases: str = "python,git,uv,node,pnpm,npm"
+
+    @property
+    def agent_workspace_root(self) -> Path:
+        return Path(self.agent_workspace_root_path).resolve()
 
     @property
     def active_knowledge_agent_skill_version(self) -> str:

@@ -183,6 +183,9 @@ class QARetrievalScope:
 class ConversationRecord:
     space_id: UUID
     owner_id: str
+    # A logical, policy-validated path below the configured workspace root.  It is
+    # deliberately not an absolute host path so a Worker resolves it again.
+    workspace_path: str | None = None
     conversation_id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -192,6 +195,16 @@ class ConversationRecord:
     def __post_init__(self) -> None:
         if not self.owner_id:
             raise ValueError("Conversation owner_id must not be blank")
+        if self.workspace_path is not None and (
+            not self.workspace_path
+            or len(self.workspace_path) > 1024
+            or "\\" in self.workspace_path
+            or "\x00" in self.workspace_path
+            or self.workspace_path.startswith("/")
+            or ":" in self.workspace_path
+            or any(part in {"", ".."} for part in self.workspace_path.split("/"))
+        ):
+            raise ValueError("Conversation workspace path is invalid")
 
 
 @dataclass(frozen=True)
@@ -350,6 +363,10 @@ class GroundedQARepository(Protocol):
 
     async def set_reasoning_effort(
         self, conversation_id: UUID, effort: ReasoningEffort
+    ) -> ConversationRecord: ...
+
+    async def set_workspace_path(
+        self, conversation_id: UUID, workspace_path: str | None
     ) -> ConversationRecord: ...
 
     async def append_message(self, message: MessageRecord) -> MessageRecord: ...

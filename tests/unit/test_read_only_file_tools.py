@@ -99,6 +99,14 @@ def _policy(root: Path, path: Path, *, max_file_bytes: int = 64) -> FileToolPoli
     )
 
 
+def _workspace_policy(root: Path) -> FileToolPolicy:
+    return FileToolPolicy(
+        roots={"workspace": root},
+        files_by_space={},
+        workspace_root_by_space={SPACE_A: "workspace"},
+    )
+
+
 def _invocation(
     run: AgentRun, ref: ToolRef, arguments: dict[str, JSONValue], *, key: str = "file-read-1"
 ) -> ToolInvocation:
@@ -242,6 +250,78 @@ async def test_file_tools_reject_cross_space_and_manifest_digest_drift(tmp_path:
             _invocation(run, ToolRef("fs_read", "1.0.0"), request_path),
         )
     assert changed.value.code is ToolRegistryErrorCode.SOURCE_CHANGED
+
+
+@pytest.mark.asyncio
+async def test_file_tools_use_relative_paths_within_selected_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "workspace"
+    docs = root / "docs"
+    docs.mkdir(parents=True)
+    (root / "root.txt").write_text("root", encoding="utf-8")
+    note = docs / "note.txt"
+    note.write_text("workspace note", encoding="utf-8")
+    linked = root / "linked"
+    (linked / "hidden.txt").mkdir(parents=True)
+    registry = create_read_only_file_registry(_workspace_policy(root))
+    run = _run()
+
+    listed = await registry.invoke(
+        run,
+        _invocation(run, ToolRef("fs_list", "1.0.0"), {"path": ".", "max_depth": 2}),
+    )
+    entries = cast(dict[str, JSONValue], listed.output)["entries"]
+    assert entries == [
+        {"path": "docs", "kind": "directory", "size_bytes": 0},
+        {"path": "docs/note.txt", "kind": "file", "size_bytes": 14},
+        {"path": "linked", "kind": "directory", "size_bytes": 0},
+        {"path": "linked/hidden.txt", "kind": "directory", "size_bytes": 0},
+        {"path": "root.txt", "kind": "file", "size_bytes": 4},
+    ]
+    first = await registry.invoke(
+        run,
+        _invocation(
+            run, ToolRef("fs_read", "1.0.0"), {"path": "docs/note.txt"}, key="workspace-read"
+        ),
+    )
+    second = await registry.invoke(
+        run,
+        _invocation(
+            run,
+            ToolRef("fs_read", "1.0.0"),
+            {"path": "workspace/docs/note.txt"},
+            key="workspace-read-prefixed",
+        ),
+    )
+    assert cast(dict[str, JSONValue], first.output)["content"] == "workspace note"
+    assert cast(dict[str, JSONValue], second.output)["path"] == "docs/note.txt"
+
+    for index, path in enumerate(("../outside.txt", "C:/Windows/System32", "docs\\note.txt")):
+        with pytest.raises(ToolRegistryError) as denied:
+            await registry.invoke(
+                run,
+                _invocation(
+                    run,
+                    ToolRef("fs_read", "1.0.0"),
+                    {"path": path},
+                    key=f"workspace-denied-{index}",
+                ),
+            )
+        assert denied.value.code is ToolRegistryErrorCode.PATH_DENIED
+
+    monkeypatch.setattr(file_tools, "_is_link_or_junction", lambda path: path.name == "linked")
+    with pytest.raises(ToolRegistryError) as linked_path:
+        await registry.invoke(
+            run,
+            _invocation(
+                run,
+                ToolRef("fs_read", "1.0.0"),
+                {"path": "linked/hidden.txt"},
+                key="workspace-linked",
+            ),
+        )
+    assert linked_path.value.code is ToolRegistryErrorCode.PATH_DENIED
 
 
 @pytest.mark.asyncio

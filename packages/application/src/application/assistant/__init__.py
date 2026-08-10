@@ -55,6 +55,11 @@ from .runs import (
     ConversationRunService,
 )
 from .skill_invocation import AssistantSkillInvocationService, SkillProjectionPort
+from .workspace import (
+    ConversationWorkspace,
+    ConversationWorkspaceError,
+    ConversationWorkspaceService,
+)
 
 __all__ = [
     "AssistantTurnApplicationPort",
@@ -101,4 +106,7 @@ __all__ = [
     "ReasoningProfileResolver",
     "AssistantSkillInvocationService",
     "SkillProjectionPort",
+    "ConversationWorkspace",
+    "ConversationWorkspaceError",
+    "ConversationWorkspaceService",
 ]

@@ -104,6 +104,7 @@ class PostgresGroundedQARepository:
                     space_id=conversation.space_id,
                     owner_id=conversation.owner_id,
                     reasoning_effort=conversation.reasoning_effort.value,
+                    workspace_path=conversation.workspace_path,
                     created_at=conversation.created_at,
                     updated_at=conversation.updated_at,
                     archived_at=conversation.archived_at,
@@ -124,6 +125,18 @@ class PostgresGroundedQARepository:
             if model is None or model.archived_at is not None:
                 raise QAContractError("Conversation does not exist")
             model.reasoning_effort = effort.value
+            model.updated_at = datetime.now(UTC)
+            await session.flush()
+            return _conversation(model)
+
+    async def set_workspace_path(
+        self, conversation_id: UUID, workspace_path: str | None
+    ) -> ConversationRecord:
+        async with self._database.transaction() as session:
+            model = await session.get(ConversationModel, conversation_id, with_for_update=True)
+            if model is None or model.archived_at is not None:
+                raise QAContractError("Conversation does not exist")
+            model.workspace_path = workspace_path
             model.updated_at = datetime.now(UTC)
             await session.flush()
             return _conversation(model)
@@ -872,6 +885,7 @@ def _conversation(model: ConversationModel) -> ConversationRecord:
         conversation_id=model.id,
         space_id=model.space_id,
         owner_id=model.owner_id,
+        workspace_path=model.workspace_path,
         created_at=model.created_at,
         updated_at=model.updated_at,
         archived_at=model.archived_at,

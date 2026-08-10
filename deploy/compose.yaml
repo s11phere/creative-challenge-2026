@@ -99,6 +99,7 @@ services:
       RERANKER_MODEL: ${RERANKER_MODEL:-}
       RERANKER_BATCH_SIZE: ${RERANKER_BATCH_SIZE:-32}
       MODEL_ALLOW_EXTERNAL: ${MODEL_ALLOW_EXTERNAL:-false}
+      AGENT_WORKSPACE_MODEL_VISIBILITY_CONSENT: ${AGENT_WORKSPACE_MODEL_VISIBILITY_CONSENT:-false}
       MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-15}
       FAST_CHAT_TIMEOUT_SECONDS: ${FAST_CHAT_TIMEOUT_SECONDS:-120}
       FAST_CHAT_REASONING_ENABLED: ${FAST_CHAT_REASONING_ENABLED:-false}
@@ -107,6 +108,8 @@ services:
       SKILL_ROOT_PATH: ${SKILL_ROOT_PATH:-./skills}
       KNOWLEDGE_AGENT_SKILL_VERSION: ${KNOWLEDGE_AGENT_SKILL_VERSION:-0.7.0}
       AGENT_LOOP_V5_ENABLED: ${AGENT_LOOP_V5_ENABLED:-true}
+      AGENT_WORKSPACE_ROOT_PATH: /data/agent-workspaces
+      AGENT_WORKSPACE_COMMAND_ALIASES: ${AGENT_WORKSPACE_COMMAND_ALIASES:-python,git,uv,node,pnpm,npm}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -139,6 +142,7 @@ services:
 
     volumes:
       - blobdata:/app/data/blobs
+      - ${AGENT_WORKSPACE_HOST_PATH:-../data/workspaces}:/data/agent-workspaces
 
   worker:
     image: agent-knowledge-worker:local
@@ -184,6 +188,7 @@ services:
       RERANKER_MODEL: ${RERANKER_MODEL:-}
       RERANKER_BATCH_SIZE: ${RERANKER_BATCH_SIZE:-32}
       MODEL_ALLOW_EXTERNAL: ${MODEL_ALLOW_EXTERNAL:-false}
+      AGENT_WORKSPACE_MODEL_VISIBILITY_CONSENT: ${AGENT_WORKSPACE_MODEL_VISIBILITY_CONSENT:-false}
       MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-15}
       FAST_CHAT_TIMEOUT_SECONDS: ${FAST_CHAT_TIMEOUT_SECONDS:-120}
       FAST_CHAT_REASONING_ENABLED: ${FAST_CHAT_REASONING_ENABLED:-false}
@@ -197,6 +202,8 @@ services:
       SKILL_ROOT_PATH: ${SKILL_ROOT_PATH:-./skills}
       KNOWLEDGE_AGENT_SKILL_VERSION: ${KNOWLEDGE_AGENT_SKILL_VERSION:-0.7.0}
       AGENT_LOOP_V5_ENABLED: ${AGENT_LOOP_V5_ENABLED:-true}
+      AGENT_WORKSPACE_ROOT_PATH: /data/agent-workspaces
+      AGENT_WORKSPACE_COMMAND_ALIASES: ${AGENT_WORKSPACE_COMMAND_ALIASES:-python,git,uv,node,pnpm,npm}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -221,6 +228,7 @@ services:
     volumes:
       - blobdata:/app/data/blobs
       - ${QA_DEBUG_TRACE_HOST_PATH:-../tmp/qa-debug}:/data/qa-debug
+      - ${AGENT_WORKSPACE_HOST_PATH:-../data/workspaces}:/data/agent-workspaces
 
   web:
     image: agent-knowledge-web:local

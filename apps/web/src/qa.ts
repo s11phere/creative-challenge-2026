@@ -5,6 +5,7 @@ export type Conversation = {
   conversation_id: string
   space_id: string
   owner_id: string
+  workspace_path?: string | null
 }
 
 export type ConversationMessage = {

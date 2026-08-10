@@ -82,6 +82,7 @@ deploy/.env/
 
 # Temporary
 tmp/
+data/
 
 # Codex
 .agents/

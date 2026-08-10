@@ -24,6 +24,7 @@ from .context import ConversationContextService, ConversationContextSnapshot
 from .metrics import AssistantMetrics
 from .reasoning import ReasoningProfileResolver
 from .runs import AssistantTurnApplicationPort, AssistantTurnSubmission
+from .workspace import ConversationWorkspaceError, ConversationWorkspaceService
 
 
 class AssistantCommandKind(StrEnum):
@@ -155,6 +156,16 @@ _BASE_COMMANDS: tuple[CommandDescriptor, ...] = (
         argument_hint="",
         input_mode="none",
     ),
+    CommandDescriptor(
+        name="workspace",
+        aliases=("ws",),
+        kind=AssistantCommandKind.BASE,
+        description=(
+            "Select the local folder that file and command Tools may use in this conversation."
+        ),
+        argument_hint="<folder>",
+        input_mode="workspace_path",
+    ),
 )
 
 _SELECTABLE_REASONING_EFFORTS = frozenset(
@@ -276,6 +287,12 @@ class AssistantCommandParser:
         if descriptor.kind is AssistantCommandKind.BASE:
             if descriptor.name == "effort":
                 return {"effort": argument_text} if argument_text else {}
+            if descriptor.name == "workspace":
+                if not argument_text:
+                    raise CommandParseError(
+                        "RUN_COMMAND_ARGUMENT_REQUIRED", "Workspace path is required."
+                    )
+                return {"workspace_path": argument_text}
             return {}
         if descriptor.input_mode == "question":
             return {"question": argument_text}
@@ -313,6 +330,7 @@ class AssistantCommandService:
         context: ConversationContextService | None = None,
         metrics: AssistantMetrics | None = None,
         reasoning: ReasoningProfileResolver | None = None,
+        workspace: ConversationWorkspaceService | None = None,
     ) -> None:
         self.catalog = catalog
         self.parser = parser
@@ -324,6 +342,7 @@ class AssistantCommandService:
         self._context = context
         self._metrics = metrics
         self._reasoning = reasoning
+        self._workspace = workspace
 
     async def help(self) -> CommandExecutionResult:
         self._record_command("help")
@@ -398,6 +417,23 @@ class AssistantCommandService:
             status="completed",
             content=self._effort_status(updated.reasoning_effort),
             conversation_id=updated.conversation_id,
+        )
+
+    async def workspace(
+        self, conversation_id: UUID, *, requested_path: str
+    ) -> CommandExecutionResult:
+        self._record_command("workspace")
+        if self._workspace is None:
+            raise CommandParseError("WORKSPACE_UNAVAILABLE", "Workspace selection is unavailable.")
+        try:
+            selected = await self._workspace.select(conversation_id, requested_path)
+        except ConversationWorkspaceError as exc:
+            raise CommandParseError(str(exc), "Workspace could not be selected.") from exc
+        return CommandExecutionResult(
+            command="workspace",
+            status="completed",
+            content=f"Workspace: {selected.path}.",
+            conversation_id=conversation_id,
         )
 
     def _effort_status(self, effort: ReasoningEffort, *, default_marker: str = "") -> str:

@@ -25,3 +25,5 @@ envelope, finalization-only publication gate, and synthetic development contract
 ADR-015 records the autonomous top-level Assistant Loop, model-directed serial Skill/Tool
 orchestration, advisory knowledge next-step guidance, and preservation of the existing Worker,
 QA Application Port, checkpoint, cancellation, and single-publication contracts.
+ADR-016 records conversation-scoped local workspaces, their local-provider visibility boundary,
+relative-path Tools, and the durable approval flow for filesystem writes and command execution.

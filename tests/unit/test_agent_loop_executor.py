@@ -368,6 +368,40 @@ async def test_waiting_approval_checkpoints_and_resumes_the_pending_tool() -> No
 
 
 @pytest.mark.asyncio
+async def test_waiting_approval_records_the_durable_request_identity() -> None:
+    registry = InMemoryToolRegistry(handlers={"tool": search_handler}, approval_port=ApprovedPort())
+    definition = registry.register(tool(write=True))
+    requested: list[object] = []
+
+    async def request_approval(context: AgentRunContext, record: object) -> str:
+        assert context.run_id == loop_run(permissions=definition.permissions).context.run_id
+        requested.append(record)
+        return "durable-approval-1"
+
+    result = await AgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use only the registered synthetic Tool.",
+        model_gateway=cast(
+            ModelGateway,
+            DecisionGateway(
+                '{"action":"call_tool","tool_name":"write_note","arguments":{"query":"approved"}}'
+            ),
+        ),
+        approval_request=request_approval,
+    ).execute(
+        loop_run(permissions=definition.permissions),
+        cast(PinnedSkill, object()),
+        {"question": "synthetic"},
+        goal="Write the approved synthetic note.",
+    )
+
+    assert result.waiting_approval
+    assert result.state.approval_id == "durable-approval-1"
+    assert len(requested) == 1
+
+
+@pytest.mark.asyncio
 async def test_process_permission_also_enters_waiting_approval() -> None:
     registry = InMemoryToolRegistry(handlers={"tool": search_handler}, approval_port=ApprovedPort())
     definition = registry.register(tool(permission=ToolPermission.EXECUTE_PROCESS))

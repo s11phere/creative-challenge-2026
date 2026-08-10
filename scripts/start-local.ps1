@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$LegacyKnowledgeAgent
+    [switch]$LegacyKnowledgeAgent,
+    [switch]$AllowExternalWorkspaceTools
 )
 
 Set-StrictMode -Version Latest
@@ -200,6 +201,13 @@ $env:RERANKER_ENDPOINT = "http://tei-reranker:80"
 $env:RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 $env:EMBEDDING_PROVIDER = "text-embeddings-inference"
 $env:EMBEDDING_ENDPOINT = "http://tei:80"
+if ($AllowExternalWorkspaceTools) {
+    $env:AGENT_WORKSPACE_MODEL_VISIBILITY_CONSENT = "true"
+    Write-Host "WARNING: Workspace file contents may be sent to the configured external Chat endpoint for this process." -ForegroundColor Yellow
+}
+else {
+    $env:AGENT_WORKSPACE_MODEL_VISIBILITY_CONSENT = "false"
+}
 if ($LegacyKnowledgeAgent) {
     $env:KNOWLEDGE_AGENT_SKILL_VERSION = "0.3.0"
     $env:AGENT_LOOP_V5_ENABLED = "false"

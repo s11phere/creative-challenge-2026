@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import cast
 from uuid import UUID, uuid4
 
+import agent_runtime.side_effect_tools as side_effect_tools
 import pytest
 from agent_runtime import (
     FileWritePolicy,
@@ -107,6 +108,26 @@ def _registry(root: Path, *, approval: ApprovalFixture | None = None) -> InMemor
     tools = SideEffectTools(file_policy, shell_policy)
     registry = InMemoryToolRegistry(handlers=tools.handlers(), approval_port=approval)
     register_side_effect_tools(registry, timeout_seconds=0.25)
+    return registry
+
+
+def _workspace_registry(root: Path) -> InMemoryToolRegistry:
+    tools = SideEffectTools(
+        FileWritePolicy(
+            roots={"workspace": root},
+            allowed_paths_by_space={},
+            workspace_root_by_space={SPACE_ID: "workspace"},
+        ),
+        ShellExecutionPolicy(
+            executables={"python": Path(sys.executable)},
+            cwd_roots={"workspace": root},
+            allowed_cwds_by_space={},
+            workspace_root_by_space={SPACE_ID: "workspace"},
+            environment={"PYTHONIOENCODING": "utf-8"},
+        ),
+    )
+    registry = InMemoryToolRegistry(handlers=tools.handlers(), approval_port=ApprovalFixture())
+    register_side_effect_tools(registry)
     return registry
 
 
@@ -269,6 +290,89 @@ async def test_shell_exec_is_allowlisted_bounded_and_approval_gated(tmp_path: Pa
     truncated_output = cast(dict[str, JSONValue], truncated.output)
     assert truncated_output["truncated"] is True
     assert len(cast(str, truncated_output["stdout"]).encode("utf-8")) <= 16
+
+
+@pytest.mark.asyncio
+async def test_side_effect_tools_are_scoped_to_relative_workspace_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "workspace"
+    subdirectory = root / "subdir"
+    subdirectory.mkdir(parents=True)
+    linked = root / "linked"
+    linked.mkdir()
+    registry = _workspace_registry(root)
+
+    write_run = _run(ToolPermission.WRITE_KNOWLEDGE)
+    await registry.invoke(
+        write_run,
+        _invocation(
+            write_run,
+            ToolRef("fs_write", "1.0.0"),
+            {"path": "subdir/note.txt", "content": "workspace only"},
+            key="workspace-write",
+        ),
+    )
+    assert (subdirectory / "note.txt").read_text(encoding="utf-8") == "workspace only"
+    with pytest.raises(ToolRegistryError) as protected:
+        await registry.invoke(
+            write_run,
+            _invocation(
+                write_run,
+                ToolRef("fs_write", "1.0.0"),
+                {"path": ".env", "content": "TOKEN=never"},
+                key="workspace-protected",
+            ),
+        )
+    assert protected.value.code is ToolRegistryErrorCode.PATH_DENIED
+    with pytest.raises(ToolRegistryError) as dotted_path:
+        await registry.invoke(
+            write_run,
+            _invocation(
+                write_run,
+                ToolRef("fs_write", "1.0.0"),
+                {"path": "./subdir/other.txt", "content": "no"},
+                key="workspace-dotted-path",
+            ),
+        )
+    assert dotted_path.value.code is ToolRegistryErrorCode.PATH_DENIED
+
+    command_run = _run(ToolPermission.EXECUTE_PROCESS)
+    command = await registry.invoke(
+        command_run,
+        _invocation(
+            command_run,
+            ToolRef("shell_exec", "1.0.0"),
+            {"executable": "python", "cwd": ".", "argv": ["-c", "print('workspace')"]},
+            key="workspace-command-root",
+        ),
+    )
+    assert cast(dict[str, JSONValue], command.output)["stdout"] == "workspace\n"
+    nested = await registry.invoke(
+        command_run,
+        _invocation(
+            command_run,
+            ToolRef("shell_exec", "1.0.0"),
+            {"executable": "python", "cwd": "subdir", "argv": ["-c", "print('nested')"]},
+            key="workspace-command-nested",
+        ),
+    )
+    assert cast(dict[str, JSONValue], nested.output)["stdout"] == "nested\n"
+
+    monkeypatch.setattr(
+        side_effect_tools, "_is_link_or_junction", lambda path: path.name == "linked"
+    )
+    with pytest.raises(ToolRegistryError) as linked_cwd:
+        await registry.invoke(
+            command_run,
+            _invocation(
+                command_run,
+                ToolRef("shell_exec", "1.0.0"),
+                {"executable": "python", "cwd": "linked", "argv": ["-c", "print('no')"]},
+                key="workspace-command-linked",
+            ),
+        )
+    assert linked_cwd.value.code is ToolRegistryErrorCode.PATH_DENIED
 
 
 @pytest.mark.asyncio

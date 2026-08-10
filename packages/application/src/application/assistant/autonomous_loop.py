@@ -22,6 +22,7 @@ from domain.agent_loop import AgentLoopState, AgentLoopTask
 from domain.agent_runtime import (
     AgentRun,
     AgentRunContext,
+    ApprovalPort,
     RunBudget,
     RunErrorCategory,
     RunStatus,
@@ -215,6 +216,9 @@ class AutonomousAssistantLoopService:
         conversation_finalizer: ConversationFinalizer | None = None,
         decision_policy: DecisionPolicy | None = None,
         tool_skill_refs: Mapping[ToolRef, ToolRef] | None = None,
+        workspace_context: Mapping[str, JSONValue] | None = None,
+        additional_permissions: frozenset[ToolPermission] = frozenset(),
+        approval_port: ApprovalPort | None = None,
     ) -> None:
         self._runs = runs
         self._messages = messages
@@ -235,6 +239,9 @@ class AutonomousAssistantLoopService:
         self._metrics = metrics
         self._decision_policy = decision_policy
         self._tool_skill_refs = dict(tool_skill_refs or {})
+        self._workspace_context = dict(workspace_context or {})
+        self._additional_permissions = additional_permissions
+        self._approval_port = approval_port
 
     async def execute(self, run_id: UUID, *, trace_id: str) -> ConversationRun | None:
         parent = await self._runs.get_conversation_run(run_id)
@@ -264,11 +271,13 @@ class AutonomousAssistantLoopService:
         ):
             return await self._fail(run_id, "RUN_AGENT_DECISION_INVALID")
         snapshot = await self._context.snapshot(parent) if self._context is not None else None
-        input_data = {
+        input_data: dict[str, JSONValue] = {
             "question": user_message.content,
-            "conversation": snapshot.decision_request()
-            if snapshot is not None
-            else user_message.content,
+            "conversation": cast(
+                JSONValue,
+                snapshot.decision_request() if snapshot is not None else user_message.content,
+            ),
+            "workspace": cast(JSONValue, self._workspace_context),
         }
         await self._events.append(
             run_id,
@@ -293,6 +302,9 @@ class AutonomousAssistantLoopService:
             cancellation_check=self._cancel_requested,
             decision_policy=self._decision_policy,
             tool_skill_refs=self._tool_skill_refs,
+            approval_request=(
+                self._approval_port.request if self._approval_port is not None else None
+            ),
         )
         persisted = await self._runtime_state.get_run(run_id)
         checkpoint = await self._runtime_state.get_latest(run_id)
@@ -302,6 +314,16 @@ class AutonomousAssistantLoopService:
             and persisted.status
             not in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.TIMED_OUT}
         ):
+            approval_id = None
+            loop_state = AgentLoopState.from_checkpoint(
+                cast(dict[str, object], dict(checkpoint.state))
+            )
+            if (
+                loop_state.approval_id is not None
+                and self._approval_port is not None
+                and await self._approval_port.is_approved(loop_state.approval_id, persisted.context)
+            ):
+                approval_id = loop_state.approval_id
             result = await executor.resume(
                 persisted,
                 self._pin,
@@ -309,6 +331,7 @@ class AutonomousAssistantLoopService:
                 input_data,
                 caller_id=parent.caller_id,
                 space_id=parent.space_id,
+                approval_id=approval_id,
             )
         else:
             runtime = AgentRun(
@@ -322,7 +345,7 @@ class AutonomousAssistantLoopService:
                     caller_id=parent.caller_id,
                     granted_permissions=frozenset(
                         {ToolPermission.READ_KNOWLEDGE, ToolPermission.MODEL}
-                    ),
+                    ).union(self._additional_permissions),
                 ),
                 budget=self._budget,
             )
@@ -335,6 +358,8 @@ class AutonomousAssistantLoopService:
         if result.error is not None:
             failed = await self._fail(run_id, result.error.code)
             return failed
+        if result.waiting_approval:
+            return await self._runs.wait_for_approval(run_id)
         completed = await self._runs.get_conversation_run(run_id)
         if completed is None:
             return await self._fail(run_id, "RUN_ASSISTANT_PARENT_MISSING")

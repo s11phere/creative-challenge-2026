@@ -533,6 +533,24 @@ class PostgresConversationRunRepository:
             await session.flush()
             return _run(model)
 
+    async def wait_for_approval(self, run_id: UUID) -> ConversationRun:
+        async with self._database.transaction() as session:
+            model = await self._locked_assistant_run(session, run_id)
+            current = _run(model)
+            if (
+                current.status in _TERMINAL
+                or current.status is ConversationRunStatus.WAITING_APPROVAL
+            ):
+                return current
+            if current.cancellation_requested:
+                return self._cancel_locked(model)
+            model.status = ConversationRunStatus.WAITING_APPROVAL.value
+            model.error_code = None
+            model.updated_at = datetime.now(UTC)
+            _clear_lease(model)
+            await session.flush()
+            return _run(model)
+
     async def fail_conversation_run(self, run_id: UUID, *, error_code: str) -> ConversationRun:
         if not error_code.strip():
             raise ValueError("ConversationRun failure requires an error code")
