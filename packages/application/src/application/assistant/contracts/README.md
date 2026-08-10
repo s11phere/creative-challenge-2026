@@ -8,7 +8,8 @@ are intentionally separate from individual Skill manifests and from the bounded 
 | --- | --- |
 | `base-system-prompt-v1.txt` | Product-level routing and response boundary. |
 | `base-system-prompt-v2.txt` | Historical router prompt retained for persisted v2 Runs. |
-| `base-system-prompt-v3.txt` | Current router prompt; prefers `knowledge_agent` for architecture and multi-document synthesis. |
+| `base-system-prompt-v3.txt` | Historical router prompt retained for persisted v3 Runs. |
+| `base-system-prompt-v4.txt` | Current router prompt; defaults to ordinary conversation and requires an explicit current-Space knowledge dependency for `knowledge_agent`. |
 | `router-decision-v1.schema.json` | Strict model intent for `respond`, `clarify`, or `invoke_skill`. |
 | `command-catalog-v1.schema.json` | Safe metadata returned by the versioned command catalog. |
 | `clarification-v1.schema.json` | Server-authored clarification and safe resource candidates. |

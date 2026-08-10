@@ -8,6 +8,11 @@ from .agent import (
     AssistantRouterDecisionParser,
     AssistantSkillInvoker,
 )
+from .autonomous_loop import (
+    AssistantConversationLoopFinalizer,
+    AssistantSkillContext,
+    AutonomousAssistantLoopService,
+)
 from .commands import (
     AssistantCommandCatalog,
     AssistantCommandKind,
@@ -27,7 +32,7 @@ from .context import (
     ConversationContextService,
     ConversationContextSnapshot,
 )
-from .finalization import ConversationFinalizer, FinalizationInput
+from .finalization import ConversationFinalizer, FinalizationInput, grounded_material
 from .metrics import (
     AssistantAction,
     AssistantMetrics,
@@ -55,12 +60,15 @@ __all__ = [
     "AssistantTurnApplicationPort",
     "AssistantAgentError",
     "AssistantAgentService",
+    "AssistantConversationLoopFinalizer",
     "AssistantCommandCatalog",
     "AssistantCommandKind",
     "AssistantCommandParser",
     "AssistantCommandService",
     "AssistantMessageReader",
     "AssistantSkillInvoker",
+    "AssistantSkillContext",
+    "AutonomousAssistantLoopService",
     "ConversationCompactionService",
     "ConversationContextDataPort",
     "ConversationContextMessage",
@@ -84,6 +92,7 @@ __all__ = [
     "ConversationRunService",
     "ConversationFinalizer",
     "FinalizationInput",
+    "grounded_material",
     "NaturalLanguageResourceResolver",
     "ResourceResolutionError",
     "ResourceResolutionErrorCode",

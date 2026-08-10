@@ -11,21 +11,36 @@ import dramatiq
 from application.assistant import (
     AssistantAgentService,
     AssistantMetrics,
+    AssistantSkillContext,
     AssistantSkillInvocationService,
+    AutonomousAssistantLoopService,
     ConversationCompactionService,
     ConversationContextService,
+    ConversationFinalizer,
 )
+from application.skills import KnowledgeLoopTools, KnowledgeLoopToolsConfig
 from domain.assistant_sse import AssistantEventType
 from domain.conversation_run import ConversationRunKind, ConversationRunStatus
-from domain.qa_persistence import QARunVersions
+from domain.grounded_qa import QAAttempt, QAEvent, QAStatus
+from domain.qa_persistence import QARetrievalScope, QARunRecord, QARunVersions
+from infrastructure.agent_events import PostgresAgentRunEventStore
 from infrastructure.assistant_events import PostgresAssistantEventStore
 from infrastructure.assistant_resources import PostgresAssistantResourceResolver
 from infrastructure.assistant_skill_projection import AssistantQASkillProjection
 from infrastructure.config import settings
 from infrastructure.conversation_runs import PostgresConversationRunRepository
 from infrastructure.database import Database
-from infrastructure.qa_execution import assistant_skill_registry, qa_execution_versions
-from infrastructure.qa_persistence import PostgresGroundedQARepository
+from infrastructure.qa import DatabaseSearchService
+from infrastructure.qa_debug_trace import QADebugTrace, TracingModelGateway, TracingToolRegistry
+from infrastructure.qa_execution import (
+    GroundedQAExecutor,
+    StructuredAssistantLoopGateway,
+    StructuredFakeGateway,
+    assistant_skill_registry,
+    qa_execution_versions,
+)
+from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
+from infrastructure.runtime_state import PostgresRuntimeStateStore
 from infrastructure.skill_catalog import FileSystemSkillCatalog
 from infrastructure.telemetry_context import (
     bind_observability_context,
@@ -85,19 +100,19 @@ def assistant_run(*, run_id: str, trace_id: str, event_version: int) -> None:
         ),
         bind_observability_context(trace_id=canonical_trace_id, task_id=run_id),
     ):
-        if not _run_assistant_sync(uid):
+        if not _run_assistant_sync(uid, canonical_trace_id):
             raise dramatiq.Retry(
                 message="Assistant Run lease is active",
                 delay=settings.qa_task_retry_delay_ms,
             )
 
 
-def _run_assistant_sync(run_id: UUID) -> bool:
+def _run_assistant_sync(run_id: UUID, trace_id: str) -> bool:
     loop = asyncio.new_event_loop()
     gateway = _create_gateway()
     asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(_run_assistant_async(run_id, gateway))
+        return loop.run_until_complete(_run_assistant_async(run_id, gateway, trace_id=trace_id))
     finally:
         try:
             loop.run_until_complete(gateway.aclose())
@@ -110,7 +125,7 @@ def _start_qa(run_id: UUID) -> bool:
     return True
 
 
-async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
+async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id: str) -> bool:
     runs = PostgresConversationRunRepository(database)
     lease_owner = str(uuid4())
     claimed = await runs.claim_conversation_run(
@@ -141,7 +156,7 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
         projection=projection,
         resources=PostgresAssistantResourceResolver(database),
     )
-    service = AssistantAgentService(
+    legacy_service = AssistantAgentService(
         runs=runs,
         messages=qa_repository,
         gateway=gateway,
@@ -151,6 +166,24 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
         context=context,
         metrics=metrics,
     )
+    service: AssistantAgentService | AutonomousAssistantLoopService
+    if (
+        claimed.run_kind is ConversationRunKind.ASSISTANT_TURN
+        and claimed.router_version == "assistant-agent-loop-v1"
+        and claimed.core_prompt_version == "assistant-base-prompt-v5"
+    ):
+        service = await _autonomous_loop_service(
+            gateway=gateway,
+            registry=registry,
+            runs=runs,
+            qa_repository=qa_repository,
+            context=context,
+            metrics=metrics,
+            run_id=run_id,
+            trace_id=trace_id,
+        )
+    else:
+        service = legacy_service
     compaction = ConversationCompactionService(
         context=context,
         data=qa_repository,
@@ -168,7 +201,10 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
             lease_owner=lease_owner,
         )
     if claimed.status in _TERMINAL:
-        await service.execute(run_id)
+        if isinstance(service, AutonomousAssistantLoopService):
+            await service.execute(run_id, trace_id=trace_id)
+        else:
+            await service.execute(run_id)
         return True
 
     stop = asyncio.Event()
@@ -179,7 +215,11 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
     )
     try:
         execution = asyncio.create_task(
-            service.execute(run_id),
+            (
+                service.execute(run_id, trace_id=trace_id)
+                if isinstance(service, AutonomousAssistantLoopService)
+                else service.execute(run_id)
+            ),
             name=f"assistant-execution-{run_id}",
         )
         return await _wait_for_execution(execution, lease_lost, run_id=run_id)
@@ -187,6 +227,124 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway) -> bool:
         stop.set()
         await heartbeat
         await runs.release_conversation_run_lease(run_id, lease_owner=lease_owner)
+
+
+async def _autonomous_loop_service(
+    *,
+    gateway: ModelGateway,
+    registry: object,
+    runs: PostgresConversationRunRepository,
+    qa_repository: PostgresGroundedQARepository,
+    context: ConversationContextService,
+    metrics: AssistantMetrics,
+    run_id: UUID,
+    trace_id: str,
+) -> AutonomousAssistantLoopService:
+    """Build the top-level Loop from existing QA ports and trusted Skill packages."""
+    from agent_runtime import FileSystemSkillRegistry
+
+    skill_registry = registry
+    assert isinstance(skill_registry, FileSystemSkillRegistry)
+    assistant_pin = skill_registry.pin("assistant_agent", "0.1.0")
+    assistant_package = skill_registry.validate_pin(assistant_pin)
+    knowledge_pin = skill_registry.pin("knowledge_agent")
+    knowledge_package = skill_registry.validate_pin(knowledge_pin)
+    trace = QADebugTrace.from_settings(run_id=run_id, trace_id=trace_id, settings=settings)
+    await trace.record(
+        "run_started",
+        skill_name=assistant_pin.name,
+        skill_version=assistant_pin.version,
+        knowledge_skill_version=knowledge_pin.version,
+    )
+    qa_executor = GroundedQAExecutor(
+        database=database,
+        gateway=gateway,
+        repository=qa_repository,
+        events=PostgresQAEventStore(database),
+        agent_events=PostgresAgentRunEventStore(database),
+        skill_registry=skill_registry,
+    )
+    qa_service = qa_executor.build_service(
+        gateway,
+        generation_gateway=TracingModelGateway(
+            StructuredFakeGateway(gateway), trace, phase="grounded_generation"
+        ),
+    )
+    versions = qa_execution_versions(skill_registry, skill_name="knowledge_agent")
+
+    async def ensure_qa_run(tool_context: object) -> QARunRecord:
+        from agent_runtime import ToolExecutionContext
+
+        assert isinstance(tool_context, ToolExecutionContext)
+        existing = await qa_repository.get_run(tool_context.run.run_id)
+        if existing is not None:
+            return existing
+        parent = await runs.get_conversation_run(tool_context.run.run_id)
+        if parent is None:
+            raise ValueError("RUN_ASSISTANT_PARENT_MISSING")
+        created = await qa_repository.create_run(
+            QARunRecord(
+                run_id=parent.run_id,
+                attempt=QAAttempt(run_id=parent.run_id),
+                conversation_id=parent.conversation_id,
+                question_message_id=parent.user_message_id,
+                space_id=parent.space_id,
+                caller_id=parent.caller_id,
+                idempotency_key=parent.idempotency_key,
+                versions=versions,
+                retrieval_scope=QARetrievalScope(),
+            )
+        )
+        if created.status is QAStatus.CREATED:
+            return await qa_repository.transition_run(created.run_id, QAEvent.QUEUE)
+        return created
+
+    tools = KnowledgeLoopTools(
+        qa=qa_service,
+        search=DatabaseSearchService(database, gateway),
+        config=KnowledgeLoopToolsConfig(
+            profile=qa_executor.profile,
+            versions=versions,
+            tool_version="1.1.0",
+        ),
+        result_reader=qa_repository.get_run,
+        ensure_qa_run=ensure_qa_run,
+    )
+    tools.replace_tool_registry(TracingToolRegistry(tools.tool_registry, trace))
+    instructions = "\n\n".join(
+        (knowledge_package.root / prompt).read_text(encoding="utf-8")
+        for prompt in knowledge_package.manifest.prompts
+    )
+    return AutonomousAssistantLoopService(
+        runs=runs,
+        messages=qa_repository,
+        gateway=TracingModelGateway(
+            StructuredAssistantLoopGateway(gateway), trace, phase="assistant_agent_decision"
+        ),
+        events=PostgresAssistantEventStore(database),
+        agent_events=PostgresAgentRunEventStore(database),
+        runtime_state=PostgresRuntimeStateStore(database),
+        pin=assistant_pin,
+        budget=assistant_package.manifest.budgets,
+        tool_registry=tools.tool_registry,
+        allowed_tools=tools.allowed_tools,
+        qa_results=qa_repository.get_run,
+        conversation_finalizer=ConversationFinalizer(
+            runs=runs,
+            gateway=TracingModelGateway(gateway, trace, phase="assistant_finalization"),
+        ),
+        decision_policy=tools.decision_policy,
+        skill_contexts=(
+            AssistantSkillContext(
+                name=knowledge_pin.name,
+                version=knowledge_pin.version,
+                description=knowledge_package.manifest.description,
+                instructions=instructions,
+            ),
+        ),
+        context=context,
+        metrics=metrics,
+    )
 
 
 async def _run_compaction_with_lease(

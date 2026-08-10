@@ -205,7 +205,7 @@ if ($LegacyKnowledgeAgent) {
     $env:AGENT_LOOP_V5_ENABLED = "false"
 }
 else {
-    $env:KNOWLEDGE_AGENT_SKILL_VERSION = "0.5.0"
+    $env:KNOWLEDGE_AGENT_SKILL_VERSION = "0.7.0"
     $env:AGENT_LOOP_V5_ENABLED = "true"
 }
 
@@ -221,7 +221,7 @@ $rerankerPort = Get-ConfiguredValue -Values $envValues -Name "RERANKER_PORT" -De
 
 Write-Host "Using .env from $envPath" -ForegroundColor Gray
 Write-Host "Effective retrieval: local TEI embedding + real TEI reranker" -ForegroundColor Gray
-Write-Host "Knowledge Agent: $($env:KNOWLEDGE_AGENT_SKILL_VERSION) (v5 loop enabled: $($env:AGENT_LOOP_V5_ENABLED))" -ForegroundColor Gray
+Write-Host "Knowledge Agent: $($env:KNOWLEDGE_AGENT_SKILL_VERSION) (generic loop enabled: $($env:AGENT_LOOP_V5_ENABLED))" -ForegroundColor Gray
 Write-Host "Chat credentials: loaded from .env (secret value hidden)" -ForegroundColor Gray
 Write-Host "Local Compose project: $composeProjectName (trusted Skill fingerprint $skillFingerprint)" -ForegroundColor Gray
 

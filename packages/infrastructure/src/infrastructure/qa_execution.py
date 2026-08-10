@@ -243,6 +243,31 @@ class StructuredKnowledgeLoopGateway(StructuredAgentGateway):
         )
 
 
+class StructuredAssistantLoopGateway(StructuredAgentGateway):
+    """Provide deterministic multi-turn Tool decisions for local fake Assistant runs."""
+
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        if not isinstance(self._delegate, FakeModelGateway):
+            return await self._delegate.chat(request, capability=capability)
+        payload = _assistant_loop_decision(request.messages[-1].content)
+        text = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+        return ChatResponse(
+            text=text,
+            finish_reason="stop",
+            usage=ModelUsage(
+                input_tokens=sum(max(1, len(item.content.split())) for item in request.messages),
+                output_tokens=max(1, len(text.split())),
+            ),
+            capability=capability,
+            latency_ms=0.0,
+        )
+
+
 def _knowledge_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
     """Return deterministic decisions for local FakeModelGateway development runs."""
     try:
@@ -280,6 +305,79 @@ def _knowledge_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
     if outcome in {"refuse", "conflict"}:
         return {"action": "refuse", "reason": "Grounded QA verified a safe terminal refusal."}
     return {"action": "complete", "reason": "Grounded QA verified the current Run."}
+
+
+def _assistant_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
+    """Use Tool-provided next-step metadata, while keeping ordinary fake turns direct."""
+    try:
+        request = json.loads(content)
+        state = request.get("state", {})
+        input_data = request.get("input", {})
+        observations = state.get("observations", [])
+    except (TypeError, ValueError):
+        observations = []
+        input_data = {}
+    question = input_data.get("question", "") if isinstance(input_data, dict) else ""
+    last = observations[-1] if observations else {}
+    if not isinstance(last, dict) or not last.get("tool_name"):
+        if _requires_fake_knowledge_tool(question):
+            return {
+                "action": "call_tool",
+                "tool_name": "knowledge_search",
+                "arguments": {"query": question or "current Space knowledge request"},
+            }
+        return {
+            "action": "complete",
+            "reason": "The request does not require current-Space knowledge.",
+            "final_response": "fake-response-autonomous",
+        }
+    output = last.get("output", {})
+    recommended = output.get("recommended_next") if isinstance(output, dict) else None
+    if recommended in {
+        "knowledge_search",
+        "knowledge_inspect",
+        "grounded_answer",
+        "verify_answer",
+        "finalize_answer",
+    }:
+        arguments: dict[str, str] = {}
+        if recommended == "knowledge_search":
+            arguments["query"] = question or "current Space knowledge request"
+        return {"action": "call_tool", "tool_name": recommended, "arguments": arguments}
+    if recommended == "refuse":
+        return {"action": "refuse", "reason": "Grounded QA verified a safe terminal refusal."}
+    if recommended == "complete":
+        return {"action": "complete", "reason": "Grounded QA verified the current Run."}
+    next_tools = {
+        "knowledge_search": "knowledge_inspect",
+        "knowledge_inspect": "grounded_answer",
+        "grounded_answer": "verify_answer",
+        "verify_answer": "finalize_answer",
+    }
+    last_tool = last.get("tool_name")
+    next_tool = next_tools.get(last_tool) if isinstance(last_tool, str) else None
+    if next_tool is not None:
+        return {"action": "call_tool", "tool_name": next_tool, "arguments": {}}
+    return {"action": "complete", "reason": "Grounded QA verified the current Run."}
+
+
+def _requires_fake_knowledge_tool(question: object) -> bool:
+    if not isinstance(question, str):
+        return False
+    normalized = question.casefold()
+    markers = (
+        "knowledge base",
+        "current space",
+        "current workspace",
+        "uploaded notes",
+        "uploaded file",
+        "uploaded document",
+        "in the document",
+        "from the document",
+        "citation",
+        "knowledge_agent",
+    )
+    return any(marker in normalized for marker in markers)
 
 
 def qa_execution_versions(
@@ -356,7 +454,7 @@ class GroundedQAExecutor:
         self._derived_writer = derived_writer
         self._generation = generation
 
-    def _build_service(
+    def build_service(
         self,
         gateway: ModelGateway,
         *,
@@ -459,7 +557,7 @@ class GroundedQAExecutor:
                 run.run_id, QAEvent.FAIL, error_code=QAErrorCode.SKILL_INVALID.value
             )
         package = registry.validate_pin(pin)
-        service = self._build_service(
+        service = self.build_service(
             self._gateway,
             generation_gateway=TracingModelGateway(
                 StructuredFakeGateway(self._gateway), trace, phase="grounded_generation"
@@ -471,7 +569,8 @@ class GroundedQAExecutor:
                 run.run_id, QAEvent.FAIL, error_code="QA_RUNTIME_FAILED"
             )
         use_generic_knowledge_loop = (
-            run.versions.skill_name == "knowledge_agent" and pin.version == "0.5.0"
+            run.versions.skill_name == "knowledge_agent"
+            and pin.version in {"0.5.0", "0.6.0", "0.7.0"}
         )
         runtime_gateway: ModelGateway
         state_store = PostgresRuntimeStateStore(self._database)
@@ -483,6 +582,7 @@ class GroundedQAExecutor:
                     profile=self.profile,
                     versions=run.versions,
                     retrieval_scope=run.retrieval_scope,
+                    tool_version="1.1.0" if pin.version == "0.7.0" else "1.0.0",
                 ),
                 result_reader=self._repository.get_run,
             )
@@ -695,6 +795,7 @@ def _safe_error(error: BaseException) -> dict[str, str]:
 
 __all__ = [
     "GroundedQAExecutor",
+    "StructuredAssistantLoopGateway",
     "StructuredFakeGateway",
     "assistant_skill_registry",
     "qa_skill_registry",

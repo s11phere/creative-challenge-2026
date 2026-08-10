@@ -27,7 +27,11 @@ introduced incrementally.
    Other terminal outcomes are clarification, refusal, failure, cancellation, and timeout.
 4. The v3 SSE envelope carries only stable event names, sequence, status, timing, counts, and
    digested summaries. Prompts, answer bodies, document excerpts, credentials, and complete command
-   output are forbidden. v1/v2 projections remain readable during migration.
+   output are forbidden. The sole caller-visible debugging exception is `query_preview` on the
+   `knowledge_search` Tool: the server derives it from that caller's retrieval question, normalizes
+   whitespace/control characters, and bounds it to 512 characters. It is never accepted for other
+   Tools and does not contain document content, prompts, evidence excerpts, or Provider responses.
+   v1/v2 projections remain readable during migration.
 5. Reasoning effort is a provider-neutral persisted profile. `auto` may be downgraded by a
    capability mapping; explicit requests are fail-closed when unsupported. Requested and effective
    values plus the mapping version and downgrade reason are auditable. The exact
@@ -52,8 +56,11 @@ introduced incrementally.
    alias, fixed Space-scoped cwd, policy-owned minimal environment, argv-only execution, bounded
    output, timeout/cancellation cleanup, and no `EXTERNAL_NETWORK` grant.
 9. Knowledge Loop Tools are application-layer adapters, not retrieval implementations. The default
-   local/provisional `knowledge_agent 0.5.0` package exposes `knowledge_search`, `knowledge_inspect`,
-   `grounded_answer`, `verify_answer`, and `finalize_answer`. Search calls must use the
+   local/provisional `knowledge_agent 0.7.0` package exposes `knowledge_search`, `knowledge_inspect`,
+   `grounded_answer`, `verify_answer`, and `finalize_answer`; `0.5.0` and `0.6.0` remain immutable for
+   historical Run recovery and explicit rollback. Version 0.7.0 leaves retrieval order to the
+   model-directed outer Loop; Tools may return bounded `recommended_next` guidance, while server
+   checks retain QA ownership and finalization authority. Search calls must use the
    `SearchService.search(SearchRequest, RetrievalProfileV1)` port with the server-fixed Space and
    retrieval scope. Only metadata and safe identifiers cross the Tool boundary. Grounded QA remains
    the sole owner of context construction, claims, citations, refusal/conflict semantics, and the

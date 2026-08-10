@@ -1,0 +1,15 @@
+workflow_version: "1"
+start: loop
+nodes:
+  - id: loop
+    step: executing
+    handler: knowledge_agent_loop
+    next: null
+    max_retries: 0
+    required_permissions:
+      - read_knowledge
+      - model
+    reserve:
+      tool_calls: 10
+      input_tokens: 49152
+      output_tokens: 12288

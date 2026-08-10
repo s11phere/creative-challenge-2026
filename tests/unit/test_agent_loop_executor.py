@@ -93,9 +93,15 @@ async def search_handler(
     return {"matches": [f"found:{arguments['query']}"]}
 
 
-def tool(*, write: bool = False, permission: ToolPermission | None = None) -> ToolDefinition:
+def tool(
+    *,
+    write: bool = False,
+    permission: ToolPermission | None = None,
+    name: str | None = None,
+) -> ToolDefinition:
+    tool_name = name or ("search_knowledge" if not write else "write_note")
     return ToolDefinition(
-        name="search_knowledge" if not write else "write_note",
+        name=tool_name,
         version="1.0.0",
         description="Operate on synthetic loop data.",
         input_schema={
@@ -206,6 +212,50 @@ async def test_loop_persists_redacted_v3_history_with_one_terminal_event() -> No
     assert "secret synthetic query" not in serialized
     assert '"question"' not in serialized
     assert history.events[-1].payload["publication_id"].startswith("assistant-publication:")
+
+
+@pytest.mark.asyncio
+async def test_knowledge_search_events_expose_only_a_bounded_query_preview() -> None:
+    registry = InMemoryToolRegistry(handlers={"tool": search_handler})
+    definition = registry.register(tool(name="knowledge_search"))
+    events = AgentRunEventLog()
+    result = await AgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use the registered retrieval Tool.",
+        model_gateway=cast(
+            ModelGateway,
+            DecisionGateway(
+                '{"action":"call_tool","tool_name":"knowledge_search",'
+                '"arguments":{"query":"  What\\n is the current retrieval question?  "}}',
+                '{"action":"complete","reason":"done"}',
+            ),
+        ),
+        event_store=events,
+    ).execute(
+        loop_run(permissions=definition.permissions),
+        cast(PinnedSkill, object()),
+        {"question": "synthetic"},
+        goal="Answer the retrieval request.",
+    )
+
+    history = await events.page(result.run.context.run_id, limit=200)
+    tool_events = [
+        event
+        for event in history.events
+        if event.event_type
+        in {
+            AgentRunEventType.TOOL_REQUESTED,
+            AgentRunEventType.TOOL_STARTED,
+            AgentRunEventType.TOOL_OUTPUT,
+        }
+    ]
+    assert tool_events
+    assert all(
+        event.payload["query_preview"] == "What is the current retrieval question?"
+        for event in tool_events
+    )
+    assert all("arguments" not in event.payload for event in tool_events)
 
 
 @pytest.mark.asyncio

@@ -134,10 +134,10 @@ class FakeGroundedQA:
         return qa_run(self.outcome, run_id=run_id)
 
 
-def versions() -> QARunVersions:
+def versions(*, skill_version: str = "0.5.0") -> QARunVersions:
     return QARunVersions(
         skill_name="knowledge_agent",
-        skill_version="0.5.0",
+        skill_version=skill_version,
         profile_version="grounded-qa-provisional-v1",
         retrieval_profile_version="retrieval-profile-v1",
         model_identity="fake-fast-chat-v1",
@@ -157,7 +157,7 @@ def execution_profile() -> GroundedQAExecutionProfile:
     )
 
 
-def runtime_run() -> AgentRun:
+def runtime_run(*, max_tool_calls: int = 5) -> AgentRun:
     return AgentRun(
         context=AgentRunContext(
             run_id=RUN_ID,
@@ -171,7 +171,7 @@ def runtime_run() -> AgentRun:
         ),
         budget=RunBudget(
             max_steps=8,
-            max_tool_calls=5,
+            max_tool_calls=max_tool_calls,
             max_input_tokens=100,
             max_output_tokens=100,
             timeout_seconds=30,
@@ -185,6 +185,8 @@ def tool_context() -> ToolExecutionContext:
 
 def tools(
     outcome: QAOutcome = QAOutcome.ANSWER,
+    *,
+    skill_version: str = "0.5.0",
 ) -> tuple[KnowledgeLoopTools, FakeSearchService, FakeGroundedQA]:
     search = FakeSearchService()
     qa = FakeGroundedQA(outcome)
@@ -194,7 +196,7 @@ def tools(
             search=search,
             config=KnowledgeLoopToolsConfig(
                 profile=execution_profile(),
-                versions=versions(),
+                versions=versions(skill_version=skill_version),
                 retrieval_scope=QARetrievalScope(
                     source_ids=frozenset({SOURCE_ID}),
                     document_ids=frozenset({DOCUMENT_ID}),
@@ -336,6 +338,81 @@ async def test_knowledge_loop_server_policy_forces_verify_and_finalize_sequence(
     await adapter.finalize_answer({}, tool_context())
     forced_complete = adapter.decision_policy(runtime_run(), state, premature)
     assert forced_complete.action is LLMDecisionAction.COMPLETE
+
+
+@pytest.mark.asyncio
+async def test_v7_policy_leaves_an_unstarted_direct_turn_to_the_outer_assistant() -> None:
+    adapter, _search, _qa = tools(skill_version="0.7.0")
+    direct = LLMDecision(
+        LLMDecisionAction.COMPLETE,
+        reason="The request is ordinary conversation.",
+        final_response="A direct answer.",
+    )
+
+    assert (
+        adapter.decision_policy(
+            runtime_run(), AgentLoopState.accepted(AgentLoopTask("Ordinary conversation.")), direct
+        )
+        is direct
+    )
+
+
+@pytest.mark.asyncio
+async def test_v7_policy_replaces_an_identical_followup_search() -> None:
+    adapter, _search, _qa = tools(skill_version="0.7.0")
+    await adapter.knowledge_search({"query": "architecture"}, tool_context())
+    await adapter.knowledge_inspect({}, tool_context())
+    repeated = LLMDecision(
+        LLMDecisionAction.CALL_TOOL,
+        tool_name="knowledge_search",
+        arguments={"query": "architecture"},
+    )
+
+    recovered = adapter.decision_policy(
+        runtime_run(), AgentLoopState.accepted(AgentLoopTask("Architecture overview.")), repeated
+    )
+
+    assert recovered.action is LLMDecisionAction.CALL_TOOL
+    assert recovered.tool_name == "knowledge_search"
+    assert recovered.arguments == {"query": "Architecture overview. additional supporting evidence"}
+
+
+@pytest.mark.asyncio
+async def test_knowledge_loop_policy_cannot_skip_search_inspect_or_followup() -> None:
+    adapter, search, qa = tools(skill_version="0.6.0")
+    result = await AgentLoopExecutor(
+        tool_registry=adapter.tool_registry,
+        allowed_tools=adapter.allowed_tools,
+        system_prompt="Use only the fixed knowledge Tools.",
+        model_gateway=cast(
+            ModelGateway,
+            DecisionGateway(*([('{"action":"complete","reason":"early"}')] * 8)),
+        ),
+        finalizer=adapter.finalizer(),
+        decision_policy=adapter.decision_policy,
+    ).execute(
+        runtime_run(max_tool_calls=7),
+        cast(PinnedSkill, object()),
+        {"question": "architecture", "conversation_id": str(UUID(int=21))},
+        goal="Explain the current architecture.",
+    )
+
+    assert result.error is None, (
+        result.error,
+        [item.tool_name for item in result.state.observations],
+    )
+    assert result.run.status.value == "completed"
+    assert [item.tool_name for item in result.state.observations] == [
+        "knowledge_search",
+        "knowledge_inspect",
+        "knowledge_search",
+        "knowledge_inspect",
+        "grounded_answer",
+        "verify_answer",
+        "finalize_answer",
+    ]
+    assert len(search.calls) == 2
+    assert qa.execute_calls == [RUN_ID]
 
 
 @pytest.mark.asyncio

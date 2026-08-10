@@ -215,6 +215,14 @@ class AgentLoopExecutor:
             {
                 "tool_name": item.tool_name,
                 "tool_version": item.tool_version,
+                "output": (
+                    item.model_output
+                    if item.model_output is not None
+                    else {
+                        "status": "restored_metadata_only",
+                        "output_summary": item.output_summary,
+                    }
+                ),
                 "output_summary": item.output_summary,
                 "error_code": item.error_code,
             }
@@ -252,6 +260,7 @@ class AgentLoopExecutor:
                 allowed_tools=frozenset(ref.name for ref in self._allowed_tools),
                 system_prompt=self._system_prompt,
                 max_tokens=self._max_tokens_per_decision,
+                tool_definitions=definitions,
             )
             if state.phase is AgentLoopPhase.TOOL_REQUESTED and state.pending_tool_name:
                 run, state, pending_result = await self._execute_pending_tool(
@@ -347,6 +356,7 @@ class AgentLoopExecutor:
                         "tool_version": definition.version,
                         "input_summary": _summary_digest(decision.arguments),
                         "retry_count": 0,
+                        **_query_preview_payload(definition, decision.arguments),
                     },
                     event_key=f"iteration:{state.iteration}:tool_requested",
                 )
@@ -365,6 +375,7 @@ class AgentLoopExecutor:
                             "tool_version": definition.version,
                             "input_summary": _summary_digest(decision.arguments),
                             "retry_count": 0,
+                            **_query_preview_payload(definition, decision.arguments),
                         },
                         event_key=f"iteration:{state.iteration}:approval_required",
                     )
@@ -390,6 +401,7 @@ class AgentLoopExecutor:
                     error_code=result.record.error_code,
                     retry_count=result.record.retry_count,
                     duration_ms=result.record.duration_ms,
+                    model_output=result.output,
                 )
                 state = state.observe(observation)
                 history.append(
@@ -448,6 +460,7 @@ class AgentLoopExecutor:
             stop_reason=stop_reason,
             finalization_action=decision.action.value,
             finalizer_publication_id=_publication_id(run),
+            finalization_response=decision.final_response,
         )
         run = run.transition(RunEvent.FINALIZE)
         await self._emit(
@@ -478,6 +491,7 @@ class AgentLoopExecutor:
         decision = LLMDecision(
             action=LLMDecisionAction(state.finalization_action),
             reason="checkpointed finalization",
+            final_response=state.finalization_response,
         )
         return await self._publish_finalization(run, state, input_data, decision)
 
@@ -544,6 +558,7 @@ class AgentLoopExecutor:
                     "tool_version": definition.version,
                     "input_summary": _summary_digest(invocation.arguments),
                     "retry_count": invocation.retry_count,
+                    **_query_preview_payload(definition, invocation.arguments),
                 },
                 event_key=f"iteration:{iteration}:tool_started:{invocation.retry_count}",
             )
@@ -571,6 +586,7 @@ class AgentLoopExecutor:
                             record.retry_count if record is not None else invocation.retry_count
                         ),
                         duration_ms=record.duration_ms if record is not None else 0,
+                        query_preview=_query_preview(definition, invocation.arguments),
                     ),
                     event_key=f"iteration:{iteration}:tool_output:{invocation.retry_count}",
                 )
@@ -603,6 +619,7 @@ class AgentLoopExecutor:
                     error_code=result.record.error_code,
                     retry_count=result.record.retry_count,
                     duration_ms=result.record.duration_ms,
+                    query_preview=_query_preview(definition, invocation.arguments),
                 ),
                 event_key=f"iteration:{iteration}:tool_output:{invocation.retry_count}",
             )
@@ -644,6 +661,7 @@ class AgentLoopExecutor:
             error_code=result.record.error_code,
             retry_count=result.record.retry_count,
             duration_ms=result.record.duration_ms,
+            model_output=result.output,
         )
         return result.run, state.observe(observation), result
 
@@ -816,6 +834,26 @@ def _summary_digest(value: Mapping[str, JSONValue]) -> str:
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
+def _query_preview(definition: ToolDefinition, arguments: Mapping[str, JSONValue]) -> str | None:
+    """Return the bounded, user-visible query for the knowledge retrieval Tool only."""
+    if definition.name != "knowledge_search":
+        return None
+    value = arguments.get("query")
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(
+        "".join(character if character.isprintable() else " " for character in value).split()
+    )
+    return normalized[:512] or None
+
+
+def _query_preview_payload(
+    definition: ToolDefinition, arguments: Mapping[str, JSONValue]
+) -> dict[str, str]:
+    preview = _query_preview(definition, arguments)
+    return {"query_preview": preview} if preview is not None else {}
+
+
 def _tool_event_payload(
     definition: ToolDefinition,
     *,
@@ -826,6 +864,7 @@ def _tool_event_payload(
     error_code: str | None,
     retry_count: int,
     duration_ms: int,
+    query_preview: str | None = None,
 ) -> dict[str, str | int]:
     payload: dict[str, str | int] = {
         "status": status,
@@ -839,6 +878,8 @@ def _tool_event_payload(
     }
     if error_code is not None:
         payload["error_code"] = error_code
+    if query_preview is not None:
+        payload["query_preview"] = query_preview
     return payload
 
 

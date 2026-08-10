@@ -123,6 +123,10 @@ function isSkillInvocation(run: AssistantRun): boolean {
   return run.selection.skill !== null
 }
 
+function usesAgentLoop(run: AssistantRun): boolean {
+  return isSkillInvocation(run) || run.run_kind === 'assistant_turn'
+}
+
 function selectionSourceLabel(source: AssistantRun['selection']['source']): string {
   const labels: Record<AssistantRun['selection']['source'], string> = {
     auto: 'Agent 自动路由',
@@ -159,6 +163,7 @@ function eventLabel(event: AssistantRunEvent, skillName: string): string {
 type SkillRunCardProps = {
   run: AssistantRun
   result: QARun['result']
+  hasGroundedEvidence: boolean
   clarificationPending: boolean
   onSelectClarification: (candidateId: string) => void
   onOpenEvidence: (runId: string) => void
@@ -167,6 +172,7 @@ type SkillRunCardProps = {
 function LegacySkillRunCard({
   run,
   result,
+  hasGroundedEvidence,
   clarificationPending,
   onSelectClarification,
   onOpenEvidence,
@@ -222,7 +228,7 @@ function LegacySkillRunCard({
             </div>
           </section>
         )}
-        {isGroundedRun(run) && (
+        {hasGroundedEvidence && (
           <button
             className="chat-evidence-button"
             type="button"
@@ -274,19 +280,20 @@ function mergeAgentRunEvents(
 function SkillRunCard(props: SkillRunCardProps) {
   const { run } = props
   const skill = run.selection.skill
+  const eligibleForAgentTimeline = usesAgentLoop(run)
   const queryClient = useQueryClient()
   const agentEventsQuery = useQuery({
     queryKey: ['agent-run-events', run.run_id],
     queryFn: ({ signal }) => fetchAgentRunEvents(run.run_id, signal),
     retry: false,
-    enabled: skill !== null,
+    enabled: eligibleForAgentTimeline,
     refetchInterval: activeStatuses.has(run.status) ? 3_000 : false,
   })
   const agentEvents = agentEventsQuery.data ?? []
   const lastSequence = agentEvents.at(-1)?.sequence ?? 0
 
   useEffect(() => {
-    if (!skill || !activeStatuses.has(run.status) || !agentEventsQuery.isSuccess) return
+    if (!eligibleForAgentTimeline || !activeStatuses.has(run.status) || !agentEventsQuery.isSuccess) return
     const controller = new AbortController()
     void streamAgentRunEvents(run.run_id, {
       afterSequence: lastSequence,
@@ -298,12 +305,13 @@ function SkillRunCard(props: SkillRunCardProps) {
       },
     })
     return () => controller.abort()
-  }, [agentEventsQuery.isSuccess, lastSequence, queryClient, run.run_id, run.status, skill])
+  }, [agentEventsQuery.isSuccess, eligibleForAgentTimeline, lastSequence, queryClient, run.run_id, run.status])
 
-  if (!skill) return null
-  if (agentEvents.length > 0) {
+  if (!eligibleForAgentTimeline) return null
+  if (agentEvents.length > 0 || run.run_kind === 'assistant_turn') {
     return <AgentRunTimeline {...props} events={agentEvents} />
   }
+  if (!skill) return null
   return <LegacySkillRunCard {...props} />
 }
 
@@ -450,7 +458,7 @@ export function QAWorkspace({
   const currentQARunQuery = useQuery({
     queryKey: ['qa-run', currentRun?.run_id],
     queryFn: ({ signal }) => fetchRun(currentRun!.run_id, signal),
-    enabled: Boolean(currentRun && isGroundedRun(currentRun)),
+    enabled: Boolean(currentRun && (isGroundedRun(currentRun) || currentRun.run_kind === 'assistant_turn')),
     initialData: currentLegacyRun,
     retry: false,
     refetchInterval: (query) => activeStatuses.has(query.state.data?.status ?? '') ? 2_000 : false,
@@ -962,6 +970,7 @@ export function QAWorkspace({
               ? qaRun.result.text ?? qaRun.result.message ?? null
               : null)
             const limitations = qaRun?.result?.limitations ?? []
+            const hasGroundedEvidence = Boolean(qaRun?.result && (qaRun.citations?.length ?? 0) > 0)
             return (
               <div key={message.message_id} className={`chat-message-group chat-message-group-${message.role}`}>
                 <div
@@ -972,11 +981,12 @@ export function QAWorkspace({
                     : <RenderedAssistantAnswer content={message.content} />}
                 </div>
                 {run && (
-                  isSkillInvocation(run) ? (
+                  usesAgentLoop(run) ? (
                     <>
                       <SkillRunCard
                         run={run}
                         result={qaRun?.result ?? null}
+                        hasGroundedEvidence={hasGroundedEvidence}
                         clarificationPending={clarificationMutation.isPending}
                         onSelectClarification={(candidateId) => clarificationMutation.mutate({ run, candidateId })}
                         onOpenEvidence={openEvidence}
@@ -985,7 +995,7 @@ export function QAWorkspace({
                         <article className="chat-final-answer" data-status={run.status}>
                           <div className="qa-run-heading"><Check size={17} aria-hidden="true" /><strong>最终回答</strong></div>
                           <div className="qa-answer"><RenderedAssistantAnswer content={answer} limitations={limitations} /></div>
-                          {isGroundedRun(run) && (
+                          {hasGroundedEvidence && (
                             <button className="chat-evidence-button" type="button" onClick={() => openEvidence(run.run_id)}>
                               <Quote size={15} aria-hidden="true" />查看引用证据
                             </button>
@@ -1000,7 +1010,7 @@ export function QAWorkspace({
                         <strong>{statusLabel(run.status)}</strong>
                       </div>
                       {answer && <div className="qa-answer"><RenderedAssistantAnswer content={answer} limitations={limitations} /></div>}
-                      {isGroundedRun(run) && <button className="chat-evidence-button" type="button" onClick={() => openEvidence(run.run_id)}><Quote size={15} aria-hidden="true" />查看引用证据</button>}
+                      {hasGroundedEvidence && <button className="chat-evidence-button" type="button" onClick={() => openEvidence(run.run_id)}><Quote size={15} aria-hidden="true" />查看引用证据</button>}
                       {run.clarification && (
                         <div className="chat-clarification">
                           <p>{run.clarification.message}</p>

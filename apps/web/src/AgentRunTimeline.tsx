@@ -16,6 +16,7 @@ import type { AgentRunEvent, AssistantRun } from './qa'
 type AgentRunTimelineProps = {
   run: AssistantRun
   events: AgentRunEvent[]
+  hasGroundedEvidence: boolean
   clarificationPending: boolean
   onSelectClarification: (candidateId: string) => void
   onOpenEvidence: (runId: string) => void
@@ -126,10 +127,12 @@ function toolDetails(item: ToolTimelineItem) {
   if (!source) return []
   const entries: Array<[string, string]> = []
   const inputSummary = getText(source.payload, 'input_summary')
+  const queryPreview = getText(source.payload, 'query_preview')
   const outputSummary = getText(source.payload, 'output_summary')
   const duration = getNumber(source.payload, 'duration_ms')
   const retryCount = getNumber(source.payload, 'retry_count')
   const errorCode = getText(source.payload, 'error_code')
+  if (queryPreview) entries.push(['检索问题', queryPreview])
   if (inputSummary) entries.push(['输入摘要', inputSummary])
   if (outputSummary) entries.push(['结果摘要', outputSummary])
   if (duration !== null) entries.push(['耗时', formatDuration(duration)])
@@ -178,13 +181,10 @@ function TimelineStatusIcon({ status }: { status: string }) {
   return <Check size={17} aria-hidden="true" />
 }
 
-function isGroundedRun(run: AssistantRun): boolean {
-  return run.run_kind === 'grounded_qa' || run.run_kind === 'skill'
-}
-
 export function AgentRunTimeline({
   run,
   events,
+  hasGroundedEvidence,
   clarificationPending,
   onSelectClarification,
   onOpenEvidence,
@@ -208,7 +208,7 @@ export function AgentRunTimeline({
       <header className="chat-agent-timeline-header">
         <span className="chat-agent-timeline-title">
           <BookOpenText size={17} aria-hidden="true" />
-          <span><strong>Agent 运行时间线</strong><small>{runStatusLabel(run.status)}</small></span>
+          <span><strong>Agent 运行时间线</strong></span>
         </span>
         <span className="chat-agent-timeline-status" data-status={run.status}>
           <TimelineStatusIcon status={run.status} />{runStatusLabel(run.status)}
@@ -263,7 +263,7 @@ export function AgentRunTimeline({
         })}
       </ol>
 
-      {isGroundedRun(run) && (
+      {hasGroundedEvidence && (
         <button className="chat-evidence-button" type="button" onClick={() => onOpenEvidence(run.run_id)}>
           <Quote size={15} aria-hidden="true" />查看引用证据
         </button>

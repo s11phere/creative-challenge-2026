@@ -19,6 +19,14 @@
     "payload": {
       "type": "object",
       "maxProperties": 16,
+      "properties": {
+        "query_preview": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001F]*$",
+          "description": "Bounded caller retrieval question; emitted only for knowledge_search."
+        }
+      },
       "propertyNames": {
         "not": {"pattern": "(?i)(prompt|answer|secret|credential|raw|stdout|stderr|document_body)"}
       }

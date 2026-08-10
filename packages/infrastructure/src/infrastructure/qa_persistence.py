@@ -1050,6 +1050,22 @@ def _validate_legacy_parent(
 def _validate_parent(
     model: ConversationRunModel, run: QARunRecord, *, check_idempotency: bool = False
 ) -> None:
+    if model.router_version == "assistant-agent-loop-v1":
+        if (
+            model.conversation_id != run.conversation_id
+            or model.space_id != run.space_id
+            or model.caller_id != run.caller_id
+            or model.user_message_id != run.question_message_id
+            or (check_idempotency and model.idempotency_key != run.idempotency_key)
+            or model.run_kind != ConversationRunKind.ASSISTANT_TURN.value
+            or model.skill_name is not None
+            or model.skill_version is not None
+            or model.skill_content_sha256 is not None
+            or model.core_prompt_version != "assistant-base-prompt-v5"
+            or run.versions.skill_name != "knowledge_agent"
+        ):
+            raise QAContractError("QA Run conflicts with its autonomous Assistant parent")
+        return
     if model.router_version == "assistant-router-decision-v1":
         expected_kind = (
             ConversationRunKind.GROUNDED_QA.value
@@ -1072,7 +1088,11 @@ def _validate_parent(
             or model.skill_version != run.versions.skill_version
             or model.skill_content_sha256 != run.versions.skill_content_sha256
             or model.core_prompt_version
-            not in {"assistant-base-prompt-v2", "assistant-base-prompt-v3"}
+            not in {
+                "assistant-base-prompt-v2",
+                "assistant-base-prompt-v3",
+                "assistant-base-prompt-v4",
+            }
         ):
             raise QAContractError("QA Run conflicts with its Assistant ConversationRun parent")
         return
@@ -1082,15 +1102,22 @@ def _validate_parent(
 def _project_conversation_run(model: ConversationRunModel, run: QARunRecord) -> None:
     _validate_parent(model, run, check_idempotency=False)
     hold_for_finalizer = (
-        model.run_kind
-        in {
-            ConversationRunKind.SKILL.value,
-            ConversationRunKind.GROUNDED_QA.value,
-        }
-        and model.core_prompt_version in {"assistant-base-prompt-v2", "assistant-base-prompt-v3"}
-        and model.result is None
-        and run.status in _BUSINESS_TERMINAL
-    )
+        (
+            model.run_kind
+            in {
+                ConversationRunKind.SKILL.value,
+                ConversationRunKind.GROUNDED_QA.value,
+            }
+            and model.core_prompt_version
+            in {"assistant-base-prompt-v2", "assistant-base-prompt-v3", "assistant-base-prompt-v4"}
+        )
+        or (
+            model.run_kind == ConversationRunKind.ASSISTANT_TURN.value
+            and model.router_version == "assistant-agent-loop-v1"
+            and model.core_prompt_version == "assistant-base-prompt-v5"
+        )
+    ) and model.result is None
+    hold_for_finalizer = hold_for_finalizer and run.status in _BUSINESS_TERMINAL
     model.status = (
         ConversationRunStatus.RUNNING.value
         if hold_for_finalizer

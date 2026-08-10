@@ -444,7 +444,7 @@ async def test_v2_explicit_skill_command_bypasses_model_and_is_idempotent(
             raise AssertionError("Explicit command must not use the Assistant router model")
 
     repository = InMemoryGroundedQARepository()
-    monkeypatch.setattr(settings, "knowledge_agent_skill_version", "0.5.0")
+    monkeypatch.setattr(settings, "knowledge_agent_skill_version", "0.6.0")
     monkeypatch.setattr(settings, "agent_loop_v5_enabled", True)
     events = AssistantEventLog()
     app = create_app(
@@ -473,7 +473,7 @@ async def test_v2_explicit_skill_command_bypasses_model_and_is_idempotent(
     assert first.json()["command"] == "ask"
     assert first.json()["run"]["run_kind"] == "skill"
     assert first.json()["run"]["selection"]["source"] == "command"
-    assert first.json()["run"]["selection"]["skill"]["version"] == "0.5.0"
+    assert first.json()["run"]["selection"]["skill"]["version"] == "0.6.0"
     assert second.json()["run"]["run_id"] == first.json()["run"]["run_id"]
     replayed = await events.replay(UUID(first.json()["run"]["run_id"]))
     assert [event.event_type for event in replayed] == [

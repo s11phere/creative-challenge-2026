@@ -12,7 +12,7 @@ from domain.conversation_run import (
     ConversationRunRepository,
     ConversationRunStatus,
 )
-from domain.qa_persistence import MessageRecord, MessageRole
+from domain.qa_persistence import MessageRecord, MessageRole, QARunRecord
 from model_gateway import (
     CapabilityAlias,
     ChatMessage,
@@ -43,6 +43,7 @@ class FinalizationInput:
     question: str
     skill_result: str
     fallback_content: str | None = None
+    refused: bool = False
 
 
 class ConversationFinalizer:
@@ -84,6 +85,7 @@ class ConversationFinalizer:
                 model_latency_ms=run.usage.model_latency_ms + usage.latency_ms,
             ),
             model_identity=self._gateway.status.provider.value,
+            refused=input.refused,
         )
 
     async def _synthesize(
@@ -147,4 +149,17 @@ class _SynthesisUsage:
     latency_ms: float = 0.0
 
 
-__all__ = ["ConversationFinalizer", "FinalizationInput"]
+def grounded_material(qa_run: QARunRecord, fallback: str) -> str:
+    """Render only verified claims and server-owned evidence identities for synthesis."""
+    result = qa_run.result
+    if result is None or result.answer is None or not result.answer.claims:
+        return fallback
+    return "\n\n".join(
+        f"[verified claim {claim.claim_id}; "
+        f"evidence_ids={','.join(str(item) for item in claim.evidence_ids)}]\n"
+        f"{claim.text}"
+        for claim in result.answer.claims
+    )
+
+
+__all__ = ["ConversationFinalizer", "FinalizationInput", "grounded_material"]

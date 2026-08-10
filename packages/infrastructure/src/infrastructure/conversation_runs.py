@@ -389,6 +389,7 @@ class PostgresConversationRunRepository:
                 return current
             model.run_kind = run_kind.value
             model.selection_source = selection_source.value
+            model.router_version = "assistant-router-decision-v1"
             model.skill_name = skill.name
             model.skill_version = skill.version
             model.skill_content_sha256 = skill.content_sha256
@@ -404,6 +405,7 @@ class PostgresConversationRunRepository:
         message: MessageRecord,
         usage: ConversationRunUsage,
         model_identity: str,
+        refused: bool = False,
     ) -> ConversationRun:
         async with self._database.transaction() as session:
             model = await self._locked_executable_run(session, run_id)
@@ -436,7 +438,11 @@ class PostgresConversationRunRepository:
                     created_at=message.created_at,
                 )
             )
-            model.status = ConversationRunStatus.COMPLETED.value
+            model.status = (
+                ConversationRunStatus.REFUSED.value
+                if refused
+                else ConversationRunStatus.COMPLETED.value
+            )
             model.error_code = None
             model.model_identity = model_identity
             model.usage = _usage_value(usage)
@@ -450,6 +456,49 @@ class PostgresConversationRunRepository:
             )
             if conversation is not None and message.created_at > conversation.updated_at:
                 conversation.updated_at = message.created_at
+            await session.flush()
+            return _run(model)
+
+    async def publish_existing_skill_result(
+        self,
+        *,
+        run_id: UUID,
+        message_id: UUID,
+        usage: ConversationRunUsage,
+        model_identity: str,
+        refused: bool = False,
+    ) -> ConversationRun:
+        async with self._database.transaction() as session:
+            model = await self._locked_executable_run(session, run_id)
+            current = _run(model)
+            if current.status in _TERMINAL:
+                return current
+            if current.cancellation_requested:
+                return self._cancel_locked(model)
+            message = await session.get(QAMessageModel, message_id)
+            if (
+                message is None
+                or message.role != MessageRole.ASSISTANT.value
+                or message.run_id != run_id
+                or message.conversation_id != model.conversation_id
+                or message.space_id != model.space_id
+            ):
+                raise QAContractError(
+                    "Existing Skill message does not belong to the ConversationRun"
+                )
+            model.status = (
+                ConversationRunStatus.REFUSED.value
+                if refused
+                else ConversationRunStatus.COMPLETED.value
+            )
+            model.error_code = None
+            model.model_identity = model_identity
+            model.usage = _usage_value(usage)
+            model.result = _result_value(
+                AssistantResult(AssistantResultKind.SKILL_RESULT, message_id=message_id)
+            )
+            model.updated_at = datetime.now(UTC)
+            _clear_lease(model)
             await session.flush()
             return _run(model)
 

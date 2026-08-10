@@ -287,6 +287,17 @@ class ConversationRunRepository(Protocol):
         message: MessageRecord,
         usage: ConversationRunUsage,
         model_identity: str,
+        refused: bool = False,
+    ) -> ConversationRun: ...
+
+    async def publish_existing_skill_result(
+        self,
+        *,
+        run_id: UUID,
+        message_id: UUID,
+        usage: ConversationRunUsage,
+        model_identity: str,
+        refused: bool = False,
     ) -> ConversationRun: ...
 
     async def publish_clarification(

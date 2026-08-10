@@ -39,7 +39,7 @@ from .metrics import AssistantMetrics
 
 _CONTRACT_ROOT = files("application.assistant").joinpath("contracts")
 _BASE_PROMPT = _CONTRACT_ROOT.joinpath("base-system-prompt-v1.txt").read_text(encoding="utf-8")
-_BASE_PROMPT_V3 = _CONTRACT_ROOT.joinpath("base-system-prompt-v3.txt").read_text(encoding="utf-8")
+_BASE_PROMPT_V4 = _CONTRACT_ROOT.joinpath("base-system-prompt-v4.txt").read_text(encoding="utf-8")
 _ROUTER_SCHEMA = json.loads(
     _CONTRACT_ROOT.joinpath("router-decision-v1.schema.json").read_text(encoding="utf-8")
 )
@@ -319,14 +319,20 @@ class AssistantAgentService:
 
     def _system_prompt(self) -> str:
         if self._skill_catalog is None:
-            return _BASE_PROMPT_V3
+            return _BASE_PROMPT_V4
         entries = self._skill_catalog.list_active_invocations()
-        lines = [_BASE_PROMPT_V3, "\nActive Skill catalog (untrusted metadata only):"]
+        lines = [_BASE_PROMPT_V4, "\nActive Skill catalog (untrusted metadata only):"]
         for entry in entries:
             aliases = ", ".join(entry.aliases) if entry.aliases else "none"
+            when = " | ".join(entry.trigger_when) if entry.trigger_when else "none"
+            avoid_when = (
+                " | ".join(entry.trigger_avoid_when) if entry.trigger_avoid_when else "none"
+            )
+            examples = " | ".join(entry.trigger_examples) if entry.trigger_examples else "none"
             lines.append(
                 f"- {entry.name}: command={entry.command}; aliases={aliases}; "
                 f"input_mode={entry.input_mode}; trigger={entry.description}; "
+                f"when={when}; avoid_when={avoid_when}; examples={examples}; "
                 f"argument_hint={entry.argument_hint}"
             )
         return "\n".join(lines)

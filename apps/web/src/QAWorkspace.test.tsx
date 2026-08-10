@@ -412,18 +412,18 @@ describe('assistant conversation workspace', () => {
     expect(screen.queryByRole('listbox', { name: 'Reasoning effort options' })).not.toBeInTheDocument()
   })
 
-  it('recovers paged v3 history into a collapsed Agent timeline before the final answer', async () => {
+  it('recovers automatic paged v3 history into a collapsed Agent timeline before the final answer', async () => {
     const completed = assistantRun({
-      run_kind: 'skill',
-      selection: { source: 'auto', skill: { name: 'knowledge_agent', version: '0.3.0', content_sha256: 'a'.repeat(64) } },
+      run_kind: 'assistant_turn',
+      selection: { source: 'auto', skill: null },
       assistant_message: { message_id: 'assistant-1', content: 'Architecture answer.' },
       usage: { input_tokens: 120, output_tokens: 48, total_tokens: 168, model_latency_ms: 1240 },
     })
     const events = [
       { schema_version: 'agent-run-sse-v3', event_id: 'event-1', run_id: 'run-1', sequence: 1, occurred_at: '2026-08-09T10:00:01Z', event_type: 'accepted', payload: { status: 'accepted', requested_effort: 'high', effective_effort: 'medium', model: 'fake-reasoner' } },
       { schema_version: 'agent-run-sse-v3', event_id: 'event-2', run_id: 'run-1', sequence: 2, occurred_at: '2026-08-09T10:00:02Z', event_type: 'iteration_started', payload: { status: 'planning', iteration: 1, tool_call_count: 0, observation_count: 0 } },
-      { schema_version: 'agent-run-sse-v3', event_id: 'event-3', run_id: 'run-1', sequence: 3, occurred_at: '2026-08-09T10:00:03Z', event_type: 'tool_requested', payload: { status: 'requested', iteration: 1, tool_name: 'inspect_retrieval', tool_version: '1.0.0', input_summary: 'sha256:input-1', retry_count: 0 } },
-      { schema_version: 'agent-run-sse-v3', event_id: 'event-4', run_id: 'run-1', sequence: 4, occurred_at: '2026-08-09T10:00:04Z', event_type: 'tool_output', payload: { status: 'succeeded', iteration: 1, tool_name: 'inspect_retrieval', tool_version: '1.0.0', input_summary: 'sha256:input-1', output_summary: 'sha256:output-1', retry_count: 1, duration_ms: 126 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-3', run_id: 'run-1', sequence: 3, occurred_at: '2026-08-09T10:00:03Z', event_type: 'tool_requested', payload: { status: 'requested', iteration: 1, tool_name: 'knowledge_search', tool_version: '1.0.0', input_summary: 'sha256:input-1', query_preview: 'How is the architecture indexed?', retry_count: 0 } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-4', run_id: 'run-1', sequence: 4, occurred_at: '2026-08-09T10:00:04Z', event_type: 'tool_output', payload: { status: 'succeeded', iteration: 1, tool_name: 'knowledge_search', tool_version: '1.0.0', input_summary: 'sha256:input-1', query_preview: 'How is the architecture indexed?', output_summary: 'sha256:output-1', retry_count: 1, duration_ms: 126 } },
       { schema_version: 'agent-run-sse-v3', event_id: 'event-5', run_id: 'run-1', sequence: 5, occurred_at: '2026-08-09T10:00:05Z', event_type: 'iteration_started', payload: { status: 'planning', iteration: 2, tool_call_count: 1, observation_count: 1 } },
       { schema_version: 'agent-run-sse-v3', event_id: 'event-6', run_id: 'run-1', sequence: 6, occurred_at: '2026-08-09T10:00:06Z', event_type: 'tool_requested', payload: { status: 'requested', iteration: 2, tool_name: 'write_file', tool_version: '1.0.0', input_summary: 'sha256:input-2', retry_count: 0 } },
       { schema_version: 'agent-run-sse-v3', event_id: 'event-7', run_id: 'run-1', sequence: 7, occurred_at: '2026-08-09T10:00:07Z', event_type: 'approval_required', payload: { status: 'waiting_approval', iteration: 2, tool_name: 'write_file', tool_version: '1.0.0', input_summary: 'sha256:input-2', retry_count: 0 } },
@@ -461,20 +461,22 @@ describe('assistant conversation workspace', () => {
     renderWorkspace()
 
     const timeline = await screen.findByLabelText('Agent 运行时间线')
-    expect(screen.getByText('请求强度')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('请求强度')).toBeInTheDocument())
     expect(screen.getByText('实际强度')).toBeInTheDocument()
     expect(screen.getByText('实际 Token')).toBeInTheDocument()
     expect(screen.getByText('目标已完成')).toBeInTheDocument()
     expect(screen.getByText('等待审批')).toBeInTheDocument()
     expect(screen.getByText('审批已通过，执行中')).toBeInTheDocument()
     expect(screen.getByText('审批已拒绝，无副作用')).toBeInTheDocument()
-    const retrievalTool = screen.getByText('inspect_retrieval').closest('details')
+    const retrievalTool = screen.getByText('knowledge_search').closest('details')
     if (!retrievalTool) throw new Error('retrieval Tool card not rendered')
     expect(retrievalTool).not.toHaveAttribute('open')
     expect(retrievalTool).toHaveAttribute('data-kind', 'retrieval')
     expect(retrievalTool.querySelector('.chat-agent-tool-details')).not.toBeVisible()
-    fireEvent.click(screen.getByText('inspect_retrieval'))
+    fireEvent.click(screen.getByText('knowledge_search'))
     expect(retrievalTool.querySelector('.chat-agent-tool-details')).toBeVisible()
+    expect(screen.getByText('检索问题')).toBeInTheDocument()
+    expect(screen.getByText('How is the architecture indexed?')).toBeInTheDocument()
     const answer = screen.getByText('Architecture answer.')
     expect(timeline.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
   })
@@ -482,9 +484,9 @@ describe('assistant conversation workspace', () => {
   it('reconnects an active Agent Run stream from its durable event cursor', async () => {
     const active = assistantRun({
       status: 'running',
-      run_kind: 'skill',
+      run_kind: 'assistant_turn',
       assistant_message: null,
-      selection: { source: 'auto', skill: { name: 'knowledge_agent', version: '0.3.0', content_sha256: 'a'.repeat(64) } },
+      selection: { source: 'auto', skill: null },
     })
     const fetchMock = baseFetch({
       conversations: [{

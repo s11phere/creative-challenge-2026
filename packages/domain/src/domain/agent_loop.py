@@ -8,6 +8,13 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any, cast
 
+type ModelVisibleJSON = (
+    None | bool | int | float | str | list["ModelVisibleJSON"] | dict[str, "ModelVisibleJSON"]
+)
+
+_MAX_MODEL_VISIBLE_OBSERVATION_BYTES = 16_384
+_MAX_FINAL_RESPONSE_CHARS = 12_000
+
 
 class AgentLoopContractError(ValueError):
     """Base error for invalid loop state or transitions."""
@@ -82,7 +89,12 @@ class AgentLoopCompletionCheck:
 
 @dataclass(frozen=True)
 class AgentLoopToolObservation:
-    """A redacted Tool observation persisted in a checkpoint."""
+    """A redacted Tool observation persisted in a checkpoint.
+
+    ``model_output`` is retained only when the Tool contract explicitly allows model
+    visibility.  It is bounded and checkpointed locally so recovery can continue the
+    same reasoning loop; SSE and audit events still contain only digests.
+    """
 
     iteration: int
     tool_name: str
@@ -93,6 +105,7 @@ class AgentLoopToolObservation:
     error_code: str | None = None
     retry_count: int = 0
     duration_ms: int = 0
+    model_output: ModelVisibleJSON | None = None
 
     def __post_init__(self) -> None:
         if self.iteration < 1 or not self.tool_name or not self.tool_version:
@@ -101,6 +114,18 @@ class AgentLoopToolObservation:
             raise AgentLoopContractError("Tool observation must contain redacted summaries")
         if self.retry_count < 0 or self.duration_ms < 0:
             raise AgentLoopContractError("Tool observation counters cannot be negative")
+        try:
+            encoded = json.dumps(
+                self.model_output,
+                ensure_ascii=True,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise AgentLoopContractError("Tool observation model output is not JSON") from exc
+        if len(encoded) > _MAX_MODEL_VISIBLE_OBSERVATION_BYTES:
+            raise AgentLoopContractError("Tool observation model output is too large")
 
 
 @dataclass(frozen=True)
@@ -131,6 +156,7 @@ class AgentLoopState:
     finalization: AgentLoopFinalizationState = AgentLoopFinalizationState.NOT_STARTED
     finalization_action: str | None = None
     finalizer_publication_id: str | None = None
+    finalization_response: str | None = None
     approval_id: str | None = None
     lease_id: str | None = None
     last_idempotency_key: str | None = None
@@ -163,6 +189,11 @@ class AgentLoopState:
             "refuse",
         }:
             raise AgentLoopContractError("Finalization action is invalid")
+        if self.finalization_response is not None and (
+            not self.finalization_response.strip()
+            or len(self.finalization_response) > _MAX_FINAL_RESPONSE_CHARS
+        ):
+            raise AgentLoopContractError("Finalization response is invalid")
         if (
             self.finalizer_publication_id is not None
             and not self.finalizer_publication_id.startswith("assistant-publication:")
@@ -265,6 +296,7 @@ class AgentLoopState:
         stop_reason: AgentLoopStopReason,
         finalization_action: str | None = None,
         finalizer_publication_id: str | None = None,
+        finalization_response: str | None = None,
     ) -> AgentLoopState:
         if self.phase not in {AgentLoopPhase.PLANNING, AgentLoopPhase.OBSERVING}:
             raise AgentLoopTransitionError("Loop can finalize only after planning or observation")
@@ -276,6 +308,7 @@ class AgentLoopState:
             finalization=AgentLoopFinalizationState.IN_PROGRESS,
             finalization_action=finalization_action,
             finalizer_publication_id=finalizer_publication_id,
+            finalization_response=finalization_response,
         )
 
     def publish(self, *, refused: bool = False, clarified: bool = False) -> AgentLoopState:
@@ -316,7 +349,7 @@ class AgentLoopState:
     def as_checkpoint(self) -> dict[str, object]:
         """Return only redacted JSON state suitable for a Runtime checkpoint."""
         return {
-            "schema_version": "agent-loop-v1",
+            "schema_version": "agent-loop-v2",
             "goal": self.task.goal,
             "subquestions": list(self.task.subquestions),
             "phase": self.phase.value,
@@ -337,6 +370,7 @@ class AgentLoopState:
                     "error_code": item.error_code,
                     "retry_count": item.retry_count,
                     "duration_ms": item.duration_ms,
+                    "model_output": item.model_output,
                 }
                 for item in self.observations
             ],
@@ -344,6 +378,7 @@ class AgentLoopState:
             "finalization": self.finalization.value,
             "finalization_action": self.finalization_action,
             "finalizer_publication_id": self.finalizer_publication_id,
+            "finalization_response": self.finalization_response,
             "approval_id": self.approval_id,
             "lease_id": self.lease_id,
             "last_idempotency_key": self.last_idempotency_key,
@@ -355,7 +390,8 @@ class AgentLoopState:
 
     @classmethod
     def from_checkpoint(cls, value: dict[str, object]) -> AgentLoopState:
-        if value.get("schema_version") != "agent-loop-v1":
+        schema_version = value.get("schema_version")
+        if schema_version not in {"agent-loop-v1", "agent-loop-v2"}:
             raise AgentLoopContractError("unsupported Agent Loop checkpoint schema")
         raw_completion = value.get("completion", {})
         if not isinstance(raw_completion, dict):
@@ -382,6 +418,11 @@ class AgentLoopState:
                 error_code=str(item["error_code"]) if item.get("error_code") else None,
                 retry_count=int(item.get("retry_count", 0)),
                 duration_ms=int(item.get("duration_ms", 0)),
+                model_output=(
+                    cast(ModelVisibleJSON, item["model_output"])
+                    if schema_version == "agent-loop-v2" and "model_output" in item
+                    else None
+                ),
             )
             for item in cast(list[object], raw_observations)
             if isinstance(item, dict)
@@ -410,6 +451,9 @@ class AgentLoopState:
                 str(value["finalizer_publication_id"])
                 if value.get("finalizer_publication_id")
                 else None
+            ),
+            finalization_response=(
+                str(value["finalization_response"]) if value.get("finalization_response") else None
             ),
             approval_id=str(value["approval_id"]) if value.get("approval_id") else None,
             lease_id=str(value["lease_id"]) if value.get("lease_id") else None,

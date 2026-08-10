@@ -8,7 +8,7 @@ from contextlib import suppress
 from uuid import UUID, uuid4
 
 import dramatiq
-from application.assistant import ConversationFinalizer, FinalizationInput
+from application.assistant import ConversationFinalizer, FinalizationInput, grounded_material
 from domain.assistant_sse import AssistantEventType
 from domain.conversation_run import ConversationRun, ConversationRunKind, ConversationRunStatus
 from domain.grounded_qa import QAStatus
@@ -253,7 +253,11 @@ async def _finalize_parent_completion(
         ConversationRunStatus.CANCELLED,
         ConversationRunStatus.TIMED_OUT,
     }:
-        if claimed.core_prompt_version in {"assistant-base-prompt-v2", "assistant-base-prompt-v3"}:
+        if claimed.core_prompt_version in {
+            "assistant-base-prompt-v2",
+            "assistant-base-prompt-v3",
+            "assistant-base-prompt-v4",
+        }:
             await _ensure_finalizer_terminal_event(events, claimed)
         return
     try:
@@ -282,12 +286,12 @@ async def _finalize_parent_completion(
             if result_message is not None
             else "Skill returned no answer text."
         )
-        grounded_material = _grounded_material(qa_run, tool_result)
+        material = grounded_material(qa_run, tool_result)
         finalized = await ConversationFinalizer(runs=parent_runs, gateway=gateway).execute(
             claimed,
             input=FinalizationInput(
                 question=question.content,
-                skill_result=grounded_material,
+                skill_result=material,
                 fallback_content=tool_result,
             ),
         )
@@ -313,19 +317,6 @@ async def _finalize_parent_completion(
             )
     finally:
         await parent_runs.release_conversation_run_lease(run_id, lease_owner=lease_owner)
-
-
-def _grounded_material(qa_run: QARunRecord, fallback: str) -> str:
-    """Render only verified claims and server-owned evidence identities for synthesis."""
-    result = qa_run.result
-    if result is None or result.answer is None or not result.answer.claims:
-        return fallback
-    return "\n\n".join(
-        f"[verified claim {claim.claim_id}; "
-        f"evidence_ids={','.join(str(item) for item in claim.evidence_ids)}]\n"
-        f"{claim.text}"
-        for claim in result.answer.claims
-    )
 
 
 async def _ensure_finalizer_terminal_event(

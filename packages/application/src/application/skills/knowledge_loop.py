@@ -38,6 +38,8 @@ from application.qa.service import (
 
 from .knowledge_qa import qa_failure
 
+type EnsureQARun = Callable[[ToolExecutionContext], Awaitable[QARunRecord]]
+
 
 @dataclass(frozen=True)
 class KnowledgeLoopToolsConfig:
@@ -47,6 +49,7 @@ class KnowledgeLoopToolsConfig:
     versions: QARunVersions
     retrieval_scope: QARetrievalScope = QARetrievalScope()
     max_search_observations: int = 8
+    tool_version: str = "1.0.0"
 
     def __post_init__(self) -> None:
         if self.max_search_observations < 1:
@@ -72,7 +75,11 @@ class _SearchObservation:
 
 @dataclass
 class _RunFacts:
+    started: bool = False
     searches: list[_SearchObservation] = field(default_factory=list)
+    inspections: int = 0
+    last_inspected_search_count: int = 0
+    gap_signals: tuple[str, ...] = ()
     answer_run: QARunRecord | None = None
     verified: bool = False
     finalization_ready: bool = False
@@ -93,11 +100,13 @@ class KnowledgeLoopTools:
         search: SearchServicePort,
         config: KnowledgeLoopToolsConfig,
         result_reader: Callable[[UUID], Awaitable[QARunRecord | None]] | None = None,
+        ensure_qa_run: EnsureQARun | None = None,
     ) -> None:
         self._qa = qa
         self._search = search
         self._config = config
         self._result_reader = result_reader
+        self._ensure_qa_run = ensure_qa_run
         self._facts: dict[UUID, _RunFacts] = {}
         registry = InMemoryToolRegistry(
             handlers={
@@ -108,11 +117,11 @@ class KnowledgeLoopTools:
                 "finalize_answer": self.finalize_answer,
             }
         )
-        self.search_tool = registry.register(_knowledge_search_definition())
-        self.inspect_tool = registry.register(_knowledge_inspect_definition())
-        self.answer_tool = registry.register(_grounded_answer_definition())
-        self.verify_tool = registry.register(_verify_answer_definition())
-        self.finalize_tool = registry.register(_finalize_answer_definition())
+        self.search_tool = registry.register(_knowledge_search_definition(config.tool_version))
+        self.inspect_tool = registry.register(_knowledge_inspect_definition(config.tool_version))
+        self.answer_tool = registry.register(_grounded_answer_definition(config.tool_version))
+        self.verify_tool = registry.register(_verify_answer_definition(config.tool_version))
+        self.finalize_tool = registry.register(_finalize_answer_definition(config.tool_version))
         self.tool_registry: AgentToolRegistry = registry
 
     @property
@@ -133,6 +142,8 @@ class KnowledgeLoopTools:
         self, arguments: dict[str, JSONValue], context: ToolExecutionContext
     ) -> dict[str, JSONValue]:
         query = _required_query(arguments)
+        facts = self._facts_for(context.run.run_id)
+        facts.started = True
         result = await self._search.search(
             SearchRequest(
                 query=query,
@@ -146,7 +157,6 @@ class KnowledgeLoopTools:
             self._config.profile.retrieval,
         )
         hits = result.hits
-        facts = self._facts_for(context.run.run_id)
         if len(facts.searches) < self._config.max_search_observations:
             source_versions = tuple(
                 (
@@ -168,29 +178,34 @@ class KnowledgeLoopTools:
                     source_versions=source_versions,
                 )
             )
-        return {
-            "trust": "untrusted",
-            "query_count": 1,
-            "hit_count": len(hits),
-            "matched_count": sum(not hit.context_only for hit in hits),
-            "context_only_count": sum(hit.context_only for hit in hits),
-            "evidence_ids": [str(hit.chunk_id) for hit in hits],
-            "source_versions": [
-                {
-                    "source_id": str(hit.source_id),
-                    "document_id": str(hit.document_id),
-                    "version_id": str(hit.version_id),
-                }
-                for hit in hits
-            ],
-            "profile_version": result.diagnostics.profile_version,
-        }
+        return self._with_guidance(
+            {
+                "trust": "untrusted",
+                "query_count": 1,
+                "hit_count": len(hits),
+                "matched_count": sum(not hit.context_only for hit in hits),
+                "context_only_count": sum(hit.context_only for hit in hits),
+                "evidence_ids": [str(hit.chunk_id) for hit in hits],
+                "source_versions": [
+                    {
+                        "source_id": str(hit.source_id),
+                        "document_id": str(hit.document_id),
+                        "version_id": str(hit.version_id),
+                    }
+                    for hit in hits
+                ],
+                "profile_version": result.diagnostics.profile_version,
+            },
+            recommended_next="knowledge_inspect",
+        )
 
     async def knowledge_inspect(
         self, arguments: dict[str, JSONValue], context: ToolExecutionContext
     ) -> dict[str, JSONValue]:
-        _require_empty(arguments)
-        observations = self._facts_for(context.run.run_id).searches
+        _require_inspection(arguments)
+        facts = self._facts_for(context.run.run_id)
+        facts.started = True
+        observations = facts.searches
         hit_count = sum(item.hit_count for item in observations)
         matched_count = sum(item.matched_count for item in observations)
         context_only_count = sum(item.context_only_count for item in observations)
@@ -203,6 +218,9 @@ class KnowledgeLoopTools:
             gap_signals.append("matched_evidence_limited")
         if observations and max(item.source_count for item in observations) < 2:
             gap_signals.append("single_source_coverage")
+        facts.inspections += 1
+        facts.last_inspected_search_count = len(observations)
+        facts.gap_signals = tuple(str(signal) for signal in gap_signals)
         evidence_ids = tuple(
             dict.fromkeys(evidence_id for item in observations for evidence_id in item.evidence_ids)
         )
@@ -211,30 +229,65 @@ class KnowledgeLoopTools:
                 item for observation in observations for item in observation.source_versions
             )
         )
-        return {
-            "trust": "untrusted",
-            "search_count": len(observations),
-            "hit_count": hit_count,
-            "matched_count": matched_count,
-            "context_only_count": context_only_count,
-            "gap_signals": gap_signals,
-            "evidence_ids": list(evidence_ids),
-            "source_versions": [
-                {
-                    "source_id": source_id,
-                    "document_id": document_id,
-                    "version_id": version_id,
-                }
-                for source_id, document_id, version_id in source_versions
-            ],
-        }
+        return self._with_guidance(
+            {
+                "trust": "untrusted",
+                "search_count": len(observations),
+                "hit_count": hit_count,
+                "matched_count": matched_count,
+                "context_only_count": context_only_count,
+                "gap_signals": gap_signals,
+                "evidence_ids": list(evidence_ids),
+                "source_versions": [
+                    {
+                        "source_id": source_id,
+                        "document_id": document_id,
+                        "version_id": version_id,
+                    }
+                    for source_id, document_id, version_id in source_versions
+                ],
+            },
+            recommended_next=(
+                "knowledge_search" if _needs_followup_search(facts) else "grounded_answer"
+            ),
+        )
 
     async def grounded_answer(
         self, arguments: dict[str, JSONValue], context: ToolExecutionContext
     ) -> dict[str, JSONValue]:
         _require_empty(arguments)
         facts = self._facts_for(context.run.run_id)
-        if facts.answer_run is None:
+        facts.started = True
+        if self._uses_advisory_guidance() and not facts.searches:
+            return self._with_guidance(
+                {
+                    "status": "pending",
+                    "outcome": "pending",
+                    "claim_count": 0,
+                    "citation_count": 0,
+                },
+                recommended_next="knowledge_search",
+            )
+        if self._uses_advisory_guidance() and facts.last_inspected_search_count < len(
+            facts.searches
+        ):
+            return self._with_guidance(
+                {
+                    "status": "pending",
+                    "outcome": "pending",
+                    "claim_count": 0,
+                    "citation_count": 0,
+                },
+                recommended_next="knowledge_inspect",
+            )
+        if facts.answer_run is None and self._result_reader is not None:
+            facts.answer_run = await self._result_reader(context.run.run_id)
+        if facts.answer_run is None and self._ensure_qa_run is not None:
+            facts.answer_run = await self._ensure_qa_run(context)
+        if facts.answer_run is None or facts.answer_run.status not in {
+            QAStatus.COMPLETED,
+            QAStatus.REFUSED,
+        }:
             additional_queries = tuple(dict.fromkeys(item.query for item in facts.searches))[
                 : self._config.profile.planning.max_subqueries - 1
             ]
@@ -255,24 +308,28 @@ class KnowledgeLoopTools:
                 RunErrorCategory.SCHEMA,
                 "Grounded QA did not return the current Run result.",
             )
-        return _answer_status(completed)
+        return self._with_guidance(_answer_status(completed), recommended_next="verify_answer")
 
     async def verify_answer(
         self, arguments: dict[str, JSONValue], context: ToolExecutionContext
     ) -> dict[str, JSONValue]:
         _require_empty(arguments)
         facts = self._facts_for(context.run.run_id)
+        facts.started = True
         completed = facts.answer_run
         if completed is None:
-            return {
-                "ready": False,
-                "outcome": "pending",
-                "claim_count": 0,
-                "citation_count": 0,
-                "current_run_only": True,
-                "conflict": False,
-                "terminal_reason": "grounded_answer_required",
-            }
+            return self._with_guidance(
+                {
+                    "ready": False,
+                    "outcome": "pending",
+                    "claim_count": 0,
+                    "citation_count": 0,
+                    "current_run_only": True,
+                    "conflict": False,
+                    "terminal_reason": "grounded_answer_required",
+                },
+                recommended_next="knowledge_search",
+            )
         if completed.run_id != context.run.run_id or completed.result is None:
             raise NodeExecutionError(
                 "SKILL_QA_RUN_INVALID",
@@ -289,37 +346,46 @@ class KnowledgeLoopTools:
             ready = bool(citations) and bool(result.answer.claims) and claims_valid
             terminal_reason = "answer_verified" if ready else "citation_incomplete"
             facts.verified = ready
-            return {
-                "ready": ready,
-                "outcome": result.outcome.value,
-                "claim_count": len(result.answer.claims),
-                "citation_count": len(citations),
-                "current_run_only": True,
-                "conflict": False,
-                "terminal_reason": terminal_reason,
-            }
+            return self._with_guidance(
+                {
+                    "ready": ready,
+                    "outcome": result.outcome.value,
+                    "claim_count": len(result.answer.claims),
+                    "citation_count": len(citations),
+                    "current_run_only": True,
+                    "conflict": False,
+                    "terminal_reason": terminal_reason,
+                },
+                recommended_next="finalize_answer" if ready else "knowledge_search",
+            )
         if result.outcome is QAOutcome.REFUSE and result.refusal is not None:
             facts.verified = True
-            return {
-                "ready": True,
-                "outcome": result.outcome.value,
-                "claim_count": 0,
-                "citation_count": 0,
-                "current_run_only": True,
-                "conflict": False,
-                "terminal_reason": "evidence_insufficient",
-            }
+            return self._with_guidance(
+                {
+                    "ready": True,
+                    "outcome": result.outcome.value,
+                    "claim_count": 0,
+                    "citation_count": 0,
+                    "current_run_only": True,
+                    "conflict": False,
+                    "terminal_reason": "evidence_insufficient",
+                },
+                recommended_next="finalize_answer",
+            )
         if result.outcome is QAOutcome.CONFLICT and result.conflict is not None:
             facts.verified = True
-            return {
-                "ready": True,
-                "outcome": result.outcome.value,
-                "claim_count": 0,
-                "citation_count": len(result.conflict.evidence_ids),
-                "current_run_only": True,
-                "conflict": True,
-                "terminal_reason": "conflict",
-            }
+            return self._with_guidance(
+                {
+                    "ready": True,
+                    "outcome": result.outcome.value,
+                    "claim_count": 0,
+                    "citation_count": len(result.conflict.evidence_ids),
+                    "current_run_only": True,
+                    "conflict": True,
+                    "terminal_reason": "conflict",
+                },
+                recommended_next="finalize_answer",
+            )
         raise NodeExecutionError(
             "SKILL_QA_RESULT_INVALID",
             RunErrorCategory.SCHEMA,
@@ -331,35 +397,165 @@ class KnowledgeLoopTools:
     ) -> dict[str, JSONValue]:
         _require_empty(arguments)
         facts = self._facts_for(context.run.run_id)
+        facts.started = True
         completed = facts.answer_run
         if completed is None or not facts.verified or completed.result is None:
-            return {
-                "ready": False,
-                "publication": "grounded_qa",
-                "outcome": "pending",
-            }
+            return self._with_guidance(
+                {
+                    "ready": False,
+                    "publication": "grounded_qa",
+                    "outcome": "pending",
+                },
+                recommended_next="verify_answer" if completed is not None else "knowledge_search",
+            )
         facts.finalization_ready = True
-        return {
-            "ready": True,
-            "publication": "grounded_qa",
-            "outcome": completed.result.outcome.value,
-        }
+        terminal = (
+            "refuse"
+            if completed.result.outcome in {QAOutcome.REFUSE, QAOutcome.CONFLICT}
+            else "complete"
+        )
+        return self._with_guidance(
+            {
+                "ready": True,
+                "publication": "grounded_qa",
+                "outcome": completed.result.outcome.value,
+            },
+            recommended_next=terminal,
+        )
 
     def finalizer(self) -> AgentLoopFinalizer:
         return _KnowledgeLoopFinalizer(self)
 
     def decision_policy(
-        self, run: AgentRun, _state: AgentLoopState, decision: LLMDecision
+        self, run: AgentRun, state: AgentLoopState, decision: LLMDecision
     ) -> LLMDecision:
-        """Enforce the QA-owned post-answer sequence regardless of model drift."""
+        """Enforce retrieval and QA gates regardless of model drift.
+
+        The prompt explains the workflow, while this policy makes an early terminal decision
+        harmless: the model cannot skip the first search, coverage inspection, grounded QA, or
+        the post-answer verification/finalization gates.
+        """
         facts = self._facts_for(run.context.run_id)
         completed = facts.answer_run
+        if self._config.versions.skill_version == "0.7.0":
+            # The outer Assistant shares these Tools with ordinary conversation. Until a
+            # knowledge Tool is actually selected, leave direct/clarification decisions alone.
+            if not facts.started and any(
+                observation.tool_name
+                in {
+                    "knowledge_search",
+                    "knowledge_inspect",
+                    "grounded_answer",
+                    "verify_answer",
+                    "finalize_answer",
+                }
+                for observation in state.observations
+            ):
+                facts.started = True
+            if not facts.started:
+                return decision
+            previous_search_was_checkpointed = (
+                any(
+                    observation.tool_name == "knowledge_search"
+                    for observation in state.observations
+                )
+                and not facts.searches
+            )
+            if (
+                decision.action is LLMDecisionAction.CALL_TOOL
+                and decision.tool_name == "knowledge_search"
+                and _valid_search_arguments(decision.arguments)
+                and (
+                    str(decision.arguments["query"]) in {item.query for item in facts.searches}
+                    or previous_search_was_checkpointed
+                )
+            ):
+                return LLMDecision(
+                    action=LLMDecisionAction.CALL_TOOL,
+                    tool_name="knowledge_search",
+                    arguments={"query": _bounded_query(state.task.goal, followup=True)},
+                    reason="server-recovered repeated retrieval query",
+                )
+            # A terminal answer can never bypass QA-owned verification and publication.  Unlike
+            # 0.6.0 this policy does not prescribe retrieval order; individual Tools return a
+            # local, model-visible next-step recommendation when their precondition is unmet.
+            if not facts.finalization_ready and decision.action is not LLMDecisionAction.CALL_TOOL:
+                return LLMDecision(
+                    action=LLMDecisionAction.CALL_TOOL,
+                    tool_name="finalize_answer",
+                    arguments={},
+                    reason="server-required finalization check",
+                )
+            if not facts.finalization_ready:
+                return decision
+            expected = (
+                LLMDecisionAction.REFUSE
+                if completed is not None
+                and completed.result is not None
+                and completed.result.outcome in {QAOutcome.REFUSE, QAOutcome.CONFLICT}
+                else LLMDecisionAction.COMPLETE
+            )
+            return (
+                decision
+                if decision.action is expected
+                else LLMDecision(
+                    action=expected,
+                    reason="server-verified QA terminal outcome",
+                )
+            )
         if completed is None:
-            return decision
+            if self._config.versions.skill_version != "0.6.0":
+                return decision
+            if not facts.searches:
+                if (
+                    decision.action is LLMDecisionAction.CALL_TOOL
+                    and decision.tool_name == "knowledge_search"
+                    and _valid_search_arguments(decision.arguments)
+                ):
+                    return decision
+                return LLMDecision(
+                    action=LLMDecisionAction.CALL_TOOL,
+                    tool_name="knowledge_search",
+                    arguments={"query": _bounded_query(state.task.goal)},
+                    reason="server-required initial knowledge search",
+                )
+            if facts.last_inspected_search_count < len(facts.searches):
+                return LLMDecision(
+                    action=LLMDecisionAction.CALL_TOOL,
+                    tool_name="knowledge_inspect",
+                    arguments={"inspection_round": facts.inspections + 1},
+                    reason="server-required retrieval coverage inspection",
+                )
+            if _needs_followup_search(facts) and len(facts.searches) < 2:
+                if (
+                    decision.action is LLMDecisionAction.CALL_TOOL
+                    and decision.tool_name == "knowledge_search"
+                    and _valid_search_arguments(decision.arguments)
+                ):
+                    return decision
+                return LLMDecision(
+                    action=LLMDecisionAction.CALL_TOOL,
+                    tool_name="knowledge_search",
+                    arguments={"query": _bounded_query(state.task.goal, followup=True)},
+                    reason="server-required follow-up for weak retrieval coverage",
+                )
+            if (
+                decision.action is LLMDecisionAction.CALL_TOOL
+                and decision.tool_name == "grounded_answer"
+                and not decision.arguments
+            ):
+                return decision
+            return LLMDecision(
+                action=LLMDecisionAction.CALL_TOOL,
+                tool_name="grounded_answer",
+                arguments={},
+                reason="server-required grounded QA execution",
+            )
         if not facts.verified:
             if (
                 decision.action is LLMDecisionAction.CALL_TOOL
                 and decision.tool_name == "verify_answer"
+                and not decision.arguments
             ):
                 return decision
             return LLMDecision(
@@ -372,6 +568,7 @@ class KnowledgeLoopTools:
             if (
                 decision.action is LLMDecisionAction.CALL_TOOL
                 and decision.tool_name == "finalize_answer"
+                and not decision.arguments
             ):
                 return decision
             return LLMDecision(
@@ -389,6 +586,16 @@ class KnowledgeLoopTools:
         if decision.action is expected:
             return decision
         return LLMDecision(action=expected, reason="server-verified QA terminal outcome")
+
+    def _uses_advisory_guidance(self) -> bool:
+        return self._config.tool_version == "1.1.0"
+
+    def _with_guidance(
+        self, value: dict[str, JSONValue], *, recommended_next: str
+    ) -> dict[str, JSONValue]:
+        if self._uses_advisory_guidance():
+            return {**value, "recommended_next": recommended_next}
+        return value
 
     def _facts_for(self, run_id: UUID) -> _RunFacts:
         return self._facts.setdefault(run_id, _RunFacts())
@@ -455,10 +662,10 @@ class _KnowledgeLoopFinalizer:
         }
 
 
-def _knowledge_search_definition() -> ToolDefinition:
+def _knowledge_search_definition(version: str) -> ToolDefinition:
     return ToolDefinition(
         name="knowledge_search",
-        version="1.0.0",
+        version=version,
         description="Search the fixed current-Space knowledge scope and return metadata only.",
         input_schema={
             "type": "object",
@@ -466,42 +673,46 @@ def _knowledge_search_definition() -> ToolDefinition:
             "required": ["query"],
             "properties": {"query": {"type": "string", "minLength": 1, "maxLength": 512}},
         },
-        output_schema={
-            "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "trust",
-                "query_count",
-                "hit_count",
-                "matched_count",
-                "context_only_count",
-                "evidence_ids",
-                "source_versions",
-                "profile_version",
-            ],
-            "properties": {
-                "trust": {"const": "untrusted"},
-                "query_count": {"const": 1},
-                "hit_count": {"type": "integer", "minimum": 0},
-                "matched_count": {"type": "integer", "minimum": 0},
-                "context_only_count": {"type": "integer", "minimum": 0},
-                "evidence_ids": {"type": "array", "items": {"type": "string"}},
-                "source_versions": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["source_id", "document_id", "version_id"],
-                        "properties": {
-                            "source_id": {"type": "string"},
-                            "document_id": {"type": "string"},
-                            "version_id": {"type": "string"},
+        output_schema=_with_guidance_schema(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "trust",
+                    "query_count",
+                    "hit_count",
+                    "matched_count",
+                    "context_only_count",
+                    "evidence_ids",
+                    "source_versions",
+                    "profile_version",
+                ],
+                "properties": {
+                    "trust": {"const": "untrusted"},
+                    "query_count": {"const": 1},
+                    "hit_count": {"type": "integer", "minimum": 0},
+                    "matched_count": {"type": "integer", "minimum": 0},
+                    "context_only_count": {"type": "integer", "minimum": 0},
+                    "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                    "source_versions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["source_id", "document_id", "version_id"],
+                            "properties": {
+                                "source_id": {"type": "string"},
+                                "document_id": {"type": "string"},
+                                "version_id": {"type": "string"},
+                            },
                         },
                     },
+                    "profile_version": {"type": "string", "minLength": 1},
                 },
-                "profile_version": {"type": "string", "minLength": 1},
             },
-        },
+            version=version,
+            next_actions=("knowledge_inspect",),
+        ),
         permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
         handler_name="knowledge_search",
         model_visible=True,
@@ -509,71 +720,91 @@ def _knowledge_search_definition() -> ToolDefinition:
     )
 
 
-def _knowledge_inspect_definition() -> ToolDefinition:
+def _knowledge_inspect_definition(version: str) -> ToolDefinition:
     return ToolDefinition(
         name="knowledge_inspect",
-        version="1.0.0",
+        version=version,
         description="Inspect only safe coverage metadata from earlier knowledge searches.",
-        input_schema=_EMPTY_SCHEMA,
-        output_schema={
-            "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "trust",
-                "search_count",
-                "hit_count",
-                "matched_count",
-                "context_only_count",
-                "gap_signals",
-                "evidence_ids",
-                "source_versions",
-            ],
-            "properties": {
-                "trust": {"const": "untrusted"},
-                "search_count": {"type": "integer", "minimum": 0},
-                "hit_count": {"type": "integer", "minimum": 0},
-                "matched_count": {"type": "integer", "minimum": 0},
-                "context_only_count": {"type": "integer", "minimum": 0},
-                "gap_signals": {"type": "array", "items": {"type": "string"}},
-                "evidence_ids": {"type": "array", "items": {"type": "string"}},
-                "source_versions": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["source_id", "document_id", "version_id"],
-                        "properties": {
-                            "source_id": {"type": "string"},
-                            "document_id": {"type": "string"},
-                            "version_id": {"type": "string"},
+        input_schema=_INSPECTION_SCHEMA,
+        output_schema=_with_guidance_schema(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "trust",
+                    "search_count",
+                    "hit_count",
+                    "matched_count",
+                    "context_only_count",
+                    "gap_signals",
+                    "evidence_ids",
+                    "source_versions",
+                ],
+                "properties": {
+                    "trust": {"const": "untrusted"},
+                    "search_count": {"type": "integer", "minimum": 0},
+                    "hit_count": {"type": "integer", "minimum": 0},
+                    "matched_count": {"type": "integer", "minimum": 0},
+                    "context_only_count": {"type": "integer", "minimum": 0},
+                    "gap_signals": {"type": "array", "items": {"type": "string"}},
+                    "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                    "source_versions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["source_id", "document_id", "version_id"],
+                            "properties": {
+                                "source_id": {"type": "string"},
+                                "document_id": {"type": "string"},
+                                "version_id": {"type": "string"},
+                            },
                         },
                     },
                 },
             },
-        },
+            version=version,
+            next_actions=("knowledge_search", "grounded_answer"),
+        ),
         permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
         handler_name="knowledge_inspect",
         model_visible=True,
     )
 
 
-def _grounded_answer_definition() -> ToolDefinition:
+def _grounded_answer_definition(version: str) -> ToolDefinition:
     return ToolDefinition(
         name="grounded_answer",
-        version="1.0.0",
+        version=version,
         description="Delegate answer generation and publication to the fixed Grounded QA Run.",
         input_schema=_EMPTY_SCHEMA,
-        output_schema={
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["status", "outcome", "claim_count", "citation_count"],
-            "properties": {
-                "status": {"enum": [QAStatus.COMPLETED.value, QAStatus.REFUSED.value]},
-                "outcome": {"enum": [item.value for item in QAOutcome]},
-                "claim_count": {"type": "integer", "minimum": 0},
-                "citation_count": {"type": "integer", "minimum": 0},
+        output_schema=_with_guidance_schema(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["status", "outcome", "claim_count", "citation_count"],
+                "properties": {
+                    "status": {
+                        "enum": (
+                            [QAStatus.COMPLETED.value, QAStatus.REFUSED.value, "pending"]
+                            if version == "1.1.0"
+                            else [QAStatus.COMPLETED.value, QAStatus.REFUSED.value]
+                        )
+                    },
+                    "outcome": {
+                        "enum": (
+                            [*(item.value for item in QAOutcome), "pending"]
+                            if version == "1.1.0"
+                            else [item.value for item in QAOutcome]
+                        )
+                    },
+                    "claim_count": {"type": "integer", "minimum": 0},
+                    "citation_count": {"type": "integer", "minimum": 0},
+                },
             },
-        },
+            version=version,
+            next_actions=("knowledge_search", "knowledge_inspect", "verify_answer"),
+        ),
         permissions=frozenset({ToolPermission.READ_KNOWLEDGE, ToolPermission.MODEL}),
         handler_name="grounded_answer",
         model_visible=True,
@@ -581,58 +812,71 @@ def _grounded_answer_definition() -> ToolDefinition:
     )
 
 
-def _verify_answer_definition() -> ToolDefinition:
+def _verify_answer_definition(version: str) -> ToolDefinition:
     return ToolDefinition(
         name="verify_answer",
-        version="1.0.0",
+        version=version,
         description=(
             "Verify the current Grounded QA result using claims and citation metadata only."
         ),
         input_schema=_EMPTY_SCHEMA,
-        output_schema={
-            "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "ready",
-                "outcome",
-                "claim_count",
-                "citation_count",
-                "current_run_only",
-                "conflict",
-                "terminal_reason",
-            ],
-            "properties": {
-                "ready": {"type": "boolean"},
-                "outcome": {"type": "string", "minLength": 1},
-                "claim_count": {"type": "integer", "minimum": 0},
-                "citation_count": {"type": "integer", "minimum": 0},
-                "current_run_only": {"const": True},
-                "conflict": {"type": "boolean"},
-                "terminal_reason": {"type": "string", "minLength": 1},
+        output_schema=_with_guidance_schema(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "ready",
+                    "outcome",
+                    "claim_count",
+                    "citation_count",
+                    "current_run_only",
+                    "conflict",
+                    "terminal_reason",
+                ],
+                "properties": {
+                    "ready": {"type": "boolean"},
+                    "outcome": {"type": "string", "minLength": 1},
+                    "claim_count": {"type": "integer", "minimum": 0},
+                    "citation_count": {"type": "integer", "minimum": 0},
+                    "current_run_only": {"const": True},
+                    "conflict": {"type": "boolean"},
+                    "terminal_reason": {"type": "string", "minLength": 1},
+                },
             },
-        },
+            version=version,
+            next_actions=("knowledge_search", "finalize_answer"),
+        ),
         permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
         handler_name="verify_answer",
         model_visible=True,
     )
 
 
-def _finalize_answer_definition() -> ToolDefinition:
+def _finalize_answer_definition(version: str) -> ToolDefinition:
     return ToolDefinition(
         name="finalize_answer",
-        version="1.0.0",
+        version=version,
         description="Signal that the verified QA result may enter the Loop finalization gate.",
         input_schema=_EMPTY_SCHEMA,
-        output_schema={
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["ready", "publication", "outcome"],
-            "properties": {
-                "ready": {"type": "boolean"},
-                "publication": {"const": "grounded_qa"},
-                "outcome": {"type": "string", "minLength": 1},
+        output_schema=_with_guidance_schema(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["ready", "publication", "outcome"],
+                "properties": {
+                    "ready": {"type": "boolean"},
+                    "publication": {"const": "grounded_qa"},
+                    "outcome": {"type": "string", "minLength": 1},
+                },
             },
-        },
+            version=version,
+            next_actions=(
+                "knowledge_search",
+                "verify_answer",
+                "complete",
+                "refuse",
+            ),
+        ),
         permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
         handler_name="finalize_answer",
         model_visible=True,
@@ -645,6 +889,32 @@ _EMPTY_SCHEMA: dict[str, JSONValue] = {
     "properties": {},
 }
 
+_INSPECTION_SCHEMA: dict[str, JSONValue] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "inspection_round": {"type": "integer", "minimum": 1, "maximum": 8},
+    },
+}
+
+
+def _with_guidance_schema(
+    schema: dict[str, JSONValue], *, version: str, next_actions: tuple[str, ...]
+) -> dict[str, JSONValue]:
+    if version != "1.1.0":
+        return schema
+    required = schema.get("required")
+    properties = schema.get("properties")
+    assert isinstance(required, list) and isinstance(properties, dict)
+    return {
+        **schema,
+        "required": [*required, "recommended_next"],
+        "properties": {
+            **properties,
+            "recommended_next": {"enum": list(next_actions)},
+        },
+    }
+
 
 def _required_query(arguments: dict[str, JSONValue]) -> str:
     query = arguments.get("query")
@@ -655,10 +925,52 @@ def _required_query(arguments: dict[str, JSONValue]) -> str:
     return query
 
 
+def _needs_followup_search(facts: _RunFacts) -> bool:
+    return bool(
+        set(facts.gap_signals)
+        & {"no_matched_evidence", "matched_evidence_limited", "single_source_coverage"}
+    )
+
+
+def _bounded_query(goal: str, *, followup: bool = False) -> str:
+    """Create a bounded fallback query when the model tries to skip retrieval."""
+    normalized = " ".join(goal.split()) or "knowledge request"
+    suffix = " additional supporting evidence" if followup else ""
+    limit = max(1, 512 - len(suffix))
+    return f"{normalized[:limit]}{suffix}"[:512]
+
+
+def _valid_search_arguments(arguments: Mapping[str, JSONValue]) -> bool:
+    query = arguments.get("query")
+    return (
+        set(arguments) == {"query"}
+        and isinstance(query, str)
+        and bool(query.strip())
+        and len(query) <= 512
+    )
+
+
 def _require_empty(arguments: dict[str, JSONValue]) -> None:
     if arguments:
         raise NodeExecutionError(
             "SKILL_INPUT_INVALID", RunErrorCategory.INPUT, "Knowledge Tool does not accept input."
+        )
+
+
+def _require_inspection(arguments: dict[str, JSONValue]) -> None:
+    round_number = arguments.get("inspection_round")
+    if round_number is None and not arguments:
+        return
+    if (
+        set(arguments) != {"inspection_round"}
+        or not isinstance(round_number, int)
+        or isinstance(round_number, bool)
+        or not 1 <= round_number <= 8
+    ):
+        raise NodeExecutionError(
+            "SKILL_INPUT_INVALID",
+            RunErrorCategory.INPUT,
+            "Knowledge inspection round is invalid.",
         )
 
 

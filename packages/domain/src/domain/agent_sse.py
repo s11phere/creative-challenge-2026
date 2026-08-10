@@ -72,6 +72,7 @@ _PAYLOAD_KEYS = frozenset(
         "output_summary",
         "provider",
         "publication_id",
+        "query_preview",
         "reasoning_profile_schema_version",
         "requested_effort",
         "retry_count",
@@ -235,6 +236,19 @@ def _validate_payload(event_type: AgentRunEventType, payload: Mapping[str, Any])
     keys = set(payload)
     if keys & _FORBIDDEN_PAYLOAD_KEYS or keys - _PAYLOAD_KEYS:
         raise AgentRunEventContractError("Agent Run event payload contains unsupported fields")
+    if "query_preview" in keys and (
+        event_type
+        not in {
+            AgentRunEventType.TOOL_REQUESTED,
+            AgentRunEventType.TOOL_STARTED,
+            AgentRunEventType.TOOL_OUTPUT,
+            AgentRunEventType.APPROVAL_REQUIRED,
+        }
+        or payload.get("tool_name") != "knowledge_search"
+    ):
+        raise AgentRunEventContractError(
+            "Agent Run query preview is restricted to knowledge_search Tool events"
+        )
     if event_type in AGENT_RUN_TERMINAL_EVENT_TYPES and not isinstance(payload.get("status"), str):
         raise AgentRunEventContractError("terminal Agent Run events require a safe status")
     for key, value in payload.items():
@@ -244,6 +258,14 @@ def _validate_payload(event_type: AgentRunEventType, payload: Mapping[str, Any])
         elif key in _BOOLEAN_PAYLOAD_KEYS:
             if not isinstance(value, bool):
                 raise AgentRunEventContractError("Agent Run event completion flag is invalid")
+        elif key == "query_preview":
+            if (
+                not isinstance(value, str)
+                or not value
+                or len(value) > 512
+                or any(not character.isprintable() for character in value)
+            ):
+                raise AgentRunEventContractError("Agent Run query preview is invalid")
         elif not isinstance(value, str) or not value or len(value) > 512 or "\n" in value:
             raise AgentRunEventContractError("Agent Run event summary is invalid")
 

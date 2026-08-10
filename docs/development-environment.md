@@ -244,14 +244,14 @@ The generic Agent Loop is the default synthetic/fake or reviewed local provision
 Worker default to the following aligned values:
 
 ```dotenv
-KNOWLEDGE_AGENT_SKILL_VERSION=0.5.0
+KNOWLEDGE_AGENT_SKILL_VERSION=0.7.0
 AGENT_LOOP_V5_ENABLED=true
 ```
 
-The flag remains a fail-closed rollback: `AGENT_LOOP_V5_ENABLED=false` activates
+The legacy-named flag remains a fail-closed rollback: `AGENT_LOOP_V5_ENABLED=false` activates
 `knowledge_agent 0.3.0` for new Runs. Recreate API/Worker after changing it. This preserves all
 persisted Run/Skill pins and keeps v1/v2 API and SSE projections readable. `start-local.ps1` uses
-v5 by default; pass `-LegacyKnowledgeAgent` for a local v3 rollback. Do not use an external Provider
+v6 by default; pass `-LegacyKnowledgeAgent` for a local v3 rollback. Do not use an external Provider
 without the existing sensitivity, deployment-policy, and visible-consent checks.
 
 Validate the hash-pinned synthetic development fixture without invoking a model or reading the

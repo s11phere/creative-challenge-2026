@@ -46,12 +46,12 @@ class DecisionGateway(FakeModelGateway):
         )
 
 
-def test_v3_router_prompt_includes_skill_routing_guidance_and_raw_json_examples() -> None:
-    from application.assistant.agent import _BASE_PROMPT_V3
+def test_v4_router_prompt_includes_skill_routing_guidance_and_raw_json_examples() -> None:
+    from application.assistant.agent import _BASE_PROMPT_V4
 
-    assert "sole active knowledge-retrieval Skill" in _BASE_PROMPT_V3
-    assert "Do not select knowledge_qa" in _BASE_PROMPT_V3
-    assert "Return raw JSON only" in _BASE_PROMPT_V3
+    assert "sole active knowledge-retrieval Skill" in _BASE_PROMPT_V4
+    assert "Do not select knowledge_qa" in _BASE_PROMPT_V4
+    assert "Return raw JSON only" in _BASE_PROMPT_V4
     parser = AssistantRouterDecisionParser()
     examples = (
         {
@@ -78,9 +78,51 @@ def test_v3_router_prompt_includes_skill_routing_guidance_and_raw_json_examples(
     )
     for example in examples:
         decision = json.dumps(example, separators=(",", ":"))
-        assert decision in _BASE_PROMPT_V3
+        assert decision in _BASE_PROMPT_V4
         parsed = parser.parse(decision)
         assert parsed.action in {"respond", "clarify", "invoke_skill"}
+
+
+def test_router_prompt_requires_current_space_dependency_and_injects_catalog_boundaries() -> None:
+    from application.assistant.agent import AssistantAgentService
+    from application.skills import SkillInvocationView
+
+    class Catalog:
+        def list_active_invocations(self) -> tuple[SkillInvocationView, ...]:
+            return (
+                SkillInvocationView(
+                    name="knowledge_agent",
+                    version="0.5.0",
+                    content_sha256="a" * 64,
+                    command="ask",
+                    aliases=("qa",),
+                    description="Grounded knowledge lookup.",
+                    argument_hint="<question>",
+                    input_mode="question",
+                    trigger_when=("The current Space documents are needed.",),
+                    trigger_avoid_when=("Ordinary conversation.",),
+                    trigger_examples=("What do the uploaded notes say?",),
+                ),
+            )
+
+        def list_skills(self) -> tuple[object, ...]:
+            return ()
+
+        def list_versions(self, _name: str) -> tuple[object, ...]:
+            return ()
+
+    service = AssistantAgentService(
+        runs=cast(object, None),
+        messages=cast(object, None),
+        gateway=cast(object, None),
+        events=cast(object, None),
+        skill_catalog=Catalog(),
+    )
+    prompt = service._system_prompt()
+    assert "must depend on current-Space material" in prompt
+    assert "when=The current Space documents are needed." in prompt
+    assert "avoid_when=Ordinary conversation." in prompt
+    assert "examples=What do the uploaded notes say?" in prompt
 
 
 async def _turn(
@@ -119,6 +161,7 @@ async def test_fake_respond_publishes_one_assistant_message_atomically() -> None
 
     assert completed is not None
     assert completed.status is ConversationRunStatus.COMPLETED
+    assert completed.core_prompt_version == "assistant-base-prompt-v5"
     assert completed.result is not None
     assert completed.result.message_id is not None
     message = await repository.get_message(completed.result.message_id)

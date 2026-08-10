@@ -22,3 +22,6 @@ Skill routing, manifest v2 invocation metadata, context compression, and the ver
 projection. It explicitly preserves the ADR-010/011 provisional-quality boundary.
 ADR-014 records the generic Agent Loop, Tool trust, provider-neutral reasoning profile, v3 event
 envelope, finalization-only publication gate, and synthetic development contract boundary.
+ADR-015 records the autonomous top-level Assistant Loop, model-directed serial Skill/Tool
+orchestration, advisory knowledge next-step guidance, and preservation of the existing Worker,
+QA Application Port, checkpoint, cancellation, and single-publication contracts.

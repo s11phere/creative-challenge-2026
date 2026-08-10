@@ -507,6 +507,7 @@ class InMemoryGroundedQARepository:
                 run,
                 run_kind=run_kind,
                 selection_source=selection_source,
+                router_version="assistant-router-decision-v1",
                 skill=skill,
                 core_prompt_version=core_prompt_version,
                 updated_at=datetime.now(UTC),
@@ -521,6 +522,7 @@ class InMemoryGroundedQARepository:
         message: MessageRecord,
         usage: ConversationRunUsage,
         model_identity: str,
+        refused: bool = False,
     ) -> ConversationRun:
         async with self._lock:
             run = self._require_executable_conversation_run(run_id)
@@ -541,7 +543,9 @@ class InMemoryGroundedQARepository:
             now = message.created_at
             completed = replace(
                 run,
-                status=ConversationRunStatus.COMPLETED,
+                status=(
+                    ConversationRunStatus.REFUSED if refused else ConversationRunStatus.COMPLETED
+                ),
                 error_code=None,
                 model_identity=model_identity,
                 usage=usage,
@@ -555,6 +559,53 @@ class InMemoryGroundedQARepository:
             conversation = self._conversations[run.conversation_id]
             if now > conversation.updated_at:
                 self._conversations[run.conversation_id] = replace(conversation, updated_at=now)
+            return completed
+
+    async def publish_existing_skill_result(
+        self,
+        *,
+        run_id: UUID,
+        message_id: UUID,
+        usage: ConversationRunUsage,
+        model_identity: str,
+        refused: bool = False,
+    ) -> ConversationRun:
+        async with self._lock:
+            run = self._require_executable_conversation_run(run_id)
+            if run.status in {
+                ConversationRunStatus.COMPLETED,
+                ConversationRunStatus.REFUSED,
+                ConversationRunStatus.FAILED,
+                ConversationRunStatus.CANCELLED,
+                ConversationRunStatus.TIMED_OUT,
+            }:
+                return run
+            if run.cancellation_requested:
+                return self._cancel_assistant_conversation_run(run)
+            message = self._messages.get(message_id)
+            if (
+                message is None
+                or message.role is not MessageRole.ASSISTANT
+                or message.run_id != run.run_id
+                or message.conversation_id != run.conversation_id
+                or message.space_id != run.space_id
+            ):
+                raise QAContractError(
+                    "Existing Skill message does not belong to the ConversationRun"
+                )
+            completed = replace(
+                run,
+                status=(
+                    ConversationRunStatus.REFUSED if refused else ConversationRunStatus.COMPLETED
+                ),
+                error_code=None,
+                model_identity=model_identity,
+                usage=usage,
+                result=AssistantResult(AssistantResultKind.SKILL_RESULT, message_id=message_id),
+                updated_at=datetime.now(UTC),
+            )
+            self._conversation_runs[run_id] = completed
+            self._conversation_run_leases.pop(run_id, None)
             return completed
 
     async def publish_clarification(
@@ -1119,9 +1170,20 @@ class InMemoryGroundedQARepository:
             return
         projected = _conversation_run_from_qa(run, existing=parent)
         if (
-            parent.run_kind in {ConversationRunKind.SKILL, ConversationRunKind.GROUNDED_QA}
-            and parent.core_prompt_version
-            in {"assistant-base-prompt-v2", "assistant-base-prompt-v3"}
+            (
+                parent.run_kind in {ConversationRunKind.SKILL, ConversationRunKind.GROUNDED_QA}
+                and parent.core_prompt_version
+                in {
+                    "assistant-base-prompt-v2",
+                    "assistant-base-prompt-v3",
+                    "assistant-base-prompt-v4",
+                }
+            )
+            or (
+                parent.run_kind is ConversationRunKind.ASSISTANT_TURN
+                and parent.router_version == "assistant-agent-loop-v1"
+                and parent.core_prompt_version == "assistant-base-prompt-v5"
+            )
             and parent.result is None
             and run.status in {QAStatus.COMPLETED, QAStatus.REFUSED}
         ):
@@ -1243,6 +1305,13 @@ def _same_qa_parent_identity(existing: ConversationRun, run: QARunRecord) -> boo
             return False
     if existing.router_version == "legacy-v1":
         return _same_legacy_conversation_run_identity(existing, _conversation_run_from_qa(run))
+    if existing.router_version == "assistant-agent-loop-v1":
+        return (
+            existing.run_kind is ConversationRunKind.ASSISTANT_TURN
+            and existing.skill is None
+            and existing.core_prompt_version == "assistant-base-prompt-v5"
+            and run.versions.skill_name == "knowledge_agent"
+        )
     return (
         existing.run_kind
         == (
@@ -1255,7 +1324,8 @@ def _same_qa_parent_identity(existing: ConversationRun, run: QARunRecord) -> boo
             ConversationRunSelectionSource.AUTO,
             ConversationRunSelectionSource.COMMAND,
         }
-        and existing.core_prompt_version in {"assistant-base-prompt-v2", "assistant-base-prompt-v3"}
+        and existing.core_prompt_version
+        in {"assistant-base-prompt-v2", "assistant-base-prompt-v3", "assistant-base-prompt-v4"}
     )
 
 
@@ -1315,7 +1385,7 @@ def _conversation_run_from_qa(
         router_version=existing.router_version if existing is not None else "legacy-v1",
         core_prompt_version=existing.core_prompt_version if existing is not None else "legacy-v1",
         model_identity=run.versions.model_identity,
-        skill=existing.skill if existing is not None and existing.skill is not None else skill,
+        skill=existing.skill if existing is not None else skill,
         usage=ConversationRunUsage(
             input_tokens=run.usage.input_tokens,
             output_tokens=run.usage.output_tokens,

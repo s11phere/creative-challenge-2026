@@ -1,0 +1,49 @@
+manifest_version: "2"
+name: knowledge_agent
+version: 0.6.0
+description: Provisional generic Agent Loop with enforced retrieval coverage gates.
+input_schema: schemas/input.json
+output_schema: schemas/output.json
+required_tools:
+  - name: knowledge_search
+    version: 1.0.0
+  - name: knowledge_inspect
+    version: 1.0.0
+  - name: grounded_answer
+    version: 1.0.0
+  - name: verify_answer
+    version: 1.0.0
+  - name: finalize_answer
+    version: 1.0.0
+required_capabilities:
+  - fast_chat
+permissions:
+  - read_knowledge
+  - model
+budgets:
+  max_steps: 8
+  max_tool_calls: 7
+  max_input_tokens: 32768
+  max_output_tokens: 8192
+  timeout_seconds: 240
+entrypoint: workflow.yaml
+compatibility:
+  runtime: ">=0.1.0,<1.0.0"
+  checkpoint_schema_versions: [1]
+prompts:
+  - prompts/system.md
+evals:
+  - evals/cases.jsonl
+invocation:
+  command: ask
+  aliases: [qa]
+  argument_hint: "<question>"
+  trigger:
+    summary: "Plan fixed-Space retrieval and return a grounded answer or a safe refusal."
+    when:
+      - "The user asks about the current knowledge base or uploaded documents."
+    avoid_when:
+      - "The user is making ordinary conversation without a knowledge-base request."
+    examples:
+      - "Explain the current project's architecture and data flow."
+  input_mode: question

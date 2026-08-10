@@ -63,3 +63,50 @@ def test_agent_run_event_contract_rejects_private_fields_and_unknown_versions() 
             event_key="unknown-version",
             schema_version="agent-run-sse-v4",
         )
+
+
+def test_agent_run_event_contract_accepts_bounded_query_preview_and_rejects_controls() -> None:
+    run_id = UUID("00000000-0000-4000-8000-000000000093")
+    event = AgentRunStreamEvent(
+        run_id=run_id,
+        sequence=1,
+        event_type=AgentRunEventType.TOOL_REQUESTED,
+        payload={
+            "status": "requested",
+            "iteration": 1,
+            "tool_name": "knowledge_search",
+            "tool_version": "1.1.0",
+            "query_preview": "What is indexed?",
+        },
+        event_key="query-preview",
+    )
+    assert event.payload["query_preview"] == "What is indexed?"
+    for preview in ("line\nbreak", "x" * 513):
+        with pytest.raises(AgentRunEventContractError):
+            AgentRunStreamEvent(
+                run_id=run_id,
+                sequence=2,
+                event_type=AgentRunEventType.TOOL_REQUESTED,
+                payload={
+                    "status": "requested",
+                    "iteration": 1,
+                    "tool_name": "knowledge_search",
+                    "tool_version": "1.1.0",
+                    "query_preview": preview,
+                },
+                event_key=f"invalid-preview-{len(preview)}",
+            )
+    with pytest.raises(AgentRunEventContractError):
+        AgentRunStreamEvent(
+            run_id=run_id,
+            sequence=3,
+            event_type=AgentRunEventType.TOOL_OUTPUT,
+            payload={
+                "status": "succeeded",
+                "iteration": 1,
+                "tool_name": "other_tool",
+                "tool_version": "1.0.0",
+                "query_preview": "not allowed",
+            },
+            event_key="generic-preview",
+        )

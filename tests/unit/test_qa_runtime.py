@@ -66,7 +66,7 @@ async def test_structured_fake_gateway_refuses_without_evidence() -> None:
 async def test_worker_dispatcher_enqueues_control_metadata_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "knowledge_agent_skill_version", "0.5.0")
+    monkeypatch.setattr(settings, "knowledge_agent_skill_version", "0.6.0")
     monkeypatch.setattr(settings, "agent_loop_v5_enabled", True)
     captured: dict[str, object] = {}
 
@@ -89,7 +89,7 @@ async def test_worker_dispatcher_enqueues_control_metadata_only(
     assert len(str(captured["trace_id"])) == 32
     assert set(captured) == {"run_id", "trace_id", "event_version"}
     assert runtime.versions.skill_name == "knowledge_agent"
-    assert runtime.versions.skill_version == "0.5.0"
+    assert runtime.versions.skill_version == "0.6.0"
     assert runtime.versions.skill_content_sha256 is not None
     assert len(runtime.versions.skill_content_sha256) == 64
 
