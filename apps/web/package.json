@@ -16,6 +16,9 @@
     "test:watch": "vitest",
     "preview": "vite preview"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
   "dependencies": {
     "@tanstack/react-query": "^5.60.0",
     "katex": "0.16.21",
