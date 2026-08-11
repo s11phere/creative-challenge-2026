@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "phase", "citations", "next_action"],
+  "properties": {
+    "schema_version": {"const": "research-reading-workflow-output-v1"},
+    "status": {"enum": ["in_progress", "waiting_user_input", "completed", "refused"]},
+    "phase": {"enum": ["clarify", "screen", "layered_reading", "paper_notes", "evidence_matrix", "gaps", "reproduce", "synthesize"]},
+    "source_map": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+    "reading_queue": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["source_label", "priority", "reason", "citation_ids"], "properties": {"source_label": {"type": "string"}, "priority": {"enum": ["must_read", "optional", "background", "out_of_scope"]}, "reason": {"type": "string"}, "citation_ids": {"type": "array", "items": {"type": "string"}}}}},
+    "paper_notes": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+    "evidence_matrix": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+    "research_gaps": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["statement", "classification", "citation_ids"], "properties": {"statement": {"type": "string"}, "classification": {"enum": ["evidence_supported_gap", "plausible_question", "unsupported_speculation"]}, "citation_ids": {"type": "array", "items": {"type": "string"}}}}},
+    "candidate_hypotheses": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["hypothesis", "required_evidence", "falsification_condition"], "properties": {"hypothesis": {"type": "string"}, "required_evidence": {"type": "string"}, "falsification_condition": {"type": "string"}}}},
+    "reproduction_plan": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+    "literature_review_outline": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+    "open_questions": {"type": "array", "items": {"type": "string"}},
+    "citations": {"type": "array", "items": {"$ref": "#/$defs/citation"}},
+    "next_action": {"enum": ["select_sources", "continue_reading", "confirm_research_question", "provide_resources", "submit_experiment_observations", "complete"]},
+    "refusal": {"type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": {"code": {"type": "string"}, "message": {"type": "string"}}}
+  },
+  "$defs": {
+    "evidenceItem": {"type": "object", "additionalProperties": false, "required": ["text", "citation_ids"], "properties": {"text": {"type": "string"}, "citation_ids": {"type": "array", "items": {"type": "string"}}, "limitations": {"type": "array", "items": {"type": "string"}}}},
+    "citation": {"type": "object", "additionalProperties": false, "required": ["citation_id", "evidence_id"], "properties": {"citation_id": {"type": "string"}, "evidence_id": {"type": "string", "format": "uuid"}}}
+  }
+}

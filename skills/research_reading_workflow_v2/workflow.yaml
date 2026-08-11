@@ -1,0 +1,11 @@
+workflow_version: "1"
+start: clarify
+nodes:
+  - {id: clarify, step: planning, handler: research_workflow_clarify, next: screen, max_retries: 0, required_permissions: [], reserve: {tool_calls: 0, input_tokens: 0, output_tokens: 0}}
+  - {id: screen, step: retrieving, handler: research_workflow_screen, next: layered_reading, max_retries: 1, required_permissions: [read_knowledge, model], reserve: {tool_calls: 2, input_tokens: 8192, output_tokens: 2048}}
+  - {id: layered_reading, step: executing, handler: research_workflow_read, next: paper_notes, max_retries: 1, required_permissions: [read_knowledge, model], reserve: {tool_calls: 3, input_tokens: 16384, output_tokens: 4096}}
+  - {id: paper_notes, step: executing, handler: research_workflow_notes, next: evidence_matrix, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 2, input_tokens: 12288, output_tokens: 3072}}
+  - {id: evidence_matrix, step: executing, handler: research_workflow_compare, next: gaps, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 2, input_tokens: 12288, output_tokens: 3072}}
+  - {id: gaps, step: executing, handler: research_workflow_gaps, next: reproduce, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 1, input_tokens: 8192, output_tokens: 2048}}
+  - {id: reproduce, step: executing, handler: research_workflow_reproduce, next: synthesize, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 1, input_tokens: 4096, output_tokens: 1024}}
+  - {id: synthesize, step: verifying, handler: research_workflow_synthesize, next: null, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 1, input_tokens: 4096, output_tokens: 1024}}

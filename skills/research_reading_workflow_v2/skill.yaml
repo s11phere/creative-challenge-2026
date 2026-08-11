@@ -1,0 +1,38 @@
+manifest_version: "2"
+name: research_reading_workflow
+version: 0.1.0
+description: Provisional multi-stage workflow for evidence-grounded research reading, synthesis, reproduction planning, and research output.
+input_schema: schemas/input.json
+output_schema: schemas/output.json
+required_tools:
+  - name: grounded_qa
+    version: 1.0.0
+required_capabilities: [fast_chat]
+permissions: [read_knowledge, model]
+budgets:
+  max_steps: 12
+  max_tool_calls: 12
+  max_input_tokens: 65536
+  max_output_tokens: 16384
+  timeout_seconds: 600
+entrypoint: workflow.yaml
+compatibility:
+  runtime: ">=0.1.0,<1.0.0"
+  checkpoint_schema_versions: [1]
+prompts: [prompts/boundary.md]
+evals: [evals/cases.jsonl]
+invocation:
+  command: research
+  aliases: [literature]
+  argument_hint: "<研究目标与资料范围>"
+  trigger:
+    summary: "组织论文筛选、分层阅读、证据综合、研究缺口与复现实验计划"
+    when:
+      - "用户希望系统阅读多篇论文、形成文献综述或设计复现实验"
+      - "用户需要从知识库资料中提炼研究问题、证据矩阵或研究缺口"
+    avoid_when:
+      - "用户只询问单个事实或只要求总结一篇普通文档"
+      - "用户要求直接代写没有资料支撑的论文结论"
+    examples:
+      - "围绕图神经网络鲁棒性整理这些论文，并给出复现实验路线"
+  input_mode: sources

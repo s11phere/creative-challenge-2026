@@ -1,0 +1,4 @@
+{"case_id":"research-reading-source-screening","scenario":"normal","expected_next_action":"select_sources","fixture":"synthetic_only"}
+{"case_id":"research-reading-incompatible-results","scenario":"comparison_boundary","expected":"limitations_preserved","fixture":"synthetic_only"}
+{"case_id":"research-reading-unsupported-gap","scenario":"insufficient_evidence","expected":"unsupported_speculation_not_promoted","fixture":"synthetic_only"}
+{"case_id":"research-reading-resume-observation","scenario":"resume","expected":"user_observation_separate_from_citation","fixture":"synthetic_only"}

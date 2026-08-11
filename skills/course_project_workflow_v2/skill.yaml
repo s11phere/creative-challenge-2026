@@ -1,0 +1,31 @@
+manifest_version: "2"
+name: course_project_workflow
+version: 0.1.0
+description: Provisional end-to-end course-project workflow from rubric mapping and technical design through checkpoints, validation, submission, demonstration, defense, and retrospective.
+input_schema: schemas/input.json
+output_schema: schemas/output.json
+required_tools:
+  - name: grounded_qa
+    version: 1.0.0
+required_capabilities: [fast_chat]
+permissions: [read_knowledge, model]
+budgets: {max_steps: 14, max_tool_calls: 14, max_input_tokens: 65536, max_output_tokens: 16384, timeout_seconds: 600}
+entrypoint: workflow.yaml
+compatibility: {runtime: ">=0.1.0,<1.0.0", checkpoint_schema_versions: [1]}
+prompts: [prompts/boundary.md]
+evals: [evals/cases.jsonl]
+invocation:
+  command: course-project
+  aliases: [project-sprint]
+  argument_hint: "<课程项目目标、要求与资料范围>"
+  trigger:
+    summary: "把课程项目要求推进为技术方案、里程碑、测试验收、报告、演示与答辩闭环"
+    when:
+      - "用户希望规划或推进课程大作业、实验项目或综合设计"
+      - "用户需要把评分要求映射到实现、测试、报告或答辩证据"
+    avoid_when:
+      - "用户只要求解释单个编程错误或直接生成一小段代码"
+      - "用户要求伪造测试、实验、截图或个人贡献"
+    examples:
+      - "根据数据库课程项目要求，帮我从架构设计推进到最终答辩"
+  input_mode: sources

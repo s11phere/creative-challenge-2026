@@ -1,0 +1,31 @@
+manifest_version: "2"
+name: exam_preparation_workflow
+version: 0.1.0
+description: Provisional diagnostic exam-preparation workflow with adaptive quizzes, evidence-grounded review plans, approval-gated cards, and answer-hidden mock exams.
+input_schema: schemas/input.json
+output_schema: schemas/output.json
+required_tools:
+  - name: grounded_qa
+    version: 1.0.0
+required_capabilities: [fast_chat]
+permissions: [read_knowledge, model]
+budgets: {max_steps: 12, max_tool_calls: 12, max_input_tokens: 65536, max_output_tokens: 16384, timeout_seconds: 600}
+entrypoint: workflow.yaml
+compatibility: {runtime: ">=0.1.0,<1.0.0", checkpoint_schema_versions: [1]}
+prompts: [prompts/boundary.md]
+evals: [evals/cases.jsonl]
+invocation:
+  command: prepare-exam
+  aliases: [exam-prep]
+  argument_hint: "<课程、资料范围与考试目标>"
+  trigger:
+    summary: "通过自适应小测诊断章节薄弱点，并生成复习计划、复习卡预览和模拟考试"
+    when:
+      - "用户希望根据课程资料备考期中、期末或自定义考试"
+      - "用户希望先自测薄弱章节，再制定复习计划或生成模拟卷"
+    avoid_when:
+      - "用户只要求解释一道题或查询一个知识点"
+      - "用户要求泄露未提交测验的答案"
+    examples:
+      - "用操作系统课件和往年题帮我准备期末，先快速测一下薄弱章节"
+  input_mode: sources

@@ -536,9 +536,12 @@ def test_provisional_package_is_bulk_installed_but_activation_is_explicit() -> N
     package = next(package for package in loaded if package.manifest.name == "knowledge_qa")
     assert registry.names() == (
         "compare_sources",
+        "course_project_workflow",
         "create_review_cards",
+        "exam_preparation_workflow",
         "knowledge_agent",
         "knowledge_qa",
+        "research_reading_workflow",
         "summarize_document",
     )
     assert registry.versions("knowledge_qa") == ("0.1.0", "0.2.0")

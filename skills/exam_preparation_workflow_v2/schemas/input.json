@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["question"],
+  "properties": {
+    "question": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "exam_kind": {"enum": ["midterm", "final", "custom"]},
+    "exam_date": {"type": "string", "format": "date-time"},
+    "target_minutes": {"type": "integer", "minimum": 15, "maximum": 360},
+    "resource_reference": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "diagnostic_answers": {"type": "array", "maxItems": 20, "items": {"$ref": "#/$defs/answer"}},
+    "mock_exam_answers": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/answer"}},
+    "reveal_mock_exam_answers": {"type": "boolean", "default": false}
+  },
+  "$defs": {
+    "answer": {"type": "object", "additionalProperties": false, "required": ["question_id", "response"], "properties": {"question_id": {"type": "string", "minLength": 1, "maxLength": 100}, "response": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "maxLength": 20}}, "confidence": {"enum": ["low", "medium", "high"]}}}
+  }
+}

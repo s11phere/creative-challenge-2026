@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["question"],
+  "properties": {
+    "question": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "project_goal": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "resource_reference": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "deadline": {"type": "string", "format": "date-time"},
+    "team_context": {"type": "object", "additionalProperties": false, "properties": {"team_size": {"type": "integer", "minimum": 1, "maximum": 100}, "confirmed_contributions": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 1000}}}},
+    "technical_constraints": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 1000}},
+    "current_progress": {"enum": ["not_started", "prototype", "implementation", "validation", "submission"]},
+    "checkpoint_update": {"type": "object", "additionalProperties": false, "properties": {"completed": {"type": "array", "items": {"type": "string", "maxLength": 1000}}, "blocked": {"type": "array", "items": {"type": "string", "maxLength": 1000}}, "error_summary": {"type": "string", "maxLength": 4000}}},
+    "test_results": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/observation"}},
+    "experiment_observations": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/observation"}},
+    "defense_answers": {"type": "array", "maxItems": 50, "items": {"type": "object", "additionalProperties": false, "required": ["question_id", "response"], "properties": {"question_id": {"type": "string"}, "response": {"type": "string", "maxLength": 4000}}}},
+    "reveal_defense_reference_points": {"type": "boolean", "default": false},
+    "presentation_duration": {"type": "integer", "minimum": 1, "maximum": 120}
+  },
+  "$defs": {"observation": {"type": "object", "additionalProperties": false, "required": ["label", "observation"], "properties": {"label": {"type": "string", "maxLength": 500}, "observation": {"type": "string", "maxLength": 4000}, "reported_at": {"type": "string", "format": "date-time"}}}}
+}
