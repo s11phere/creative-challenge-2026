@@ -1,0 +1,10 @@
+schema_version: '1.0'
+dataset_version: v1
+status: provisional
+distribution_scope: repository_fixture
+content_policy: synthetic_only
+formal_runs_enabled: false
+schema_path: cases/evals/datasets/agent-loop-v1/schema.json
+schema_sha256: 69af740c50bc732617357383e0b62d8be0b6df3a22a02265ce63f0b48160086c
+cases_path: cases/evals/datasets/agent-loop-v1/development.jsonl
+cases_sha256: 1f37126c929d9fb8f2c7a3b22ba31ff6917d6e88b2af6a8e0da8a7db63fd3acb

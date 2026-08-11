@@ -109,7 +109,7 @@ def _registry(root: Path, *, approval: ApprovalFixture | None = None) -> InMemor
         },
     )
     shell_policy = ShellExecutionPolicy(
-        executables={"python": Path(sys.executable)},
+        executables={"python": Path(sys.executable).resolve(strict=True)},
         cwd_roots={"workspace": root},
         allowed_cwds_by_space={SPACE_ID: ("workspace",)},
         environment={"PYTHONIOENCODING": "utf-8"},
@@ -129,7 +129,7 @@ def _workspace_registry(root: Path) -> InMemoryToolRegistry:
             workspace_root_by_space={SPACE_ID: "workspace"},
         ),
         ShellExecutionPolicy(
-            executables={"python": Path(sys.executable)},
+            executables={"python": Path(sys.executable).resolve(strict=True)},
             cwd_roots={"workspace": root},
             allowed_cwds_by_space={},
             workspace_root_by_space={SPACE_ID: "workspace"},
@@ -435,7 +435,7 @@ async def test_shell_exec_timeout_and_cancellation_do_not_leave_a_process(
             allowed_paths_by_space={SPACE_ID: (WritableFile("workspace", "note.txt"),)},
         ),
         ShellExecutionPolicy(
-            executables={"python": Path(sys.executable)},
+            executables={"python": Path(sys.executable).resolve(strict=True)},
             cwd_roots={"workspace": root},
             allowed_cwds_by_space={SPACE_ID: ("workspace",)},
         ),

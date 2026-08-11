@@ -42,6 +42,8 @@ cases/evals/datasets/knowledge-qa-v1/*
 !cases/evals/datasets/knowledge-qa-v1/schema.json
 !cases/evals/datasets/assistant-routing-v1/
 !cases/evals/datasets/assistant-routing-v1/**
+!cases/evals/datasets/agent-loop-v1/
+!cases/evals/datasets/agent-loop-v1/**
 
 # Environment
 .env
