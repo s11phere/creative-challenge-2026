@@ -495,15 +495,12 @@ def qa_skill_registry() -> FileSystemSkillRegistry:
 def assistant_skill_registry() -> FileSystemSkillRegistry:
     """Build the v2 invocation catalog with knowledge_agent as the sole QA entry."""
     registry = qa_skill_registry()
-    for name in (
-        "knowledge_agent",
-        "summarize_document",
-        "compare_sources",
-        "create_review_cards",
+    for name, version in (
+        ("summarize_document", "0.2.0"),
+        ("compare_sources", "0.3.0"),
+        ("create_review_cards", "0.2.0"),
     ):
-        if name == "knowledge_agent":
-            continue
-        registry.activate(name, "0.2.0")
+        registry.activate(name, version)
     return registry
 
 

@@ -126,7 +126,7 @@ def _active_skill_versions() -> dict[str, str]:
     return {
         "knowledge_agent": settings.active_knowledge_agent_skill_version,
         "summarize_document": "0.1.0",
-        "compare_sources": "0.1.0",
+        "compare_sources": "0.3.0",
         "create_review_cards": "0.1.0",
     }
 

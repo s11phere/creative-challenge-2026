@@ -60,7 +60,7 @@ def test_active_skill_versions_exclude_legacy_recovery_package() -> None:
     assert _active_skill_versions() == {
         "knowledge_agent": "0.9.0",
         "summarize_document": "0.1.0",
-        "compare_sources": "0.1.0",
+        "compare_sources": "0.3.0",
         "create_review_cards": "0.1.0",
     }
 

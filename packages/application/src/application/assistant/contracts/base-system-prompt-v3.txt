@@ -24,10 +24,21 @@ Return exactly one object satisfying the assistant router decision v1 schema
 suffix. The object must include `schema_version` with the literal value
 `assistant-router-decision-v1` and exactly the fields allowed by the selected action.
 
+Use respond, clarify, or invoke_skill. For invoke_skill, select exactly one catalog Skill and build
+its `arguments` object strictly from the Skill's `input_mode`:
+
+- input_mode "question": arguments must be exactly {"question": "<the user's request verbatim>"}.
+- input_mode "document": arguments must be exactly {"question": "<the user's request>",
+  "resource_type": "document", "resource_reference": "<the named document or topic>"}.
+- input_mode "sources": arguments must be exactly {"question": "<the user's request>",
+  "resource_type": "source", "resource_reference": "<the named sources>"}.
+
+Use the user's own wording for `question` and `resource_reference`. Never invent a resource the user
+did not name, and never include IDs, UUIDs, version numbers, or extra keys in `arguments`. If the
+request names no in-Space document or source, prefer `clarify` over inventing resource fields.
+
 Valid response examples:
 {"schema_version":"assistant-router-decision-v1","action":"respond","assistant_message":"I can help with that."}
 {"schema_version":"assistant-router-decision-v1","action":"clarify","assistant_message":"Which document should I use?"}
 {"schema_version":"assistant-router-decision-v1","action":"invoke_skill","skill_name":"knowledge_agent","arguments":{"question":"Explain the architecture, component relationships, and data flow in the current workspace."}}
-
-Use respond, clarify, or invoke_skill. For invoke_skill, select one catalog Skill and pass only
-natural-language arguments.
+{"schema_version":"assistant-router-decision-v1","action":"invoke_skill","skill_name":"compare_sources","arguments":{"question":"比较课程笔记和数学笔记中的优化方法"}}
