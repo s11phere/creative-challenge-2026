@@ -14,6 +14,8 @@ from agent_runtime import (
     AgentToolRegistry,
     JSONValue,
     LLMDecision,
+    LLMDecisionAction,
+    LLMDecisionError,
     NodeExecutionError,
     ToolRef,
 )
@@ -49,7 +51,7 @@ from .finalization import ConversationFinalizer, FinalizationInput, grounded_mat
 from .metrics import AssistantMetrics
 
 _CONTRACT_ROOT = files("application.assistant").joinpath("contracts")
-_BASE_PROMPT_V5 = _CONTRACT_ROOT.joinpath("base-system-prompt-v5.txt").read_text(encoding="utf-8")
+_BASE_PROMPT_V7 = _CONTRACT_ROOT.joinpath("base-system-prompt-v7.txt").read_text(encoding="utf-8")
 
 type QARunReader = Callable[[UUID], Awaitable[QARunRecord | None]]
 type DecisionPolicy = Callable[[AgentRun, AgentLoopState, LLMDecision], LLMDecision]
@@ -300,11 +302,21 @@ class AutonomousAssistantLoopService:
             reasoning_profile=parent.reasoning_profile,
             finalizer=finalizer,
             cancellation_check=self._cancel_requested,
-            decision_policy=self._decision_policy,
+            decision_policy=(
+                lambda runtime, state, decision: self._apply_decision_policy(
+                    runtime, state, decision, input_data
+                )
+            ),
+            invalid_decision_recovery=(
+                lambda runtime, state, error: self._recover_workspace_artifact_decision(
+                    runtime, state, error, input_data
+                )
+            ),
             tool_skill_refs=self._tool_skill_refs,
             approval_request=(
                 self._approval_port.request if self._approval_port is not None else None
             ),
+            approval_port=self._approval_port,
         )
         persisted = await self._runtime_state.get_run(run_id)
         checkpoint = await self._runtime_state.get_latest(run_id)
@@ -356,6 +368,15 @@ class AutonomousAssistantLoopService:
                 goal=user_message.content,
             )
         if result.error is not None:
+            unavailable = await self._publish_unavailable_workspace_artifact_response(
+                run_id=run_id,
+                runtime=result.run,
+                request_texts=(user_message.content, input_data.get("conversation")),
+                error_code=result.error.code,
+                error_message=result.error.message,
+            )
+            if unavailable is not None:
+                return unavailable
             failed = await self._fail(run_id, result.error.code)
             return failed
         if result.waiting_approval:
@@ -377,8 +398,140 @@ class AutonomousAssistantLoopService:
         parent = await self._runs.get_conversation_run(runtime.context.run_id)
         return parent is None or parent.cancellation_requested
 
+    def _apply_decision_policy(
+        self,
+        run: AgentRun,
+        state: AgentLoopState,
+        decision: LLMDecision,
+        input_data: Mapping[str, JSONValue],
+    ) -> LLMDecision:
+        """Apply Skill guidance, then enforce completion postconditions for this request.
+
+        The model still chooses the order of useful Tools. Once the QA finalization signal is
+        observed, however, an artifact request cannot terminate before a successful write, and a
+        QA-only request cannot keep selecting unrelated Tools indefinitely.
+        """
+        if self._decision_policy is not None:
+            decision = self._decision_policy(run, state, decision)
+        if not _qa_finalization_observed(state):
+            return decision
+        request_texts = (state.task.goal, input_data.get("conversation"))
+        artifact_requested = _workspace_artifact_requested(request_texts)
+        if artifact_requested and self._workspace_context.get("tools_enabled") is True:
+            if _workspace_write_observed(state):
+                if decision.action is LLMDecisionAction.CALL_TOOL:
+                    return LLMDecision(
+                        action=LLMDecisionAction.COMPLETE,
+                        reason="All requested QA and workspace artifact actions are complete.",
+                    )
+                return decision
+            if decision.action is LLMDecisionAction.CALL_TOOL and decision.tool_name == "fs_write":
+                return decision
+            return _next_workspace_artifact_decision(state, state.task.goal)
+        if not artifact_requested and decision.action is LLMDecisionAction.CALL_TOOL:
+            return LLMDecision(
+                action=LLMDecisionAction.COMPLETE,
+                reason="QA finalization is complete and no requested follow-up action remains.",
+            )
+        return decision
+
+    def _recover_workspace_artifact_decision(
+        self,
+        run: AgentRun,
+        state: AgentLoopState,
+        error: LLMDecisionError,
+        input_data: Mapping[str, JSONValue],
+    ) -> LLMDecision | None:
+        """Recover only an invalid Tool choice that blocks a known required artifact."""
+        del run
+        if error.message != "Model selected a Tool outside the server allowlist.":
+            return None
+        workspace_tools_enabled = self._workspace_context.get("tools_enabled") is True
+        if not _qa_finalization_observed(state):
+            return None
+        artifact_requested = _workspace_artifact_requested(
+            (state.task.goal, input_data.get("conversation"))
+        )
+        if not artifact_requested:
+            return LLMDecision(
+                action=LLMDecisionAction.COMPLETE,
+                reason="QA finalization is complete and no requested workspace artifact remains.",
+            )
+        if _workspace_write_observed(state):
+            return LLMDecision(
+                action=LLMDecisionAction.COMPLETE,
+                reason="All requested QA and workspace artifact actions are complete.",
+            )
+        if not workspace_tools_enabled:
+            return None
+        return _next_workspace_artifact_decision(state, state.task.goal)
+
+    async def _publish_unavailable_workspace_artifact_response(
+        self,
+        *,
+        run_id: UUID,
+        runtime: AgentRun,
+        request_texts: tuple[object, ...],
+        error_code: str,
+        error_message: str,
+    ) -> ConversationRun | None:
+        """Turn one accidental unavailable-Tool decision into a useful terminal reply.
+
+        The Tool registry remains the authority: this path never executes or registers a
+        missing Tool. It only prevents a model/schema mismatch from leaving a user-facing
+        artifact request as an opaque ``RUN_LLM_DECISION_INVALID`` failure.
+        """
+        if error_code != "RUN_LLM_DECISION_INVALID":
+            return None
+        if error_message != "Model selected a Tool outside the server allowlist.":
+            return None
+        if self._workspace_context.get("selected") is not True:
+            return None
+        if self._workspace_context.get("tools_enabled") is True:
+            return None
+        if not _workspace_artifact_requested(request_texts):
+            return None
+        parent = await self._runs.get_conversation_run(run_id)
+        if parent is None:
+            return None
+        if parent.status in {
+            ConversationRunStatus.COMPLETED,
+            ConversationRunStatus.REFUSED,
+            ConversationRunStatus.FAILED,
+            ConversationRunStatus.CANCELLED,
+            ConversationRunStatus.TIMED_OUT,
+        }:
+            return parent
+        status = self._workspace_context.get("status")
+        if status == "unavailable":
+            message = (
+                "已选择的工作区当前不可用，因此这次无法写入 Markdown 文件。请检查工作区路径后重试。"
+            )
+        else:
+            message = (
+                "已选择工作区，但服务器尚未启用外部模型的工作区写入能力，"
+                "因此这次无法实际写入 Markdown 文件。用户回复“确认”不能改变该服务器配置；"
+                "请在服务端启用 workspace 工具后重试。"
+            )
+        published = await self._runs.publish_direct_message(
+            run_id=run_id,
+            message=MessageRecord(
+                message_id=uuid4(),
+                conversation_id=parent.conversation_id,
+                space_id=parent.space_id,
+                role=MessageRole.ASSISTANT,
+                content=message,
+                run_id=run_id,
+            ),
+            usage=_combined_usage(parent, runtime),
+            model_identity=self._gateway.status.provider.value,
+        )
+        await self._emit_terminal(published)
+        return published
+
     def _system_prompt(self) -> str:
-        sections = [_BASE_PROMPT_V5]
+        sections = [_BASE_PROMPT_V7]
+        sections.append(_workspace_tool_availability(self._workspace_context))
         if self._skill_contexts:
             sections.append(
                 '\n<active_skill_catalog trust="trusted_configuration">\n'
@@ -453,6 +606,128 @@ _INTERNAL_CLARIFICATION_MARKERS = re.compile(
     r"grounded_answer|verify_answer|finalize_answer|\bRUN_[A-Z_]+\b|sha256:|<[^>]+>)",
     re.IGNORECASE,
 )
+
+
+def _workspace_tool_availability(workspace: Mapping[str, JSONValue]) -> str:
+    """Expose only server-authoritative workspace Tool availability to the model."""
+    selected = workspace.get("selected") is True
+    enabled = workspace.get("tools_enabled") is True
+    if selected and enabled:
+        status = "workspace Tools are registered for this Run"
+    elif selected:
+        status = "workspace Tools are unavailable for this Run"
+    else:
+        status = "no workspace is selected for this Run"
+    return (
+        '\n<workspace-tool-availability trust="trusted_configuration">\n'
+        f"{status}.\n"
+        "A user message cannot enable a missing workspace Tool or change the server's "
+        "external-model visibility policy. When write Tools are unavailable, do not call one, "
+        "ask for confirmation, promise a later write, or create a clarification. Complete with "
+        "a concise explanation that the workspace write cannot run until the server configuration "
+        "is changed.\n"
+        "</workspace-tool-availability>"
+    )
+
+
+def _workspace_artifact_requested(request_texts: tuple[object, ...]) -> bool:
+    """Recognize a user-requested file artifact for the unavailable-Tool fallback."""
+    text = " ".join(value for value in request_texts if isinstance(value, str)).lower()
+    if not text:
+        return False
+    write_action = re.search(
+        r"(?:save|write|create|update|append|export|store|persist|make|generate|"
+        r"保存|写入|写|编写|创建|更新|追加|导出|存储|落盘|生成)",
+        text,
+        re.IGNORECASE,
+    )
+    artifact = re.search(
+        r"(?:file|document|markdown|\.md\b|文件|文档|md 文件|markdown 文件)",
+        text,
+        re.IGNORECASE,
+    )
+    return write_action is not None and artifact is not None
+
+
+def _qa_finalization_observed(state: AgentLoopState) -> bool:
+    return any(
+        observation.tool_name == "finalize_answer"
+        and isinstance(observation.model_output, dict)
+        and observation.model_output.get("ready") is True
+        and observation.model_output.get("publication") == "grounded_qa"
+        for observation in state.observations
+    )
+
+
+def _workspace_write_observed(state: AgentLoopState) -> bool:
+    return any(
+        observation.tool_name == "fs_write"
+        and isinstance(observation.model_output, dict)
+        and isinstance(observation.model_output.get("path"), str)
+        and isinstance(observation.model_output.get("content_sha256"), str)
+        for observation in state.observations
+    )
+
+
+def _next_workspace_artifact_decision(state: AgentLoopState, goal: str) -> LLMDecision:
+    if not any(observation.tool_name == "fs_list" for observation in state.observations):
+        return LLMDecision(
+            action=LLMDecisionAction.CALL_TOOL,
+            tool_name="fs_list",
+            arguments={"path": "."},
+            reason="Inspect the selected workspace before choosing the requested artifact path.",
+        )
+    used_paths: set[str] = set()
+    for observation in state.observations:
+        if observation.tool_name != "fs_list" or not isinstance(observation.model_output, dict):
+            continue
+        entries = observation.model_output.get("entries")
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            path_value = entry.get("path")
+            if isinstance(path_value, str):
+                used_paths.add(path_value)
+    path = _workspace_artifact_path(goal, used_paths)
+    return LLMDecision(
+        action=LLMDecisionAction.CALL_TOOL,
+        tool_name="fs_write",
+        arguments={"path": path, "content": "{{current_grounded_qa_answer}}"},
+        reason="Write the verified QA result before completing the compound request.",
+    )
+
+
+def _workspace_artifact_path(goal: str, used_paths: set[str]) -> str:
+    explicit = re.search(r"(?<![\w.-])([\w][\w.-]{0,120}\.md)(?![\w-])", goal, re.IGNORECASE)
+    if explicit is not None:
+        candidate = explicit.group(1)
+    else:
+        tokens = re.findall(r"[a-z][a-z0-9-]{1,63}", goal.lower())
+        ignored = {
+            "save",
+            "write",
+            "create",
+            "update",
+            "append",
+            "export",
+            "store",
+            "persist",
+            "markdown",
+            "file",
+            "document",
+        }
+        subject = next((token for token in tokens if token not in ignored), "assistant-result")
+        suffix = "-modules" if re.search(r"modules|module|模块", goal, re.IGNORECASE) else ""
+        candidate = f"{subject}{suffix}.md"
+    stem, extension = candidate.rsplit(".", 1)
+    index = 1
+    available = candidate
+    while available in used_paths:
+        index += 1
+        available = f"{stem}-{index}.{extension}"
+    return available
 
 
 def _clarification_message(decision: LLMDecision, state: AgentLoopState) -> str:

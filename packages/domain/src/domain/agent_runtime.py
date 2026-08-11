@@ -103,13 +103,18 @@ class RunBudget:
             raise ValueError("run budget limits must be positive")
 
     def allows(self, usage: BudgetUsage) -> bool:
-        return (
-            usage.steps <= self.max_steps
-            and usage.tool_calls <= self.max_tool_calls
-            and usage.input_tokens <= self.max_input_tokens
-            and usage.output_tokens <= self.max_output_tokens
-            and usage.elapsed_ms <= self.timeout_seconds * 1000
+        return not self.exceeded_limits(usage)
+
+    def exceeded_limits(self, usage: BudgetUsage) -> tuple[str, ...]:
+        """Return safe numeric diagnostics for each exhausted execution limit."""
+        limits = (
+            ("steps", usage.steps, self.max_steps),
+            ("tool_calls", usage.tool_calls, self.max_tool_calls),
+            ("input_tokens", usage.input_tokens, self.max_input_tokens),
+            ("output_tokens", usage.output_tokens, self.max_output_tokens),
+            ("elapsed_ms", usage.elapsed_ms, self.timeout_seconds * 1000),
         )
+        return tuple(f"{name}={actual}>{limit}" for name, actual, limit in limits if actual > limit)
 
 
 @dataclass(frozen=True)
@@ -155,7 +160,8 @@ class BudgetUsage:
             elapsed_ms=self.elapsed_ms + elapsed_ms,
         )
         if budget is not None and not budget.allows(updated):
-            raise BudgetExceededError("run budget exceeded")
+            limits = ", ".join(budget.exceeded_limits(updated))
+            raise BudgetExceededError(f"run budget exceeded: {limits}")
         return updated
 
 
@@ -170,6 +176,7 @@ class ToolCallRecord:
     error_code: str | None = None
     retry_count: int = 0
     duration_ms: int = 0
+    display_summary: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
@@ -179,6 +186,10 @@ class ToolCallRecord:
             raise ValueError("tool call record requires at least one permission")
         if self.retry_count < 0 or self.duration_ms < 0:
             raise ValueError("tool retry count and duration cannot be negative")
+        if len(self.display_summary) > 512 or any(
+            not character.isprintable() for character in self.display_summary
+        ):
+            raise ValueError("tool display summary is invalid")
 
 
 @dataclass(frozen=True)
@@ -293,7 +304,8 @@ class AgentRun:
         if self.checkpoint_sequence < 0:
             raise ValueError("checkpoint sequence cannot be negative")
         if not self.budget.allows(self.usage):
-            raise BudgetExceededError("initial usage exceeds run budget")
+            limits = ", ".join(self.budget.exceeded_limits(self.usage))
+            raise BudgetExceededError(f"initial usage exceeds run budget: {limits}")
 
     def transition(self, event: RunEvent, *, now: datetime | None = None) -> AgentRun:
         next_status, next_step = transition_run(self.status, self.current_step, event)
@@ -440,6 +452,10 @@ class ApprovalPort(Protocol):
     async def request(self, context: AgentRunContext, tool: ToolCallRecord) -> str: ...
 
     async def is_approved(self, approval_id: str, context: AgentRunContext) -> bool: ...
+
+    async def is_always_allowed(
+        self, context: AgentRunContext, *, tool_name: str, tool_version: str
+    ) -> bool: ...
 
 
 def validate_recovery(

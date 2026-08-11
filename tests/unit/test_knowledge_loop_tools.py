@@ -11,7 +11,7 @@ from agent_runtime.skills import PinnedSkill
 from application.qa.profile import QAPlanningProfileV1
 from application.qa.service import GroundedQAApplicationPort, GroundedQAExecutionProfile
 from application.skills import KnowledgeLoopTools, KnowledgeLoopToolsConfig
-from domain.agent_loop import AgentLoopState, AgentLoopTask
+from domain.agent_loop import AgentLoopState, AgentLoopTask, AgentLoopToolObservation
 from domain.agent_runtime import AgentRun, AgentRunContext, RunBudget, ToolPermission
 from domain.grounded_qa import (
     Citation,
@@ -480,8 +480,8 @@ async def test_knowledge_loop_server_policy_forces_verify_and_finalize_sequence(
 
 
 @pytest.mark.asyncio
-async def test_v7_policy_leaves_an_unstarted_direct_turn_to_the_outer_assistant() -> None:
-    adapter, _search, _qa = tools(skill_version="0.7.0")
+async def test_v8_policy_leaves_an_unstarted_direct_turn_to_the_outer_assistant() -> None:
+    adapter, _search, _qa = tools(skill_version="0.8.0")
     direct = LLMDecision(
         LLMDecisionAction.COMPLETE,
         reason="The request is ordinary conversation.",
@@ -496,9 +496,53 @@ async def test_v7_policy_leaves_an_unstarted_direct_turn_to_the_outer_assistant(
     )
 
 
+def test_v9_policy_requires_a_named_document_summary_before_grounded_answer() -> None:
+    search = FakeSearchService()
+    qa = FakeGroundedQA()
+    adapter = KnowledgeLoopTools(
+        qa=cast(GroundedQAApplicationPort, qa),
+        search=search,
+        config=KnowledgeLoopToolsConfig(
+            profile=execution_profile(),
+            versions=versions(skill_version="0.9.0"),
+            tool_version="1.1.0",
+            resource_resolver=FakeResourceResolver(),
+        ),
+    )
+    requested = LLMDecision(
+        LLMDecisionAction.CALL_TOOL,
+        tool_name="grounded_answer",
+        arguments={},
+    )
+
+    recovered = adapter.decision_policy(
+        runtime_run(),
+        AgentLoopState.accepted(
+            AgentLoopTask("Introduce OmniStudio modules and summarize CLAUDE.md.")
+        ),
+        requested,
+    )
+
+    assert recovered.action is LLMDecisionAction.CALL_TOOL
+    assert recovered.tool_name == "summarize_document"
+    assert recovered.arguments == {"document_reference": "CLAUDE.md"}
+
+    recovered_chinese = adapter.decision_policy(
+        runtime_run(),
+        AgentLoopState.accepted(
+            AgentLoopTask("介绍一下 OmniStudio 的主要模块，并为 CLAUDE.md 写一下摘要。")
+        ),
+        requested,
+    )
+
+    assert recovered_chinese.action is LLMDecisionAction.CALL_TOOL
+    assert recovered_chinese.tool_name == "summarize_document"
+    assert recovered_chinese.arguments == {"document_reference": "CLAUDE.md"}
+
+
 @pytest.mark.asyncio
-async def test_v7_policy_replaces_an_identical_followup_search() -> None:
-    adapter, _search, _qa = tools(skill_version="0.7.0")
+async def test_v8_policy_replaces_an_identical_followup_search() -> None:
+    adapter, _search, _qa = tools(skill_version="0.8.0")
     await adapter.knowledge_search({"query": "architecture"}, tool_context())
     await adapter.knowledge_inspect({}, tool_context())
     repeated = LLMDecision(
@@ -512,8 +556,96 @@ async def test_v7_policy_replaces_an_identical_followup_search() -> None:
     )
 
     assert recovered.action is LLMDecisionAction.CALL_TOOL
-    assert recovered.tool_name == "knowledge_search"
-    assert recovered.arguments == {"query": "Architecture overview. additional supporting evidence"}
+    assert recovered.tool_name == "grounded_answer"
+    assert recovered.arguments == {}
+
+
+@pytest.mark.asyncio
+async def test_v8_policy_does_not_turn_a_meta_instruction_into_a_search_query() -> None:
+    adapter, _search, _qa = tools(skill_version="0.8.0")
+    await adapter.knowledge_search({"query": "omnistudio 主要模块"}, tool_context())
+    await adapter.knowledge_inspect({}, tool_context())
+
+    recovered = adapter.decision_policy(
+        runtime_run(),
+        AgentLoopState.accepted(AgentLoopTask("介绍 OmniStudio 的主要模块。")),
+        LLMDecision(
+            LLMDecisionAction.CALL_TOOL,
+            tool_name="knowledge_search",
+            arguments={"query": "你可以通过 knowledge_search 查询 additional supporting evidence"},
+        ),
+    )
+
+    assert recovered.action is LLMDecisionAction.CALL_TOOL
+    assert recovered.tool_name == "grounded_answer"
+    assert recovered.arguments == {}
+
+
+@pytest.mark.asyncio
+async def test_v8_policy_resolves_a_model_selected_qa_workspace_write() -> None:
+    adapter, _search, _qa = tools(skill_version="0.8.0")
+    context = tool_context()
+    await adapter.knowledge_search({"query": "omnistudio 主要模块"}, context)
+    await adapter.knowledge_inspect({}, context)
+    await adapter.grounded_answer({}, context)
+    await adapter.verify_answer({}, context)
+    await adapter.finalize_answer({}, context)
+
+    requested = LLMDecision(
+        LLMDecisionAction.CALL_TOOL,
+        tool_name="fs_write",
+        arguments={
+            "path": "omnistudio-modules.md",
+            "content": "{{current_grounded_qa_answer}}",
+        },
+    )
+    decision = adapter.decision_policy(
+        runtime_run(),
+        AgentLoopState.accepted(
+            AgentLoopTask("介绍 OmniStudio 的主要模块，将结果保存为md文件，放在工作区内。")
+        ),
+        requested,
+    )
+
+    assert decision.action is LLMDecisionAction.CALL_TOOL
+    assert decision.tool_name == "fs_write"
+    assert decision.arguments["path"] == "omnistudio-modules.md"
+    assert decision.arguments["content"].startswith("Authoritative QA answer")
+
+
+def test_v8_policy_allows_workspace_tools_after_checkpointed_finalization() -> None:
+    adapter, _search, _qa = tools(skill_version="0.8.0")
+    task = AgentLoopTask("总结上传资料并保存到工作区。")
+    state = AgentLoopState.accepted(task).start()
+    state = (
+        state.begin_iteration({"action": "call_tool"})
+        .request_tool(
+            name="finalize_answer",
+            version="1.0.0",
+            arguments={},
+            idempotency_key="finalize-1",
+            request_fingerprint="finalize-1",
+        )
+        .start_tool()
+        .observe(
+            AgentLoopToolObservation(
+                iteration=1,
+                tool_name="finalize_answer",
+                tool_version="1.0.0",
+                idempotency_key="finalize-1",
+                input_summary="sha256:input",
+                output_summary="sha256:output",
+                model_output={"ready": True, "publication": "grounded_qa", "outcome": "answer"},
+            )
+        )
+    )
+
+    requested = LLMDecision(
+        LLMDecisionAction.CALL_TOOL,
+        tool_name="fs_list",
+        arguments={"path": "."},
+    )
+    assert adapter.decision_policy(runtime_run(), state, requested) is requested
 
 
 @pytest.mark.asyncio

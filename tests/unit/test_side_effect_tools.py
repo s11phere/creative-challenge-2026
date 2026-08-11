@@ -28,8 +28,18 @@ SPACE_ID = UUID("00000000-0000-4000-8000-000000000501")
 
 
 class ApprovalFixture:
-    def __init__(self, approved: bool = True) -> None:
+    def __init__(self, approved: bool = True, always_allowed: bool = False) -> None:
         self.approved = approved
+        self.always_allowed = always_allowed
+
+    async def is_always_allowed(
+        self, _context: AgentRunContext, *, tool_name: str, tool_version: str
+    ) -> bool:
+        return (
+            self.always_allowed
+            and tool_name in {"fs_write", "shell_exec"}
+            and tool_version == "1.0.0"
+        )
 
     async def is_approved_for_invocation(
         self,
@@ -165,6 +175,26 @@ async def test_fs_write_requires_approval_and_atomically_replays_idempotently(
             ),
         )
     assert conflict.value.code is ToolRegistryErrorCode.IDEMPOTENCY_CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_fs_write_can_use_a_conversation_scoped_always_allow_grant(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    registry = _registry(root, approval=ApprovalFixture(always_allowed=True))
+    run = _run(ToolPermission.WRITE_KNOWLEDGE)
+    result = await registry.invoke(
+        run,
+        _invocation(
+            run,
+            ToolRef("fs_write", "1.0.0"),
+            {"path": "workspace/note.txt", "content": "always allowed"},
+            key="write-always-allowed",
+            approval_id=None,
+        ),
+    )
+
+    assert cast(dict[str, JSONValue], result.output)["bytes_written"] == 14
 
 
 @pytest.mark.asyncio

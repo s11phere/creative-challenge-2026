@@ -161,6 +161,7 @@ class AgentLoopState:
     lease_id: str | None = None
     last_idempotency_key: str | None = None
     tool_request_fingerprints: tuple[str, ...] = ()
+    repeated_tool_request_fingerprints: tuple[str, ...] = ()
     pending_tool_name: str | None = None
     pending_tool_version: str | None = None
     pending_arguments: dict[str, object] | None = None
@@ -261,6 +262,44 @@ class AgentLoopState:
             pending_tool_version=version,
             pending_arguments=dict(arguments),
             tool_request_fingerprints=self.tool_request_fingerprints + (request_fingerprint,),
+        )
+
+    def observe_repeated_tool_request(
+        self,
+        *,
+        name: str,
+        version: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+        input_summary: str,
+        output_summary: str,
+        model_output: ModelVisibleJSON,
+    ) -> AgentLoopState:
+        """Return one model-visible recovery observation for a duplicate Tool request."""
+        self._require_phase(AgentLoopPhase.PLANNING)
+        if (
+            request_fingerprint not in self.tool_request_fingerprints
+            or request_fingerprint in self.repeated_tool_request_fingerprints
+        ):
+            raise AgentLoopNoProgressError("Tool request has no recoverable duplicate observation")
+        observation = AgentLoopToolObservation(
+            iteration=self.iteration,
+            tool_name=name,
+            tool_version=version,
+            idempotency_key=idempotency_key,
+            input_summary=input_summary,
+            output_summary=output_summary,
+            error_code="RUN_LLM_DUPLICATE_TOOL_REQUEST",
+            model_output=model_output,
+        )
+        return replace(
+            self,
+            phase=AgentLoopPhase.OBSERVING,
+            iterations=self.iterations[:-1]
+            + (replace(self.iterations[-1], tool_name=name, observation=observation),),
+            observations=self.observations + (observation,),
+            repeated_tool_request_fingerprints=self.repeated_tool_request_fingerprints
+            + (request_fingerprint,),
         )
 
     def wait_for_approval(self, approval_id: str | None = None) -> AgentLoopState:
@@ -383,6 +422,7 @@ class AgentLoopState:
             "lease_id": self.lease_id,
             "last_idempotency_key": self.last_idempotency_key,
             "tool_request_fingerprints": list(self.tool_request_fingerprints),
+            "repeated_tool_request_fingerprints": list(self.repeated_tool_request_fingerprints),
             "pending_tool_name": self.pending_tool_name,
             "pending_tool_version": self.pending_tool_version,
             "pending_arguments": self.pending_arguments,
@@ -407,6 +447,13 @@ class AgentLoopState:
             isinstance(item, str) and item for item in raw_fingerprints
         ):
             raise AgentLoopContractError("checkpoint Tool request fingerprints are invalid")
+        raw_repeated_fingerprints = value.get("repeated_tool_request_fingerprints", [])
+        if not isinstance(raw_repeated_fingerprints, list) or not all(
+            isinstance(item, str) and item for item in raw_repeated_fingerprints
+        ):
+            raise AgentLoopContractError(
+                "checkpoint repeated Tool request fingerprints are invalid"
+            )
         observations = tuple(
             AgentLoopToolObservation(
                 iteration=int(item["iteration"]),
@@ -461,6 +508,7 @@ class AgentLoopState:
                 str(value["last_idempotency_key"]) if value.get("last_idempotency_key") else None
             ),
             tool_request_fingerprints=tuple(cast(list[str], raw_fingerprints)),
+            repeated_tool_request_fingerprints=tuple(cast(list[str], raw_repeated_fingerprints)),
             pending_tool_name=(
                 str(value["pending_tool_name"]) if value.get("pending_tool_name") else None
             ),

@@ -3,6 +3,11 @@
     "schemas": {
       "AgentApprovalDecisionRequest": {
         "properties": {
+          "always_allow": {
+            "default": false,
+            "title": "Always Allow",
+            "type": "boolean"
+          },
           "approved": {
             "title": "Approved",
             "type": "boolean"
@@ -27,6 +32,11 @@
             "format": "uuid",
             "title": "Approval Id",
             "type": "string"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
           },
           "status": {
             "title": "Status",

@@ -20,6 +20,7 @@ from application.assistant import (
     AutonomousAssistantLoopService,
     ConversationRunService,
 )
+from application.assistant.autonomous_loop import _next_workspace_artifact_decision
 from application.qa import InMemoryGroundedQARepository
 from domain.agent_loop import AgentLoopState, AgentLoopTask, AgentLoopToolObservation
 from domain.agent_runtime import AgentRun, AgentRunContext, RunBudget, ToolPermission
@@ -79,6 +80,40 @@ class SerialDecisionGateway:
         text = json.dumps(decision, separators=(",", ":"))
         return ChatResponse(
             text=text,
+            finish_reason="stop",
+            usage=ModelUsage(input_tokens=5, output_tokens=3),
+            capability=capability,
+            latency_ms=1.0,
+        )
+
+
+class UnavailableWorkspaceToolGateway:
+    """Model fixture that incorrectly selects a Tool hidden by server policy."""
+
+    def __init__(self) -> None:
+        self._delegate = FakeModelGateway()
+        self.requests: list[ChatRequest] = []
+
+    @property
+    def status(self) -> GatewayStatus:
+        return self._delegate.status
+
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        self.requests.append(request)
+        return ChatResponse(
+            text=json.dumps(
+                {
+                    "action": "call_tool",
+                    "tool_name": "fs_write",
+                    "arguments": {"path": "omnistudio-modules.md", "content": "..."},
+                },
+                separators=(",", ":"),
+            ),
             finish_reason="stop",
             usage=ModelUsage(input_tokens=5, output_tokens=3),
             capability=capability,
@@ -196,6 +231,11 @@ async def test_top_level_loop_observes_one_skill_adapter_before_selecting_anothe
                 instructions="Summarize only when the user explicitly asks.",
             ),
         ),
+        workspace_context={
+            "selected": True,
+            "tools_enabled": False,
+            "status": "model_visibility_consent_required",
+        },
     )
 
     completed = await service.execute(submitted.run_id, trace_id="a" * 32)
@@ -215,6 +255,10 @@ async def test_top_level_loop_observes_one_skill_adapter_before_selecting_anothe
     assert "- summary_skill v2.0.0" in system_prompt
     assert '"name":"research_skill"' in system_prompt
     assert '"name":"review_skill"' in system_prompt
+    assert "saving it is part of the requested outcome" in system_prompt
+    assert "A successful Tool result is one completed observation" in system_prompt
+    assert '<workspace-tool-availability trust="trusted_configuration">' in system_prompt
+    assert "workspace Tools are unavailable for this Run" in system_prompt
     history = await agent_events.page(submitted.run_id, limit=200)
     assert history.events[0].event_type.value == "accepted"
     assert any(event.event_type.value == "tool_output" for event in history.events)
@@ -226,6 +270,110 @@ async def test_top_level_loop_observes_one_skill_adapter_before_selecting_anothe
         ("research_skill", "1.0.0"),
         ("summary_skill", "2.0.0"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_unavailable_workspace_tool_decision_publishes_configuration_explanation() -> None:
+    repository = InMemoryGroundedQARepository()
+    conversation = ConversationRecord(
+        conversation_id=UUID(int=1051), space_id=UUID(int=1052), owner_id="loop-user"
+    )
+    await repository.create_conversation(conversation)
+    submitted = await ConversationRunService(conversations=repository, runs=repository).submit(
+        AssistantTurnSubmission(
+            conversation_id=conversation.conversation_id,
+            content="介绍一下 omnistudio 的主要模块，并保存为 markdown 文件",
+            idempotency_key="autonomous-loop-workspace-unavailable-1",
+        )
+    )
+    await repository.claim_conversation_run(
+        submitted.run_id, lease_owner="test-worker", lease_seconds=60
+    )
+    registry = InMemoryToolRegistry(handlers={"research": _research})
+    research = registry.register(_tool("research_skill", "research"))
+    gateway = UnavailableWorkspaceToolGateway()
+    service = AutonomousAssistantLoopService(
+        runs=repository,
+        messages=repository,
+        gateway=cast(ModelGateway, gateway),
+        events=AssistantEventLog(),
+        agent_events=AgentRunEventLog(),
+        runtime_state=InMemoryRuntimeStateStore(),
+        pin=_pin(),
+        budget=RunBudget(
+            max_steps=4,
+            max_tool_calls=2,
+            max_input_tokens=100,
+            max_output_tokens=100,
+            timeout_seconds=30,
+        ),
+        tool_registry=registry,
+        allowed_tools=(ToolRef(research.name, research.version),),
+        qa_results=_no_qa_result,
+        skill_contexts=(),
+        workspace_context={
+            "selected": True,
+            "tools_enabled": False,
+            "status": "model_visibility_consent_required",
+        },
+    )
+
+    completed = await service.execute(submitted.run_id, trace_id="d" * 32)
+
+    assert completed is not None
+    assert completed.status is ConversationRunStatus.COMPLETED
+    assert completed.result is not None
+    message = await repository.get_message(completed.result.message_id)
+    assert message is not None
+    assert "尚未启用外部模型的工作区写入能力" in message.content
+    assert "确认" in message.content
+    assert len(gateway.requests) == 1
+
+
+def test_completion_recovery_requires_a_workspace_write_after_qa_finalization() -> None:
+    state = AgentLoopState.accepted(
+        AgentLoopTask("OmniStudio modules: save as a Markdown file.")
+    ).start()
+
+    list_decision = _next_workspace_artifact_decision(state, state.task.goal)
+
+    assert list_decision.action is LLMDecisionAction.CALL_TOOL
+    assert list_decision.tool_name == "fs_list"
+    assert list_decision.arguments == {"path": "."}
+
+    state = (
+        state.begin_iteration({"action": "call_tool"})
+        .request_tool(
+            name="fs_list",
+            version="1.0.0",
+            arguments={"path": "."},
+            idempotency_key="list-1",
+            request_fingerprint="list-1",
+        )
+        .start_tool()
+        .observe(
+            AgentLoopToolObservation(
+                iteration=1,
+                tool_name="fs_list",
+                tool_version="1.0.0",
+                idempotency_key="list-1",
+                input_summary="sha256:input",
+                output_summary="sha256:output",
+                model_output={
+                    "entries": [{"path": "omnistudio-modules.md", "kind": "file", "size_bytes": 1}]
+                },
+            )
+        )
+    )
+
+    write_decision = _next_workspace_artifact_decision(state, state.task.goal)
+
+    assert write_decision.action is LLMDecisionAction.CALL_TOOL
+    assert write_decision.tool_name == "fs_write"
+    assert write_decision.arguments == {
+        "path": "omnistudio-modules-2.md",
+        "content": "{{current_grounded_qa_answer}}",
+    }
 
 
 @pytest.mark.asyncio

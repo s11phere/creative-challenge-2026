@@ -1223,7 +1223,12 @@ class InMemoryGroundedQARepository:
             or (
                 parent.run_kind is ConversationRunKind.ASSISTANT_TURN
                 and parent.router_version == "assistant-agent-loop-v1"
-                and parent.core_prompt_version == "assistant-base-prompt-v5"
+                and parent.core_prompt_version
+                in {
+                    "assistant-base-prompt-v5",
+                    "assistant-base-prompt-v6",
+                    "assistant-base-prompt-v7",
+                }
             )
             and parent.result is None
             and run.status in {QAStatus.COMPLETED, QAStatus.REFUSED}
@@ -1350,7 +1355,8 @@ def _same_qa_parent_identity(existing: ConversationRun, run: QARunRecord) -> boo
         return (
             existing.run_kind is ConversationRunKind.ASSISTANT_TURN
             and existing.skill is None
-            and existing.core_prompt_version == "assistant-base-prompt-v5"
+            and existing.core_prompt_version
+            in {"assistant-base-prompt-v5", "assistant-base-prompt-v6", "assistant-base-prompt-v7"}
             and run.versions.skill_name == "knowledge_agent"
         )
     return (

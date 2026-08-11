@@ -8,10 +8,12 @@ import {
   LoaderCircle,
   Quote,
   Search,
+  ShieldCheck,
   Terminal,
+  X,
   type LucideIcon,
 } from 'lucide-react'
-import type { AgentRunEvent, AssistantRun } from './qa'
+import type { AgentApproval, AgentRunEvent, AssistantRun } from './qa'
 
 type AgentRunTimelineProps = {
   run: AssistantRun
@@ -20,6 +22,9 @@ type AgentRunTimelineProps = {
   clarificationPending: boolean
   onSelectClarification: (candidateId: string) => void
   onOpenEvidence: (runId: string) => void
+  approvals: AgentApproval[]
+  approvalBusy: boolean
+  onDecideApproval: (approvalId: string, approved: boolean, alwaysAllow: boolean) => void
 }
 
 type ToolKind = 'read' | 'retrieval' | 'write' | 'command'
@@ -151,10 +156,17 @@ function toolDetails(item: ToolTimelineItem) {
   const inputSummary = getText(source.payload, 'input_summary')
   const queryPreview = getText(source.payload, 'query_preview')
   const resourceReference = getText(source.payload, 'resource_reference')
+  const path = getText(source.payload, 'path')
+  const command = getText(source.payload, 'command')
+  const cwd = getText(source.payload, 'cwd')
   const outputSummary = getText(source.payload, 'output_summary')
   const duration = getNumber(source.payload, 'duration_ms')
   const retryCount = getNumber(source.payload, 'retry_count')
+  const exitCode = getNumber(source.payload, 'exit_code')
   const errorCode = getText(source.payload, 'error_code')
+  if (path) entries.push(['操作对象', path])
+  if (command) entries.push(['执行命令', command])
+  if (cwd) entries.push(['工作目录', cwd])
   if (resourceReference) entries.push(['目标文档', resourceReference])
   if (queryPreview) entries.push(['检索问题', queryPreview])
   if (inputSummary) entries.push(['输入摘要', inputSummary])
@@ -162,7 +174,16 @@ function toolDetails(item: ToolTimelineItem) {
   if (duration !== null) entries.push(['耗时', formatDuration(duration)])
   if (retryCount !== null) entries.push(['重试', `${retryCount} 次`])
   if (errorCode) entries.push(['错误码', errorCode])
+  if (exitCode !== null) entries.push(['Exit code', String(exitCode)])
   return entries
+}
+
+function toolOutput(item: ToolTimelineItem): { value: string; truncated: boolean } | null {
+  const output = item.events.findLast((event) => event.event_type === 'tool_output')
+  if (!output) return null
+  const value = getText(output.payload, 'output_preview')
+  if (!value) return null
+  return { value, truncated: output.payload.output_truncated === true }
 }
 
 function formatDuration(value: number): string {
@@ -212,8 +233,12 @@ export function AgentRunTimeline({
   clarificationPending,
   onSelectClarification,
   onOpenEvidence,
+  approvals,
+  approvalBusy,
+  onDecideApproval,
 }: AgentRunTimelineProps) {
   const accepted = events.find((event) => event.event_type === 'accepted')
+  const approvalList = Array.isArray(approvals) ? approvals : []
   const tools = mergeToolEvents(events)
   const activations = skillActivations(events)
   const rootActivations = activations.filter((item) => item.iteration === 0)
@@ -280,6 +305,10 @@ export function AgentRunTimeline({
                     const ToolIcon = visual.Icon
                     const status = toolStatus(tool)
                     const details = toolDetails(tool)
+                    const output = toolOutput(tool)
+                    const approvalEvent = tool.events.findLast((event) => event.event_type === 'approval_required')
+                    const approvalId = getText(approvalEvent?.payload ?? {}, 'approval_id')
+                    const approval = approvalList.find((item) => item.approval_id === approvalId)
                     return (
                       <details key={`${tool.iteration}:${tool.toolName}:${tool.toolVersion}`} className="chat-agent-tool" data-kind={classifyTool(tool.toolName)} data-status={status.state}>
                         <summary>
@@ -293,6 +322,40 @@ export function AgentRunTimeline({
                           <dl className="chat-agent-tool-details">
                             {details.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
                           </dl>
+                        )}
+                        {output && (
+                          <details className="chat-agent-tool-output">
+                            <summary>查看输出{output.truncated ? '（结果已截断）' : ''}</summary>
+                            <pre>{output.value}</pre>
+                          </details>
+                        )}
+                        {approvalEvent && approval?.status === 'pending' && (
+                          <div className="chat-agent-approval-actions">
+                            <span>需要审批此操作</span>
+                            <div>
+                              <button
+                                type="button"
+                                disabled={approvalBusy}
+                                onClick={() => onDecideApproval(approval.approval_id, true, false)}
+                              >
+                                <Check size={15} aria-hidden="true" />批准
+                              </button>
+                              <button
+                                type="button"
+                                disabled={approvalBusy}
+                                onClick={() => onDecideApproval(approval.approval_id, true, true)}
+                              >
+                                <ShieldCheck size={15} aria-hidden="true" />始终允许此类操作
+                              </button>
+                              <button
+                                type="button"
+                                disabled={approvalBusy}
+                                onClick={() => onDecideApproval(approval.approval_id, false, false)}
+                              >
+                                <X size={15} aria-hidden="true" />拒绝
+                              </button>
+                            </div>
+                          </div>
                         )}
                       </details>
                     )
@@ -311,7 +374,7 @@ export function AgentRunTimeline({
       )}
       {run.clarification && (
         <section className="chat-clarification">
-          <h3>需要选择</h3>
+          <h3>{run.clarification.resource_candidates.length > 0 ? '需要选择' : '需要补充信息'}</h3>
           <p>{run.clarification.message}</p>
           {run.clarification.resource_candidates.length > 0 && (
             <div role="group" aria-label="资源选择">

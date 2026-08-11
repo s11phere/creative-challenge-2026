@@ -36,9 +36,31 @@ and checkpoint contracts.
 6. Writes and commands enter `WAITING_APPROVAL`. The Runtime records the exact invocation digest in
    a durable approval request and checkpoint. The v2 approval endpoints decide a request only after
    confirming it belongs to the specified Run; approval resumes the same Run, while rejection
-   cancels the pending Run without executing the Tool.
+   cancels the pending Run without executing the Tool. The Web timeline can make that decision
+   directly. An approved decision with `always_allow=true` additionally records the Tool name in
+   the current Conversation. Later side-effect invocations of that Tool name in the same
+   Conversation bypass the approval wait, but retain all workspace, protected-path, command-alias,
+   schema, cancellation, idempotency, and Runtime permission checks. A new Conversation does not
+   inherit this allowance.
 7. API and Worker deployments must mount the same workspace root. The Compose configuration binds
    `AGENT_WORKSPACE_HOST_PATH` to `/data/agent-workspaces` in both containers.
+8. The Agent timeline displays a filesystem Tool's target path and a command Tool's argv-rendered
+   command plus relative cwd. It stores only bounded, control-character-sanitized previews of
+   `shell_exec` stdout/stderr and `fs_list` entries in the v3 event stream. Previews are limited to
+   4,000 characters, signal truncation, and are expandable in the UI; `fs_read` and `fs_write` do
+   not expose file content in this display channel.
+9. The local workspace and the fixed current-Space knowledge corpus remain separate data scopes.
+   A workspace listing never determines whether uploaded knowledge is present. Prompted Agent
+   planning, rather than a server-side intent matcher, determines whether retrieval, listing, and
+   writing are needed for a compound request. When a user asks to save the verified QA result, the
+   Agent chooses the target path and explicitly calls the existing approval-gated `fs_write` Tool;
+   the runtime resolves a dedicated result marker to the server-owned answer text only for that
+   selected write. Before terminal completion, the Assistant harness checks the successful QA and
+   write observations for that explicit request; if QA is complete but the artifact is absent, it
+   may inspect `.` and then call the normal approval-gated write Tool. This is a completion
+   postcondition, not a fixed retrieval plan or an authorization path. No default output filename
+   is imposed. The display-only workspace name is not a Tool cwd; `.` is the selected workspace
+   root.
 
 ## Alternatives
 
@@ -55,10 +77,14 @@ Local fake-model sessions can select a folder through `/workspace <folder>` or t
 workspace API, then let the Agent inspect files and request approved changes or commands. A
 non-fake session needs the explicit visibility consent above. The API and Worker require a shared
 mount, and an unavailable persisted workspace fails closed by omitting the Tools. The capability is
-an engineering workflow feature, not a formal quality acceptance.
+an engineering workflow feature, not a formal quality acceptance. A Conversation-level allowance
+improves repeated local workflow actions but is not a blanket shell grant or a cross-Conversation
+permission. The bounded output preview makes execution inspectable in the UI without creating an
+unbounded command log or exposing file-read content through events.
 
 ## Reassessment Triggers
 
-Reassess before changing the consent policy, adding a command alias with a broader data or network
-boundary, allowing a workspace outside the configured root, or changing the approval identity,
-cancellation, or checkpoint protocol.
+Reassess before changing the consent policy, widening a Conversation-level allowance beyond a Tool
+name, adding a command alias with a broader data or network boundary, allowing a workspace outside
+the configured root, increasing preview retention, or changing the approval identity, cancellation,
+or checkpoint protocol.

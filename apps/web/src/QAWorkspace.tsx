@@ -26,6 +26,8 @@ import {
   cancelRun,
   cancelAssistantRun,
   createConversation,
+  decideAssistantApproval,
+  fetchAssistantApprovals,
   fetchAssistantConversationRuns,
   fetchAssistantCommands,
   fetchAssistantRunEvents,
@@ -93,6 +95,9 @@ function reportedReasoningEffort(content: string | null): typeof reasoningEffort
 }
 
 const activeStatuses = new Set(['created', 'queued', 'running', 'cancel_requested'])
+// Approval decisions are persisted asynchronously by the Worker. Keep polling while a
+// run waits for approval so the UI observes the resumed execution without navigation.
+const refreshingStatuses = new Set([...activeStatuses, 'waiting_approval'])
 
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
@@ -167,6 +172,8 @@ type SkillRunCardProps = {
   clarificationPending: boolean
   onSelectClarification: (candidateId: string) => void
   onOpenEvidence: (runId: string) => void
+  approvalBusy: boolean
+  onDecideApproval: (approvalId: string, approved: boolean, alwaysAllow: boolean) => void
 }
 
 function LegacySkillRunCard({
@@ -183,7 +190,7 @@ function LegacySkillRunCard({
     queryFn: ({ signal }) => fetchAssistantRunEvents(run.run_id, signal),
     retry: false,
     enabled: skill !== null,
-    refetchInterval: activeStatuses.has(run.status) ? 2_000 : false,
+    refetchInterval: refreshingStatuses.has(run.status) ? 2_000 : false,
   })
   if (!skill) return null
   const activity = activityQuery.data ?? []
@@ -287,7 +294,14 @@ function SkillRunCard(props: SkillRunCardProps) {
     queryFn: ({ signal }) => fetchAgentRunEvents(run.run_id, signal),
     retry: false,
     enabled: eligibleForAgentTimeline,
-    refetchInterval: activeStatuses.has(run.status) ? 3_000 : false,
+    refetchInterval: refreshingStatuses.has(run.status) ? 3_000 : false,
+  })
+  const approvalQuery = useQuery({
+    queryKey: ['agent-run-approvals', run.run_id],
+    queryFn: ({ signal }) => fetchAssistantApprovals(run.run_id, signal),
+    retry: false,
+    enabled: eligibleForAgentTimeline,
+    refetchInterval: run.status === 'waiting_approval' ? 2_000 : false,
   })
   const agentEvents = agentEventsQuery.data ?? []
   const lastSequence = agentEvents.at(-1)?.sequence ?? 0
@@ -309,7 +323,7 @@ function SkillRunCard(props: SkillRunCardProps) {
 
   if (!eligibleForAgentTimeline) return null
   if (agentEvents.length > 0 || run.run_kind === 'assistant_turn') {
-    return <AgentRunTimeline {...props} events={agentEvents} />
+    return <AgentRunTimeline {...props} events={agentEvents} approvals={approvalQuery.data ?? []} />
   }
   if (!skill) return null
   return <LegacySkillRunCard {...props} />
@@ -429,7 +443,7 @@ export function QAWorkspace({
     enabled: Boolean(conversationId) && !usingLegacyV1,
     retry: false,
     refetchInterval: (query) =>
-      query.state.data?.some((run) => activeStatuses.has(run.status)) ? 2_000 : false,
+      query.state.data?.some((run) => refreshingStatuses.has(run.status)) ? 2_000 : false,
   })
 
   const conversations = historyQuery.data?.conversations ?? []
@@ -461,7 +475,7 @@ export function QAWorkspace({
     enabled: Boolean(currentRun && (isGroundedRun(currentRun) || currentRun.run_kind === 'assistant_turn')),
     initialData: currentLegacyRun,
     retry: false,
-    refetchInterval: (query) => activeStatuses.has(query.state.data?.status ?? '') ? 2_000 : false,
+    refetchInterval: (query) => refreshingStatuses.has(query.state.data?.status ?? '') ? 2_000 : false,
   })
   const evidenceLegacyRun = evidenceRunId ? legacyRunsById.get(evidenceRunId) : undefined
   const evidenceRunQuery = useQuery<QARun>({
@@ -726,6 +740,25 @@ export function QAWorkspace({
       )
     },
   })
+  const approvalMutation = useMutation({
+    mutationFn: ({
+      runId,
+      approvalId,
+      approved,
+      alwaysAllow,
+    }: {
+      runId: string
+      approvalId: string
+      approved: boolean
+      alwaysAllow: boolean
+    }) => decideAssistantApproval(runId, approvalId, approved, alwaysAllow),
+    onSuccess: (_approval, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['agent-run-approvals', variables.runId] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-run-events', variables.runId] })
+      void queryClient.invalidateQueries({ queryKey: ['assistant-runs', conversationId] })
+      void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
+    },
+  })
 
   const chooseCommand = (command: AssistantCommand) => {
     setDraft(`/${command.name} `)
@@ -827,7 +860,10 @@ export function QAWorkspace({
     }
   }
 
-  const error = submitMutation.error ?? cancelMutation.error ?? clarificationMutation.error
+  const error = submitMutation.error
+    ?? cancelMutation.error
+    ?? clarificationMutation.error
+    ?? approvalMutation.error
   const messages = useMemo(() => {
     const values = new Map((selectedConversation?.messages ?? []).map((message) => [message.message_id, message]))
     for (const message of localMessages) values.set(message.message_id, message)
@@ -990,6 +1026,13 @@ export function QAWorkspace({
                         clarificationPending={clarificationMutation.isPending}
                         onSelectClarification={(candidateId) => clarificationMutation.mutate({ run, candidateId })}
                         onOpenEvidence={openEvidence}
+                        approvalBusy={approvalMutation.isPending}
+                        onDecideApproval={(approvalId, approved, alwaysAllow) => approvalMutation.mutate({
+                          runId: run.run_id,
+                          approvalId,
+                          approved,
+                          alwaysAllow,
+                        })}
                       />
                       {answer && (
                         <article className="chat-final-answer" data-status={run.status}>

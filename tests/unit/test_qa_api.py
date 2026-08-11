@@ -10,6 +10,7 @@ from domain.qa_sse import QAEventLog
 from domain.retrieval import LocatorKind, SearchLocator
 from httpx import ASGITransport, AsyncClient
 from infrastructure.config import settings
+from infrastructure.qa_execution import _assistant_loop_decision
 from infrastructure.skill_lifecycle import InMemorySkillActivationStore
 from model_gateway import FakeModelGateway
 
@@ -50,17 +51,74 @@ class FakeOrganizationScope:
 
 
 @pytest.fixture(autouse=True)
-def enable_default_agent_loop_v7(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "knowledge_agent_skill_version", "0.7.0")
+def enable_default_agent_loop_v9(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "knowledge_agent_skill_version", "0.9.0")
     monkeypatch.setattr(settings, "agent_loop_v5_enabled", True)
 
 
 def test_active_skill_versions_exclude_legacy_recovery_package() -> None:
     assert _active_skill_versions() == {
-        "knowledge_agent": "0.7.0",
+        "knowledge_agent": "0.9.0",
         "summarize_document": "0.1.0",
         "compare_sources": "0.1.0",
         "create_review_cards": "0.1.0",
+    }
+
+
+def test_fake_assistant_harness_probes_a_chinese_named_subject_before_artifact_work() -> None:
+    decision = _assistant_loop_decision(
+        json.dumps(
+            {
+                "input": {"question": "介绍一下 omnistudio 的主要模块，并保存为 markdown 文件"},
+                "state": {"observations": []},
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    assert decision == {
+        "action": "call_tool",
+        "tool_name": "knowledge_search",
+        "arguments": {"query": "介绍一下 omnistudio 的主要模块"},
+    }
+
+
+def test_fake_assistant_harness_selects_and_writes_a_non_conflicting_markdown_artifact() -> None:
+    prefix = {
+        "input": {
+            "question": "介绍一下 omnistudio 的主要模块，并保存为 markdown 文件",
+            "workspace": {"tools_enabled": True},
+        },
+        "state": {
+            "observations": [
+                {
+                    "tool_name": "finalize_answer",
+                    "output": {"ready": True, "outcome": "answer"},
+                }
+            ]
+        },
+    }
+    listed = _assistant_loop_decision(json.dumps(prefix, ensure_ascii=False))
+    assert listed == {
+        "action": "call_tool",
+        "tool_name": "fs_list",
+        "arguments": {"path": "."},
+    }
+
+    prefix["state"]["observations"].append(
+        {
+            "tool_name": "fs_list",
+            "output": {"entries": [{"path": "omnistudio-modules.md", "kind": "file"}]},
+        }
+    )
+    written = _assistant_loop_decision(json.dumps(prefix, ensure_ascii=False))
+    assert written == {
+        "action": "call_tool",
+        "tool_name": "fs_write",
+        "arguments": {
+            "path": "omnistudio-modules-2.md",
+            "content": "{{current_grounded_qa_answer}}",
+        },
     }
 
 
@@ -90,7 +148,7 @@ async def test_provisional_qa_api_creates_run_cancels_and_replays_events() -> No
         run_id = UUID(submitted.json()["run_id"])
         assert submitted.json()["status"] == "queued"
         assert submitted.json()["skill"]["name"] == "knowledge_agent"
-        assert submitted.json()["skill"]["version"] == "0.7.0"
+        assert submitted.json()["skill"]["version"] == "0.9.0"
         assert len(submitted.json()["skill"]["content_sha256"]) == 64
         parent = await repository.get_conversation_run(run_id)
         assert parent is not None
@@ -238,7 +296,7 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
     knowledge_agent = next(item for item in listed.json() if item["name"] == "knowledge_agent")
     assert knowledge_agent == {
         "name": "knowledge_agent",
-        "active_version": "0.7.0",
+        "active_version": "0.9.0",
         "active_revision": 1,
         "versions": [
             "0.1.0",
@@ -248,21 +306,23 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
             "0.5.0",
             "0.6.0",
             "0.7.0",
+            "0.8.0",
+            "0.9.0",
         ],
     }
     assert legacy.status_code == 404
     assert legacy.json()["code"] == "SKILL_NOT_FOUND"
     assert versions.status_code == 200
-    payload = next(item for item in versions.json() if item["version"] == "0.7.0")
+    payload = next(item for item in versions.json() if item["version"] == "0.9.0")
     assert payload["active"] is True
     assert payload["content_sha256"]
     assert payload["permissions"] == ["model", "read_knowledge"]
     assert payload["budget"] == {
-        "max_steps": 12,
-        "max_tool_calls": 10,
-        "max_input_tokens": 49152,
-        "max_output_tokens": 12288,
-        "timeout_seconds": 300,
+        "max_steps": 32,
+        "max_tool_calls": 24,
+        "max_input_tokens": 131072,
+        "max_output_tokens": 32768,
+        "timeout_seconds": 600,
     }
     assert missing.status_code == 404
     assert missing.json()["code"] == "SKILL_NOT_FOUND"
@@ -422,7 +482,7 @@ async def test_knowledge_agent_uses_the_shared_qa_run_and_fixed_skill_identity()
 
     assert submitted.status_code == 202
     assert submitted.json()["skill"]["name"] == "knowledge_agent"
-    assert submitted.json()["skill"]["version"] == "0.7.0"
+    assert submitted.json()["skill"]["version"] == "0.9.0"
     assert submitted.json()["fixed_scope"] == {
         "source_ids": [],
         "document_ids": [],

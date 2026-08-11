@@ -1,0 +1,49 @@
+manifest_version: "2"
+name: knowledge_agent
+version: 0.9.0
+description: Provisional autonomous knowledge Tool loop with workspace artifact and duplicate-request recovery.
+input_schema: schemas/input.json
+output_schema: schemas/output.json
+required_tools:
+  - name: knowledge_search
+    version: 1.1.0
+  - name: knowledge_inspect
+    version: 1.1.0
+  - name: grounded_answer
+    version: 1.1.0
+  - name: verify_answer
+    version: 1.1.0
+  - name: finalize_answer
+    version: 1.1.0
+required_capabilities:
+  - fast_chat
+permissions:
+  - read_knowledge
+  - model
+budgets:
+  max_steps: 32
+  max_tool_calls: 24
+  max_input_tokens: 131072
+  max_output_tokens: 32768
+  timeout_seconds: 600
+entrypoint: workflow.yaml
+compatibility:
+  runtime: ">=0.1.0,<1.0.0"
+  checkpoint_schema_versions: [1]
+prompts:
+  - prompts/system.md
+evals:
+  - evals/cases.jsonl
+invocation:
+  command: ask
+  aliases: [qa]
+  argument_hint: "<question>"
+  trigger:
+    summary: "Use current-Space knowledge to research, verify, and answer a grounded question."
+    when:
+      - "The user asks what current-Space documents, notes, uploads, or citations say."
+    avoid_when:
+      - "The request can be answered from the message alone without current-Space material."
+    examples:
+      - "What do the uploaded notes say about the current project's architecture?"
+  input_mode: question

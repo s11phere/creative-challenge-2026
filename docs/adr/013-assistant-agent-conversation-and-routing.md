@@ -43,9 +43,9 @@ untrusted intent: Application code validates it, resolves natural-language resou
 Space, pins `(name, version, content_sha256)`, validates input, and applies policy before execution.
 The schema prevents model-created resource, Space, and version identifiers.
 
-`assistant-base-prompt-v5` is the current top-level Assistant prompt; `assistant-base-prompt-v4` and
-`v3` remain available for historical fixed Runs and the compatibility router. The active catalog
-exposes `knowledge_agent 0.7.0` for requests that explicitly depend
+`assistant-base-prompt-v7` is the current top-level Assistant prompt; `assistant-base-prompt-v6`,
+`assistant-base-prompt-v5`, `assistant-base-prompt-v4`, and `v3` remain available for historical
+fixed Runs and the compatibility router. The active catalog exposes `knowledge_agent 0.9.0` for requests that explicitly depend
 on current-Space knowledge, while ordinary conversation remains the default. The `knowledge_qa`
 packages remain installed only to validate and recover historical fixed Runs; they cannot be selected
 by a new Assistant or v1 Run request. Existing Runs retain their pinned prompt identity for recovery

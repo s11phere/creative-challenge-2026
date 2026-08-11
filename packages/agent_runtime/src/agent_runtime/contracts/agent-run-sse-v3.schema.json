@@ -20,6 +20,13 @@
       "type": "object",
       "maxProperties": 16,
       "properties": {
+        "approval_id": {"type": "string", "maxLength": 255},
+        "command": {"type": "string", "maxLength": 512},
+        "cwd": {"type": "string", "maxLength": 512},
+        "exit_code": {"type": "integer"},
+        "output_preview": {"type": "string", "maxLength": 4000},
+        "output_truncated": {"type": "boolean"},
+        "path": {"type": "string", "maxLength": 512},
         "query_preview": {
           "type": "string",
           "maxLength": 512,

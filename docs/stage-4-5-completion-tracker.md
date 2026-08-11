@@ -18,6 +18,31 @@ only after a run-scoped v2 approval decision. API and Worker share one Compose b
 provisional local engineering capability under ADR-016; it does not change ADR-010/ADR-011 formal
 quality boundaries or authorize a formal holdout.
 
+The Web Agent timeline now lets a user approve, reject, or select **always allow this Tool type**
+for a pending write or command directly. The latter is limited to the current Conversation and Tool
+name; it does not relax workspace, protected-path, alias, schema, cancellation, idempotency, or
+permission checks. Tool cards show filesystem targets and command/cwd details, with expandable
+4,000-character previews for command output and directory listings. File-read content remains out
+of the event display channel.
+
+## 2026-08-11 duplicate Tool-request recovery and knowledge_agent 0.9.0
+
+A first accidental duplicate Tool name/version/argument request is now represented as one durable,
+model-visible `already_observed` feedback observation without running the Tool again. The model
+chooses a different next action; only a second identical repeat remains `RUN_LLM_NO_PROGRESS`. New
+turns use `assistant-base-prompt-v7` and `knowledge_agent 0.9.0`; v5/v6 and 0.7.0/0.8.0 remain
+available for fixed historical Runs. This is a bounded harness recovery rather than a mandatory
+Tool sequence.
+
+## 2026-08-11 workspace-artifact handoff and knowledge_agent 0.8.0
+
+The workspace-save path now keeps the prompt and Skill package immutable: new turns use
+`assistant-base-prompt-v6` and `knowledge_agent 0.8.0`, while v5/0.7.0 remain available for fixed
+historical Runs. The model chooses whether a requested artifact needs `fs_list`, `fs_read`, or
+`fs_write`; the runtime only resolves the server-owned verified QA result marker and preserves the
+existing approval, path, idempotency, and recovery checks. This keeps artifact writing a harness
+capability rather than a mandatory execution sequence.
+
 ## 2026-08-10 autonomous Assistant Loop and knowledge_agent 0.7.0
 
 New Assistant turns now enter one recoverable top-level Agent Loop. The model receives the active
@@ -329,7 +354,7 @@ lint、typecheck、Vitest 27 项、production build，以及隔离 Web 首页、
 | --- | --- | --- | --- | --- | --- |
 | 阶段 3 检索 | `retrieval-v1.yaml` + dataset `knowledge-qa-v0`；另有 `retrieval-v1-knowledge-qa-v1.yaml` + dataset `knowledge-qa-v1` | v1 schema/locator/hash 校验和 GPU development 消融已通过；两者仍 `provisional`，formal runs disabled；正式门未通过但满足 ADR-011 continuation gate | 可在 v1 上继续阶段 4/5 provisional 工程；正式线仍需新 dataset/config、代表性覆盖、claim-aware evaluator、development 达标、配置 hash 冻结后才可一次性运行 retrieval holdout | 仅使用 manifest 允许来源；默认本地；私有语料不得外发 | 待认领 |
 | 阶段 4 QA 评测 | `qa-continuation-v1.yaml` + `qa-profile-continuation-v1.yaml`；dataset `knowledge-qa-v0`；prompt `grounded-qa-v1-provisional` | provisional continuation 配置已 pin `retrieval-v1-knowledge-qa-v1`，validate-only 和受影响单测通过；正式配置未冻结 | 在 continuation gate 下继续 QA/E2E 工程；正式线仍需代表性 QA dataset、真实模型 development、answer config hash 和一次性 holdout | 题目、回答、引用原文和 Provider 响应不得写日志/报告；外部 Chat 需显式策略和同意 | 待认领 |
-| 阶段 5 Skill 评测 | 新知识入口默认 `knowledge_agent 0.7.0`（`0.5.0`/`0.6.0` 用于历史 Run 恢复或显式回滚，`0.3.0` 为兼容回滚，保留历史包）；顶层 `assistant_agent 0.1.0` 负责自主 Skill/Tool Loop；`knowledge_qa` 仅历史 Run 恢复 | 工程实现完成、质量 provisional；整理 Skill 已支持预览/审批/派生写入，正式 Eval 未关闭 | 为每个 Skill 固定 workflow/manifest/prompt/schema/eval 版本和摘要；现有 Runtime 恢复、审批、派生写入、回滚/清理引用检查已实现，之后再做正式 Skill Eval | 受信根加载；运行固定 Skill identity；派生写入前必须持久审批，所有输入继承来源敏感度 | 待认领 |
+| 阶段 5 Skill 评测 | 新知识入口默认 `knowledge_agent 0.9.0`（`0.5.0`/`0.6.0`/`0.7.0`/`0.8.0` 用于历史 Run 恢复或显式回滚，`0.3.0` 为兼容回滚，保留历史包）；顶层 `assistant_agent 0.2.0` 负责自主 Skill/Tool Loop，`0.1.0` 仅用于历史 Run 恢复；`knowledge_qa` 仅历史 Run 恢复 | 工程实现完成、质量 provisional；整理 Skill 已支持预览/审批/派生写入，正式 Eval 未关闭 | 为每个 Skill 固定 workflow/manifest/prompt/schema/eval 版本和摘要；现有 Runtime 恢复、审批、派生写入、回滚/清理引用检查已实现，之后再做正式 Skill Eval | 受信根加载；运行固定 Skill identity；派生写入前必须持久审批，所有输入继承来源敏感度 | 待认领 |
 
 ### 2.1 版本冻结顺序
 

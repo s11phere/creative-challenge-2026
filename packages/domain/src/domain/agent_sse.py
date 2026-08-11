@@ -56,11 +56,14 @@ _PAYLOAD_KEYS = frozenset(
     {
         "checkpoint_sequence",
         "checkpoint_sha256",
+        "approval_id",
+        "command",
         "continuation",
         "downgrade_reason",
         "duration_ms",
         "effective_effort",
         "error_code",
+        "exit_code",
         "evidence_sufficient",
         "goal_complete",
         "has_conflict",
@@ -71,6 +74,10 @@ _PAYLOAD_KEYS = frozenset(
         "model",
         "observation_count",
         "output_summary",
+        "output_preview",
+        "output_truncated",
+        "path",
+        "cwd",
         "provider",
         "publication_id",
         "query_preview",
@@ -110,9 +117,12 @@ _INTEGER_PAYLOAD_KEYS = frozenset(
         "observation_count",
         "retry_count",
         "tool_call_count",
+        "exit_code",
     }
 )
-_BOOLEAN_PAYLOAD_KEYS = frozenset({"evidence_sufficient", "goal_complete", "has_conflict"})
+_BOOLEAN_PAYLOAD_KEYS = frozenset(
+    {"evidence_sufficient", "goal_complete", "has_conflict", "output_truncated"}
+)
 
 
 @dataclass(frozen=True)
@@ -278,7 +288,10 @@ def _validate_payload(event_type: AgentRunEventType, payload: Mapping[str, Any])
     if event_type in AGENT_RUN_TERMINAL_EVENT_TYPES and not isinstance(payload.get("status"), str):
         raise AgentRunEventContractError("terminal Agent Run events require a safe status")
     for key, value in payload.items():
-        if key in _INTEGER_PAYLOAD_KEYS:
+        if key == "exit_code":
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise AgentRunEventContractError("Agent Run exit code is invalid")
+        elif key in _INTEGER_PAYLOAD_KEYS:
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise AgentRunEventContractError("Agent Run event counter is invalid")
         elif key in _BOOLEAN_PAYLOAD_KEYS:
@@ -292,6 +305,17 @@ def _validate_payload(event_type: AgentRunEventType, payload: Mapping[str, Any])
                 or any(not character.isprintable() for character in value)
             ):
                 raise AgentRunEventContractError("Agent Run event preview is invalid")
+        elif key == "output_preview":
+            if (
+                not isinstance(value, str)
+                or not value
+                or len(value) > 4_000
+                or any(
+                    not (character.isprintable() or character in {"\n", "\r", "\t"})
+                    for character in value
+                )
+            ):
+                raise AgentRunEventContractError("Agent Run event output preview is invalid")
         elif not isinstance(value, str) or not value or len(value) > 512 or "\n" in value:
             raise AgentRunEventContractError("Agent Run event summary is invalid")
 

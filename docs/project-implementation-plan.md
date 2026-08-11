@@ -9,7 +9,7 @@
 The current development cut has completed the planned Assistant conversation evolution through
 Step 8 on top of the Stage 4/5 provisional contracts. The v2 Web workspace provides direct
 conversation, server-authoritative automatic routing, explicit slash commands, bounded context,
-and durable Skill invocation trace cards. New knowledge requests default to `knowledge_agent 0.7.0`;
+and durable Skill invocation trace cards. New knowledge requests default to `knowledge_agent 0.9.0`;
 `AGENT_LOOP_V5_ENABLED=false` is the explicit fail-closed rollback to `0.3.0`, while
 `knowledge_qa` is retained only for historical fixed Run recovery.
 

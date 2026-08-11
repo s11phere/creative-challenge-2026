@@ -250,7 +250,7 @@ class InMemoryToolRegistry:
             except BudgetExceededError as exc:
                 raise ToolRegistryError(
                     ToolRegistryErrorCode.BUDGET_EXCEEDED,
-                    "Tool call budget is exhausted.",
+                    f"Tool call budget is exhausted: {exc}",
                 ) from exc
 
             started = monotonic()
@@ -357,7 +357,17 @@ class InMemoryToolRegistry:
         input_summary: str,
     ) -> None:
         approval_id = invocation.approval_id
-        if approval_id is None or self._approval_port is None:
+        if self._approval_port is None:
+            raise ToolRegistryError(
+                ToolRegistryErrorCode.APPROVAL_REQUIRED,
+                "Side-effect Tool requires a durable approval.",
+            )
+        if approval_id is None:
+            checker = getattr(self._approval_port, "is_always_allowed", None)
+            if checker is not None and await checker(
+                context, tool_name=definition.name, tool_version=definition.version
+            ):
+                return
             raise ToolRegistryError(
                 ToolRegistryErrorCode.APPROVAL_REQUIRED,
                 "Side-effect Tool requires a durable approval.",
@@ -443,6 +453,7 @@ class InMemoryToolRegistry:
             error_code=error_code.value if error_code is not None else None,
             retry_count=invocation.retry_count,
             duration_ms=max(0, int((monotonic() - started) * 1000)),
+            display_summary="",
         )
 
     @staticmethod

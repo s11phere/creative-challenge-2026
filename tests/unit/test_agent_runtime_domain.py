@@ -90,7 +90,7 @@ def test_budget_usage_only_increases_and_enforces_limits() -> None:
     budget = RunBudget(max_steps=2, max_tool_calls=1, max_input_tokens=10, max_output_tokens=10)
     usage = BudgetUsage().add(steps=1, tool_calls=1, input_tokens=3, budget=budget)
     assert usage.steps == 1
-    with pytest.raises(BudgetExceededError):
+    with pytest.raises(BudgetExceededError, match=r"tool_calls=2>1"):
         usage.add(tool_calls=1, budget=budget)
     with pytest.raises(ValueError):
         usage.add(steps=-1)

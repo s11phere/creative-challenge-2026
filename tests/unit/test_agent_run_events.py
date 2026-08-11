@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
+from agent_runtime.loop import _display_text
 from domain.agent_sse import (
     AgentRunEventConflictError,
     AgentRunEventContractError,
@@ -155,3 +156,32 @@ def test_agent_run_event_contract_accepts_safe_skill_and_document_details() -> N
             },
             event_key="invalid-document-reference",
         )
+
+
+def test_agent_run_event_contract_accepts_workspace_operation_and_output_details() -> None:
+    run_id = UUID("00000000-0000-4000-8000-000000000095")
+    event = AgentRunStreamEvent(
+        run_id=run_id,
+        sequence=1,
+        event_type=AgentRunEventType.TOOL_OUTPUT,
+        payload={
+            "status": "succeeded",
+            "iteration": 1,
+            "tool_name": "shell_exec",
+            "tool_version": "1.0.0",
+            "path": "src/main.py",
+            "command": "python -m pytest",
+            "cwd": ".",
+            "output_preview": "stdout:\npassed",
+            "output_truncated": False,
+            "exit_code": 0,
+        },
+        event_key="workspace-output",
+    )
+    assert event.payload["command"] == "python -m pytest"
+
+
+def test_workspace_display_text_preserves_unicode_paths_and_command_tokens() -> None:
+    assert _display_text("OmniStudio_主要模块.md") == "OmniStudio_主要模块.md"
+    assert _display_text("python --version") == "python --version"
+    assert _display_text("workspace/sub folder") == "workspace/sub folder"

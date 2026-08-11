@@ -105,6 +105,7 @@ class PostgresGroundedQARepository:
                     owner_id=conversation.owner_id,
                     reasoning_effort=conversation.reasoning_effort.value,
                     workspace_path=conversation.workspace_path,
+                    always_allowed_tool_names=list(conversation.always_allowed_tool_names),
                     created_at=conversation.created_at,
                     updated_at=conversation.updated_at,
                     archived_at=conversation.archived_at,
@@ -886,6 +887,7 @@ def _conversation(model: ConversationModel) -> ConversationRecord:
         space_id=model.space_id,
         owner_id=model.owner_id,
         workspace_path=model.workspace_path,
+        always_allowed_tool_names=tuple(model.always_allowed_tool_names or ()),
         created_at=model.created_at,
         updated_at=model.updated_at,
         archived_at=model.archived_at,
@@ -1075,7 +1077,12 @@ def _validate_parent(
             or model.skill_name is not None
             or model.skill_version is not None
             or model.skill_content_sha256 is not None
-            or model.core_prompt_version != "assistant-base-prompt-v5"
+            or model.core_prompt_version
+            not in {
+                "assistant-base-prompt-v5",
+                "assistant-base-prompt-v6",
+                "assistant-base-prompt-v7",
+            }
             or run.versions.skill_name != "knowledge_agent"
         ):
             raise QAContractError("QA Run conflicts with its autonomous Assistant parent")
@@ -1128,7 +1135,8 @@ def _project_conversation_run(model: ConversationRunModel, run: QARunRecord) -> 
         or (
             model.run_kind == ConversationRunKind.ASSISTANT_TURN.value
             and model.router_version == "assistant-agent-loop-v1"
-            and model.core_prompt_version == "assistant-base-prompt-v5"
+            and model.core_prompt_version
+            in {"assistant-base-prompt-v5", "assistant-base-prompt-v6", "assistant-base-prompt-v7"}
         )
     ) and model.result is None
     hold_for_finalizer = hold_for_finalizer and run.status in _BUSINESS_TERMINAL

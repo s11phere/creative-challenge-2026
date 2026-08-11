@@ -563,7 +563,7 @@ class KnowledgeLoopTools:
         """
         facts = self._facts_for(run.context.run_id)
         completed = facts.answer_run
-        if self._config.versions.skill_version == "0.7.0":
+        if self._config.versions.skill_version in {"0.7.0", "0.8.0", "0.9.0"}:
             required_document = _explicit_document_summary_reference(state.task.goal)
             if required_document is not None and not facts.document_skill_used:
                 if self.summary_tool is None:
@@ -602,6 +602,7 @@ class KnowledgeLoopTools:
                 facts.started = True
             if not facts.started:
                 return decision
+            _restore_finalization_from_checkpoint(facts, state)
             if facts.clarification_needed:
                 if decision.action is LLMDecisionAction.CLARIFY:
                     return decision
@@ -609,28 +610,34 @@ class KnowledgeLoopTools:
                     action=LLMDecisionAction.CLARIFY,
                     reason="A document selection is needed before the request can continue.",
                 )
-            previous_search_was_checkpointed = (
-                any(
-                    observation.tool_name == "knowledge_search"
-                    for observation in state.observations
-                )
-                and not facts.searches
-            )
             if (
                 decision.action is LLMDecisionAction.CALL_TOOL
                 and decision.tool_name == "knowledge_search"
                 and _valid_search_arguments(decision.arguments)
-                and (
-                    str(decision.arguments["query"]) in {item.query for item in facts.searches}
-                    or previous_search_was_checkpointed
-                )
             ):
-                return LLMDecision(
-                    action=LLMDecisionAction.CALL_TOOL,
-                    tool_name="knowledge_search",
-                    arguments={"query": _bounded_query(state.task.goal, followup=True)},
-                    reason="server-recovered repeated retrieval query",
-                )
+                query = str(decision.arguments["query"])
+                if facts.searches and (
+                    query in {item.query for item in facts.searches} or _is_meta_search_query(query)
+                ):
+                    if facts.last_inspected_search_count < len(facts.searches):
+                        return LLMDecision(
+                            action=LLMDecisionAction.CALL_TOOL,
+                            tool_name="knowledge_inspect",
+                            arguments={"inspection_round": facts.inspections + 1},
+                            reason="server-required retrieval coverage inspection",
+                        )
+                    return LLMDecision(
+                        action=LLMDecisionAction.CALL_TOOL,
+                        tool_name="grounded_answer",
+                        arguments={},
+                        reason="server-recovered repeated or meta retrieval query",
+                    )
+            workspace_write = self._resolve_qa_workspace_write(decision, facts)
+            if workspace_write is not None:
+                return workspace_write
+            # A checkpoint can preserve the observation history before process-local search facts
+            # are rehydrated. A new bounded query is allowed to rebuild those facts; do not
+            # manufacture a query from an instruction such as "use knowledge_search".
             # A terminal answer can never bypass QA-owned verification and publication.  Unlike
             # 0.6.0 this policy does not prescribe retrieval order; individual Tools return a
             # local, model-visible next-step recommendation when their precondition is unmet.
@@ -643,13 +650,11 @@ class KnowledgeLoopTools:
                 )
             if not facts.finalization_ready:
                 return decision
-            expected = (
-                LLMDecisionAction.REFUSE
-                if completed is not None
-                and completed.result is not None
-                and completed.result.outcome in {QAOutcome.REFUSE, QAOutcome.CONFLICT}
-                else LLMDecisionAction.COMPLETE
-            )
+            if decision.action not in {LLMDecisionAction.COMPLETE, LLMDecisionAction.REFUSE}:
+                return decision
+            if completed is None or completed.result is None:
+                return decision
+            expected = _terminal_action(completed)
             return (
                 decision
                 if decision.action is expected
@@ -691,7 +696,7 @@ class KnowledgeLoopTools:
                 return LLMDecision(
                     action=LLMDecisionAction.CALL_TOOL,
                     tool_name="knowledge_search",
-                    arguments={"query": _bounded_query(state.task.goal, followup=True)},
+                    arguments={"query": _followup_query(facts, state.task.goal)},
                     reason="server-required follow-up for weak retrieval coverage",
                 )
             if (
@@ -732,12 +737,11 @@ class KnowledgeLoopTools:
                 arguments={},
                 reason="server-required QA finalization",
             )
-        expected = (
-            LLMDecisionAction.REFUSE
-            if completed.result is not None
-            and completed.result.outcome in {QAOutcome.REFUSE, QAOutcome.CONFLICT}
-            else LLMDecisionAction.COMPLETE
-        )
+        if decision.action not in {LLMDecisionAction.COMPLETE, LLMDecisionAction.REFUSE}:
+            return decision
+        if completed is None or completed.result is None:
+            return decision
+        expected = _terminal_action(completed)
         if decision.action is expected:
             return decision
         return LLMDecision(action=expected, reason="server-verified QA terminal outcome")
@@ -754,6 +758,53 @@ class KnowledgeLoopTools:
 
     def _facts_for(self, run_id: UUID) -> _RunFacts:
         return self._facts.setdefault(run_id, _RunFacts())
+
+    def _resolve_qa_workspace_write(
+        self, decision: LLMDecision, facts: _RunFacts
+    ) -> LLMDecision | None:
+        """Resolve an explicitly requested write of the fixed QA artifact.
+
+        The model chooses whether to save, where to save, and when workspace inspection is useful.
+        It cannot see the authoritative answer text, so the marker is resolved only after the
+        existing QA verification gate has completed.
+        """
+        if (
+            decision.action is not LLMDecisionAction.CALL_TOOL
+            or decision.tool_name != "fs_write"
+            or decision.arguments.get("content") != _CURRENT_QA_ANSWER_MARKER
+        ):
+            return None
+        completed = facts.answer_run
+        if completed is None or completed.result is None:
+            return LLMDecision(
+                action=LLMDecisionAction.CALL_TOOL,
+                tool_name="grounded_answer",
+                arguments={},
+                reason="QA result required for the model-selected workspace write",
+            )
+        if not facts.verified:
+            return LLMDecision(
+                action=LLMDecisionAction.CALL_TOOL,
+                tool_name="verify_answer",
+                arguments={},
+                reason="QA verification required for the model-selected workspace write",
+            )
+        if not facts.finalization_ready:
+            return LLMDecision(
+                action=LLMDecisionAction.CALL_TOOL,
+                tool_name="finalize_answer",
+                arguments={},
+                reason="QA finalization required for the model-selected workspace write",
+            )
+        content = _qa_result_markdown(completed)
+        if content is None:
+            return None
+        return LLMDecision(
+            action=LLMDecisionAction.CALL_TOOL,
+            tool_name="fs_write",
+            arguments={**decision.arguments, "content": content},
+            reason=decision.reason,
+        )
 
     def _qa_scope(self, facts: _RunFacts) -> QARetrievalScope:
         """Pin any document Skill observations before creating the shared QA projection."""
@@ -1247,6 +1298,70 @@ def _bounded_query(goal: str, *, followup: bool = False) -> str:
     return f"{normalized[:limit]}{suffix}"[:512]
 
 
+def _followup_query(facts: _RunFacts, goal: str) -> str:
+    """Derive a follow-up from the last real topic, never from a meta Tool instruction."""
+    base = facts.searches[-1].query if facts.searches else _bounded_query(goal)
+    return _bounded_query(base, followup=True)
+
+
+def _restore_finalization_from_checkpoint(facts: _RunFacts, state: AgentLoopState) -> None:
+    """Restore the terminal QA gate after an approval resumes in a fresh Worker process."""
+    if facts.finalization_ready:
+        return
+    for observation in reversed(state.observations):
+        if observation.tool_name != "finalize_answer" or not isinstance(
+            observation.model_output, dict
+        ):
+            continue
+        output = observation.model_output
+        outcome = output.get("outcome")
+        if (
+            output.get("ready") is True
+            and output.get("publication") == "grounded_qa"
+            and isinstance(outcome, str)
+            and outcome in {item.value for item in QAOutcome}
+        ):
+            facts.finalization_ready = True
+            facts.verified = True
+        return
+
+
+def _terminal_action(completed: QARunRecord) -> LLMDecisionAction:
+    assert completed.result is not None
+    outcome = completed.result.outcome
+    return (
+        LLMDecisionAction.REFUSE
+        if outcome in {QAOutcome.REFUSE, QAOutcome.CONFLICT}
+        else LLMDecisionAction.COMPLETE
+    )
+
+
+_META_SEARCH_QUERY = re.compile(
+    r"(?:knowledge_search|knowledge search|additional supporting evidence|"
+    r"通过.+查询|use.+search)",
+    re.IGNORECASE,
+)
+
+_CURRENT_QA_ANSWER_MARKER = "{{current_grounded_qa_answer}}"
+
+
+def _is_meta_search_query(query: str) -> bool:
+    return bool(_META_SEARCH_QUERY.search(query))
+
+
+def _qa_result_markdown(qa_run: QARunRecord) -> str | None:
+    result = qa_run.result
+    if result is None:
+        return None
+    if result.answer is not None:
+        return result.answer.text
+    if result.refusal is not None:
+        return result.refusal.message
+    if result.conflict is not None:
+        return result.conflict.message
+    return None
+
+
 def _valid_search_arguments(arguments: Mapping[str, JSONValue]) -> bool:
     query = arguments.get("query")
     return (
@@ -1275,7 +1390,9 @@ _DOCUMENT_REFERENCE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _DOCUMENT_SUMMARY_INTENT_PATTERN = re.compile(
-    r"摘要|总结|概述|summari[sz]e|summary|recap", re.IGNORECASE
+    r"\u6458\u8981|\u603b\u7ed3|\u6982\u8ff0|\u56de\u987e|\u6c47\u603b|"
+    r"summari[sz]e|summary|recap",
+    re.IGNORECASE,
 )
 
 

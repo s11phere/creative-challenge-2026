@@ -186,6 +186,7 @@ class ConversationRecord:
     # A logical, policy-validated path below the configured workspace root.  It is
     # deliberately not an absolute host path so a Worker resolves it again.
     workspace_path: str | None = None
+    always_allowed_tool_names: tuple[str, ...] = ()
     conversation_id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -205,6 +206,10 @@ class ConversationRecord:
             or any(part in {"", ".."} for part in self.workspace_path.split("/"))
         ):
             raise ValueError("Conversation workspace path is invalid")
+        if len(set(self.always_allowed_tool_names)) != len(self.always_allowed_tool_names):
+            raise ValueError("Conversation always-allowed Tools must be unique")
+        if any(not item or len(item) > 255 for item in self.always_allowed_tool_names):
+            raise ValueError("Conversation always-allowed Tool name is invalid")
 
 
 @dataclass(frozen=True)

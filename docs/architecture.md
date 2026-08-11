@@ -74,7 +74,7 @@ The Agent Loop Step 9 boundary adds a hash-verified `agent-loop-v1` synthetic de
 It consumes only body-free prediction metadata and reports explicit denominators for first/terminal
 action, goal/subquestion/evidence/citation coverage, unsupported claims, correct refusals, Tool
 selection/repetition, approval gating, security assertions, recovery, token usage, latency, and stop
-reasons. `knowledge_agent 0.7.0` is the default fake/local provisional path for new Runs.
+reasons. `knowledge_agent 0.9.0` is the default fake/local provisional path for new Runs.
 `AGENT_LOOP_V5_ENABLED=false` is its fail-closed release rollback and activates `0.3.0` instead;
 persisted Run pins and v1/v2 projections remain unaffected. This default changes no formal quality
 boundary or external-provider policy.
@@ -85,7 +85,7 @@ Search API or QA. The corrected GPU development runs are provisional evidence on
 reopen Stage 3 or authorize the existing holdout.
 
 The current Assistant v2 boundary is also closed for this development phase. New turns enter the
-top-level `AutonomousAssistantLoopService`; the active catalog uses `knowledge_agent 0.7.0` for every new knowledge
+top-level `AutonomousAssistantLoopService`; the active catalog uses `knowledge_agent 0.9.0` for every new knowledge
 request, while `knowledge_agent 0.5.0`, `knowledge_agent 0.3.0`, and `knowledge_qa` remain available
 for fixed historical Runs or explicit rollback only. After a
 grounded Skill reaches a business-terminal state, the Worker invokes `ConversationFinalizer` once.
@@ -224,8 +224,11 @@ Agent Runtime → Domain + ModelGateway
 │   ├── knowledge_agent_v4/         # provisional generic-loop candidate (0.4.0, opt-in)
 │   ├── knowledge_agent_v5/         # historical knowledge-loop Tools (0.5.0)
 │   ├── knowledge_agent_v6/         # historical knowledge-loop Tools (0.6.0)
-│   ├── knowledge_agent_v7/         # default advisory knowledge-loop Tools (0.7.0)
-│   ├── assistant_agent_v1/          # top-level autonomous Assistant Loop (0.1.0)
+│   ├── knowledge_agent_v7/         # historical advisory knowledge-loop Tools (0.7.0)
+│   ├── knowledge_agent_v8/         # historical workspace-aware knowledge-loop Tools (0.8.0)
+│   ├── knowledge_agent_v9/         # default duplicate-recovery knowledge-loop Tools (0.9.0)
+│   ├── assistant_agent_v1/          # historical top-level Assistant Loop (0.1.0)
+│   ├── assistant_agent_v2/          # top-level autonomous Assistant Loop (0.2.0)
 │   ├── knowledge_agent/            # immutable 0.2.0 recovery package
 │   ├── knowledge_agent_v0_1/       # immutable 0.1.0 recovery package
 │   ├── knowledge_qa/               # legacy recovery-only Grounded QA packages
@@ -505,7 +508,7 @@ published version，避免排队期间跟随新版本或扩大范围。比较结
 则拒答；复习卡在审批前只返回预览并报告 `side_effects=0`，批准后才通过派生知识 Port 写入。
 
 `knowledge_agent` 是当前 LLM Agent 业务入口。它通过现有 `fast_chat` 能力产生严格的
-`call_tool/complete/refuse` 决策。默认 `knowledge_agent 0.7.0` 运行在顶层
+`call_tool/complete/refuse` 决策。默认 `knowledge_agent 0.9.0` 运行在顶层
 `AutonomousAssistantLoopService` 中，只可调用服务端注册的
 `knowledge_search`、`knowledge_inspect`、`summarize_document`、`grounded_answer`、`verify_answer` 和
 `finalize_answer`；`summarize_document` 通过资源解析 Port 固定一个当前 Space 的已发布
@@ -521,10 +524,12 @@ detects repeated request fingerprints, checkpoints after each observation, pause
 approval, and enters a finalization-only gate before publishing. The 0.3.0 Skill and v1/v2
 projections remain available for historical recovery and explicit rollback; `knowledge_agent_v4`
 carries the earlier dynamic-loop prompt. `knowledge_agent_v5` and `knowledge_agent_v6` remain
-available for fixed historical Runs or explicit rollback. `knowledge_agent_v7` is the default
-advisory path: the model chooses serial searches, inspections, QA, and verification, while Tool
-outputs may suggest a bounded next action and the server retains finalization authority. The
-top-level `assistant_agent 0.1.0` injects the active Skill context and Tool schemas into the same
+available for fixed historical Runs or explicit rollback. `knowledge_agent_v7` remains historical;
+`knowledge_agent_v8` remains available for fixed historical Runs or explicit rollback;
+`knowledge_agent_v9` is the default duplicate-recovery path: the model chooses serial searches, inspections,
+QA, verification, and any needed workspace artifact operation, while Tool outputs may suggest a
+bounded next action and the server retains finalization authority. The
+top-level `assistant_agent 0.2.0` injects the active Skill context and Tool schemas into the same
 decision loop. `AGENT_LOOP_V5_ENABLED=false` still activates the 0.3.0 rollback. Its Application adapter calls only
 `SearchService.search(SearchRequest, RetrievalProfileV1)` and
 the existing Grounded QA Application Port. Search observations never contain source text, and its
@@ -962,7 +967,7 @@ docker compose -f deploy/compose.yaml down --volumes               # 仅确认�
 | **阶段 2** | **✅ 正式完成** | **Step 0～9 完成；冻结 manifest 的 74 个 P0 来源成功率 100%，退出记录见 `docs/stage-2-acceptance.md`** |
 | **阶段 3** | **⏹️ 已终止** | **工程 Step 0～10 已完成；正式质量门禁未通过，因当前评测集代表性局限终止，未运行正式 holdout，配置保持 provisional（ADR-010）** |
 | 阶段 4 | 🟡 provisional Step 0～10 | 领域、Evidence/Citation、PostgreSQL QA 持久化、SSE/API/Web、Worker lease/重启恢复、原文解析和回答评测门禁已落地；默认配置和 holdout 未落地 |
-| **阶段 5** | **🟡 provisional Skills** | **Step 0～10 工程功能已实现；新知识入口默认为 `knowledge_agent 0.7.0`（`0.5.0`/`0.6.0` 用于历史 Run 恢复或显式回滚，`0.3.0` 保留为兼容回滚，另有历史包），顶层 `assistant_agent 0.1.0` 负责可恢复的自主 Skill/Tool Loop；`knowledge_qa` 仅用于历史 Run 恢复，质量状态仍受 Stage 3/4 正式 Eval 门禁约束** |
+| **阶段 5** | **🟡 provisional Skills** | **Step 0～10 工程功能已实现；新知识入口默认为 `knowledge_agent 0.9.0`（`0.5.0`/`0.6.0`/`0.7.0`/`0.8.0` 用于历史 Run 恢复或显式回滚，`0.3.0` 保留为兼容回滚，另有历史包），顶层 `assistant_agent 0.2.0` 负责可恢复的自主 Skill/Tool Loop，`0.1.0` 保留给历史 Run；`knowledge_qa` 仅用于历史 Run 恢复，质量状态仍受 Stage 3/4 正式 Eval 门禁约束** |
 
 阶段 1 已完成本地验收：Step 0（启动决策）✅、Step 1（工具链）✅、Step 2（API 与错误协议）✅、Step 3（DB 迁移与 Worker）✅、Step 4（可观测性）✅、Step 5（ModelGateway）✅、Step 6（Web 工作台）✅、Step 7（Compose/CI）✅、Step 8（验收与移交）✅
 

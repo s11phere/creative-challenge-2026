@@ -213,7 +213,7 @@ if ($LegacyKnowledgeAgent) {
     $env:AGENT_LOOP_V5_ENABLED = "false"
 }
 else {
-    $env:KNOWLEDGE_AGENT_SKILL_VERSION = "0.7.0"
+    $env:KNOWLEDGE_AGENT_SKILL_VERSION = "0.9.0"
     $env:AGENT_LOOP_V5_ENABLED = "true"
 }
 

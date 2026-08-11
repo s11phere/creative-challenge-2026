@@ -2,7 +2,7 @@
 
 ## 2026-08-10 实现状态
 
-当前 Assistant 对话版本已完成临时工程契约。新的知识请求默认使用 `knowledge_agent 0.7.0`；
+当前 Assistant 对话版本已完成临时工程契约。新的知识请求默认使用 `knowledge_agent 0.9.0`；
 `knowledge_qa` 仅保留用于历史 Run 的校验和恢复。Grounded Skill 结果只是参考材料，由一次独立的
 `ConversationFinalizer` 生成面向用户的 Assistant 消息，并且只发布一次。
 
@@ -33,7 +33,7 @@ Assistant 输出支持 GFM Markdown 和 LaTeX 渲染。这些改动不改变阶�
 | 阶段 2 ✅ | 摄入工程 Step 0-8 与正式 Step 9 验收完成；冻结 manifest 中 74 个 P0 来源解析/定位/分块成功率 100%，幂等、原子发布、删除恢复、API/Web 和 Compose E2E 通过 |
 | 阶段 3 ⏹️ 已终止（工程完成，质量门禁未通过） | PostgreSQL FTS/pgvector 检索、加权 RRF、上下文扩展、可选 Reranker、Space/版本安全边界、检索 API、版本化离线评测与集成验收已完成；API/QA 默认 `dense_rerank`，PR #4 GPU 开发集在 v0/v1 Claim Recall@10 为 82.37%/78.75%，但评测集代表性仍不足，正式留出集尚未执行，配置保持临时状态 |
 | 阶段 4 🟡 临时 Step 0-10 | 在 ADR-011 继续门禁下继续；ADR-007、唯一临时 QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测仅校验流程均已完成；默认配置与正式留出集尚未完成 |
-| 阶段 5 🟡 临时 Skills | Assistant 对话演进 Step 3-8 的 v2 调用目录、自主可恢复 Skill/Tool Loop、上下文、指标、最终回答生成器、调用记录卡和 Web 展示已完成；新知识请求默认 `knowledge_agent 0.7.0`，`knowledge_qa` 仅历史恢复；正式质量仍为临时状态 |
+| 阶段 5 🟡 临时 Skills | Assistant 对话演进 Step 3-8 的 v2 调用目录、自主可恢复 Skill/Tool Loop、上下文、指标、最终回答生成器、调用记录卡和 Web 展示已完成；新知识请求默认 `knowledge_agent 0.9.0`，`knowledge_qa` 仅历史恢复；正式质量仍为临时状态 |
 
 当前 Web 展示系统健康、数据来源和临时知识问答工作区；HTTP API 可创建持久会话、提交
 问题，由 API 仅向 Redis 投递 Run ID，再由独立 Worker 调用唯一 `GroundedQAApplicationPort`、
@@ -46,7 +46,7 @@ Chat Provider 仍走相同结构化生成与引用校验路径。Web 会展示�
 Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL；API/Worker 重启可恢复
 未完成运行，重复投递不会重复发布终态；Citation 原文解析不会接受客户端伪造的版本、locator 或 Blob 路径；
 阶段 3 默认检索配置和质量门禁也尚未冻结。
-新建知识问答默认固定为 `knowledge_agent 0.7.0`：v1 提问入口、`/api/v1/runs` 默认值、Web
+新建知识问答默认固定为 `knowledge_agent 0.9.0`：v1 提问入口、`/api/v1/runs` 默认值、Web
 兼容入口和 Assistant v2 的 `/ask`/`/qa` 都只会创建该 Skill 的 Run。API 在提交时固定名称、版本和
 内容摘要，Worker 恢复时按该固定身份校验声明式 workflow，再经唯一 QA Application Port 执行。
 `knowledge_qa` 包仅保留给已固定的历史 Run 校验和恢复，不在任何新调用目录或 Skill 管理 catalog 中
@@ -58,7 +58,7 @@ Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL
 扩大检索范围。比较结果必须引用至少两个来源，否则按证据不足拒答。复习卡当前只返回带引用预览，
 并以 `SKILL_WRITE_REQUIRES_APPROVAL` 明确报告审批前 `side_effects=0`；批准后通过持久化
 Derived Knowledge Port 幂等写入，并可查询或撤销。
-`knowledge_agent 0.7.0` 提供当前默认的受约束 LLM/Tool 循环：顶层 Agent 会在每轮观察 Tool
+`knowledge_agent 0.9.0` 提供当前默认的受约束 LLM/Tool 循环：顶层 Agent 会在每轮观察 Tool
 结果后自主选择下一步；模型仅可调用服务端注册的
 `knowledge_search`、`knowledge_inspect`、`summarize_document`、`grounded_answer`、`verify_answer` 和
 `finalize_answer`。`summarize_document` 只在服务端资源解析器可用时注册，先固定当前 Space 的已发布
@@ -66,7 +66,8 @@ DocumentVersion，再回到同一 Grounded QA Run；复合请求可在一个 Loo
 `grounded_answer` 继续通过现有 QA Run、Worker、SSE、Grounded QA Port 和 Citation 链路完成问答。
 动态数值由服务端 profile 封顶，Space/版本边界不能由模型扩大；规划失败会降级到原问题的
 Grounded QA，而不是把 Run 变成基础设施失败。Tool 仅向外层模型返回状态和覆盖计数，不返回回答
-或原文。旧 Agent
+或原文。首个意外重复的同一 Tool 调用不会重新执行，而是作为可恢复的模型可见观察返回；第二次相同重复才以
+`RUN_LLM_NO_PROGRESS` 停止。旧 Agent
 版本和 `knowledge_qa` 包保留用于固定 Run 恢复；设置 `AGENT_LOOP_V5_ENABLED=false` 并重建
 API/Worker 时，新 Run fail-closed 回退到 `knowledge_agent 0.3.0`。默认 fake 可跑通流程，配置允许的
 OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。非 fake Provider 仍不会注册本地工作区
@@ -115,7 +116,7 @@ Assistant 对话演进 Step 8 将 Web 入口切换到临时 API v2 对话工作�
 用于恢复和单独审查的客户端。
 
 Agent Loop v5 是 fake/local 的默认 provisional 路径。新 Run 默认固定到
-`knowledge_agent 0.7.0`；设置 `AGENT_LOOP_V5_ENABLED=false` 并重建 API/Worker 会 fail-closed
+`knowledge_agent 0.9.0`；设置 `AGENT_LOOP_V5_ENABLED=false` 并重建 API/Worker 会 fail-closed
 回退至 `0.3.0`，既有 Run 的 pin、事件和 v1/v2 投影不变。先执行只读取 hash 固定合成 fixture 的检查：
 
 ```powershell
@@ -222,7 +223,7 @@ API、Worker 和 Web 达到各自完成或健康条件。
 ```
 
 脚本会检查 Docker GPU 透传，启动 `embedding` 和 `reranker` profile，将生效的 reranker 配置强制为
-使用 `BAAI/bge-reranker-v2-m3` 的 `inherit`，并将新 Run 固定到 `knowledge_agent 0.7.0`，然后检查 Web、API、
+使用 `BAAI/bge-reranker-v2-m3` 的 `inherit`，并将新 Run 固定到 `knowledge_agent 0.9.0`，然后检查 Web、API、
 Embedding 和 Reranker 健康状态。执行 `./scripts/start-local.ps1 -LegacyKnowledgeAgent` 可临时回退到 `0.3.0`。
 脚本不会修改 `.env` 或打印密钥。配置的外部 Chat 端点可能接收问题和检索片段；没有完成必要的策略审批时，
 不要将私有或受限来源用于该路径。
@@ -375,6 +376,22 @@ selected path is constrained below `AGENT_WORKSPACE_ROOT_PATH`, stored as a logi
 and included in the Agent context so file paths and command cwd values are interpreted relative to
 that workspace. `fs_list` and `fs_read` are available only in a selected local workspace;
 `fs_write` and `shell_exec` require a durable approval before execution.
+
+The selected local workspace is independent from uploaded, current-Space knowledge. A workspace
+file listing cannot determine whether uploaded knowledge exists. When a request combines a
+knowledge question with a local save, the Agent decides whether to retrieve, inspect the workspace,
+and write based on the request and each Tool result. If no filename is provided, it chooses a
+descriptive Markdown path that avoids an unintended collision; there is no fixed default filename.
+The workspace root is always `.` in Tool paths and `shell_exec.cwd`; the displayed workspace
+selection (for example, `project-a`) is not a child cwd.
+
+The Agent timeline lists each workspace Tool's target path, and records the command and relative
+cwd for `shell_exec`. It provides in-page actions for pending write and command approvals:
+approve once, reject, or **always allow this Tool type**. The last option is limited to the current
+Conversation and only suppresses later approval prompts for the same Tool type; workspace
+containment, protected-path checks, command aliases, invocation validation, and all other runtime
+policy checks still apply. `shell_exec` output and `fs_list` results are shown as bounded previews
+in the Tool details. Long previews are marked as truncated and may be expanded in the timeline.
 
 The Tools are registered for `MODEL_PROVIDER=fake` by default. A non-fake Chat Provider requires
 explicit `AGENT_WORKSPACE_MODEL_VISIBILITY_CONSENT=true`. Run

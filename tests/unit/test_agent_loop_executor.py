@@ -4,7 +4,13 @@ from typing import cast
 from uuid import UUID
 
 import pytest
-from agent_runtime import AgentLoopExecutor, InMemoryRuntimeStateStore, InMemoryToolRegistry
+from agent_runtime import (
+    AgentLoopExecutor,
+    InMemoryRuntimeStateStore,
+    InMemoryToolRegistry,
+    LLMDecision,
+    LLMDecisionAction,
+)
 from agent_runtime.skills import PinnedSkill
 from agent_runtime.tools import JSONValue, ToolDefinition, ToolExecutionContext, ToolRef
 from domain.agent_loop import AgentLoopFinalizationState, AgentLoopPhase
@@ -176,6 +182,47 @@ async def test_loop_observes_multiple_tools_then_finalizes_once() -> None:
 
 
 @pytest.mark.asyncio
+async def test_loop_recovers_one_allowlist_error_with_a_caller_scoped_decision() -> None:
+    registry = InMemoryToolRegistry(handlers={"tool": search_handler})
+    definition = registry.register(tool())
+    recoveries: list[str] = []
+
+    def recover(_run: AgentRun, _state: object, error: object) -> LLMDecision | None:
+        recoveries.append(str(getattr(error, "message", "")))
+        return LLMDecision(
+            action=LLMDecisionAction.CALL_TOOL,
+            tool_name="search_knowledge",
+            arguments={"query": "recovered"},
+        )
+
+    result = await AgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use only the registered synthetic Tool.",
+        model_gateway=cast(
+            ModelGateway,
+            DecisionGateway(
+                '{"action":"call_tool","tool_name":"fs_read","arguments":{"path":"note.md"}}',
+                '{"action":"complete","reason":"recovered result","final_response":"done"}',
+            ),
+        ),
+        invalid_decision_recovery=recover,
+    ).execute(
+        loop_run(permissions=definition.permissions),
+        cast(PinnedSkill, object()),
+        {"question": "synthetic"},
+        goal="Answer the synthetic request.",
+    )
+
+    assert result.error is None
+    assert result.run.status is RunStatus.COMPLETED
+    assert recoveries == ["Model selected a Tool outside the server allowlist."]
+    assert [observation.tool_name for observation in result.state.observations] == [
+        "search_knowledge"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_loop_persists_redacted_v3_history_with_one_terminal_event() -> None:
     registry = InMemoryToolRegistry(handlers={"tool": search_handler})
     definition = registry.register(tool())
@@ -271,7 +318,7 @@ async def test_knowledge_search_events_expose_only_a_bounded_query_preview() -> 
 
 
 @pytest.mark.asyncio
-async def test_loop_rejects_repeated_tool_arguments_as_no_progress() -> None:
+async def test_loop_returns_one_repeated_tool_request_as_model_feedback() -> None:
     calls = 0
 
     async def count_handler(
@@ -290,6 +337,51 @@ async def test_loop_rejects_repeated_tool_arguments_as_no_progress() -> None:
         model_gateway=cast(
             ModelGateway,
             DecisionGateway(
+                '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"same"}}',
+                '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"same"}}',
+                '{"action":"complete","reason":"the existing observation is sufficient"}',
+            ),
+        ),
+    ).execute(
+        loop_run(permissions=definition.permissions),
+        cast(PinnedSkill, object()),
+        {"question": "synthetic"},
+        goal="Answer the synthetic request.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert result.error is None
+    assert calls == 1
+    assert result.state.observations[-1].error_code == "RUN_LLM_DUPLICATE_TOOL_REQUEST"
+    assert result.state.observations[-1].model_output == {
+        "trust": "trusted_runtime",
+        "status": "already_observed",
+        "tool_name": "search_knowledge",
+        "recommended_next": "choose_a_different_action",
+    }
+
+
+@pytest.mark.asyncio
+async def test_loop_rejects_a_second_repeated_tool_request_as_no_progress() -> None:
+    calls = 0
+
+    async def count_handler(
+        arguments: dict[str, JSONValue], context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        nonlocal calls
+        calls += 1
+        return await search_handler(arguments, context)
+
+    registry = InMemoryToolRegistry(handlers={"tool": count_handler})
+    definition = registry.register(tool())
+    result = await AgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use only the registered synthetic Tool.",
+        model_gateway=cast(
+            ModelGateway,
+            DecisionGateway(
+                '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"same"}}',
                 '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"same"}}',
                 '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"same"}}',
             ),

@@ -318,13 +318,15 @@ def _assistant_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
         observations = []
         input_data = {}
     question = input_data.get("question", "") if isinstance(input_data, dict) else ""
+    workspace = input_data.get("workspace") if isinstance(input_data, dict) else None
+    workspace_enabled = isinstance(workspace, dict) and workspace.get("tools_enabled") is True
     last = observations[-1] if observations else {}
     if not isinstance(last, dict) or not last.get("tool_name"):
         if _requires_fake_knowledge_tool(question):
             return {
                 "action": "call_tool",
                 "tool_name": "knowledge_search",
-                "arguments": {"query": question or "current Space knowledge request"},
+                "arguments": {"query": _fake_knowledge_query(question)},
             }
         return {
             "action": "complete",
@@ -333,6 +335,24 @@ def _assistant_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
         }
     output = last.get("output", {})
     recommended = output.get("recommended_next") if isinstance(output, dict) else None
+    last_tool = last.get("tool_name")
+    if workspace_enabled and _requires_fake_workspace_artifact(question):
+        if (
+            last_tool == "finalize_answer"
+            and isinstance(output, dict)
+            and output.get("ready") is True
+            and output.get("outcome") not in {"refuse", "conflict"}
+        ):
+            return {"action": "call_tool", "tool_name": "fs_list", "arguments": {"path": "."}}
+        if last_tool == "fs_list":
+            return {
+                "action": "call_tool",
+                "tool_name": "fs_write",
+                "arguments": {
+                    "path": _fake_markdown_path(question, output),
+                    "content": "{{current_grounded_qa_answer}}",
+                },
+            }
     if recommended in {
         "knowledge_search",
         "knowledge_inspect",
@@ -342,7 +362,7 @@ def _assistant_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
     }:
         arguments: dict[str, str] = {}
         if recommended == "knowledge_search":
-            arguments["query"] = question or "current Space knowledge request"
+            arguments["query"] = _fake_knowledge_query(question)
         return {"action": "call_tool", "tool_name": recommended, "arguments": arguments}
     if recommended == "refuse":
         return {"action": "refuse", "reason": "Grounded QA verified a safe terminal refusal."}
@@ -354,7 +374,6 @@ def _assistant_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
         "grounded_answer": "verify_answer",
         "verify_answer": "finalize_answer",
     }
-    last_tool = last.get("tool_name")
     next_tool = next_tools.get(last_tool) if isinstance(last_tool, str) else None
     if next_tool is not None:
         return {"action": "call_tool", "tool_name": next_tool, "arguments": {}}
@@ -377,7 +396,70 @@ def _requires_fake_knowledge_tool(question: object) -> bool:
         "citation",
         "knowledge_agent",
     )
-    return any(marker in normalized for marker in markers)
+    if any(marker in normalized for marker in markers):
+        return True
+    informational_markers = (
+        "what is",
+        "what are",
+        "which modules",
+        "main modules",
+        "overview",
+        "describe",
+        "explain",
+        "介绍",
+        "说明",
+        "概述",
+        "总结",
+        "主要模块",
+        "有哪些",
+    )
+    return bool(
+        any(marker in normalized for marker in informational_markers)
+        and re.search(r"[a-z][a-z0-9.-]{1,}|[\u4e00-\u9fff]{2,}", normalized)
+    )
+
+
+def _fake_knowledge_query(question: object) -> str:
+    if not isinstance(question, str):
+        return "current Space knowledge request"
+    query = re.split(
+        r"\s*(?:and then|and|并|然后)?\s*(?:save|write|store|保存|写入|存为)",
+        question,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    return query.rstrip(" ,，;；。.!！\t\r\n").strip()[:512] or "current Space knowledge request"
+
+
+def _requires_fake_workspace_artifact(question: object) -> bool:
+    if not isinstance(question, str):
+        return False
+    normalized = question.casefold()
+    return bool(
+        re.search(r"(?:save|write|store|保存|写入|存为)", normalized)
+        and re.search(r"(?:markdown|\.md\b|md文件|md 文件)", normalized)
+    )
+
+
+def _fake_markdown_path(question: object, output: object) -> str:
+    normalized = question.casefold() if isinstance(question, str) else ""
+    subject = re.search(r"[a-z][a-z0-9.-]{1,}", normalized)
+    slug = subject.group(0) if subject is not None else "knowledge"
+    suffix = "-modules" if "module" in normalized or "模块" in normalized else "-overview"
+    base = f"{slug}{suffix}.md"
+    existing: set[str] = set()
+    if isinstance(output, dict) and isinstance(output.get("entries"), list):
+        for entry in output["entries"]:
+            if isinstance(entry, dict) and isinstance(entry.get("path"), str):
+                existing.add(entry["path"].lstrip("./"))
+    if base not in existing:
+        return base
+    stem = base[:-3]
+    for index in range(2, 100):
+        candidate = f"{stem}-{index}.md"
+        if candidate not in existing:
+            return candidate
+    return f"{slug}-notes.md"
 
 
 def qa_execution_versions(
@@ -570,7 +652,7 @@ class GroundedQAExecutor:
             )
         use_generic_knowledge_loop = (
             run.versions.skill_name == "knowledge_agent"
-            and pin.version in {"0.5.0", "0.6.0", "0.7.0"}
+            and pin.version in {"0.5.0", "0.6.0", "0.7.0", "0.8.0", "0.9.0"}
         )
         runtime_gateway: ModelGateway
         state_store = PostgresRuntimeStateStore(self._database)
@@ -582,7 +664,7 @@ class GroundedQAExecutor:
                     profile=self.profile,
                     versions=run.versions,
                     retrieval_scope=run.retrieval_scope,
-                    tool_version="1.1.0" if pin.version == "0.7.0" else "1.0.0",
+                    tool_version="1.1.0" if pin.version in {"0.7.0", "0.8.0", "0.9.0"} else "1.0.0",
                 ),
                 result_reader=self._repository.get_run,
             )

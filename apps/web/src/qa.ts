@@ -197,6 +197,14 @@ export type AgentRunEvent = {
   payload: Record<string, unknown>
 }
 
+export type AgentApproval = {
+  approval_id: string
+  tool_name: string
+  tool_version: string
+  status: 'pending' | 'approved' | 'rejected' | 'revoked' | string
+  details: Record<string, unknown>
+}
+
 type AgentRunEventPage = {
   schema_version: 'agent-run-event-page-v1'
   events: unknown[]
@@ -561,6 +569,25 @@ function parseAssistantRunEvents(stream: string): AssistantRunEvent[] {
     }
   }
   return events
+}
+
+export function fetchAssistantApprovals(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<AgentApproval[]> {
+  return request<AgentApproval[]>(`/api/v2/runs/${runId}/approvals`, { signal })
+}
+
+export function decideAssistantApproval(
+  runId: string,
+  approvalId: string,
+  approved: boolean,
+  alwaysAllow = false,
+): Promise<AgentApproval> {
+  return request<AgentApproval>(`/api/v2/runs/${runId}/approvals/${approvalId}/decision`, {
+    method: 'POST',
+    body: JSON.stringify({ approved, always_allow: alwaysAllow, decided_by: 'web' }),
+  })
 }
 
 function parseAgentRunEventStream(stream: string): AgentRunEvent[] {

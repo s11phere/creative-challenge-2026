@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from .database import Database
 from .orm import (
+    ConversationModel,
     ConversationRunModel,
     DerivedKnowledgeItemModel,
     QACitationModel,
@@ -54,6 +55,7 @@ class ApprovalRecord:
     expires_at: datetime | None
     revoked_at: datetime | None
     revoked_by: str | None
+    details: Mapping[str, Any]
 
 
 class PostgresApprovalPort(ApprovalPort):
@@ -80,6 +82,7 @@ class PostgresApprovalPort(ApprovalPort):
                     details={
                         "input_summary": tool.input_summary,
                         "permissions": sorted(permission.value for permission in tool.permissions),
+                        "display_summary": tool.display_summary,
                     },
                 )
                 .on_conflict_do_nothing(constraint="uq_runtime_approvals_idempotency")
@@ -104,6 +107,21 @@ class PostgresApprovalPort(ApprovalPort):
 
     async def is_approved(self, approval_id: str, context: AgentRunContext) -> bool:
         return await self.is_approved_for_tool(approval_id, context)
+
+    async def is_always_allowed(
+        self, context: AgentRunContext, *, tool_name: str, tool_version: str
+    ) -> bool:
+        del tool_version
+        async with self._database.session() as session:
+            allowed = await session.scalar(
+                select(ConversationModel.always_allowed_tool_names)
+                .join(
+                    ConversationRunModel,
+                    ConversationRunModel.conversation_id == ConversationModel.id,
+                )
+                .where(ConversationRunModel.id == context.run_id)
+            )
+        return isinstance(allowed, list) and tool_name in allowed
 
     async def is_approved_for_tool(
         self,
@@ -171,6 +189,7 @@ class PostgresApprovalPort(ApprovalPort):
         approved: bool,
         decided_by: str,
         expires_at: datetime | None = None,
+        always_allow: bool = False,
     ) -> bool:
         try:
             approval_uuid = UUID(approval_id)
@@ -181,7 +200,27 @@ class PostgresApprovalPort(ApprovalPort):
             if approval is None:
                 return False
             target_status = "approved" if approved else "rejected"
+            conversation: ConversationModel | None = None
+            if approved and always_allow:
+                conversation_id = await session.scalar(
+                    select(ConversationRunModel.conversation_id).where(
+                        ConversationRunModel.id == approval.run_id
+                    )
+                )
+                if conversation_id is None:
+                    return False
+                conversation = await session.get(
+                    ConversationModel, conversation_id, with_for_update=True
+                )
+                if conversation is None:
+                    return False
             if approval.status == target_status:
+                if conversation is not None:
+                    allowed_tools = list(conversation.always_allowed_tool_names or [])
+                    if approval.tool_name not in allowed_tools:
+                        allowed_tools.append(approval.tool_name)
+                        conversation.always_allowed_tool_names = allowed_tools
+                        conversation.updated_at = datetime.now(UTC)
                 return True
             if approval.status != "pending":
                 return False
@@ -189,6 +228,12 @@ class PostgresApprovalPort(ApprovalPort):
             approval.decided_at = datetime.now(UTC)
             approval.decided_by = decided_by
             approval.expires_at = expires_at if approved else None
+            if conversation is not None:
+                allowed_tools = list(conversation.always_allowed_tool_names or [])
+                if approval.tool_name not in allowed_tools:
+                    allowed_tools.append(approval.tool_name)
+                    conversation.always_allowed_tool_names = allowed_tools
+                    conversation.updated_at = datetime.now(UTC)
         return True
 
     async def revoke(self, approval_id: str, *, revoked_by: str) -> bool:
@@ -373,6 +418,7 @@ def _approval_record(value: RuntimeApprovalModel) -> ApprovalRecord:
         expires_at=value.expires_at,
         revoked_at=value.revoked_at,
         revoked_by=value.revoked_by,
+        details=cast(Mapping[str, Any], value.details or {}),
     )
 
 

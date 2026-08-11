@@ -290,6 +290,6 @@ def test_active_assistant_catalog_exposes_only_knowledge_agent_for_knowledge_req
     knowledge_entries = [entry for entry in entries if entry.command == "ask"]
 
     assert [(entry.name, entry.version, entry.aliases) for entry in knowledge_entries] == [
-        ("knowledge_agent", "0.7.0", ("qa",))
+        ("knowledge_agent", "0.9.0", ("qa",))
     ]
     assert all(entry.name != "knowledge_qa" for entry in entries)

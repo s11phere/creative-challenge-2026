@@ -51,10 +51,12 @@ class AgentApprovalResponse(BaseModel):
     tool_name: str
     tool_version: str
     status: str
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentApprovalDecisionRequest(BaseModel):
     approved: bool
+    always_allow: bool = False
     decided_by: str = Field(default="local", min_length=1, max_length=255)
 
 
@@ -311,6 +313,7 @@ async def list_agent_approvals(run_id: UUID, request: Request) -> list[AgentAppr
             tool_name=record.tool_name,
             tool_version=record.tool_version,
             status=record.status,
+            details=dict(record.details),
         )
         for record in records
     ]
@@ -334,7 +337,10 @@ async def decide_agent_approval(
     if existing is None:
         raise AppError("APPROVAL_NOT_FOUND", "Approval not found", 404)
     decided = await request.app.state.approval_port.decide(
-        str(approval_id), approved=body.approved, decided_by=body.decided_by
+        str(approval_id),
+        approved=body.approved,
+        decided_by=body.decided_by,
+        always_allow=body.always_allow,
     )
     if not decided:
         raise AppError("APPROVAL_CONFLICT", "Approval cannot be decided.", 409)
@@ -350,6 +356,7 @@ async def decide_agent_approval(
         tool_name=record.tool_name,
         tool_version=record.tool_version,
         status=record.status,
+        details=dict(record.details),
     )
 
 

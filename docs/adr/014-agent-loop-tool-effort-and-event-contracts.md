@@ -56,11 +56,13 @@ introduced incrementally.
    alias, fixed Space-scoped cwd, policy-owned minimal environment, argv-only execution, bounded
    output, timeout/cancellation cleanup, and no `EXTERNAL_NETWORK` grant.
 9. Knowledge Loop Tools are application-layer adapters, not retrieval implementations. The default
-   local/provisional `knowledge_agent 0.7.0` package exposes `knowledge_search`, `knowledge_inspect`,
-   `grounded_answer`, `verify_answer`, and `finalize_answer`; `0.5.0` and `0.6.0` remain immutable for
-   historical Run recovery and explicit rollback. Version 0.7.0 leaves retrieval order to the
+   local/provisional `knowledge_agent 0.9.0` package exposes `knowledge_search`, `knowledge_inspect`,
+   `grounded_answer`, `verify_answer`, and `finalize_answer`; `0.5.0` through `0.8.0` remain immutable
+   for historical Run recovery and explicit rollback. Version 0.9.0 leaves retrieval order to the
    model-directed outer Loop; Tools may return bounded `recommended_next` guidance, while server
-   checks retain QA ownership and finalization authority. Search calls must use the
+   checks retain QA ownership and finalization authority. A first accidental duplicate Tool request
+   is converted into a checkpointed, model-visible runtime observation without invoking the Tool;
+   a second identical repeat remains `RUN_LLM_NO_PROGRESS`. Search calls must use the
    `SearchService.search(SearchRequest, RetrievalProfileV1)` port with the server-fixed Space and
    retrieval scope. Only metadata and safe identifiers cross the Tool boundary. Grounded QA remains
    the sole owner of context construction, claims, citations, refusal/conflict semantics, and the

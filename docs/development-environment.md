@@ -244,14 +244,14 @@ The generic Agent Loop is the default synthetic/fake or reviewed local provision
 Worker default to the following aligned values:
 
 ```dotenv
-KNOWLEDGE_AGENT_SKILL_VERSION=0.7.0
+KNOWLEDGE_AGENT_SKILL_VERSION=0.9.0
 AGENT_LOOP_V5_ENABLED=true
 ```
 
 The legacy-named flag remains a fail-closed rollback: `AGENT_LOOP_V5_ENABLED=false` activates
 `knowledge_agent 0.3.0` for new Runs. Recreate API/Worker after changing it. This preserves all
 persisted Run/Skill pins and keeps v1/v2 API and SSE projections readable. `start-local.ps1` uses
-v6 by default; pass `-LegacyKnowledgeAgent` for a local v3 rollback. Do not use an external Provider
+v9 by default; pass `-LegacyKnowledgeAgent` for a local v3 rollback. Do not use an external Provider
 without the existing sensitivity, deployment-policy, and visible-consent checks.
 
 ## Local Agent Workspaces
@@ -266,6 +266,13 @@ For a selected workspace, `fs_list`, `fs_read`, `fs_write`, and `shell_exec` use
 `cwd` values relative to that folder. `.` names the root. The legacy `workspace/...` form is also
 accepted by the Tool schema. The model receives the selected logical path, this convention, and the
 available command aliases in its bounded workspace context.
+
+The local workspace is separate from the current Space's uploaded knowledge corpus. A local
+`fs_list` result must not be used to conclude that uploaded documents are unavailable. For a
+compound retrieve-or-summarize-and-save request, the Agent decides which knowledge and workspace
+Tools are useful from each result. It chooses a descriptive, non-conflicting filename when the user
+does not provide one; no universal output filename is imposed. Use `.` for the workspace root in a
+command Tool call, even when the selected workspace's logical name is something else.
 
 Set the following values consistently in API and Worker processes:
 
@@ -289,7 +296,17 @@ approval to the exact Tool invocation. List pending records with
 `GET /api/v2/runs/{run_id}/approvals`, then decide with
 `POST /api/v2/runs/{run_id}/approvals/{approval_id}/decision` and
 `{"approved":true,"decided_by":"local"}`. Rejection cancels the waiting Run without executing the
-side effect.
+side effect. The Web Agent timeline exposes the same decision directly. Its **always allow this
+Tool type** action sends `{"approved":true,"always_allow":true,"decided_by":"web"}` and records
+the selected Tool name on the current Conversation. Later `fs_write` or `shell_exec` invocations of
+that Tool name in the same Conversation do not create an approval request, but still pass all
+workspace, protected-path, executable-alias, schema, cancellation, and idempotency checks. A new
+Conversation does not inherit this allowance.
+
+Expanded Tool details show the workspace path for filesystem Tools, the command and relative cwd
+for commands, and bounded previews of `shell_exec` stdout/stderr or `fs_list` entries. The preview
+is limited to 4,000 characters and is marked as truncated when the command or list result exceeds
+the display bound; it must not be treated as a substitute for a secure command log.
 
 Validate the hash-pinned synthetic development fixture without invoking a model or reading the
 controlled corpus:

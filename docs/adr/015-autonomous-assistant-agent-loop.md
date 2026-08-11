@@ -48,6 +48,16 @@ recoverable execution.
    autonomous path writes to the existing QA debug trace through the top-level decision gateway,
    Grounded QA generation gateway, Tool registry, and final answer writer; no durable SSE event is
    broadened for this purpose.
+8. A first duplicate Tool name/version/argument request is not executed again. The Runtime records a
+   checkpointed, model-visible `already_observed` observation and asks the model to choose its next
+   action. A second identical repeat remains `RUN_LLM_NO_PROGRESS`. This is a bounded harness
+   recovery, not an intent matcher or a prescribed Skill/Tool sequence.
+9. Assistant package `0.2.0` supersedes `0.1.0` for new Runs. It adds a narrow completion guard:
+   once the existing QA finalization observation is present, an explicitly requested workspace
+   artifact cannot become terminal until `fs_write` has succeeded. The guard may select `fs_list`
+   to avoid an accidental overwrite, then routes back through the normal approval-gated write
+   Tool. It does not prescribe retrieval order or bypass Tool registration, approval, or model
+   visibility policy. `0.1.0` remains installed for historical references.
 
 ## Alternatives
 
@@ -62,10 +72,11 @@ recoverable execution.
 
 The loop can make multiple serial Tool/Skill calls and can answer ordinary conversation without
 activating knowledge retrieval. Tool schemas and local next-step guidance improve model behavior,
-while server checks remain deliberately narrow. The current production adapter exposes the v7
-knowledge Tools plus the read-only `summarize_document` adapter when the server resource resolver
-is available; additional Skill adapters can be registered without changing the outer Loop contract.
-This rollout is provisional and must not be described as a formal quality acceptance.
+while server checks remain deliberately narrow. New Runs pin `assistant_agent 0.2.0`; the current
+production adapter exposes the v9 knowledge Tools plus the read-only `summarize_document` adapter
+when the server resource resolver is available; additional Skill adapters can be registered without
+changing the outer Loop contract. This rollout is provisional and must not be described as a formal
+quality acceptance.
 
 ## Reassessment Triggers
 

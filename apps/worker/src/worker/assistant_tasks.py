@@ -201,7 +201,8 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
     if (
         claimed.run_kind is ConversationRunKind.ASSISTANT_TURN
         and claimed.router_version == "assistant-agent-loop-v1"
-        and claimed.core_prompt_version == "assistant-base-prompt-v5"
+        and claimed.core_prompt_version
+        in {"assistant-base-prompt-v5", "assistant-base-prompt-v6", "assistant-base-prompt-v7"}
     ):
         service = await _autonomous_loop_service(
             gateway=gateway,
@@ -277,7 +278,7 @@ async def _autonomous_loop_service(
     skill_registry = registry
     assert isinstance(skill_registry, FileSystemSkillRegistry)
     resources = PostgresAssistantResourceResolver(database)
-    assistant_pin = skill_registry.pin("assistant_agent", "0.1.0")
+    assistant_pin = skill_registry.pin("assistant_agent", "0.2.0")
     assistant_package = skill_registry.validate_pin(assistant_pin)
     knowledge_pin = skill_registry.pin("knowledge_agent")
     active_skill_contexts: list[AssistantSkillContext] = []
@@ -396,8 +397,12 @@ async def _autonomous_loop_service(
                 "path": workspace.path,
                 "tools_enabled": True,
                 "path_convention": (
-                    "All file paths and command working directories are relative to this workspace."
+                    "All file paths and command working directories are relative "
+                    "to this workspace; the selected workspace root is '.', never "
+                    "the displayed workspace name."
                 ),
+                "workspace_root_reference": ".",
+                "command_cwd_example": ".",
                 "command_aliases": cast(list[JSONValue], sorted(aliases)),
             }
         elif workspace is not None:

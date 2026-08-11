@@ -167,7 +167,7 @@ fake/local 索引误判为缺少外部 Embedding revision。
 `RUN_LLM_DECISION_INVALID` 表示 Provider 没有返回严格的单个 JSON 决策；检查模型是否遵循
 `call_tool/complete/refuse` schema。`RUN_LLM_MAX_ITERATIONS` 表示模型在五轮内未终止；
 `TOOL_NOT_ALLOWED`、`TOOL_MODEL_OUTPUT_DENIED` 或 `TOOL_APPROVAL_REQUIRED` 表示服务端安全边界拒绝
-模型选择。默认 `knowledge_agent 0.7.0` 只允许受信的知识 Tool：`knowledge_search`、
+模型选择。默认 `knowledge_agent 0.9.0` 只允许受信的知识 Tool：`knowledge_search`、
 `knowledge_inspect`、`summarize_document`、`grounded_answer`、`verify_answer` 和 `finalize_answer`；文档 Tool 只有在资源
 解析器注册时可用，写 Tool 不可通过 prompt
 开启。若出现意外 v6 行为，设置 `AGENT_LOOP_V5_ENABLED=false` 并重建 API/Worker 即会回落到 `0.3.0`，
@@ -296,18 +296,22 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 - 需要检索时先确认 Space 存在、Document 有当前 published version，且查询模式所需的 Embedding/Reranker 能力已配置；无命中是成功的空列表，不是系统故障。
 - 模型服务不可用不会阻断 PostgreSQL/Redis 管理面 ready；Dense 会返回明确 Provider 错误，Hybrid 只有 profile 明确允许时才可降级为 Keyword。
 - 已有 Agent Runtime、Tool/Skill Registry、声明式执行器、内存与 PostgreSQL 检查点恢复和 Skill 模板；
-  新建 QA HTTP/Web Run 默认由 `knowledge_agent 0.7.0` 初始化，随后以 PostgreSQL active pointer 为准，
+  新建 QA HTTP/Web Run 默认由 `knowledge_agent 0.9.0` 初始化，随后以 PostgreSQL active pointer 为准，
   每个 Run 都固定包摘要，Worker 校验后才调用唯一 QA Application Port。可用 `GET /api/v1/skills` 和
   `GET /api/v1/skills/knowledge_agent/versions` 检查安装摘要、active 版本和 manifest 预算。
-- `knowledge_agent 0.7.0` 通过 `fast_chat` 执行当前默认的受约束 LLM 决策，可在同一顶层 Loop 中串行调用
+  当前 `assistant_agent 0.2.0` 与 `knowledge_agent 0.9.0` 的复合任务预算已提高到 32 steps、24 Tool
+  calls、131072 input tokens、32768 output tokens 和 600 秒。若仍触发 `RUN_BUDGET_EXCEEDED`，
+  Runtime error message 会列出具体超限项及实际值；优先检查 `input_tokens` 是否因长对话上下文累积。
+- `knowledge_agent 0.9.0` 通过 `fast_chat` 执行当前默认的受约束 LLM 决策，可在同一顶层 Loop 中串行调用
   注册 Tool；可调用
   `knowledge_search`、`knowledge_inspect`、`summarize_document`、`grounded_answer`、`verify_answer` 和
   `finalize_answer`；
   旧 Agent 与 `knowledge_qa` 包仅保留用于固定 Run 恢复。外层模型只看到 Tool 状态/计数，不看到
   回答或引用原文；Runtime checkpoint 快照与 append-only checkpoint 已持久化，
-  当前恢复和最终结果仍以 QA PostgreSQL 状态为准。
+  当前恢复和最终结果仍以 QA PostgreSQL 状态为准。首个重复 Tool 请求会回传 `already_observed`
+  观察而不重复执行；第二次相同重复才会以 `RUN_LLM_NO_PROGRESS` 终止。
 - 若 Run 以 `QA_SKILL_INVALID` 失败，检查 API 与 Worker 的 `SKILL_ROOT_PATH`、
-  `KNOWLEDGE_AGENT_SKILL_VERSION`、`AGENT_LOOP_V5_ENABLED` 和镜像内 `skills/knowledge_agent_v7` 内容是否一致。
+  `KNOWLEDGE_AGENT_SKILL_VERSION`、`AGENT_LOOP_V5_ENABLED` 和镜像内 `skills/knowledge_agent_v9` 内容是否一致。
   需要回退时，设置 `AGENT_LOOP_V5_ENABLED=false` 并重建 API/Worker，或以
   `./scripts/start-local.ps1 -LegacyKnowledgeAgent` 启动；不要就地修改已被 Run
   引用的同名版本；发布新 semver 并保留旧包供排队/恢复 Run 校验。
@@ -379,10 +383,23 @@ expected; do not bypass this restriction by placing local files in a prompt or e
 manually. `scripts/start-local.ps1 -AllowExternalWorkspaceTools` is the reviewed one-process opt-in
 and warns about the external data boundary.
 
+When a request includes a workspace artifact but the model nevertheless selects an unavailable
+workspace Tool, the Assistant completes with an explicit server-configuration explanation. A user
+reply such as `confirm` cannot change that policy, and the Run should not surface
+`RUN_LLM_DECISION_INVALID` for this bounded recovery case.
+
 For `WORKSPACE_PATH_DENIED`, confirm that the folder already exists below
 `AGENT_WORKSPACE_ROOT_PATH` and that no selected path component is a symlink or Windows junction.
 Use paths relative to the selected workspace in Tool calls: `.` for the root and `src/main.py` for a
-child. Absolute paths, backslashes, drive prefixes, and `..` are denied.
+child. The selected workspace name itself is descriptive context, not a child cwd: for example,
+use `cwd="."`, not `cwd="project-a"`, to run at the root of workspace `project-a`. Absolute paths,
+backslashes, drive prefixes, and `..` are denied.
+
+Uploaded documents and the selected local workspace are separate scopes. If a request asks to
+retrieve or summarize uploaded knowledge then save the result, do not infer missing knowledge from
+`fs_list`. The Agent should search the current Space when the subject may be Space-specific, then
+choose any useful workspace inspection and a descriptive, non-conflicting Markdown path. There is
+no fixed `knowledge-answer.md` fallback; `fs_write` still requires its normal approval.
 
 Under Compose, API and Worker must both mount the same `AGENT_WORKSPACE_HOST_PATH` at
 `/data/agent-workspaces`. Recreate both services after changing either mount or workspace settings.
@@ -394,6 +411,13 @@ restore the directory or select a new workspace after active Runs have completed
 An `APPROVAL_NOT_FOUND` response means the ID does not belong to that Run; an
 `APPROVAL_CONFLICT` response means it is no longer pending. Approval resumes the same checkpoint;
 rejection cancels it without running the requested operation.
+
+In the Web Agent timeline, open the pending Tool card and choose `approve`, `reject`, or
+`always allow this Tool type`. The last action approves the displayed invocation and remembers only
+its Tool name for the current Conversation. It does not permit arbitrary paths or executables, and
+a new Conversation starts without that allowance. The card also shows filesystem paths, shell
+command and cwd, plus a bounded expandable output preview for commands and directory listings. A
+truncated preview indicates only that the display limit was reached.
 
 ## `start-local.ps1` Count error
 

@@ -22,7 +22,9 @@ from domain.agent_loop import (
 from domain.agent_runtime import (
     AgentRun,
     AgentRunContext,
+    ApprovalPort,
     BudgetExceededError,
+    BudgetUsage,
     RecoveryRejectedError,
     RunCheckpoint,
     RunError,
@@ -44,6 +46,7 @@ from .llm_decision import (
     AgentToolRegistry,
     LLMDecision,
     LLMDecisionAction,
+    LLMDecisionError,
     LLMDecisionNode,
 )
 from .skills import PinnedSkill
@@ -61,6 +64,9 @@ from .tools import (
 
 type CancellationCheck = Callable[[AgentRun], Awaitable[bool]]
 type DecisionPolicy = Callable[[AgentRun, AgentLoopState, LLMDecision], LLMDecision]
+type InvalidDecisionRecovery = Callable[
+    [AgentRun, AgentLoopState, LLMDecisionError], LLMDecision | None
+]
 type ClockMilliseconds = Callable[[], int]
 type ApprovalRequest = Callable[[AgentRunContext, ToolCallRecord], Awaitable[str]]
 
@@ -120,9 +126,11 @@ class AgentLoopExecutor:
         max_tokens_per_decision: int = 512,
         cancellation_check: CancellationCheck | None = None,
         decision_policy: DecisionPolicy | None = None,
+        invalid_decision_recovery: InvalidDecisionRecovery | None = None,
         tool_skill_refs: Mapping[ToolRef, ToolRef] | None = None,
         clock_ms: ClockMilliseconds | None = None,
         approval_request: ApprovalRequest | None = None,
+        approval_port: ApprovalPort | None = None,
     ) -> None:
         names = tuple(ref.name for ref in allowed_tools)
         if not allowed_tools or len(names) != len(set(names)):
@@ -143,9 +151,11 @@ class AgentLoopExecutor:
         self._max_tokens_per_decision = max_tokens_per_decision
         self._cancellation_check = cancellation_check or _not_cancelled
         self._decision_policy = decision_policy
+        self._invalid_decision_recovery = invalid_decision_recovery
         self._tool_skill_refs = dict(tool_skill_refs or {})
         self._clock_ms = clock_ms or _monotonic_ms
         self._approval_request = approval_request
+        self._approval_port = approval_port
 
     async def execute(
         self,
@@ -327,7 +337,18 @@ class AgentLoopExecutor:
                     },
                     model_gateway=self._model_gateway,
                 )
-                decision, decision_usage = await decision_node.decide(context)
+                try:
+                    decision, decision_usage = await decision_node.decide(context)
+                except LLMDecisionError as exc:
+                    recovered = (
+                        self._invalid_decision_recovery(run, state, exc)
+                        if self._invalid_decision_recovery is not None
+                        else None
+                    )
+                    if recovered is None:
+                        raise
+                    decision = recovered
+                    decision_usage = BudgetUsage()
                 if self._decision_policy is not None:
                     decision = self._decision_policy(run, state, decision)
                 run = run.consume(
@@ -367,20 +388,67 @@ class AgentLoopExecutor:
                     idempotency_key=self._idempotency_key(run, state.iteration, decision),
                     approval_id=approval_id,
                 )
+                request_fingerprint = self._request_fingerprint(definition, decision)
                 try:
                     state = state.request_tool(
                         name=definition.name,
                         version=definition.version,
                         arguments=cast(dict[str, object], decision.arguments),
                         idempotency_key=invocation.idempotency_key,
-                        request_fingerprint=self._request_fingerprint(definition, decision),
+                        request_fingerprint=request_fingerprint,
                     )
-                except AgentLoopNoProgressError as exc:
-                    raise NodeExecutionError(
-                        code="RUN_LLM_NO_PROGRESS",
-                        category=RunErrorCategory.BUDGET,
-                        message="Agent Loop repeated a Tool request without progress.",
-                    ) from exc
+                except AgentLoopNoProgressError:
+                    duplicate_output: dict[str, JSONValue] = {
+                        "trust": "trusted_runtime",
+                        "status": "already_observed",
+                        "tool_name": definition.name,
+                        "recommended_next": "choose_a_different_action",
+                    }
+                    try:
+                        state = state.observe_repeated_tool_request(
+                            name=definition.name,
+                            version=definition.version,
+                            idempotency_key=invocation.idempotency_key,
+                            request_fingerprint=request_fingerprint,
+                            input_summary=_summary_digest(decision.arguments),
+                            output_summary=_summary_digest(duplicate_output),
+                            model_output=duplicate_output,
+                        )
+                    except AgentLoopNoProgressError as recovery_error:
+                        raise NodeExecutionError(
+                            code="RUN_LLM_NO_PROGRESS",
+                            category=RunErrorCategory.BUDGET,
+                            message="Agent Loop repeated a Tool request without progress.",
+                        ) from recovery_error
+                    history.append(
+                        {
+                            "tool_name": definition.name,
+                            "tool_version": definition.version,
+                            "output": duplicate_output,
+                            "output_summary": _summary_digest(duplicate_output),
+                        }
+                    )
+                    run = await self._persist(run, state)
+                    await self._emit(
+                        run,
+                        AgentRunEventType.TOOL_OUTPUT,
+                        _tool_event_payload(
+                            definition,
+                            iteration=state.iteration,
+                            status="skipped",
+                            input_summary=_summary_digest(decision.arguments),
+                            output_summary=_summary_digest(duplicate_output),
+                            error_code="RUN_LLM_DUPLICATE_TOOL_REQUEST",
+                            retry_count=0,
+                            duration_ms=0,
+                            arguments=decision.arguments,
+                            output=None,
+                            query_preview=_query_preview(definition, decision.arguments),
+                            resource_reference=_resource_reference(definition, decision.arguments),
+                        ),
+                        event_key=f"iteration:{state.iteration}:duplicate_tool_request",
+                    )
+                    continue
                 skill_ref = self._tool_skill_refs.get(definition.ref)
                 if skill_ref is not None and skill_ref not in activated_skill_refs:
                     await self._emit_skill_activated(
@@ -400,6 +468,7 @@ class AgentLoopExecutor:
                         "tool_version": definition.version,
                         "input_summary": _summary_digest(decision.arguments),
                         "retry_count": 0,
+                        **_tool_display_payload(definition, decision.arguments),
                         **_query_preview_payload(definition, decision.arguments),
                         **_resource_reference_payload(definition, decision.arguments),
                     },
@@ -407,7 +476,11 @@ class AgentLoopExecutor:
                 )
                 run = _move_to_executing(run)
                 run = await self._persist(run, state)
-                if tool_requires_durable_approval(definition.permissions) and approval_id is None:
+                if (
+                    tool_requires_durable_approval(definition.permissions)
+                    and approval_id is None
+                    and not await self._is_always_allowed(run.context, definition)
+                ):
                     if self._approval_request is not None:
                         approval_id = await self._approval_request(
                             run.context,
@@ -417,6 +490,9 @@ class AgentLoopExecutor:
                                 permissions=definition.permissions,
                                 idempotency_key=invocation.idempotency_key,
                                 input_summary=tool_input_summary(decision.arguments),
+                                display_summary=_tool_display_summary(
+                                    definition, decision.arguments
+                                ),
                             ),
                         )
                     state = state.wait_for_approval(approval_id)
@@ -429,8 +505,10 @@ class AgentLoopExecutor:
                             "iteration": state.iteration,
                             "tool_name": definition.name,
                             "tool_version": definition.version,
+                            "approval_id": approval_id or "unavailable",
                             "input_summary": _summary_digest(decision.arguments),
                             "retry_count": 0,
+                            **_tool_display_payload(definition, decision.arguments),
                             **_query_preview_payload(definition, decision.arguments),
                             **_resource_reference_payload(definition, decision.arguments),
                         },
@@ -615,6 +693,7 @@ class AgentLoopExecutor:
                     "tool_version": definition.version,
                     "input_summary": _summary_digest(invocation.arguments),
                     "retry_count": invocation.retry_count,
+                    **_tool_display_payload(definition, invocation.arguments),
                     **_query_preview_payload(definition, invocation.arguments),
                     **_resource_reference_payload(definition, invocation.arguments),
                 },
@@ -644,6 +723,8 @@ class AgentLoopExecutor:
                             record.retry_count if record is not None else invocation.retry_count
                         ),
                         duration_ms=record.duration_ms if record is not None else 0,
+                        arguments=invocation.arguments,
+                        output=None,
                         query_preview=_query_preview(definition, invocation.arguments),
                         resource_reference=_resource_reference(definition, invocation.arguments),
                     ),
@@ -678,6 +759,8 @@ class AgentLoopExecutor:
                     error_code=result.record.error_code,
                     retry_count=result.record.retry_count,
                     duration_ms=result.record.duration_ms,
+                    arguments=invocation.arguments,
+                    output=result.output,
                     query_preview=_query_preview(definition, invocation.arguments),
                     resource_reference=_resource_reference(definition, invocation.arguments),
                 ),
@@ -848,6 +931,18 @@ class AgentLoopExecutor:
             event_key=event_key,
         )
 
+    async def _is_always_allowed(
+        self, context: AgentRunContext, definition: ToolDefinition
+    ) -> bool:
+        if self._approval_port is None:
+            return False
+        checker = getattr(self._approval_port, "is_always_allowed", None)
+        if checker is None:
+            return False
+        return bool(
+            await checker(context, tool_name=definition.name, tool_version=definition.version)
+        )
+
     async def _emit_skill_activated(
         self,
         run: AgentRun,
@@ -927,6 +1022,96 @@ def _query_preview(definition: ToolDefinition, arguments: Mapping[str, JSONValue
     return normalized[:512] or None
 
 
+def _tool_display_summary(definition: ToolDefinition, arguments: Mapping[str, JSONValue]) -> str:
+    if definition.name in {"fs_list", "fs_read", "fs_write"}:
+        path = arguments.get("path")
+        return _display_text(path) if isinstance(path, str) else ""
+    if definition.name == "shell_exec":
+        executable = arguments.get("executable")
+        argv = arguments.get("argv")
+        cwd = arguments.get("cwd")
+        if not isinstance(executable, str) or not isinstance(argv, list):
+            return ""
+        command = " ".join([executable, *[item for item in argv if isinstance(item, str)]])
+        if isinstance(cwd, str) and cwd:
+            command = f"{command} (cwd: {cwd})"
+        return _display_text(command)
+    return ""
+
+
+def _display_text(value: str) -> str:
+    cleaned = "".join(character if character.isprintable() else " " for character in value)
+    return " ".join(cleaned.split())[:512]
+
+
+def _tool_display_payload(
+    definition: ToolDefinition, arguments: Mapping[str, JSONValue]
+) -> dict[str, str]:
+    if definition.name in {"fs_list", "fs_read", "fs_write"}:
+        path = arguments.get("path")
+        return {"path": _display_text(path)} if isinstance(path, str) else {}
+    if definition.name == "shell_exec":
+        executable = arguments.get("executable")
+        argv = arguments.get("argv")
+        cwd = arguments.get("cwd")
+        payload: dict[str, str] = {}
+        if isinstance(executable, str) and isinstance(argv, list):
+            payload["command"] = _display_text(
+                " ".join([executable, *[item for item in argv if isinstance(item, str)]])
+            )
+        if isinstance(cwd, str):
+            payload["cwd"] = _display_text(cwd)
+        return payload
+    return {}
+
+
+def _tool_output_preview(
+    definition: ToolDefinition, output: JSONValue | None
+) -> tuple[str | None, bool, int | None]:
+    if not isinstance(output, dict):
+        return None, False, None
+    if definition.name == "fs_list":
+        entries = output.get("entries")
+        if not isinstance(entries, list):
+            return None, output.get("truncated") is True, None
+        lines: list[str] = []
+        for entry in entries[:200]:
+            if not isinstance(entry, dict):
+                continue
+            path = entry.get("path")
+            kind = entry.get("kind")
+            size = entry.get("size_bytes")
+            if isinstance(path, str) and isinstance(kind, str):
+                suffix = f" ({size} bytes)" if isinstance(size, int) else ""
+                lines.append(f"{kind}: {path}{suffix}")
+        raw = "\n".join(lines)
+        return _bounded_output(raw), output.get("truncated") is True or len(raw) > 4_000, None
+    if definition.name == "shell_exec":
+        sections: list[str] = []
+        stdout = output.get("stdout")
+        stderr = output.get("stderr")
+        if isinstance(stdout, str) and stdout:
+            sections.append(f"stdout:\n{stdout}")
+        if isinstance(stderr, str) and stderr:
+            sections.append(f"stderr:\n{stderr}")
+        exit_code = output.get("exit_code")
+        raw = "\n\n".join(sections)
+        return (
+            _bounded_output(raw),
+            output.get("truncated") is True or len(raw) > 4_000,
+            exit_code if isinstance(exit_code, int) else None,
+        )
+    return None, False, None
+
+
+def _bounded_output(value: str) -> str | None:
+    cleaned = "".join(
+        character if character in {"\n", "\r", "\t"} or character.isprintable() else " "
+        for character in value
+    )
+    return cleaned[:4_000] or None
+
+
 def _query_preview_payload(
     definition: ToolDefinition, arguments: Mapping[str, JSONValue]
 ) -> dict[str, str]:
@@ -966,10 +1151,12 @@ def _tool_event_payload(
     error_code: str | None,
     retry_count: int,
     duration_ms: int,
+    arguments: Mapping[str, JSONValue],
+    output: JSONValue | None,
     query_preview: str | None = None,
     resource_reference: str | None = None,
-) -> dict[str, str | int]:
-    payload: dict[str, str | int] = {
+) -> dict[str, str | int | bool]:
+    payload: dict[str, str | int | bool] = {
         "status": status,
         "iteration": iteration,
         "tool_name": definition.name,
@@ -985,6 +1172,14 @@ def _tool_event_payload(
         payload["query_preview"] = query_preview
     if resource_reference is not None:
         payload["resource_reference"] = resource_reference
+    payload.update(_tool_display_payload(definition, arguments))
+    output_preview, output_truncated, exit_code = _tool_output_preview(definition, output)
+    if output_preview is not None:
+        payload["output_preview"] = output_preview
+    if output_truncated:
+        payload["output_truncated"] = True
+    if exit_code is not None:
+        payload["exit_code"] = exit_code
     return payload
 
 

@@ -9,7 +9,10 @@ are intentionally separate from individual Skill manifests and from the bounded 
 | `base-system-prompt-v1.txt` | Product-level routing and response boundary. |
 | `base-system-prompt-v2.txt` | Historical router prompt retained for persisted v2 Runs. |
 | `base-system-prompt-v3.txt` | Historical router prompt retained for persisted v3 Runs. |
-| `base-system-prompt-v4.txt` | Current router prompt; defaults to ordinary conversation and requires an explicit current-Space knowledge dependency for `knowledge_agent`. |
+| `base-system-prompt-v4.txt` | Historical router prompt; defaults to ordinary conversation and requires an explicit current-Space knowledge dependency for `knowledge_agent`. |
+| `base-system-prompt-v5.txt` | Historical autonomous-loop prompt retained for fixed Runs. |
+| `base-system-prompt-v6.txt` | Historical autonomous-loop prompt retained for fixed Runs. |
+| `base-system-prompt-v7.txt` | Current autonomous-loop prompt; models every compound deliverable, requires a final postcondition check, treats workspace artifacts as part of the request, and explains one accidental duplicate Tool recovery without prescribing a fixed Tool sequence. |
 | `router-decision-v1.schema.json` | Strict model intent for `respond`, `clarify`, or `invoke_skill`. |
 | `command-catalog-v1.schema.json` | Safe metadata returned by the versioned command catalog. |
 | `clarification-v1.schema.json` | Server-authored clarification and safe resource candidates. |

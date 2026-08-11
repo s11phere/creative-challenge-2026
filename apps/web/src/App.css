@@ -2206,6 +2206,71 @@
   border-top: 1px solid var(--border);
 }
 
+.chat-agent-tool-output {
+  margin: 0 9px 9px;
+  border-top: 1px solid var(--border);
+}
+
+.chat-agent-tool-output summary {
+  min-height: 0;
+  padding: 8px 0 5px;
+  color: var(--accent-strong);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chat-agent-tool-output pre {
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  padding: 8px;
+  color: var(--ink-soft);
+  background: #f3f7f4;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 11px/17px var(--mono);
+}
+
+.chat-agent-approval-actions {
+  margin: 0 9px 9px;
+  padding: 9px 0 0;
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid var(--border);
+  color: #76551b;
+  font-size: 12px;
+}
+
+.chat-agent-approval-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-agent-approval-actions button {
+  min-height: 30px;
+  padding: 5px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink);
+  background: #fffdf6;
+  border: 1px solid #d9bd7c;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.chat-agent-approval-actions button:hover:not(:disabled) {
+  background: #fff4d5;
+}
+
+.chat-agent-approval-actions button:disabled {
+  cursor: wait;
+  opacity: .6;
+}
+
 .chat-command-notice {
   max-width: 640px;
   margin: 0 0 18px;

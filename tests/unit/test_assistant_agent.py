@@ -161,7 +161,7 @@ async def test_fake_respond_publishes_one_assistant_message_atomically() -> None
 
     assert completed is not None
     assert completed.status is ConversationRunStatus.COMPLETED
-    assert completed.core_prompt_version == "assistant-base-prompt-v5"
+    assert completed.core_prompt_version == "assistant-base-prompt-v7"
     assert completed.result is not None
     assert completed.result.message_id is not None
     message = await repository.get_message(completed.result.message_id)

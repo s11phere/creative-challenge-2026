@@ -341,6 +341,9 @@ class ConversationModel(Base):
     owner_id: Mapped[str] = mapped_column(String(255), nullable=False)
     reasoning_effort: Mapped[str] = mapped_column(String(16), nullable=False, default="auto")
     workspace_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    always_allowed_tool_names: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow

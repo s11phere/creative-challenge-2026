@@ -85,7 +85,7 @@ class ConversationRunService:
             selection_source=submission.selection_source,
             run_kind=ConversationRunKind.ASSISTANT_TURN,
             router_version="assistant-agent-loop-v1",
-            core_prompt_version="assistant-base-prompt-v5",
+            core_prompt_version="assistant-base-prompt-v7",
             reasoning_profile=self._resolve_reasoning(conversation),
             created_at=now,
             updated_at=now,
