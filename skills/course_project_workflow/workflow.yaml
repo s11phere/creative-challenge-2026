@@ -1,0 +1,15 @@
+workflow_version: "1"
+start: requirements
+nodes:
+  - {id: requirements, step: planning, handler: project_workflow_requirements, next: baseline, max_retries: 1, required_permissions: [read_knowledge, model], reserve: {tool_calls: 2, input_tokens: 8192, output_tokens: 2048}}
+  - {id: baseline, step: planning, handler: project_workflow_baseline, next: learn, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 1, input_tokens: 4096, output_tokens: 1024}}
+  - {id: learn, step: executing, handler: project_workflow_learning, next: design, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 2, input_tokens: 8192, output_tokens: 2048}}
+  - {id: design, step: executing, handler: project_workflow_design, next: milestones, max_retries: 1, required_permissions: [read_knowledge, model], reserve: {tool_calls: 2, input_tokens: 10240, output_tokens: 2560}}
+  - {id: milestones, step: executing, handler: project_workflow_milestones, next: await_checkpoint, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 1, input_tokens: 4096, output_tokens: 1024}}
+  - {id: await_checkpoint, step: waiting_user_input, handler: project_workflow_wait_checkpoint, next: validate, max_retries: 0, required_permissions: [], reserve: {tool_calls: 0, input_tokens: 0, output_tokens: 0}}
+  - {id: validate, step: executing, handler: project_workflow_validate, next: await_results, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 2, input_tokens: 10240, output_tokens: 2560}}
+  - {id: await_results, step: waiting_user_input, handler: project_workflow_wait_results, next: submission, max_retries: 0, required_permissions: [], reserve: {tool_calls: 0, input_tokens: 0, output_tokens: 0}}
+  - {id: submission, step: executing, handler: project_workflow_submission, next: defense, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 2, input_tokens: 10240, output_tokens: 2560}}
+  - {id: defense, step: executing, handler: project_workflow_defense, next: await_defense_answers, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 1, input_tokens: 6144, output_tokens: 1536}}
+  - {id: await_defense_answers, step: waiting_user_input, handler: project_workflow_wait_defense, next: retrospective, max_retries: 0, required_permissions: [], reserve: {tool_calls: 0, input_tokens: 0, output_tokens: 0}}
+  - {id: retrospective, step: verifying, handler: project_workflow_retrospective, next: null, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 1, input_tokens: 4096, output_tokens: 1024}}

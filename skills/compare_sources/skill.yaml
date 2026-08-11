@@ -1,7 +1,7 @@
 manifest_version: "2"
 name: compare_sources
 version: 1.0.0
-description: Compare fixed published versions from at least two Space-owned sources.
+description: Compare at least two Space-owned published sources with verified citations.
 input_schema: schemas/input.json
 output_schema: schemas/output.json
 required_tools: []
@@ -15,7 +15,7 @@ evals: [evals/cases.jsonl]
 invocation:
   command: compare
   aliases: [contrast]
-  argument_hint: "<两个或多个来源> <比较主题>"
+  argument_hint: "<比较问题>"
   trigger:
     summary: "比较当前 Space 中至少两个已发布来源的内容并保留引用"
     when:
@@ -24,4 +24,4 @@ invocation:
       - "用户只需要一般性概念比较且未涉及知识库内容"
     examples:
       - "比较课程笔记和数学笔记中的优化方法"
-  input_mode: sources
+  input_mode: question

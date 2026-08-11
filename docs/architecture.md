@@ -2,9 +2,11 @@
 
 ## Current Skill and Assistant Contract (2026-08-11)
 
-The runtime exposes exactly five trusted Skills: `assistant_agent`, `knowledge_agent`,
-`summarize_document`, `compare_sources`, and `create_review_cards`, all at `1.0.0`. New Runs use
-only the current pinned identity. Historical Skill packages, prompt versions, version activation,
+The runtime exposes five active Skills: `assistant_agent`, `knowledge_agent`, `summarize_document`,
+`compare_sources`, and `create_review_cards`, all at `1.0.0`. Three inactive `1.0.0` student Workflow
+contracts (`research_reading_workflow`, `exam_preparation_workflow`, and `course_project_workflow`)
+are installed for future implementation but are not in the Assistant catalog. New Runs use only the
+current pinned identity. Historical Skill packages, prompt versions, version activation,
 rollback, cleanup APIs, and the `knowledge_qa` adapter have been removed; persisted Runs are not
 recovered through compatibility code.
 
@@ -232,6 +234,9 @@ Agent Runtime → Domain + ModelGateway
 │   ├── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
 │   ├── assistant_agent/             # 顶层自主 Assistant Loop (1.0.0)
 │   ├── knowledge_agent/             # 知识检索和回答 Loop (1.0.0)
+│   ├── research_reading_workflow/   # 未激活的研究阅读 Workflow 契约 (1.0.0)
+│   ├── exam_preparation_workflow/   # 未激活的备考 Workflow 契约 (1.0.0)
+│   ├── course_project_workflow/     # 未激活的课程项目 Workflow 契约 (1.0.0)
 │   ├── summarize_document/         # 固定单文档版本的引用摘要
 │   ├── compare_sources/            # 固定多来源的引用比较
 │   └── create_review_cards/        # 带引用预览与审批后的派生知识写入

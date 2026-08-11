@@ -8,7 +8,7 @@
 
 ## 决定
 
-- 每个受信 Skill 只保留当前目录和版本 `1.0.0`。
+- 每个受信 Skill 只保留当前目录和版本 `1.0.0`；未激活的学习 Workflow 契约也遵循此规则，且不进入 Assistant 调用目录。
 - 知识请求固定使用 `knowledge_agent 1.0.0`，持久化新 Run 固定使用 Router `assistant-agent-loop-v1`
   和 Prompt `assistant-base-prompt-v7`。
 - 删除旧 `knowledge_qa` Skill/适配器、旧 Prompt 产物、Assistant v1 Web 入口和 Skill 激活、回滚、清理 API。

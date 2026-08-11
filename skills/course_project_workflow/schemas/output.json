@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "phase", "citations", "next_action"],
+  "properties": {
+    "schema_version": {"const": "course-project-workflow-output-v1"},
+    "status": {"enum": ["in_progress", "waiting_user_input", "completed", "refused"]},
+    "phase": {"enum": ["requirements", "baseline", "learn", "design", "milestones", "validate", "submission", "defense", "retrospective"]},
+    "requirement_matrix": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["requirement", "source_status", "deliverables", "acceptance_evidence", "citation_ids"], "properties": {"requirement": {"type": "string"}, "source_status": {"enum": ["explicit", "unknown"]}, "deliverables": {"type": "array", "items": {"type": "string"}}, "acceptance_evidence": {"type": "array", "items": {"type": "string"}}, "citation_ids": {"type": "array", "items": {"type": "string"}}}}},
+    "project_baseline": {"$ref": "#/$defs/textItems"},
+    "knowledge_dependencies": {"$ref": "#/$defs/evidenceItems"},
+    "learning_plan": {"$ref": "#/$defs/evidenceItems"},
+    "architecture_plan": {"$ref": "#/$defs/evidenceItems"},
+    "decision_records": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["decision", "alternatives", "tradeoffs", "revisit_when", "citation_ids"], "properties": {"decision": {"type": "string"}, "alternatives": {"type": "array", "items": {"type": "string"}}, "tradeoffs": {"type": "array", "items": {"type": "string"}}, "revisit_when": {"type": "string"}, "citation_ids": {"type": "array", "items": {"type": "string"}}}}},
+    "milestones": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name", "tasks", "deliverables", "acceptance_criteria", "dependencies", "risks"], "properties": {"name": {"type": "string"}, "tasks": {"type": "array", "items": {"type": "string"}}, "deliverables": {"type": "array", "items": {"type": "string"}}, "acceptance_criteria": {"type": "array", "items": {"type": "string"}}, "dependencies": {"type": "array", "items": {"type": "string"}}, "risks": {"type": "array", "items": {"type": "string"}}}}},
+    "implementation_checklist": {"$ref": "#/$defs/textItems"},
+    "test_matrix": {"$ref": "#/$defs/evidenceItems"},
+    "experiment_plan": {"$ref": "#/$defs/evidenceItems"},
+    "submission_checklist": {"$ref": "#/$defs/textItems"},
+    "report_outline": {"$ref": "#/$defs/evidenceItems"},
+    "demo_script": {"$ref": "#/$defs/textItems"},
+    "defense_quiz": {"type": "object", "additionalProperties": false, "required": ["quiz_id", "questions"], "properties": {"quiz_id": {"type": "string"}, "questions": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["question_id", "prompt", "category", "citation_ids"], "properties": {"question_id": {"type": "string"}, "prompt": {"type": "string"}, "category": {"enum": ["design", "algorithm", "experiment", "failure", "contribution"]}, "citation_ids": {"type": "array", "items": {"type": "string"}}}}}}},
+    "defense_review": {"type": "object", "additionalProperties": false, "required": ["quiz_id", "items"], "properties": {"quiz_id": {"type": "string"}, "items": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["question_id", "feedback", "reference_points", "citation_ids"], "properties": {"question_id": {"type": "string"}, "feedback": {"type": "string"}, "reference_points": {"type": "array", "items": {"type": "string"}}, "citation_ids": {"type": "array", "items": {"type": "string"}}}}}}},
+    "retrospective": {"$ref": "#/$defs/textItems"},
+    "citations": {"type": "array", "items": {"$ref": "#/$defs/citation"}},
+    "next_action": {"enum": ["confirm_requirements", "select_design", "submit_checkpoint", "provide_test_results", "provide_experiment_observations", "start_acceptance", "answer_defense_questions", "reveal_defense_reference_points", "complete"]},
+    "refusal": {"type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": {"code": {"type": "string"}, "message": {"type": "string"}}}
+  },
+  "$defs": {
+    "textItems": {"type": "array", "items": {"type": "string"}},
+    "evidenceItems": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["text", "citation_ids"], "properties": {"text": {"type": "string"}, "citation_ids": {"type": "array", "items": {"type": "string"}}, "limitations": {"type": "array", "items": {"type": "string"}}}}},
+    "citation": {"type": "object", "additionalProperties": false, "required": ["citation_id", "evidence_id"], "properties": {"citation_id": {"type": "string"}, "evidence_id": {"type": "string", "format": "uuid"}}}
+  }
+}

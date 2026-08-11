@@ -3,7 +3,8 @@
 ## 2026-08-10 实现状态
 
 当前 Assistant 对话版本已完成临时工程契约。新的知识请求统一使用 `knowledge_agent 1.0.0`；
-旧版 Skill、旧 Prompt 和 `knowledge_qa` 适配器已删除，不再提供回退恢复路径。Grounded Skill 结果只是参考材料，由一次独立的
+五个活跃 Runtime Skill 与三个未激活的学习 Workflow 契约均只保留 `1.0.0`。旧版 Skill、旧 Prompt 和
+`knowledge_qa` 适配器已删除，不再提供回退恢复路径。Grounded Skill 结果只是参考材料，由一次独立的
 `ConversationFinalizer` 生成面向用户的 Assistant 消息，并且只发布一次。
 
 Web 会为每次 Skill 调用保留一个默认折叠的调用记录卡，即使调用完成、失败、取消或进入澄清状态也不会
