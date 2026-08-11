@@ -133,10 +133,15 @@ function Get-ManagedComposeProjects {
     $expectedPath = [System.IO.Path]::GetFullPath($ComposePath)
     $projects = @($rawProjects | ConvertFrom-Json)
     return @($projects | Where-Object {
-        $matchesConfig = $_.ConfigFiles -split ',' | ForEach-Object {
+        $configFilesProperty = $_.PSObject.Properties['ConfigFiles']
+        $nameProperty = $_.PSObject.Properties['Name']
+        if ($null -eq $configFilesProperty -or $null -eq $nameProperty) {
+            return $false
+        }
+        $matchesConfig = ([string]$configFilesProperty.Value) -split ',' | ForEach-Object {
             [System.IO.Path]::GetFullPath($_.Trim()) -eq $expectedPath
         } | Where-Object { $_ } | Select-Object -First 1
-        $matchesConfig -and ($_.Name -eq $LegacyProjectName -or $_.Name -like "creative-challenge-local-*")
+        $matchesConfig -and ($nameProperty.Value -eq $LegacyProjectName -or $nameProperty.Value -like "creative-challenge-local-*")
     } | ForEach-Object { $_.Name })
 }
 

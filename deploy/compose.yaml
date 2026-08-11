@@ -233,7 +233,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.web
-      args:
+      args: {}
     ports:
       - "${WEB_PORT:-5173}:80"
     depends_on:

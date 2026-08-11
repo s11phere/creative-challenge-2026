@@ -1065,9 +1065,20 @@ def _validate_parent(
                 ConversationRunSelectionSource.AUTO.value,
                 ConversationRunSelectionSource.NONE.value,
             }
-            and model.skill_name == run.versions.skill_name
-            and model.skill_version == run.versions.skill_version
-            and model.skill_content_sha256 == run.versions.skill_content_sha256
+            and (
+                (
+                    run.versions.skill_content_sha256 is None
+                    and model.skill_name is None
+                    and model.skill_version is None
+                    and model.skill_content_sha256 is None
+                )
+                or (
+                    run.versions.skill_content_sha256 is not None
+                    and model.skill_name == run.versions.skill_name
+                    and model.skill_version == run.versions.skill_version
+                    and model.skill_content_sha256 == run.versions.skill_content_sha256
+                )
+            )
         )
     if not valid:
         raise QAContractError("QA Run conflicts with its current ConversationRun parent")

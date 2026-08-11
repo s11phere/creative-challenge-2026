@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { QAWorkspace } from './QAWorkspace'
-import type { ConversationHistory } from './qa'
+import type { ConversationHistory, QARun } from './qa'
 
 const conversation = {
   conversation_id: 'conversation-1',
