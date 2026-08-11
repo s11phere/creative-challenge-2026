@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { SkillsPanel } from './SkillsPanel'
 
@@ -32,7 +32,9 @@ it('loads the fixed installed Skill set without version-management controls', as
 
   renderPanel()
 
-  expect(await screen.findByText('knowledge_agent')).toBeInTheDocument()
+  const summary = await screen.findByRole('button', { name: /knowledge_agent/ })
+  expect(screen.queryByText('Grounded knowledge requests.')).not.toBeInTheDocument()
+  fireEvent.click(summary)
   expect(screen.getByText('Grounded knowledge requests.')).toBeInTheDocument()
   expect(screen.queryByText(/回滚|激活|清理/)).not.toBeInTheDocument()
   expect(fetchMock).toHaveBeenCalledWith(

@@ -1,25 +1,46 @@
 import { useQuery } from '@tanstack/react-query'
-import { Bot, CircleAlert, LoaderCircle, RefreshCw } from 'lucide-react'
+import { Bot, ChevronDown, CircleAlert, LoaderCircle, RefreshCw } from 'lucide-react'
+import { useState } from 'react'
 import { fetchSkills, type SkillVersion } from './qa'
 
 function SkillRow({ skill }: { skill: SkillVersion }) {
+  const [expanded, setExpanded] = useState(false)
+  const detailsId = `skill-${skill.name}-details`
   return (
-    <article className="skill-row">
-      <div className="skill-summary">
+    <div className={`skill-row${expanded ? ' expanded' : ''}`}>
+      <button
+        type="button"
+        className="skill-summary"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        aria-controls={detailsId}
+      >
         <span className="skill-icon"><Bot size={18} /></span>
         <span className="skill-name">
           <strong>{skill.name}</strong>
-          <span>v{skill.version}</span>
+          <span>固定版本 v{skill.version}</span>
         </span>
-      </div>
-      <p>{skill.description}</p>
-      <dl className="skill-version-meta">
-        <div><dt>摘要</dt><dd title={skill.content_sha256}>{skill.content_sha256}</dd></div>
-        <div><dt>权限</dt><dd>{skill.permissions.join(', ') || '无'}</dd></div>
-        <div><dt>能力</dt><dd>{skill.required_capabilities.join(', ') || '无'}</dd></div>
-        <div><dt>预算</dt><dd>{skill.budget.max_steps} 步 / {skill.budget.max_tool_calls} Tool / {skill.budget.timeout_seconds}s</dd></div>
-      </dl>
-    </article>
+        <ChevronDown className={expanded ? 'skill-chevron skill-chevron-open' : 'skill-chevron'} size={16} aria-hidden="true" />
+      </button>
+      {expanded && (
+        <div className="skill-versions" id={detailsId}>
+          <div className="skill-version">
+            <div className="skill-version-heading">
+              <div>
+                <strong>v{skill.version}</strong>
+              </div>
+            </div>
+            <p>{skill.description}</p>
+            <dl className="skill-version-meta">
+              <div><dt>摘要</dt><dd title={skill.content_sha256}>{skill.content_sha256}</dd></div>
+              <div><dt>权限</dt><dd>{skill.permissions.join(', ') || '无'}</dd></div>
+              <div><dt>能力</dt><dd>{skill.required_capabilities.join(', ') || '无'}</dd></div>
+              <div><dt>预算</dt><dd>{skill.budget.max_steps} 步 / {skill.budget.max_tool_calls} Tool / {skill.budget.timeout_seconds}s</dd></div>
+            </dl>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

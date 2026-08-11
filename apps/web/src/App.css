@@ -10,6 +10,19 @@
   overflow: hidden;
 }
 
+/* Non-QA views scroll the page, not the shell; keep the sidebar pinned at viewport
+   height so it does not stretch to the full content height and scroll away. */
+.app-shell:not([data-view='qa']) .sidebar,
+.app-shell:not([data-view='qa']) .sidebar-resizer {
+  height: 100svh;
+  position: sticky;
+  top: 0;
+}
+
+.app-shell:not([data-view='qa']) .sidebar {
+  align-self: start;
+}
+
 .sidebar {
   min-height: 100svh;
   padding: 22px 16px 18px;
@@ -287,6 +300,7 @@
 }
 
 .sidebar-nav a:focus-visible,
+.skill-summary:focus-visible,
 .icon-button:focus-visible,
 .panel-action-button:focus-visible,
 .source-action-button:focus-visible,
@@ -733,6 +747,8 @@
 
   .sidebar {
     min-height: 0;
+    height: auto;
+    position: static;
     padding: 12px 16px;
     display: flex;
     flex-direction: column;
@@ -740,6 +756,11 @@
     gap: 12px;
     border-right: 0;
     border-bottom: 1px solid #2d4038;
+  }
+
+  .app-shell:not([data-view='qa']) .sidebar-resizer {
+    height: auto;
+    position: static;
   }
 
   .sidebar-nav {
@@ -3161,6 +3182,15 @@
 
 .skill-summary:hover {
   background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+
+.skill-chevron {
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.skill-chevron-open {
+  transform: rotate(180deg);
 }
 
 .skill-icon {
