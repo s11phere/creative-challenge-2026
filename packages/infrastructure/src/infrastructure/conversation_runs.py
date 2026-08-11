@@ -389,7 +389,7 @@ class PostgresConversationRunRepository:
                 return current
             model.run_kind = run_kind.value
             model.selection_source = selection_source.value
-            model.router_version = "assistant-router-decision-v1"
+            model.router_version = "assistant-agent-loop-v1"
             model.skill_name = skill.name
             model.skill_version = skill.version
             model.skill_content_sha256 = skill.content_sha256

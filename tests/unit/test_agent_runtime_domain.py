@@ -27,7 +27,7 @@ def make_run() -> AgentRun:
         context=AgentRunContext(
             run_id=uuid4(),
             space_id=uuid4(),
-            skill_name="knowledge_qa",
+            skill_name="knowledge_agent",
             skill_version="1.0.0",
             skill_content_sha256="a" * 64,
             trace_id="trace-1",

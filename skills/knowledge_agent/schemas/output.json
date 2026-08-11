@@ -2,9 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["action", "reason"],
+  "required": ["status", "outcome", "qa_run_id", "publication"],
   "properties": {
-    "action": {"enum": ["complete", "refuse"]},
-    "reason": {"type": "string", "minLength": 1, "maxLength": 2000}
+    "status": {"enum": ["completed", "refused"]},
+    "outcome": {"enum": ["answer", "refuse", "conflict"]},
+    "qa_run_id": {"type": "string", "format": "uuid"},
+    "publication": {"const": "grounded_qa"}
   }
 }

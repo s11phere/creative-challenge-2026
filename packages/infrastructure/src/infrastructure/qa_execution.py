@@ -33,12 +33,10 @@ from application.qa import (
 )
 from application.skills import (
     DerivedKnowledgeWriter,
-    KnowledgeAgentSkillAdapter,
-    KnowledgeAgentSkillConfig,
+    GroundedQASkillAdapter,
+    GroundedQASkillConfig,
     KnowledgeLoopTools,
     KnowledgeLoopToolsConfig,
-    KnowledgeQASkillAdapter,
-    KnowledgeQASkillConfig,
 )
 from domain.agent_runtime import AgentRun, AgentRunContext, ApprovalPort, RunStatus
 from domain.agent_sse import AgentRunEventStore
@@ -488,7 +486,7 @@ def qa_skill_registry() -> FileSystemSkillRegistry:
     """Load all trusted Skills and activate the sole new knowledge entry point."""
     registry = FileSystemSkillRegistry(Path(settings.skill_root_path))
     registry.reload()
-    registry.activate("knowledge_agent", settings.active_knowledge_agent_skill_version)
+    registry.activate("knowledge_agent", settings.knowledge_agent_skill_version)
     return registry
 
 
@@ -503,7 +501,7 @@ def assistant_skill_registry() -> FileSystemSkillRegistry:
     ):
         if name == "knowledge_agent":
             continue
-        registry.activate(name, "0.2.0")
+        registry.activate(name, "1.0.0")
     return registry
 
 
@@ -650,10 +648,7 @@ class GroundedQAExecutor:
             return await self._repository.transition_run(
                 run.run_id, QAEvent.FAIL, error_code="QA_RUNTIME_FAILED"
             )
-        use_generic_knowledge_loop = (
-            run.versions.skill_name == "knowledge_agent"
-            and pin.version in {"0.5.0", "0.6.0", "0.7.0", "0.8.0", "0.9.0"}
-        )
+        use_generic_knowledge_loop = run.versions.skill_name == "knowledge_agent"
         runtime_gateway: ModelGateway
         state_store = PostgresRuntimeStateStore(self._database)
         if use_generic_knowledge_loop:
@@ -664,7 +659,7 @@ class GroundedQAExecutor:
                     profile=self.profile,
                     versions=run.versions,
                     retrieval_scope=run.retrieval_scope,
-                    tool_version="1.1.0" if pin.version in {"0.7.0", "0.8.0", "0.9.0"} else "1.0.0",
+                    tool_version="1.1.0",
                 ),
                 result_reader=self._repository.get_run,
             )
@@ -673,27 +668,10 @@ class GroundedQAExecutor:
             )
             runtime_tool_registry = TracingToolRegistry(loop_tools.tool_registry, trace)
             loop_tools.replace_tool_registry(runtime_tool_registry)
-        elif run.versions.skill_name == "knowledge_agent":
-            agent_adapter = KnowledgeAgentSkillAdapter(
-                qa=service,
-                config=KnowledgeAgentSkillConfig(
-                    profile=self.profile,
-                    versions=run.versions,
-                    system_prompt=(package.root / package.manifest.prompts[0]).read_text(
-                        encoding="utf-8"
-                    ),
-                ),
-            )
-            runtime_gateway = TracingModelGateway(
-                StructuredAgentGateway(self._gateway), trace, phase="agent_decision"
-            )
-            runtime_tool_registry = TracingToolRegistry(agent_adapter.tool_registry, trace)
-            agent_adapter.replace_tool_registry(runtime_tool_registry)
-            runtime_handlers = agent_adapter.handlers()
         else:
-            qa_adapter = KnowledgeQASkillAdapter(
+            qa_adapter = GroundedQASkillAdapter(
                 qa=service,
-                config=KnowledgeQASkillConfig(
+                config=GroundedQASkillConfig(
                     profile=self.profile,
                     versions=run.versions,
                     execute_existing_run=True,
@@ -851,7 +829,6 @@ def _profiles() -> tuple[QAPlanningProfileV1, RetrievalProfileV1, QAGenerationPr
 
 def _skill_output_schema(skill_name: str) -> str:
     schemas = {
-        "knowledge_qa": "knowledge-qa-skill-output-v1",
         "summarize_document": "summarize-document-skill-output-v1",
         "compare_sources": "compare-sources-skill-output-v1",
         "create_review_cards": "review-cards-skill-output-v1",

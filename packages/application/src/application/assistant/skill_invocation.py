@@ -245,17 +245,12 @@ class AssistantSkillInvocationService:
         resource_scope: object | None,
         context: ConversationContextSnapshot | None,
     ) -> ConversationRun:
-        run_kind = (
-            ConversationRunKind.GROUNDED_QA
-            if skill.name == "knowledge_qa"
-            else ConversationRunKind.SKILL
-        )
         promoted = await self._runs.promote_to_skill(
             run.run_id,
-            run_kind=run_kind,
+            run_kind=ConversationRunKind.SKILL,
             selection_source=selection_source,
             skill=skill,
-            core_prompt_version="assistant-base-prompt-v4",
+            core_prompt_version="assistant-base-prompt-v7",
         )
         assert promoted.skill is not None
         projection_arguments = dict(arguments)

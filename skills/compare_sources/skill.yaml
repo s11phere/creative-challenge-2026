@@ -1,6 +1,6 @@
-manifest_version: "1"
+manifest_version: "2"
 name: compare_sources
-version: 0.1.0
+version: 1.0.0
 description: Compare fixed published versions from at least two Space-owned sources.
 input_schema: schemas/input.json
 output_schema: schemas/output.json
@@ -12,3 +12,16 @@ entrypoint: workflow.yaml
 compatibility: {runtime: ">=0.1.0,<1.0.0", checkpoint_schema_versions: [1]}
 prompts: [prompts/boundary.md]
 evals: [evals/cases.jsonl]
+invocation:
+  command: compare
+  aliases: [contrast]
+  argument_hint: "<两个或多个来源> <比较主题>"
+  trigger:
+    summary: "比较当前 Space 中至少两个已发布来源的内容并保留引用"
+    when:
+      - "用户明确要求比较两个或多个库内来源"
+    avoid_when:
+      - "用户只需要一般性概念比较且未涉及知识库内容"
+    examples:
+      - "比较课程笔记和数学笔记中的优化方法"
+  input_mode: sources

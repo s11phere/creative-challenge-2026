@@ -1,6 +1,5 @@
 [CmdletBinding()]
 param(
-    [switch]$LegacyKnowledgeAgent,
     [switch]$AllowExternalWorkspaceTools
 )
 
@@ -208,14 +207,7 @@ if ($AllowExternalWorkspaceTools) {
 else {
     $env:AGENT_WORKSPACE_MODEL_VISIBILITY_CONSENT = "false"
 }
-if ($LegacyKnowledgeAgent) {
-    $env:KNOWLEDGE_AGENT_SKILL_VERSION = "0.3.0"
-    $env:AGENT_LOOP_V5_ENABLED = "false"
-}
-else {
-    $env:KNOWLEDGE_AGENT_SKILL_VERSION = "0.9.0"
-    $env:AGENT_LOOP_V5_ENABLED = "true"
-}
+$env:KNOWLEDGE_AGENT_SKILL_VERSION = "1.0.0"
 
 $composeFile = "deploy/compose.yaml"
 $skillFingerprint = Get-SkillStateFingerprint -SkillsRoot (Join-Path $repoRoot "skills")
@@ -229,7 +221,7 @@ $rerankerPort = Get-ConfiguredValue -Values $envValues -Name "RERANKER_PORT" -De
 
 Write-Host "Using .env from $envPath" -ForegroundColor Gray
 Write-Host "Effective retrieval: local TEI embedding + real TEI reranker" -ForegroundColor Gray
-Write-Host "Knowledge Agent: $($env:KNOWLEDGE_AGENT_SKILL_VERSION) (generic loop enabled: $($env:AGENT_LOOP_V5_ENABLED))" -ForegroundColor Gray
+Write-Host "Knowledge Agent: $($env:KNOWLEDGE_AGENT_SKILL_VERSION)" -ForegroundColor Gray
 Write-Host "Chat credentials: loaded from .env (secret value hidden)" -ForegroundColor Gray
 Write-Host "Local Compose project: $composeProjectName (trusted Skill fingerprint $skillFingerprint)" -ForegroundColor Gray
 

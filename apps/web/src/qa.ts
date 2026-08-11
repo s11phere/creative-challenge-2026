@@ -66,19 +66,11 @@ export type ConversationHistory = {
   conversations: ConversationHistoryItem[]
 }
 
-export type SkillSummary = {
-  name: string
-  active_version: string | null
-  active_revision: number | null
-  versions: string[]
-}
-
 export type SkillVersion = {
   name: string
   version: string
   content_sha256: string
   description: string
-  active: boolean
   permissions: string[]
   required_capabilities: string[]
   budget: {
@@ -88,13 +80,6 @@ export type SkillVersion = {
     max_output_tokens: number
     timeout_seconds: number
   }
-}
-
-export type SkillActivation = {
-  name: string
-  version: string
-  content_sha256: string
-  revision: number
 }
 
 export type Approval = {
@@ -229,26 +214,6 @@ export type AssistantCommandResult = {
 
 export type AssistantTurnResult = AssistantRun | AssistantCommandResult
 
-export function legacyQARunToAssistantRun(run: QARun): AssistantRun {
-  return {
-    run_id: run.run_id,
-    user_message_id: run.question_message_id,
-    status: run.status,
-    run_kind: 'grounded_qa',
-    error_code: run.error_code,
-    selection: { source: 'none', skill: null },
-    model_identity: 'legacy-v1',
-    assistant_message: null,
-    clarification: null,
-    usage: {
-      input_tokens: 0,
-      output_tokens: 0,
-      total_tokens: 0,
-      model_latency_ms: 0,
-    },
-  }
-}
-
 function isAssistantRun(value: AssistantTurnResult): value is AssistantRun {
   return 'run_id' in value
 }
@@ -279,21 +244,6 @@ export function createConversation(): Promise<Conversation> {
   return request(`/api/v1/spaces/${DEFAULT_SPACE_ID}/conversations`, {
     method: 'POST',
     body: JSON.stringify({ owner_id: 'local' }),
-  })
-}
-
-export function submitQuestion(
-  conversationId: string,
-  question: string,
-  idempotencyKey: string,
-  legacyRoute = false,
-): Promise<QARun> {
-  const path = legacyRoute
-    ? `/api/v1/conversations/${conversationId}/questions`
-    : `/api/v1/conversations/${conversationId}/skills/knowledge_agent/runs`
-  return request(path, {
-    method: 'POST',
-    body: JSON.stringify({ question, idempotency_key: idempotencyKey }),
   })
 }
 
@@ -330,13 +280,6 @@ export function createReviewCards(
   })
 }
 
-export function cancelRun(runId: string): Promise<QARun> {
-  return request(`/api/v1/qa/runs/${runId}/cancel`, {
-    method: 'POST',
-    body: JSON.stringify({}),
-  })
-}
-
 export function resumeRun(runId: string): Promise<QARun> {
   return request(`/api/v1/qa/runs/${runId}/resume`, { method: 'POST', body: JSON.stringify({}) })
 }
@@ -355,45 +298,8 @@ export function decideApproval(runId: string, approvalId: string, approved: bool
   })
 }
 
-export function fetchSkills(signal?: AbortSignal): Promise<SkillSummary[]> {
+export function fetchSkills(signal?: AbortSignal): Promise<SkillVersion[]> {
   return request('/api/v1/skills', { signal })
-}
-
-export function fetchSkillVersions(skillName: string, signal?: AbortSignal): Promise<SkillVersion[]> {
-  return request(`/api/v1/skills/${skillName}/versions`, { signal })
-}
-
-export function activateSkill(
-  skillName: string,
-  version: string,
-  expectedRevision: number,
-): Promise<SkillActivation> {
-  return request(`/api/v1/skills/${skillName}/active`, {
-    method: 'PUT',
-    body: JSON.stringify({ version, expected_revision: expectedRevision }),
-  })
-}
-
-export function rollbackSkill(
-  skillName: string,
-  version: string,
-  expectedRevision: number,
-): Promise<SkillActivation> {
-  return request(`/api/v1/skills/${skillName}/rollback`, {
-    method: 'POST',
-    body: JSON.stringify({ version, expected_revision: expectedRevision }),
-  })
-}
-
-export function cleanupSkillVersion(
-  skillName: string,
-  version: string,
-  contentSha256: string,
-): Promise<{ name: string; version: string; removed: boolean; references: number }> {
-  return request(`/api/v1/skills/${skillName}/versions/${version}/cleanup`, {
-    method: 'POST',
-    body: JSON.stringify({ content_sha256: contentSha256 }),
-  })
 }
 
 export function fetchCitationExcerpt(

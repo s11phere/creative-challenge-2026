@@ -19,7 +19,7 @@ async def test_openapi_includes_health_endpoints() -> None:
     assert "/api/v1/health/ready" in paths
     assert "/api/v1/spaces/{space_id}/search" in paths
     assert "/api/v1/skills" in paths
-    assert "/api/v1/skills/{skill_name}/versions" in paths
+    assert "/api/v1/skills/{skill_name}/versions" not in paths
     assert "/api/v2/conversations/{conversation_id}/turns" in paths
     assert "/api/v2/commands" in paths
     assert "/api/v2/runs/{run_id}" in paths

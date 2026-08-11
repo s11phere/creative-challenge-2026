@@ -1,6 +1,5 @@
 """Provisional Skill adapters that invoke authoritative Application ports."""
 
-from .active_catalog import ActiveSkillCatalogService
 from .catalog import (
     SkillActivation,
     SkillActivationStore,
@@ -10,9 +9,8 @@ from .catalog import (
     SkillVersionView,
     SkillView,
 )
-from .knowledge_agent import KnowledgeAgentSkillAdapter, KnowledgeAgentSkillConfig
+from .grounded_qa_skill import DerivedKnowledgeWriter, GroundedQASkillAdapter, GroundedQASkillConfig
 from .knowledge_loop import KnowledgeLoopTools, KnowledgeLoopToolsConfig
-from .knowledge_qa import DerivedKnowledgeWriter, KnowledgeQASkillAdapter, KnowledgeQASkillConfig
 from .lifecycle import SkillLifecycleError, SkillLifecycleErrorCode, SkillLifecycleService
 from .organization import (
     KnowledgeOrganizationScopeService,
@@ -21,12 +19,9 @@ from .organization import (
 )
 
 __all__ = [
-    "KnowledgeQASkillAdapter",
-    "KnowledgeQASkillConfig",
-    "ActiveSkillCatalogService",
+    "GroundedQASkillAdapter",
+    "GroundedQASkillConfig",
     "DerivedKnowledgeWriter",
-    "KnowledgeAgentSkillAdapter",
-    "KnowledgeAgentSkillConfig",
     "KnowledgeLoopTools",
     "KnowledgeLoopToolsConfig",
     "KnowledgeOrganizationScopeService",

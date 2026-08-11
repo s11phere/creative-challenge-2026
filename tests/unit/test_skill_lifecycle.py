@@ -14,7 +14,10 @@ from agent_runtime.skills import (
     SkillRegistryErrorCode,
     SkillRegistryEventType,
 )
-from application.skills import SkillLifecycleError, SkillLifecycleErrorCode, SkillLifecycleService
+from application.skills import (
+    SkillActivation,
+    SkillLifecycleService,
+)
 from domain.agent_runtime import RunCheckpoint
 from infrastructure.skill_lifecycle import InMemorySkillActivationStore
 
@@ -213,7 +216,7 @@ def test_concurrent_activation_and_pinning_return_only_complete_versions(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_persisted_activation_survives_registry_reconstruction_and_rejects_stale_write(
+async def test_current_skill_replaces_a_stale_persisted_activation(
     tmp_path: Path,
 ) -> None:
     write_package(tmp_path, "v1", version="1.0.0")
@@ -229,8 +232,12 @@ async def test_persisted_activation_survives_registry_reconstruction_and_rejects
     )
     initial = await first.current("lifecycle_skill")
     assert (initial.version, initial.revision) == ("1.0.0", 1)
-    activated = await first.activate("lifecycle_skill", "2.0.0", expected_revision=1)
-    assert (activated.version, activated.revision) == ("2.0.0", 2)
+    stale_pin = first_registry.pin("lifecycle_skill", "2.0.0")
+    stale = await store.compare_and_set(
+        SkillActivation("lifecycle_skill", "2.0.0", stale_pin.content_sha256, 2),
+        expected_revision=1,
+    )
+    assert stale is not None
 
     second_registry = FileSystemSkillRegistry(tmp_path)
     second_registry.reload()
@@ -240,10 +247,5 @@ async def test_persisted_activation_survives_registry_reconstruction_and_rejects
         defaults={"lifecycle_skill": "1.0.0"},
     )
     restored = await second.current("lifecycle_skill")
-    assert restored == activated
-    assert second_registry.active_version("lifecycle_skill") == "2.0.0"
-
-    with pytest.raises(SkillLifecycleError) as stale:
-        await first.activate("lifecycle_skill", "1.0.0", expected_revision=1, rollback=True)
-    assert stale.value.code is SkillLifecycleErrorCode.ACTIVATION_CONFLICT
-    assert first_registry.active_version("lifecycle_skill") == "2.0.0"
+    assert (restored.version, restored.revision) == ("1.0.0", 3)
+    assert second_registry.active_version("lifecycle_skill") == "1.0.0"

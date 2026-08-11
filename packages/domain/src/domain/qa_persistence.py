@@ -144,7 +144,7 @@ class QARunVersions:
     output_schema_version: str
     corpus_version: str
     dataset_version: str
-    skill_name: str = "knowledge_qa"
+    skill_name: str = "knowledge_agent"
     skill_content_sha256: str | None = None
 
     def __post_init__(self) -> None:

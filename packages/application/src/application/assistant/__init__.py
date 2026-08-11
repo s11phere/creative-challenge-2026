@@ -1,13 +1,5 @@
 """Versioned contracts and application services for the product-level Assistant Agent."""
 
-from .agent import (
-    AssistantAgentError,
-    AssistantAgentService,
-    AssistantMessageReader,
-    AssistantRouterDecision,
-    AssistantRouterDecisionParser,
-    AssistantSkillInvoker,
-)
 from .autonomous_loop import (
     AssistantConversationLoopFinalizer,
     AssistantSkillContext,
@@ -63,15 +55,11 @@ from .workspace import (
 
 __all__ = [
     "AssistantTurnApplicationPort",
-    "AssistantAgentError",
-    "AssistantAgentService",
     "AssistantConversationLoopFinalizer",
     "AssistantCommandCatalog",
     "AssistantCommandKind",
     "AssistantCommandParser",
     "AssistantCommandService",
-    "AssistantMessageReader",
-    "AssistantSkillInvoker",
     "AssistantSkillContext",
     "AutonomousAssistantLoopService",
     "ConversationCompactionService",
@@ -89,8 +77,6 @@ __all__ = [
     "CommandParseError",
     "ParsedAssistantCommand",
     "SkillCommandInvoker",
-    "AssistantRouterDecision",
-    "AssistantRouterDecisionParser",
     "AssistantTurnSubmission",
     "ConversationReader",
     "ConversationRunApplicationError",

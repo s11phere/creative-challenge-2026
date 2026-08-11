@@ -62,12 +62,8 @@ describe('system status workspace', () => {
     renderApp('')
 
     expect(await screen.findByRole('combobox', { name: '消息' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Assistant' })).toHaveAttribute('aria-pressed', 'true')
     expect(window.location.hash).toBe('#qa')
-
-    fireEvent.click(screen.getByRole('button', { name: '兼容问答' }))
-    expect(screen.getByRole('button', { name: '兼容问答' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('textbox', { name: '消息' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: '消息' })).toBeInTheDocument()
   })
 
   it('shows bounded loading and then all healthy services', async () => {

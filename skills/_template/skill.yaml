@@ -1,6 +1,6 @@
 manifest_version: "1"
 name: skill_template
-version: 0.1.0
+version: 1.0.0
 description: Minimal declaration-only Skill package template.
 input_schema: schemas/input.json
 output_schema: schemas/output.json

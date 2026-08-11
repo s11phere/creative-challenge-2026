@@ -168,7 +168,7 @@ class FakeResourceResolver:
         )
 
 
-def versions(*, skill_version: str = "0.5.0") -> QARunVersions:
+def versions(*, skill_version: str = "1.0.0") -> QARunVersions:
     return QARunVersions(
         skill_name="knowledge_agent",
         skill_version=skill_version,
@@ -197,7 +197,7 @@ def runtime_run(*, max_tool_calls: int = 5) -> AgentRun:
             run_id=RUN_ID,
             space_id=SPACE_ID,
             skill_name="knowledge_agent",
-            skill_version="0.5.0",
+            skill_version="1.0.0",
             skill_content_sha256="a" * 64,
             trace_id="knowledge-loop-test",
             caller_id="synthetic-user",
@@ -220,7 +220,7 @@ def tool_context() -> ToolExecutionContext:
 def tools(
     outcome: QAOutcome = QAOutcome.ANSWER,
     *,
-    skill_version: str = "0.5.0",
+    skill_version: str = "1.0.0",
 ) -> tuple[KnowledgeLoopTools, FakeSearchService, FakeGroundedQA]:
     search = FakeSearchService()
     qa = FakeGroundedQA(outcome)
@@ -326,7 +326,7 @@ async def test_document_summary_resolves_and_searches_a_fixed_published_scope() 
         search=search,
         config=KnowledgeLoopToolsConfig(
             profile=execution_profile(),
-            versions=versions(skill_version="0.7.0"),
+            versions=versions(skill_version="1.0.0"),
             tool_version="1.1.0",
             resource_resolver=resolver,
         ),
@@ -347,13 +347,13 @@ async def test_document_summary_resolves_and_searches_a_fixed_published_scope() 
 @pytest.mark.asyncio
 async def test_document_summary_reports_ambiguous_resource_for_actionable_clarification() -> None:
     resolver = FakeResourceResolver(conflict=True)
-    adapter, _search, _qa = tools(skill_version="0.7.0")
+    adapter, _search, _qa = tools(skill_version="1.0.0")
     adapter = KnowledgeLoopTools(
         qa=cast(GroundedQAApplicationPort, _qa),
         search=_search,
         config=KnowledgeLoopToolsConfig(
             profile=execution_profile(),
-            versions=versions(skill_version="0.7.0"),
+            versions=versions(skill_version="1.0.0"),
             tool_version="1.1.0",
             resource_resolver=resolver,
         ),
@@ -376,7 +376,7 @@ async def test_document_summary_can_be_serially_composed_with_knowledge_search()
         search=search,
         config=KnowledgeLoopToolsConfig(
             profile=execution_profile(),
-            versions=versions(skill_version="0.7.0"),
+            versions=versions(skill_version="1.0.0"),
             tool_version="1.1.0",
             resource_resolver=resolver,
         ),
@@ -480,23 +480,22 @@ async def test_knowledge_loop_server_policy_forces_verify_and_finalize_sequence(
 
 
 @pytest.mark.asyncio
-async def test_v8_policy_leaves_an_unstarted_direct_turn_to_the_outer_assistant() -> None:
-    adapter, _search, _qa = tools(skill_version="0.8.0")
+async def test_current_policy_requires_retrieval_for_a_standalone_turn() -> None:
+    adapter, _search, _qa = tools(skill_version="1.0.0")
     direct = LLMDecision(
         LLMDecisionAction.COMPLETE,
         reason="The request is ordinary conversation.",
         final_response="A direct answer.",
     )
 
-    assert (
-        adapter.decision_policy(
-            runtime_run(), AgentLoopState.accepted(AgentLoopTask("Ordinary conversation.")), direct
-        )
-        is direct
+    recovered = adapter.decision_policy(
+        runtime_run(), AgentLoopState.accepted(AgentLoopTask("Ordinary conversation.")), direct
     )
+    assert recovered.action is LLMDecisionAction.CALL_TOOL
+    assert recovered.tool_name == "knowledge_search"
 
 
-def test_v9_policy_requires_a_named_document_summary_before_grounded_answer() -> None:
+def test_current_policy_requires_a_named_document_summary_before_grounded_answer() -> None:
     search = FakeSearchService()
     qa = FakeGroundedQA()
     adapter = KnowledgeLoopTools(
@@ -504,7 +503,7 @@ def test_v9_policy_requires_a_named_document_summary_before_grounded_answer() ->
         search=search,
         config=KnowledgeLoopToolsConfig(
             profile=execution_profile(),
-            versions=versions(skill_version="0.9.0"),
+            versions=versions(skill_version="1.0.0"),
             tool_version="1.1.0",
             resource_resolver=FakeResourceResolver(),
         ),
@@ -541,8 +540,8 @@ def test_v9_policy_requires_a_named_document_summary_before_grounded_answer() ->
 
 
 @pytest.mark.asyncio
-async def test_v8_policy_replaces_an_identical_followup_search() -> None:
-    adapter, _search, _qa = tools(skill_version="0.8.0")
+async def test_current_policy_replaces_an_identical_followup_search() -> None:
+    adapter, _search, _qa = tools(skill_version="1.0.0")
     await adapter.knowledge_search({"query": "architecture"}, tool_context())
     await adapter.knowledge_inspect({}, tool_context())
     repeated = LLMDecision(
@@ -561,8 +560,8 @@ async def test_v8_policy_replaces_an_identical_followup_search() -> None:
 
 
 @pytest.mark.asyncio
-async def test_v8_policy_does_not_turn_a_meta_instruction_into_a_search_query() -> None:
-    adapter, _search, _qa = tools(skill_version="0.8.0")
+async def test_current_policy_does_not_turn_a_meta_instruction_into_a_search_query() -> None:
+    adapter, _search, _qa = tools(skill_version="1.0.0")
     await adapter.knowledge_search({"query": "omnistudio 主要模块"}, tool_context())
     await adapter.knowledge_inspect({}, tool_context())
 
@@ -582,8 +581,8 @@ async def test_v8_policy_does_not_turn_a_meta_instruction_into_a_search_query() 
 
 
 @pytest.mark.asyncio
-async def test_v8_policy_resolves_a_model_selected_qa_workspace_write() -> None:
-    adapter, _search, _qa = tools(skill_version="0.8.0")
+async def test_current_policy_resolves_a_model_selected_qa_workspace_write() -> None:
+    adapter, _search, _qa = tools(skill_version="1.0.0")
     context = tool_context()
     await adapter.knowledge_search({"query": "omnistudio 主要模块"}, context)
     await adapter.knowledge_inspect({}, context)
@@ -613,8 +612,8 @@ async def test_v8_policy_resolves_a_model_selected_qa_workspace_write() -> None:
     assert decision.arguments["content"].startswith("Authoritative QA answer")
 
 
-def test_v8_policy_allows_workspace_tools_after_checkpointed_finalization() -> None:
-    adapter, _search, _qa = tools(skill_version="0.8.0")
+def test_current_policy_allows_workspace_tools_after_checkpointed_finalization() -> None:
+    adapter, _search, _qa = tools(skill_version="1.0.0")
     task = AgentLoopTask("总结上传资料并保存到工作区。")
     state = AgentLoopState.accepted(task).start()
     state = (
@@ -650,7 +649,7 @@ def test_v8_policy_allows_workspace_tools_after_checkpointed_finalization() -> N
 
 @pytest.mark.asyncio
 async def test_knowledge_loop_policy_cannot_skip_search_inspect_or_followup() -> None:
-    adapter, search, qa = tools(skill_version="0.6.0")
+    adapter, search, qa = tools(skill_version="1.0.0")
     result = await AgentLoopExecutor(
         tool_registry=adapter.tool_registry,
         allowed_tools=adapter.allowed_tools,
@@ -676,13 +675,11 @@ async def test_knowledge_loop_policy_cannot_skip_search_inspect_or_followup() ->
     assert [item.tool_name for item in result.state.observations] == [
         "knowledge_search",
         "knowledge_inspect",
-        "knowledge_search",
-        "knowledge_inspect",
         "grounded_answer",
         "verify_answer",
         "finalize_answer",
     ]
-    assert len(search.calls) == 2
+    assert len(search.calls) == 1
     assert qa.execute_calls == [RUN_ID]
 
 

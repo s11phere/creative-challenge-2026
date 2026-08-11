@@ -253,12 +253,6 @@ async def _finalize_parent_completion(
         ConversationRunStatus.CANCELLED,
         ConversationRunStatus.TIMED_OUT,
     }:
-        if claimed.core_prompt_version in {
-            "assistant-base-prompt-v2",
-            "assistant-base-prompt-v3",
-            "assistant-base-prompt-v4",
-        }:
-            await _ensure_finalizer_terminal_event(events, claimed)
         return
     try:
         published = await events.replay(run_id)

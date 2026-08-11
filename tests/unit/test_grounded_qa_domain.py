@@ -209,7 +209,7 @@ def test_qa_status_projects_the_shared_agent_run_without_a_second_budget() -> No
         context=AgentRunContext(
             run_id=uuid4(),
             space_id=SPACE_ID,
-            skill_name="knowledge_qa",
+            skill_name="knowledge_agent",
             skill_version="1.0.0",
             skill_content_sha256="a" * 64,
             trace_id="trace-1",

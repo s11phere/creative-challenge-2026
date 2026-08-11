@@ -13,7 +13,6 @@ from .catalog import SkillActivation, SkillActivationStore
 class SkillLifecycleErrorCode(StrEnum):
     NOT_FOUND = "SKILL_NOT_FOUND"
     INVALID = "SKILL_INVALID"
-    ACTIVATION_CONFLICT = "SKILL_ACTIVATION_CONFLICT"
 
 
 class SkillLifecycleError(Exception):
@@ -39,49 +38,39 @@ class SkillLifecycleService:
 
     async def current(self, name: str) -> SkillActivation:
         async with self._lock:
+            default = self._defaults.get(name)
+            if default is None:
+                raise SkillLifecycleError(
+                    SkillLifecycleErrorCode.NOT_FOUND, "Skill is not installed."
+                )
+            desired = self._activation(name, default, 1)
             activation = await self._store.get(name)
             if activation is None:
-                default = self._defaults.get(name)
-                if default is None:
-                    raise SkillLifecycleError(
-                        SkillLifecycleErrorCode.NOT_FOUND, "Skill is not installed."
-                    )
-                activation = await self._store.initialize(self._activation(name, default, 1))
-            self._apply(activation, rollback=False)
-            return activation
-
-    async def activate(
-        self,
-        name: str,
-        version: str,
-        *,
-        expected_revision: int,
-        rollback: bool = False,
-    ) -> SkillActivation:
-        async with self._lock:
-            current = await self._store.get(name)
-            if current is None:
-                default = self._defaults.get(name)
-                if default is None:
-                    raise SkillLifecycleError(
-                        SkillLifecycleErrorCode.NOT_FOUND, "Skill is not installed."
-                    )
-                current = await self._store.initialize(self._activation(name, default, 1))
-                self._apply(current, rollback=False)
-            candidate = self._activation(name, version, expected_revision + 1)
-            updated = await self._store.compare_and_set(
-                candidate, expected_revision=expected_revision
-            )
-            if updated is None:
-                current = await self._store.get(name)
-                if current is not None:
-                    self._apply(current, rollback=False)
-                raise SkillLifecycleError(
-                    SkillLifecycleErrorCode.ACTIVATION_CONFLICT,
-                    "Skill active revision changed; refresh the catalog and retry.",
+                activation = await self._store.initialize(desired)
+            elif (
+                activation.version != desired.version
+                or activation.content_sha256 != desired.content_sha256
+            ):
+                updated = await self._store.compare_and_set(
+                    SkillActivation(
+                        name=desired.name,
+                        version=desired.version,
+                        content_sha256=desired.content_sha256,
+                        revision=activation.revision + 1,
+                    ),
+                    expected_revision=activation.revision,
                 )
-            self._apply(updated, rollback=rollback)
-            return updated
+                if updated is None:
+                    activation = await self._store.get(name)
+                    if activation is None:
+                        raise SkillLifecycleError(
+                            SkillLifecycleErrorCode.INVALID,
+                            "Skill activation disappeared during update.",
+                        )
+                else:
+                    activation = updated
+            self._apply(activation)
+            return activation
 
     def _activation(self, name: str, version: str, revision: int) -> SkillActivation:
         try:
@@ -97,7 +86,7 @@ class SkillLifecycleService:
             revision=revision,
         )
 
-    def _apply(self, activation: SkillActivation, *, rollback: bool) -> None:
+    def _apply(self, activation: SkillActivation) -> None:
         try:
             pin = self._registry.pin(activation.name, activation.version)
             if pin.content_sha256 != activation.content_sha256:
@@ -105,10 +94,7 @@ class SkillLifecycleService:
                     SkillLifecycleErrorCode.INVALID,
                     "Persisted Skill identity does not match the trusted package.",
                 )
-            if rollback:
-                self._registry.rollback(activation.name, activation.version)
-            else:
-                self._registry.activate(activation.name, activation.version)
+            self._registry.activate(activation.name, activation.version)
         except SkillRegistryError as exc:
             raise SkillLifecycleError(
                 SkillLifecycleErrorCode.INVALID,

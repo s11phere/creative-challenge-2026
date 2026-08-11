@@ -159,7 +159,7 @@ responses, or internal resource IDs to prediction files or operational metric lo
 ### Web QA provider split
 
 `text-embeddings-inference` is an embedding/reranking adapter, not a Chat adapter. Do not set it as
-the sole `MODEL_PROVIDER` when using `knowledge_qa` or `knowledge_agent`; that leaves `fast_chat`
+the sole `MODEL_PROVIDER` when using `knowledge_agent`; that leaves `fast_chat`
 unavailable. The supported local-development split is:
 
 ```dotenv
@@ -222,36 +222,19 @@ RERANKER_ENDPOINT=http://host.docker.internal:<reranker-port>
 RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 ```
 
-## Assistant Web release controls
+## Assistant and Skill Runtime
 
-The Web build defaults to API v2. Compose passes these Vite variables to `Dockerfile.web` at build
-time:
-
-```dotenv
-VITE_ASSISTANT_DEFAULT_API_MODE=v2
-VITE_ASSISTANT_V1_COMPATIBILITY_UNTIL=2026-09-30T23:59:59Z
-```
-
-During the compatibility window, set `VITE_ASSISTANT_DEFAULT_API_MODE=v1` and rebuild only the Web
-image to restore the legacy QA entry. This is a reversible entry-point change: it does not remove
-v2 data, historical Runs, or Skill packages. The selector is hidden after the deadline and malformed
-or expired deadlines fail closed to v2. Deploy fake/local Chat first; an external Chat endpoint still
-requires the existing `MODEL_ALLOW_EXTERNAL` and source/deployment/consent policy checks.
-
-## Agent Loop v5 Release Control
+The Web exposes only the Assistant conversation path. Do not configure `VITE_ASSISTANT_*` release
+controls: the compatibility selector and v1 Web path have been removed.
 
 The generic Agent Loop is the default synthetic/fake or reviewed local provisional path. API and
-Worker default to the following aligned values:
+Worker use the single current Skill identity:
 
 ```dotenv
-KNOWLEDGE_AGENT_SKILL_VERSION=0.9.0
-AGENT_LOOP_V5_ENABLED=true
+KNOWLEDGE_AGENT_SKILL_VERSION=1.0.0
 ```
 
-The legacy-named flag remains a fail-closed rollback: `AGENT_LOOP_V5_ENABLED=false` activates
-`knowledge_agent 0.3.0` for new Runs. Recreate API/Worker after changing it. This preserves all
-persisted Run/Skill pins and keeps v1/v2 API and SSE projections readable. `start-local.ps1` uses
-v9 by default; pass `-LegacyKnowledgeAgent` for a local v3 rollback. Do not use an external Provider
+There is no version rollback flag or legacy startup parameter. Do not use an external Provider
 without the existing sensitivity, deployment-policy, and visible-consent checks.
 
 ## Local Agent Workspaces

@@ -8,11 +8,9 @@ from contextlib import asynccontextmanager
 from typing import Any, Literal, cast
 
 from application.assistant import (
-    AssistantAgentService,
     AssistantCommandCatalog,
     AssistantCommandParser,
     AssistantCommandService,
-    AssistantMessageReader,
     AssistantMetrics,
     AssistantSkillInvocationService,
     ConversationContextDataPort,
@@ -124,10 +122,10 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 def _active_skill_versions() -> dict[str, str]:
     """Return the Skills that may receive new durable activations."""
     return {
-        "knowledge_agent": settings.active_knowledge_agent_skill_version,
-        "summarize_document": "0.1.0",
-        "compare_sources": "0.1.0",
-        "create_review_cards": "0.1.0",
+        "knowledge_agent": settings.knowledge_agent_skill_version,
+        "summarize_document": "1.0.0",
+        "compare_sources": "1.0.0",
+        "create_review_cards": "1.0.0",
     }
 
 
@@ -270,16 +268,6 @@ def create_app(
         reasoning=reasoning,
         workspace=workspace_service,
     )
-    assistant_agent_service = AssistantAgentService(
-        runs=conversation_run_repository,
-        messages=cast(AssistantMessageReader, qa_repository),
-        gateway=gateway,
-        events=assistant_event_log,
-        skill_catalog=assistant_catalog,
-        skill_invoker=assistant_skill_invoker,
-        context=conversation_context,
-        metrics=assistant_metrics,
-    )
     qa_citation_service = qa_citation_service or PublishedCitationService(
         runs=qa_repository,
         resolver=CitationResolver(
@@ -323,7 +311,6 @@ def create_app(
     app.state.conversation_run_repository = conversation_run_repository
     app.state.assistant_turn_service = assistant_turn_service
     app.state.assistant_command_service = assistant_command_service
-    app.state.assistant_agent_service = assistant_agent_service
     app.state.assistant_skill_invoker = assistant_skill_invoker
     app.state.conversation_context_service = conversation_context
     app.state.workspace_service = workspace_service

@@ -1,1 +1,1 @@
-{"case_id":"knowledge-agent-grounded-tool","expected":"grounded_qa_once","fixture":"repository_fixture"}
+{"case_id":"knowledge-loop-autonomous-followup","expected":"model_directed_retrieval_with_verified_finalization","fixture":"synthetic_only"}

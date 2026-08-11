@@ -341,7 +341,7 @@ class PostgresGroundedQARepository:
                 ).scalar_one_or_none()
                 if conflicting_parent is not None:
                     raise QAContractError("QA run idempotency key conflicts with a ConversationRun")
-                parent = _legacy_conversation_run_model(run)
+                parent = _conversation_run_model(run)
                 session.add(parent)
                 await session.flush()
             else:
@@ -1005,7 +1005,7 @@ def _project_run(model: QARunModel, run: QARunRecord) -> None:
     model.updated_at = run.updated_at
 
 
-def _legacy_conversation_run_model(run: QARunRecord) -> ConversationRunModel:
+def _conversation_run_model(run: QARunRecord) -> ConversationRunModel:
     model = ConversationRunModel(
         id=run.run_id,
         conversation_id=run.conversation_id,
@@ -1013,17 +1013,13 @@ def _legacy_conversation_run_model(run: QARunRecord) -> ConversationRunModel:
         caller_id=run.caller_id,
         user_message_id=run.question_message_id,
         idempotency_key=run.idempotency_key,
-        run_kind=(
-            ConversationRunKind.GROUNDED_QA.value
-            if run.versions.skill_name == "knowledge_qa"
-            else ConversationRunKind.SKILL.value
-        ),
+        run_kind=ConversationRunKind.SKILL.value,
         selection_source=ConversationRunSelectionSource.NONE.value,
         status=_conversation_run_status(run.status).value,
         cancellation_requested=run.cancellation_requested,
         error_code=run.error_code,
-        router_version="legacy-v1",
-        core_prompt_version="legacy-v1",
+        router_version="assistant-agent-loop-v1",
+        core_prompt_version="assistant-base-prompt-v7",
         model_identity=run.versions.model_identity,
         skill_name=(
             run.versions.skill_name if run.versions.skill_content_sha256 is not None else None
@@ -1040,105 +1036,51 @@ def _legacy_conversation_run_model(run: QARunRecord) -> ConversationRunModel:
     return model
 
 
-def _validate_legacy_parent(
+def _validate_parent(
     model: ConversationRunModel, run: QARunRecord, *, check_idempotency: bool = False
 ) -> None:
-    expected_kind = (
-        ConversationRunKind.GROUNDED_QA.value
-        if run.versions.skill_name == "knowledge_qa"
-        else ConversationRunKind.SKILL.value
-    )
     if (
         model.conversation_id != run.conversation_id
         or model.space_id != run.space_id
         or model.caller_id != run.caller_id
         or model.user_message_id != run.question_message_id
         or (check_idempotency and model.idempotency_key != run.idempotency_key)
-        or model.run_kind != expected_kind
-        or model.selection_source != ConversationRunSelectionSource.NONE.value
-        or model.router_version != "legacy-v1"
-        or model.core_prompt_version != "legacy-v1"
-        or model.model_identity != run.versions.model_identity
+        or model.router_version != "assistant-agent-loop-v1"
+        or model.core_prompt_version != "assistant-base-prompt-v7"
     ):
-        raise QAContractError("QA Run conflicts with its ConversationRun parent")
-
-
-def _validate_parent(
-    model: ConversationRunModel, run: QARunRecord, *, check_idempotency: bool = False
-) -> None:
-    if model.router_version == "assistant-agent-loop-v1":
-        if (
-            model.conversation_id != run.conversation_id
-            or model.space_id != run.space_id
-            or model.caller_id != run.caller_id
-            or model.user_message_id != run.question_message_id
-            or (check_idempotency and model.idempotency_key != run.idempotency_key)
-            or model.run_kind != ConversationRunKind.ASSISTANT_TURN.value
-            or model.skill_name is not None
-            or model.skill_version is not None
-            or model.skill_content_sha256 is not None
-            or model.core_prompt_version
-            not in {
-                "assistant-base-prompt-v5",
-                "assistant-base-prompt-v6",
-                "assistant-base-prompt-v7",
-            }
-            or run.versions.skill_name != "knowledge_agent"
-        ):
-            raise QAContractError("QA Run conflicts with its autonomous Assistant parent")
-        return
-    if model.router_version == "assistant-router-decision-v1":
-        expected_kind = (
-            ConversationRunKind.GROUNDED_QA.value
-            if run.versions.skill_name == "knowledge_qa"
-            else ConversationRunKind.SKILL.value
+        raise QAContractError("QA Run conflicts with its current ConversationRun parent")
+    if model.run_kind == ConversationRunKind.ASSISTANT_TURN.value:
+        valid = (
+            model.skill_name is None
+            and model.skill_version is None
+            and model.skill_content_sha256 is None
+            and run.versions.skill_name == "knowledge_agent"
         )
-        if (
-            model.conversation_id != run.conversation_id
-            or model.space_id != run.space_id
-            or model.caller_id != run.caller_id
-            or model.user_message_id != run.question_message_id
-            or (check_idempotency and model.idempotency_key != run.idempotency_key)
-            or model.run_kind != expected_kind
-            or model.selection_source
-            not in {
-                ConversationRunSelectionSource.AUTO.value,
+    else:
+        valid = (
+            model.run_kind == ConversationRunKind.SKILL.value
+            and model.selection_source
+            in {
                 ConversationRunSelectionSource.COMMAND.value,
+                ConversationRunSelectionSource.AUTO.value,
+                ConversationRunSelectionSource.NONE.value,
             }
-            or model.skill_name != run.versions.skill_name
-            or model.skill_version != run.versions.skill_version
-            or model.skill_content_sha256 != run.versions.skill_content_sha256
-            or model.core_prompt_version
-            not in {
-                "assistant-base-prompt-v2",
-                "assistant-base-prompt-v3",
-                "assistant-base-prompt-v4",
-            }
-        ):
-            raise QAContractError("QA Run conflicts with its Assistant ConversationRun parent")
-        return
-    _validate_legacy_parent(model, run, check_idempotency=check_idempotency)
+            and model.skill_name == run.versions.skill_name
+            and model.skill_version == run.versions.skill_version
+            and model.skill_content_sha256 == run.versions.skill_content_sha256
+        )
+    if not valid:
+        raise QAContractError("QA Run conflicts with its current ConversationRun parent")
 
 
 def _project_conversation_run(model: ConversationRunModel, run: QARunRecord) -> None:
     _validate_parent(model, run, check_idempotency=False)
     hold_for_finalizer = (
-        (
-            model.run_kind
-            in {
-                ConversationRunKind.SKILL.value,
-                ConversationRunKind.GROUNDED_QA.value,
-            }
-            and model.core_prompt_version
-            in {"assistant-base-prompt-v2", "assistant-base-prompt-v3", "assistant-base-prompt-v4"}
-        )
-        or (
-            model.run_kind == ConversationRunKind.ASSISTANT_TURN.value
-            and model.router_version == "assistant-agent-loop-v1"
-            and model.core_prompt_version
-            in {"assistant-base-prompt-v5", "assistant-base-prompt-v6", "assistant-base-prompt-v7"}
-        )
-    ) and model.result is None
+        model.run_kind == ConversationRunKind.ASSISTANT_TURN.value
+        and model.router_version == "assistant-agent-loop-v1"
+        and model.core_prompt_version == "assistant-base-prompt-v7"
+        and model.result is None
+    )
     hold_for_finalizer = hold_for_finalizer and run.status in _BUSINESS_TERMINAL
     model.status = (
         ConversationRunStatus.RUNNING.value

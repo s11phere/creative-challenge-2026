@@ -1,5 +1,18 @@
 # 项目架构概览
 
+## Current Skill and Assistant Contract (2026-08-11)
+
+The runtime exposes exactly five trusted Skills: `assistant_agent`, `knowledge_agent`,
+`summarize_document`, `compare_sources`, and `create_review_cards`, all at `1.0.0`. New Runs use
+only the current pinned identity. Historical Skill packages, prompt versions, version activation,
+rollback, cleanup APIs, and the `knowledge_qa` adapter have been removed; persisted Runs are not
+recovered through compatibility code.
+
+The Web exposes only the Assistant conversation path. It has no v1 compatibility selector or Vite
+release controls. The `AutonomousAssistantLoopService` dispatches selected Skills through the same
+durable QA Run/Worker/SSE path. The later Evolution-step passages are retained as implementation
+history where they explicitly describe old versions or release controls.
+
 ## Current completion boundary (2026-08-10)
 
 The implemented Stage 4/5 boundary now includes feedback review persistence in `qa_feedback`,
@@ -9,8 +22,7 @@ content. The architecture remains a modular monolith with the existing Worker an
 Formal quality gates remain governed by ADR-010 and ADR-011.
 
 The Assistant Conversation Evolution Step 3 boundary adds manifest v2 invocation metadata and a
-separate active routing catalog. Legacy v1 Skill pointers remain available for historical QA recovery;
-Assistant selections pin a v2 `(name, version, content_sha256)` and project the same parent
+separate active routing catalog. Assistant selections pin the current `(name, version, content_sha256)` and project the same parent
 `ConversationRun` into the existing QA Run/Worker/SSE path. Natural-language resource resolution is
 read-only and Space-scoped; only safe candidate labels cross the Assistant boundary.
 
@@ -74,9 +86,8 @@ The Agent Loop Step 9 boundary adds a hash-verified `agent-loop-v1` synthetic de
 It consumes only body-free prediction metadata and reports explicit denominators for first/terminal
 action, goal/subquestion/evidence/citation coverage, unsupported claims, correct refusals, Tool
 selection/repetition, approval gating, security assertions, recovery, token usage, latency, and stop
-reasons. `knowledge_agent 0.9.0` is the default fake/local provisional path for new Runs.
-`AGENT_LOOP_V5_ENABLED=false` is its fail-closed release rollback and activates `0.3.0` instead;
-persisted Run pins and v1/v2 projections remain unaffected. This default changes no formal quality
+reasons. `knowledge_agent 1.0.0` is the default fake/local provisional path for new Runs.
+No compatibility rollback is available. This default changes no formal quality
 boundary or external-provider policy.
 
 PR #4 corrected the online and evaluation retrieval path to `dense_rerank`: dense-exact candidates
@@ -84,10 +95,9 @@ are reranked directly. `hybrid_rerank` remains an explicit compatibility mode, n
 Search API or QA. The corrected GPU development runs are provisional evidence only; they do not
 reopen Stage 3 or authorize the existing holdout.
 
-The current Assistant v2 boundary is also closed for this development phase. New turns enter the
-top-level `AutonomousAssistantLoopService`; the active catalog uses `knowledge_agent 0.9.0` for every new knowledge
-request, while `knowledge_agent 0.5.0`, `knowledge_agent 0.3.0`, and `knowledge_qa` remain available
-for fixed historical Runs or explicit rollback only. After a
+The current Assistant boundary is also closed for this development phase. New turns enter the
+top-level `AutonomousAssistantLoopService`; the active catalog uses `knowledge_agent 1.0.0` for every new knowledge
+request. After a
 grounded Skill reaches a business-terminal state, the Worker invokes `ConversationFinalizer` once.
 Its independently persisted Assistant message is the user-facing answer; the grounded Skill
 result remains an internal reference with its own trace and evidence projection.
@@ -220,18 +230,8 @@ Agent Runtime → Domain + ModelGateway
 │
 ├── skills/
 │   ├── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
-│   ├── knowledge_agent_v3/         # legacy knowledge invocation (0.3.0, rollback)
-│   ├── knowledge_agent_v4/         # provisional generic-loop candidate (0.4.0, opt-in)
-│   ├── knowledge_agent_v5/         # historical knowledge-loop Tools (0.5.0)
-│   ├── knowledge_agent_v6/         # historical knowledge-loop Tools (0.6.0)
-│   ├── knowledge_agent_v7/         # historical advisory knowledge-loop Tools (0.7.0)
-│   ├── knowledge_agent_v8/         # historical workspace-aware knowledge-loop Tools (0.8.0)
-│   ├── knowledge_agent_v9/         # default duplicate-recovery knowledge-loop Tools (0.9.0)
-│   ├── assistant_agent_v1/          # historical top-level Assistant Loop (0.1.0)
-│   ├── assistant_agent_v2/          # top-level autonomous Assistant Loop (0.2.0)
-│   ├── knowledge_agent/            # immutable 0.2.0 recovery package
-│   ├── knowledge_agent_v0_1/       # immutable 0.1.0 recovery package
-│   ├── knowledge_qa/               # legacy recovery-only Grounded QA packages
+│   ├── assistant_agent/             # 顶层自主 Assistant Loop (1.0.0)
+│   ├── knowledge_agent/             # 知识检索和回答 Loop (1.0.0)
 │   ├── summarize_document/         # 固定单文档版本的引用摘要
 │   ├── compare_sources/            # 固定多来源的引用比较
 │   └── create_review_cards/        # 带引用预览与审批后的派生知识写入
@@ -377,11 +377,11 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/qa/generation.py` | `fast_chat` 非流式结构化生成、JSON schema 解析、一次修复、空证据拒答、显式取消、细分模型故障、冲突/发布竞态校验和安全版本/用量结果 |
 | `src/application/qa/persistence.py` | provisional 内存 Grounded QA Repository；验证 Space/owner、幂等、attempt、取消、usage、Evidence/Feedback 和原子终态发布 |
 | `src/application/assistant/runs.py` | v2 Assistant turn 创建、读取和取消用例；API 协程只持久化与投递，不执行模型 |
-| `src/application/assistant/agent.py` | Worker 内的 `AssistantAgentService`；加载冻结 prompt、严格校验 router JSON，并以原子消息/Run 发布完成 `respond` 或服务端澄清 |
+| `src/application/assistant/autonomous_loop.py` | Worker 内的 `AutonomousAssistantLoopService`；执行当前 Assistant Skill/Tool Loop，并以原子消息/Run 发布最终结果或服务端澄清 |
 | `src/application/assistant/context.py` | Bounded shared context snapshots, automatic/manual compaction Run creation, and Worker-only summary generation |
 | `src/application/assistant/metrics.py` | 不含正文的 Assistant 路由/命令/澄清/压缩/用量/延迟/终止指标，以及 synthetic development 报告聚合 |
 | `src/application/qa/service.py` | 唯一 provisional `GroundedQAApplicationPort`；编排幂等提交、阶段 3 SearchService、Evidence/上下文、结构化生成、原子发布、取消和稳定失败终态 |
-| `src/application/skills/knowledge_qa.py` | legacy Skill Adapter；仅为固定历史 Run 将 Runtime 服务端上下文映射到唯一 QA Port 并投影其结构化结果 |
+| `src/application/skills/grounded_qa_skill.py` | 当前 Grounded QA Adapter；为文档摘要、比较和复习卡将 Runtime 上下文映射到唯一 QA Port 并投影其结构化结果 |
 | `src/application/skills/organization.py` | 校验知识整理 Skill 的 Space 归属和当前 published Source/Document/DocumentVersion，并生成固定检索范围 |
 | `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
 | `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
@@ -483,7 +483,7 @@ Stage 3 模型组合。
 | 文件 | 职责 |
 | --- | --- |
 | `tools.py` | Tool 定义、JSON Schema、显式 handler、权限/Space/预算/审批校验和脱敏调用记录 |
-| `skills.py` | 受信目录 Skill manifest、包摘要、版本固定、事务式 reload、原子激活/回滚和恢复兼容检查 |
+| `skills.py` | 受信目录 Skill manifest、包摘要、当前版本固定和事务式 reload |
 | `checkpoints.py` | 规范化状态摘要、下一安全节点和内存原子 Run/Checkpoint 事务替身 |
 | `llm_decision.py` | 通过 `ModelGateway.fast_chat` 解析严格 `LLMDecision`，并在有限循环中只调用服务端白名单内、明确允许模型查看输出的只读 Tool |
 | `executor.py` | 声明式 workflow、状态迁移、预算预留、有限重试、取消/超时、检查点恢复和审计事件 v1 |
@@ -498,8 +498,7 @@ Skill 身份、规范化状态摘要、连续序号和预算用量，并与 `Con
 Checkpoint 恢复，重复提交按序号幂等，租约丢失会取消未提交执行。PostgreSQL `skill_activations`
 保存 active pointer，Catalog 暴露安装版本、manifest 预算和 pointer revision；受控
 activate/rollback API 使用 revision CAS，引用检查器保护 QA 投影、Runtime Run 和 Checkpoint
-仍在使用的版本，清理只移除进程 Registry，不删除受信磁盘包。新 QA Run 在提交时固定 Skill
-名称、版本和内容摘要，Worker 按该身份执行唯一 QA Application Port。
+仍在使用的版本。新 QA Run 在提交时固定当前 Skill 名称、版本和内容摘要，Worker 按该身份执行唯一 QA Application Port。
 
 持久审批绑定运行、Space、调用者和具体 Tool 名称/版本，支持过期、撤销和幂等重放；派生知识
 写入通过同一 QA Run 的 Citation/Space 校验并 exactly-once 保存，可查询和撤销。知识整理 Run
@@ -508,7 +507,7 @@ published version，避免排队期间跟随新版本或扩大范围。比较结
 则拒答；复习卡在审批前只返回预览并报告 `side_effects=0`，批准后才通过派生知识 Port 写入。
 
 `knowledge_agent` 是当前 LLM Agent 业务入口。它通过现有 `fast_chat` 能力产生严格的
-`call_tool/complete/refuse` 决策。默认 `knowledge_agent 0.9.0` 运行在顶层
+`call_tool/complete/refuse` 决策。默认 `knowledge_agent 1.0.0` 运行在顶层
 `AutonomousAssistantLoopService` 中，只可调用服务端注册的
 `knowledge_search`、`knowledge_inspect`、`summarize_document`、`grounded_answer`、`verify_answer` 和
 `finalize_answer`；`summarize_document` 通过资源解析 Port 固定一个当前 Space 的已发布
@@ -521,16 +520,9 @@ DocumentVersion，并把安全检索观测交回同一 Loop。Tool Registry 在�
 Step 1 additionally provides the provider-neutral `AgentLoopState` domain state machine and
 `AgentLoopExecutor`. It records goal/subquestions, iteration and redacted Tool observations,
 detects repeated request fingerprints, checkpoints after each observation, pauses write Tools for
-approval, and enters a finalization-only gate before publishing. The 0.3.0 Skill and v1/v2
-projections remain available for historical recovery and explicit rollback; `knowledge_agent_v4`
-carries the earlier dynamic-loop prompt. `knowledge_agent_v5` and `knowledge_agent_v6` remain
-available for fixed historical Runs or explicit rollback. `knowledge_agent_v7` remains historical;
-`knowledge_agent_v8` remains available for fixed historical Runs or explicit rollback;
-`knowledge_agent_v9` is the default duplicate-recovery path: the model chooses serial searches, inspections,
-QA, verification, and any needed workspace artifact operation, while Tool outputs may suggest a
-bounded next action and the server retains finalization authority. The
-top-level `assistant_agent 0.2.0` injects the active Skill context and Tool schemas into the same
-decision loop. `AGENT_LOOP_V5_ENABLED=false` still activates the 0.3.0 rollback. Its Application adapter calls only
+approval, and enters a finalization-only gate before publishing. The current
+`assistant_agent 1.0.0` injects the active Skill context and Tool schemas into the same
+decision loop. Its Application adapter calls only
 `SearchService.search(SearchRequest, RetrievalProfileV1)` and
 the existing Grounded QA Application Port. Search observations never contain source text, and its
 finalizer returns only a safe routing projection after QA-owned verification.
@@ -578,8 +570,7 @@ finalizer returns only a safe routing projection after QA-owned verification.
      Run 查询/取消、SSE 重放和反馈契约；终态响应包含结构化回答/拒答及已校验 Citation 身份
    - `GET /api/v1/qa/runs/{run_id}/citations/{evidence_id}` — 只解析该 Run 已原子发布的 Citation，
      重新校验 Space、固定 DocumentVersion、Chunk、locator 和 Blob hash 后返回最小必要片段
-   - `GET /api/v1/skills`、`GET /api/v1/skills/{skill_name}/versions` — 只读查询受信 Registry
-     已安装/active 版本、摘要、权限、能力和预算；不提供激活/回滚写操作
+   - `GET /api/v1/skills` — 只读查询当前受信 Registry 中已安装版本、摘要、权限、能力和预算
 4. **请求可观测性**：`observability.py` 校验或生成 trace/request ID，返回
     `X-Trace-ID`、`X-Request-ID`，并创建 HTTP server span 与开始/完成 JSON 日志。
 
@@ -590,12 +581,8 @@ resource identifier. The development evaluator accepts only the pinned `syntheti
 body-free prediction metadata; its report is permanently labeled `provisional` and cannot run a
 formal holdout.
 
-Assistant Conversation Evolution Step 8 makes the Web v2 workspace the default entry while retaining
-an explicit, time-bounded v1 compatibility selector. The release controls are Vite build arguments
-(`VITE_ASSISTANT_DEFAULT_API_MODE` and `VITE_ASSISTANT_V1_COMPATIBILITY_UNTIL`); an expired or invalid
-window fails closed to v2. The v1 API, historical Run projections, and installed Skill packages are
-not removed. Rollback is a Web rebuild with `VITE_ASSISTANT_DEFAULT_API_MODE=v1`, so it does not
-delete data or mutate Skill pointers. Fake/local Provider rollout precedes any external Chat rollout;
+Assistant Conversation Evolution Step 8 makes the Web Assistant workspace the only entry. There are
+no Vite compatibility release controls or v1 selector. Fake/local Provider rollout precedes any external Chat rollout;
 the existing `MODEL_ALLOW_EXTERNAL`, source-policy, deployment-policy, and consent checks remain
 authoritative. Operational monitoring uses the Step 7 privacy-safe counters and covers routing
 misfires, clarification loops, cancellation, recovery, token usage, and latency.
@@ -1012,3 +999,11 @@ termination or formal holdout boundary.
 显式 continuation floor 即可支持阶段 4/5 provisional 工程，但不能形成正式质量结论。若未来重新
 开启正式质量线，必须按 ADR-010/011 使用新的 dataset/config version 重新完成 development 和正式
 门禁。GitHub Actions 已由用户确认运行正常；阶段 0 当前仅允许组员内部使用。
+# 当前架构边界（2026-08-11）
+
+运行时已收敛到 Assistant 主路径：每个 Skill 只保留 `1.0.0`，知识请求固定使用
+`knowledge_agent 1.0.0`。旧 Skill 目录、旧 Prompt、旧 `knowledge_qa` 适配器、Skill 版本激活/回滚/清理
+接口和 Web 兼容问答模式已删除。持久化新 Run 统一使用 `assistant-agent-loop-v1` 与
+`assistant-base-prompt-v7`；旧 Run 不再提供恢复兼容。
+
+本文后续阶段记录中的旧版本仅表示历史实现，不代表当前部署内容。

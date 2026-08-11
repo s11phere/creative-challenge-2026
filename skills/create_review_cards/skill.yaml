@@ -1,6 +1,6 @@
-manifest_version: "1"
+manifest_version: "2"
 name: create_review_cards
-version: 0.1.0
+version: 1.0.0
 description: Preview citation-backed review cards without performing unavailable derived writes.
 input_schema: schemas/input.json
 output_schema: schemas/output.json
@@ -12,3 +12,16 @@ entrypoint: workflow.yaml
 compatibility: {runtime: ">=0.1.0,<1.0.0", checkpoint_schema_versions: [1]}
 prompts: [prompts/boundary.md]
 evals: [evals/cases.jsonl]
+invocation:
+  command: cards
+  aliases: [flashcards]
+  argument_hint: "<主题或文档>"
+  trigger:
+    summary: "根据当前 Space 的证据生成复习卡预览，写入仍需审批"
+    when:
+      - "用户明确要求根据知识库资料制作复习卡"
+    avoid_when:
+      - "用户没有要求知识库支撑的复习材料"
+    examples:
+      - "为量子力学常用公式制作复习卡"
+  input_mode: document

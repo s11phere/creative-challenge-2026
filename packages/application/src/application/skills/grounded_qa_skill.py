@@ -1,4 +1,4 @@
-"""Provisional knowledge_qa adapter over the single Grounded QA Application port."""
+"""Grounded QA adapter used by the remaining document-oriented Skills."""
 
 from __future__ import annotations
 
@@ -24,11 +24,11 @@ _CONVERSATION_NAMESPACE = UUID("f941116d-dbc0-42f4-a43b-0a041ec50da4")
 
 
 @dataclass(frozen=True)
-class KnowledgeQASkillConfig:
+class GroundedQASkillConfig:
     profile: GroundedQAExecutionProfile
     versions: QARunVersions
     execute_existing_run: bool = False
-    skill_name: str = "knowledge_qa"
+    skill_name: str = "knowledge_agent"
     output_schema_version: str = "knowledge-qa-skill-output-v1"
     preview_only_write: bool = False
     approval_port: ApprovalPort | None = None
@@ -49,10 +49,10 @@ class DerivedKnowledgeWriter(Protocol):
     ) -> object: ...
 
 
-class KnowledgeQASkillAdapter:
+class GroundedQASkillAdapter:
     """Map Runtime context to Grounded QA without owning retrieval or citation logic."""
 
-    def __init__(self, *, qa: GroundedQAApplicationPort, config: KnowledgeQASkillConfig) -> None:
+    def __init__(self, *, qa: GroundedQAApplicationPort, config: GroundedQASkillConfig) -> None:
         if (
             config.profile.planning.profile_id != config.versions.profile_version
             or config.profile.retrieval.profile_version != config.versions.retrieval_profile_version
@@ -63,9 +63,9 @@ class KnowledgeQASkillAdapter:
 
     def handlers(self) -> dict[str, NodeHandler]:
         return {
-            "knowledge_qa_plan": self.plan,
-            "knowledge_qa_delegate": self.delegate,
-            "knowledge_qa_verify": self.verify,
+            "grounded_qa_plan": self.plan,
+            "grounded_qa_delegate": self.delegate,
+            "grounded_qa_verify": self.verify,
         }
 
     async def plan(self, context: NodeExecutionContext) -> NodeResult:
@@ -201,12 +201,46 @@ class _SkillInput:
     conversation_id: UUID | None
 
 
+def qa_failure(run: QARunRecord) -> NodeExecutionError:
+    code = run.error_code or "QA_FAILED"
+    if run.status is QAStatus.CANCELLED:
+        return NodeExecutionError(
+            "RUN_CANCELLED", RunErrorCategory.CANCELLATION, "Grounded QA was cancelled."
+        )
+    if run.status is QAStatus.TIMED_OUT:
+        return NodeExecutionError(
+            "DEPENDENCY_QA_TIMEOUT",
+            RunErrorCategory.DEPENDENCY,
+            "Grounded QA timed out.",
+            retryable=True,
+            timed_out=True,
+        )
+    if code in {"QA_INVALID_INPUT", "QA_STRUCTURED_RESPONSE_INVALID", "QA_CITATION_INVALID"}:
+        return NodeExecutionError(
+            "SKILL_QA_RESULT_INVALID",
+            RunErrorCategory.SCHEMA,
+            "Grounded QA rejected the request or result contract.",
+        )
+    if code in {"QA_SPACE_DENIED", "QA_POLICY_DENIED"}:
+        return NodeExecutionError(
+            "AUTH_QA_DENIED",
+            RunErrorCategory.PERMISSION,
+            "Grounded QA authorization or policy denied the request.",
+        )
+    return NodeExecutionError(
+        f"DEPENDENCY_{code.removeprefix('QA_')}",
+        RunErrorCategory.DEPENDENCY,
+        "Grounded QA dependency failed.",
+        retryable=code in {"QA_RETRIEVAL_FAILED", "QA_MODEL_FAILED", "QA_STORAGE_FAILED"},
+    )
+
+
 def _parse_input(value: object) -> _SkillInput:
     if not isinstance(value, dict) or set(value) - {"question", "conversation_id"}:
         raise NodeExecutionError(
             "SKILL_INPUT_INVALID",
             RunErrorCategory.INPUT,
-            "knowledge_qa input does not match its fixed schema.",
+            "Grounded QA input does not match its fixed schema.",
         )
     question = value.get("question")
     conversation = value.get("conversation_id")
@@ -231,41 +265,6 @@ def _parse_input(value: object) -> _SkillInput:
             "Conversation identity must be a UUID string.",
         )
     return _SkillInput(question=question, conversation_id=conversation_id)
-
-
-def qa_failure(run: QARunRecord) -> NodeExecutionError:
-    code = run.error_code or "QA_FAILED"
-    if run.status is QAStatus.CANCELLED:
-        return NodeExecutionError(
-            "RUN_CANCELLED", RunErrorCategory.CANCELLATION, "Grounded QA was cancelled."
-        )
-    if run.status is QAStatus.TIMED_OUT:
-        return NodeExecutionError(
-            "DEPENDENCY_QA_TIMEOUT",
-            RunErrorCategory.DEPENDENCY,
-            "Grounded QA timed out.",
-            retryable=True,
-            timed_out=True,
-        )
-    if code in {"QA_INVALID_INPUT", "QA_STRUCTURED_RESPONSE_INVALID", "QA_CITATION_INVALID"}:
-        return NodeExecutionError(
-            "SKILL_QA_RESULT_INVALID",
-            RunErrorCategory.SCHEMA,
-            "Grounded QA rejected the fixed request or result contract.",
-        )
-    if code in {"QA_SPACE_DENIED", "QA_POLICY_DENIED"}:
-        return NodeExecutionError(
-            "AUTH_QA_DENIED",
-            RunErrorCategory.PERMISSION,
-            "Grounded QA authorization or policy denied the request.",
-        )
-    retryable = code in {"QA_RETRIEVAL_FAILED", "QA_MODEL_FAILED", "QA_STORAGE_FAILED"}
-    return NodeExecutionError(
-        f"DEPENDENCY_{code.removeprefix('QA_')}",
-        RunErrorCategory.DEPENDENCY,
-        "Grounded QA dependency failed.",
-        retryable=retryable,
-    )
 
 
 def _project_run(
@@ -294,7 +293,7 @@ def _project_run(
             "model_calls": run.usage.model_calls,
         },
     }
-    if operation != "knowledge_qa":
+    if operation != "knowledge_agent":
         payload["operation"] = operation
         payload["fixed_scope"] = {
             "source_ids": _json_uuid_list(run.retrieval_scope.source_ids),
@@ -365,7 +364,7 @@ def _json_uuid_list(values: frozenset[UUID]) -> list[JSONValue]:
 
 __all__ = [
     "DerivedKnowledgeWriter",
-    "KnowledgeQASkillAdapter",
-    "KnowledgeQASkillConfig",
+    "GroundedQASkillAdapter",
+    "GroundedQASkillConfig",
     "qa_failure",
 ]

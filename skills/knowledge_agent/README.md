@@ -1,17 +1,12 @@
-# knowledge_agent 0.2.0
+# knowledge_agent 1.0.0
 
-This provisional Skill runs a bounded LLM decision loop over the server-registered read-only Tools
-`inspect_retrieval 1.0.0` and `grounded_qa 1.0.0`. Grounded QA remains the answer, Citation,
-persistence, and SSE authority. The previous `0.1.0` package remains installed separately for
-fixed-run recovery and rollback.
+This immutable provisional package extends the model-directed knowledge loop with an explicit
+workspace-artifact handoff and one model-visible recovery observation for an accidental duplicate
+Tool request. The model still chooses whether a local workspace operation advances the user's
+request; the runtime only supplies approval, path, QA-result, and duplicate-request safety checks.
 
-The Agent cannot select arbitrary Tools, change Space or permissions, or invoke write Tools. Tool
-output returned to the Agent contains only status, result type, and Citation count. The default fake
-provider chooses the Tool deterministically; an external OpenAI-compatible provider requires explicit
-endpoint, model, key, and external-policy configuration.
-
-Assistant operational metrics are content-safe: routing, command, clarification, token, latency, and
-termination observations carry only aggregate values and safe labels. They never contain user text,
-prompts, document content, Tool results, Provider responses, or internal resource IDs. The synthetic
-Assistant routing evaluator is development/provisional only and cannot be used as a formal Skill
+The package retains the existing QA Application Port, fixed Space/version boundaries, durable
+runtime checkpoints, cancellation, permissions, and QA-owned citation/publication semantics.
+The package is provisional. Run `uv run --frozen python scripts/evaluate_agent_loop.py
+--validate-only` before local rollout; this does not close any formal retrieval, answer, or Skill
 quality gate.

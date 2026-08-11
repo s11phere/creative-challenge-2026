@@ -23,7 +23,6 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEven
 import 'katex/dist/katex.min.css'
 import { AgentRunTimeline } from './AgentRunTimeline'
 import {
-  cancelRun,
   cancelAssistantRun,
   createConversation,
   decideAssistantApproval,
@@ -36,9 +35,7 @@ import {
   fetchConversationHistory,
   fetchRun,
   isAssistantRun,
-  legacyQARunToAssistantRun,
   selectClarificationResource,
-  submitQuestion,
   submitAssistantTurn,
   type AssistantCommand,
   type AssistantCommandResult,
@@ -49,13 +46,11 @@ import {
   type QARun,
   streamAgentRunEvents,
 } from './qa'
-import { assistantDefaultApiMode, type AssistantApiMode } from './assistantRelease'
 import { fetchSourceDetail } from './sources'
 
 export type QAWorkspaceProps = {
   selectedConversationId?: string | null
   onConversationSelected?: (conversationId: string | null) => void
-  apiMode?: AssistantApiMode
 }
 
 type CitationMetadata = {
@@ -224,7 +219,7 @@ function LegacySkillRunCard({
             <div><dt>模型耗时</dt><dd>{Math.round(run.usage.model_latency_ms).toLocaleString('zh-CN')} ms</dd></div>
           </dl>
         </section>
-        {result && skill.name !== 'knowledge_qa' && (result.text || result.message) && (
+        {result && (result.text || result.message) && (
           <section>
             <h3>Skill 结果</h3>
             <div className="qa-answer">
@@ -395,7 +390,6 @@ function RenderedAssistantAnswer({
 export function QAWorkspace({
   selectedConversationId,
   onConversationSelected,
-  apiMode = assistantDefaultApiMode,
 }: QAWorkspaceProps = {}) {
   const [draft, setDraft] = useState('')
   const [conversationId, setConversationId] = useState<string | null>(null)
@@ -422,8 +416,6 @@ export function QAWorkspace({
   const localMessageOrdersRef = useRef(new Map<string, number>())
   const effortPickerConsumedRef = useRef(false)
   const queryClient = useQueryClient()
-  const usingLegacyV1 = apiMode === 'v1'
-
   const historyQuery = useQuery({
     queryKey: ['qa-history'],
     queryFn: ({ signal }) => fetchConversationHistory(signal),
@@ -435,12 +427,11 @@ export function QAWorkspace({
     queryFn: ({ signal }) => fetchAssistantCommands(signal),
     staleTime: 60_000,
     retry: false,
-    enabled: !usingLegacyV1,
   })
   const assistantRunsQuery = useQuery({
     queryKey: ['assistant-runs', conversationId],
     queryFn: ({ signal }) => fetchAssistantConversationRuns(conversationId!, signal),
-    enabled: Boolean(conversationId) && !usingLegacyV1,
+    enabled: Boolean(conversationId),
     retry: false,
     refetchInterval: (query) =>
       query.state.data?.some((run) => refreshingStatuses.has(run.status)) ? 2_000 : false,
@@ -451,41 +442,30 @@ export function QAWorkspace({
     (conversation) => conversation.conversation_id === conversationId,
   )
   const runs = useMemo(() => {
-    const apiRuns = usingLegacyV1
-      ? (selectedConversation?.runs ?? []).map(legacyQARunToAssistantRun)
-      : (assistantRunsQuery.data ?? [])
     // The submission response is only an optimistic snapshot. A refreshed API Run is authoritative.
     const values = new Map(localRuns.map((run) => [run.run_id, run]))
-    for (const run of apiRuns) values.set(run.run_id, run)
+    for (const run of assistantRunsQuery.data ?? []) values.set(run.run_id, run)
     return [...values.values()]
-  }, [assistantRunsQuery.data, localRuns, selectedConversation?.runs, usingLegacyV1])
+  }, [assistantRunsQuery.data, localRuns])
   const runsByMessage = useMemo(
     () => new Map(runs.map((run) => [run.user_message_id, run])),
     [runs],
   )
-  const legacyRunsById = useMemo(
-    () => new Map((selectedConversation?.runs ?? []).map((run) => [run.run_id, run])),
-    [selectedConversation],
-  )
   const currentRun = runs.find((run) => run.run_id === activeRunId) ?? runs.at(-1)
-  const currentLegacyRun = currentRun ? legacyRunsById.get(currentRun.run_id) : undefined
   const currentQARunQuery = useQuery({
     queryKey: ['qa-run', currentRun?.run_id],
     queryFn: ({ signal }) => fetchRun(currentRun!.run_id, signal),
     enabled: Boolean(currentRun && (isGroundedRun(currentRun) || currentRun.run_kind === 'assistant_turn')),
-    initialData: currentLegacyRun,
     retry: false,
     refetchInterval: (query) => refreshingStatuses.has(query.state.data?.status ?? '') ? 2_000 : false,
   })
-  const evidenceLegacyRun = evidenceRunId ? legacyRunsById.get(evidenceRunId) : undefined
   const evidenceRunQuery = useQuery<QARun>({
     queryKey: ['qa-evidence-run', evidenceRunId],
     queryFn: ({ signal }) => fetchRun(evidenceRunId!, signal),
     enabled: Boolean(evidenceRunId),
-    initialData: evidenceLegacyRun,
     retry: false,
   })
-  const evidenceRun = evidenceRunQuery.data ?? evidenceLegacyRun
+  const evidenceRun = evidenceRunQuery.data
   const citationSourceIds = useMemo(
     () => [...new Set(evidenceRun?.citations?.map((citation) => citation.source_id) ?? [])],
     [evidenceRun?.citations],
@@ -532,8 +512,7 @@ export function QAWorkspace({
       : commands.filter((command) => commandDescriptionMatches(command, commandToken))
   }, [commandToken, commandsQuery.data])
   const commandHasArguments = /\s/.test(trimmed.slice(1))
-  const commandMenuOpen = !usingLegacyV1
-    && trimmed.startsWith('/')
+  const commandMenuOpen = trimmed.startsWith('/')
     && !trimmed.startsWith('//')
     && !commandHasArguments
     && !commandMenuDismissed
@@ -584,19 +563,6 @@ export function QAWorkspace({
   }, [conversationId, historyQuery.data, onConversationSelected, selectedConversationId])
 
   useEffect(() => {
-    setLocalMessages([])
-    setLocalRuns([])
-    setActiveRunId(null)
-    evidenceUserClosedRef.current = false
-    setEvidenceRunId(null)
-    setSelectedEvidenceId(null)
-    setCommandNotices([])
-    setPendingEffortPicker(null)
-    localMessageOrdersRef.current.clear()
-    setCommandMenuDismissed(false)
-  }, [apiMode])
-
-  useEffect(() => {
     if (!pendingEffortPicker) return
     const frame = requestAnimationFrame(() => effortPickerRef.current?.focus())
     return () => cancelAnimationFrame(frame)
@@ -613,11 +579,11 @@ export function QAWorkspace({
   }, [citationQuery.data, citationQuery.error, selectedEvidenceId])
 
   useEffect(() => {
-    const citations = currentQARunQuery.data?.citations ?? currentLegacyRun?.citations ?? []
+    const citations = currentQARunQuery.data?.citations ?? []
     if (!evidenceRunId && !evidenceUserClosedRef.current && currentRun?.run_id && citations.length > 0) {
       setEvidenceRunId(currentRun.run_id)
     }
-  }, [currentQARunQuery.data?.citations, currentLegacyRun?.citations, currentRun?.run_id, evidenceRunId])
+  }, [currentQARunQuery.data?.citations, currentRun?.run_id, evidenceRunId])
 
   const nextTimelinePosition = () => ({
     created_at: new Date().toISOString(),
@@ -631,11 +597,7 @@ export function QAWorkspace({
         const created = await createConversation()
         targetConversationId = created.conversation_id
       }
-      const result = usingLegacyV1
-        ? legacyQARunToAssistantRun(
-          await submitQuestion(targetConversationId, content, crypto.randomUUID(), true),
-        )
-        : await submitAssistantTurn(targetConversationId, content, crypto.randomUUID())
+      const result = await submitAssistantTurn(targetConversationId, content, crypto.randomUUID())
       return { content, result, targetConversationId }
     },
     onSuccess: ({ content, result, targetConversationId }) => {
@@ -717,9 +679,6 @@ export function QAWorkspace({
   })
   const cancelMutation = useMutation({
     mutationFn: async () => {
-      if (usingLegacyV1) {
-        return legacyQARunToAssistantRun(await cancelRun(currentRun!.run_id))
-      }
       return cancelAssistantRun(currentRun!.run_id)
     },
     onSuccess: (run) => {
@@ -793,7 +752,7 @@ export function QAWorkspace({
     event.preventDefault()
     const content = draft.trim()
     if (!content || submitMutation.isPending) return
-    if (!usingLegacyV1 && /^\/effort$/i.test(content)) {
+    if (/^\/effort$/i.test(content)) {
       setDraft('')
       setCommandMenuDismissed(false)
       openEffortPicker()
@@ -831,7 +790,7 @@ export function QAWorkspace({
       requestAnimationFrame(() => textareaRef.current?.setSelectionRange(start + 1, start + 1))
       return
     }
-    if (!usingLegacyV1 && event.key === 'Enter' && /^\/effort\s*$/i.test(draft)) {
+    if (event.key === 'Enter' && /^\/effort\s*$/i.test(draft)) {
       event.preventDefault()
       event.currentTarget.form?.requestSubmit()
       return
@@ -998,13 +957,8 @@ export function QAWorkspace({
             }
             const message = item.message
             const run = message.role === 'user' ? runsByMessage.get(message.message_id) : undefined
-            const legacyRun = run ? legacyRunsById.get(run.run_id) : undefined
-            const qaRun = run?.run_id === currentRun?.run_id ? currentQARunQuery.data ?? legacyRun : legacyRun
-            // New Skills expose only the parent finalizer message. The legacy
-            // knowledge_qa projection remains readable for historical v1 Runs.
-            const answer = run?.assistant_message?.content ?? (qaRun?.skill?.name === 'knowledge_qa' && qaRun?.result
-              ? qaRun.result.text ?? qaRun.result.message ?? null
-              : null)
+            const qaRun = run?.run_id === currentRun?.run_id ? currentQARunQuery.data : undefined
+            const answer = run?.assistant_message?.content ?? null
             const limitations = qaRun?.result?.limitations ?? []
             const hasGroundedEvidence = Boolean(qaRun?.result && (qaRun.citations?.length ?? 0) > 0)
             return (
@@ -1099,15 +1053,13 @@ export function QAWorkspace({
             ref={textareaRef}
             className={commandPrefix ? 'chat-composer-textarea-highlighted' : undefined}
             value={draft}
-            role={usingLegacyV1 ? undefined : 'combobox'}
-            aria-autocomplete={usingLegacyV1 ? undefined : 'list'}
-            aria-expanded={usingLegacyV1 ? undefined : commandMenuOpen}
-            aria-controls={usingLegacyV1 ? undefined : 'assistant-command-listbox'}
-            aria-activedescendant={usingLegacyV1
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={commandMenuOpen}
+            aria-controls="assistant-command-listbox"
+            aria-activedescendant={!commandMenuOpen || !activeCommand
               ? undefined
-              : !commandMenuOpen || !activeCommand
-                ? undefined
-                : `assistant-command-${activeCommand.name}`}
+              : `assistant-command-${activeCommand.name}`}
             onChange={(event) => { setDraft(event.target.value); setCommandMenuDismissed(false) }}
             onCompositionStart={() => { isComposingRef.current = true }}
             onCompositionEnd={() => { isComposingRef.current = false }}

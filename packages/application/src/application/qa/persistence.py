@@ -524,7 +524,7 @@ class InMemoryGroundedQARepository:
                 run,
                 run_kind=run_kind,
                 selection_source=selection_source,
-                router_version="assistant-router-decision-v1",
+                router_version="assistant-agent-loop-v1",
                 skill=skill,
                 core_prompt_version=core_prompt_version,
                 updated_at=datetime.now(UTC),
@@ -822,7 +822,7 @@ class InMemoryGroundedQARepository:
             self._attempts[run.attempt.attempt_id] = run
             self._latest_attempts[run.run_id] = run.attempt.attempt_id
             self._run_keys[key] = run.attempt.attempt_id
-            self._create_legacy_conversation_run(run)
+            self._create_conversation_run(run)
             return run
 
     async def get_run(self, run_id: UUID) -> QARunRecord | None:
@@ -1189,7 +1189,7 @@ class InMemoryGroundedQARepository:
             raise QAContractError("QA run does not exist")
         return self._attempts[attempt_id]
 
-    def _create_legacy_conversation_run(self, run: QARunRecord) -> None:
+    def _create_conversation_run(self, run: QARunRecord) -> None:
         existing = self._conversation_runs.get(run.run_id)
         parent = _conversation_run_from_qa(run)
         if existing is not None:
@@ -1207,29 +1207,13 @@ class InMemoryGroundedQARepository:
     def _project_conversation_run(self, run: QARunRecord) -> None:
         parent = self._conversation_runs.get(run.run_id)
         if parent is None:
-            self._create_legacy_conversation_run(run)
+            self._create_conversation_run(run)
             return
         projected = _conversation_run_from_qa(run, existing=parent)
         if (
-            (
-                parent.run_kind in {ConversationRunKind.SKILL, ConversationRunKind.GROUNDED_QA}
-                and parent.core_prompt_version
-                in {
-                    "assistant-base-prompt-v2",
-                    "assistant-base-prompt-v3",
-                    "assistant-base-prompt-v4",
-                }
-            )
-            or (
-                parent.run_kind is ConversationRunKind.ASSISTANT_TURN
-                and parent.router_version == "assistant-agent-loop-v1"
-                and parent.core_prompt_version
-                in {
-                    "assistant-base-prompt-v5",
-                    "assistant-base-prompt-v6",
-                    "assistant-base-prompt-v7",
-                }
-            )
+            parent.run_kind is ConversationRunKind.ASSISTANT_TURN
+            and parent.router_version == "assistant-agent-loop-v1"
+            and parent.core_prompt_version == "assistant-base-prompt-v7"
             and parent.result is None
             and run.status in {QAStatus.COMPLETED, QAStatus.REFUSED}
         ):
@@ -1292,9 +1276,7 @@ def _same_conversation_turn(
     )
 
 
-def _same_legacy_conversation_run_identity(
-    existing: ConversationRun, requested: ConversationRun
-) -> bool:
+def _same_conversation_run_identity(existing: ConversationRun, requested: ConversationRun) -> bool:
     return (
         existing.run_id,
         existing.conversation_id,
@@ -1349,31 +1331,18 @@ def _same_qa_parent_identity(existing: ConversationRun, run: QARunRecord) -> boo
             content_sha256=run.versions.skill_content_sha256,
         ):
             return False
-    if existing.router_version == "legacy-v1":
-        return _same_legacy_conversation_run_identity(existing, _conversation_run_from_qa(run))
-    if existing.router_version == "assistant-agent-loop-v1":
-        return (
-            existing.run_kind is ConversationRunKind.ASSISTANT_TURN
-            and existing.skill is None
-            and existing.core_prompt_version
-            in {"assistant-base-prompt-v5", "assistant-base-prompt-v6", "assistant-base-prompt-v7"}
-            and run.versions.skill_name == "knowledge_agent"
-        )
-    return (
-        existing.run_kind
-        == (
-            ConversationRunKind.GROUNDED_QA
-            if run.versions.skill_name == "knowledge_qa"
-            else ConversationRunKind.SKILL
-        )
-        and existing.selection_source
-        in {
-            ConversationRunSelectionSource.AUTO,
+    if (
+        existing.router_version == "assistant-agent-loop-v1"
+        and existing.core_prompt_version == "assistant-base-prompt-v7"
+    ):
+        if existing.run_kind is ConversationRunKind.ASSISTANT_TURN:
+            return existing.skill is None and run.versions.skill_name == "knowledge_agent"
+        return existing.run_kind is ConversationRunKind.SKILL and existing.selection_source in {
             ConversationRunSelectionSource.COMMAND,
+            ConversationRunSelectionSource.AUTO,
+            ConversationRunSelectionSource.NONE,
         }
-        and existing.core_prompt_version
-        in {"assistant-base-prompt-v2", "assistant-base-prompt-v3", "assistant-base-prompt-v4"}
-    )
+    return False
 
 
 def _conversation_run_from_qa(
@@ -1412,15 +1381,7 @@ def _conversation_run_from_qa(
         caller_id=run.caller_id,
         user_message_id=run.question_message_id,
         idempotency_key=existing.idempotency_key if existing is not None else run.idempotency_key,
-        run_kind=(
-            existing.run_kind
-            if existing is not None
-            else (
-                ConversationRunKind.GROUNDED_QA
-                if run.versions.skill_name == "knowledge_qa"
-                else ConversationRunKind.SKILL
-            )
-        ),
+        run_kind=existing.run_kind if existing is not None else ConversationRunKind.SKILL,
         selection_source=(
             existing.selection_source
             if existing is not None
@@ -1429,8 +1390,12 @@ def _conversation_run_from_qa(
         status=status,
         cancellation_requested=run.cancellation_requested,
         error_code=run.error_code,
-        router_version=existing.router_version if existing is not None else "legacy-v1",
-        core_prompt_version=existing.core_prompt_version if existing is not None else "legacy-v1",
+        router_version=(
+            existing.router_version if existing is not None else "assistant-agent-loop-v1"
+        ),
+        core_prompt_version=(
+            existing.core_prompt_version if existing is not None else "assistant-base-prompt-v7"
+        ),
         model_identity=run.versions.model_identity,
         skill=existing.skill if existing is not None else skill,
         usage=ConversationRunUsage(

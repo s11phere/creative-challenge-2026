@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { QAWorkspace } from './QAWorkspace'
-import type { ConversationHistory, QARun } from './qa'
+import type { ConversationHistory } from './qa'
 
 const conversation = {
   conversation_id: 'conversation-1',
@@ -52,11 +52,11 @@ function assistantRun(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function renderWorkspace(apiMode: 'v1' | 'v2' = 'v2') {
+function renderWorkspace() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
   return render(
     <QueryClientProvider client={client}>
-      <QAWorkspace selectedConversationId="conversation-1" apiMode={apiMode} />
+      <QAWorkspace selectedConversationId="conversation-1" />
     </QueryClientProvider>,
   )
 }
@@ -240,7 +240,7 @@ describe('assistant conversation workspace', () => {
     const completed = assistantRun({
       run_kind: 'grounded_qa',
       assistant_message: { message_id: 'assistant-1', content: 'One grounded answer.' },
-      selection: { source: 'auto', skill: { name: 'knowledge_qa', version: '0.2.0', content_sha256: 'a'.repeat(64) } },
+      selection: { source: 'auto', skill: { name: 'knowledge_agent', version: '1.0.0', content_sha256: 'a'.repeat(64) } },
     })
     const fetchMock = baseFetch({
       conversations: [{
@@ -280,7 +280,7 @@ describe('assistant conversation workspace', () => {
   it('keeps a collapsed Skill invocation card with its persisted activity and final answer', async () => {
     const completed = assistantRun({
       run_kind: 'skill',
-      selection: { source: 'auto', skill: { name: 'knowledge_agent', version: '0.2.0', content_sha256: 'a'.repeat(64) } },
+      selection: { source: 'auto', skill: { name: 'knowledge_agent', version: '1.0.0', content_sha256: 'a'.repeat(64) } },
       assistant_message: { message_id: 'assistant-1', content: 'Architecture answer.' },
     })
     const fetchMock = baseFetch({
@@ -658,63 +658,6 @@ describe('assistant conversation workspace', () => {
     expect(thread.lastElementChild).toBe(timelineItems[laterMessageIndex])
   })
 
-  it('uses v1 only when the compatibility mode is explicitly selected', async () => {
-    const legacyRun: QARun = {
-      run_id: 'legacy-run-1',
-      attempt_id: 'legacy-attempt-1',
-      status: 'queued',
-      conversation_id: 'conversation-1',
-      question_message_id: 'legacy-message-1',
-      cancellation_requested: false,
-      error_code: null,
-      skill: { name: 'knowledge_qa', version: '0.1.0', content_sha256: null },
-      fixed_scope: { source_ids: [], document_ids: [], version_ids: [] },
-    }
-    const fetchMock = baseFetch()
-    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input)
-      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
-        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [], runs: [] }] }))
-      }
-      if (url.endsWith('/api/v1/conversations/conversation-1/questions') && init?.method === 'POST') {
-        return Promise.resolve(response(legacyRun, 202))
-      }
-      if (url.endsWith('/api/v1/qa/runs/legacy-run-1')) return Promise.resolve(response(legacyRun))
-      if (url.endsWith('/api/v1/qa/runs/legacy-run-1/cancel') && init?.method === 'POST') {
-        return Promise.resolve(response({ ...legacyRun, status: 'cancelled', cancellation_requested: true }))
-      }
-      return Promise.resolve(response({}))
-    })
-    vi.stubGlobal('fetch', fetchMock)
-    vi.stubGlobal('crypto', { randomUUID: () => 'legacy-idempotency-1' })
-    const view = renderWorkspace('v1')
-
-    const composer = await screen.findByRole('textbox', { name: '消息' })
-    fireEvent.change(composer, { target: { value: 'Legacy question.' } })
-    fireEvent.click(screen.getByRole('button', { name: '发送' }))
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringMatching(/\/api\/v1\/conversations\/conversation-1\/questions$/),
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ question: 'Legacy question.', idempotency_key: 'legacy-idempotency-1' }),
-      }),
-    ))
-    const cancelButton = await waitFor(() => {
-      const element = view.container.querySelector('button.qa-cancel-button')
-      if (!element) throw new Error('cancel control not rendered')
-      return element
-    })
-    fireEvent.click(cancelButton)
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringMatching(/\/api\/v1\/qa\/runs\/legacy-run-1\/cancel$/),
-      expect.objectContaining({ method: 'POST' }),
-    ))
-    const requestedUrls = fetchMock.mock.calls.map(([input]) => String(input))
-    expect(requestedUrls.some((url) => url.includes('/api/v2/commands'))).toBe(false)
-    expect(requestedUrls.some((url) => url.includes('/api/v2/conversations/conversation-1/turns'))).toBe(false)
-  })
-
   it('continues a resource clarification on its existing Run', async () => {
     const waiting = assistantRun({
       status: 'waiting_clarification',
@@ -762,11 +705,11 @@ describe('assistant conversation workspace', () => {
     const grounded = assistantRun({
       run_kind: 'grounded_qa',
       assistant_message: null,
-      selection: { source: 'command', skill: { name: 'knowledge_qa', version: '0.2.0', content_sha256: 'a'.repeat(64) } },
+      selection: { source: 'command', skill: { name: 'knowledge_agent', version: '1.0.0', content_sha256: 'a'.repeat(64) } },
     })
     const qaRun: QARun = {
       run_id: 'run-1', attempt_id: 'attempt-1', status: 'completed', conversation_id: 'conversation-1', question_message_id: 'message-1', cancellation_requested: false, error_code: null,
-      skill: { name: 'knowledge_qa', version: '0.2.0', content_sha256: 'a'.repeat(64) }, fixed_scope: { source_ids: [], document_ids: [], version_ids: [] },
+      skill: { name: 'knowledge_agent', version: '1.0.0', content_sha256: 'a'.repeat(64) }, fixed_scope: { source_ids: [], document_ids: [], version_ids: [] },
       result: { type: 'answer', text: 'Grounded response.', limitations: [] },
       citations: [{ evidence_id: 'evidence-1', source_id: 'source-1', document_id: 'document-1', version_id: 'version-1', chunk_id: 'chunk-1', locator: { kind: 'lines', start: 1, end: 2 } }],
     }

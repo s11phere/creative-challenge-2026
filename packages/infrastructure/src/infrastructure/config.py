@@ -124,8 +124,7 @@ class Settings(BaseSettings):
 
     # --- Skill Registry ---
     skill_root_path: str = "./skills"
-    knowledge_agent_skill_version: str = "0.9.0"
-    agent_loop_v5_enabled: bool = True
+    knowledge_agent_skill_version: str = "1.0.0"
 
     # Workspace Tools are rooted here. The API and Worker must see the same mounted path.
     agent_workspace_root_path: str = "./data/workspaces"
@@ -134,16 +133,6 @@ class Settings(BaseSettings):
     @property
     def agent_workspace_root(self) -> Path:
         return Path(self.agent_workspace_root_path).resolve()
-
-    @property
-    def active_knowledge_agent_skill_version(self) -> str:
-        """Use the default Agent Loop path unless its rollback flag is disabled."""
-        if (
-            self.knowledge_agent_skill_version in {"0.5.0", "0.6.0", "0.7.0", "0.8.0", "0.9.0"}
-            and not self.agent_loop_v5_enabled
-        ):
-            return "0.3.0"
-        return self.knowledge_agent_skill_version
 
     def active_embedding_identity(self, *, allow_unconfigured: bool = False) -> EmbeddingIdentity:
         """Return the one identity shared by ingestion and online retrieval."""

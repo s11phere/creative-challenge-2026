@@ -51,17 +51,16 @@ class FakeOrganizationScope:
 
 
 @pytest.fixture(autouse=True)
-def enable_default_agent_loop_v9(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "knowledge_agent_skill_version", "0.9.0")
-    monkeypatch.setattr(settings, "agent_loop_v5_enabled", True)
+def enable_current_agent_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "knowledge_agent_skill_version", "1.0.0")
 
 
 def test_active_skill_versions_exclude_legacy_recovery_package() -> None:
     assert _active_skill_versions() == {
-        "knowledge_agent": "0.9.0",
-        "summarize_document": "0.1.0",
-        "compare_sources": "0.1.0",
-        "create_review_cards": "0.1.0",
+        "knowledge_agent": "1.0.0",
+        "summarize_document": "1.0.0",
+        "compare_sources": "1.0.0",
+        "create_review_cards": "1.0.0",
     }
 
 
@@ -148,7 +147,7 @@ async def test_provisional_qa_api_creates_run_cancels_and_replays_events() -> No
         run_id = UUID(submitted.json()["run_id"])
         assert submitted.json()["status"] == "queued"
         assert submitted.json()["skill"]["name"] == "knowledge_agent"
-        assert submitted.json()["skill"]["version"] == "0.9.0"
+        assert submitted.json()["skill"]["version"] == "1.0.0"
         assert len(submitted.json()["skill"]["content_sha256"]) == 64
         parent = await repository.get_conversation_run(run_id)
         assert parent is not None
@@ -282,9 +281,6 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         listed = await client.get("/api/v1/skills")
-        versions = await client.get("/api/v1/skills/knowledge_agent/versions")
-        legacy = await client.get("/api/v1/skills/knowledge_qa/versions")
-        missing = await client.get("/api/v1/skills/not_installed/versions")
 
     assert listed.status_code == 200
     assert {item["name"] for item in listed.json()} == {
@@ -293,28 +289,8 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
         "knowledge_agent",
         "summarize_document",
     }
-    knowledge_agent = next(item for item in listed.json() if item["name"] == "knowledge_agent")
-    assert knowledge_agent == {
-        "name": "knowledge_agent",
-        "active_version": "0.9.0",
-        "active_revision": 1,
-        "versions": [
-            "0.1.0",
-            "0.2.0",
-            "0.3.0",
-            "0.4.0",
-            "0.5.0",
-            "0.6.0",
-            "0.7.0",
-            "0.8.0",
-            "0.9.0",
-        ],
-    }
-    assert legacy.status_code == 404
-    assert legacy.json()["code"] == "SKILL_NOT_FOUND"
-    assert versions.status_code == 200
-    payload = next(item for item in versions.json() if item["version"] == "0.9.0")
-    assert payload["active"] is True
+    payload = next(item for item in listed.json() if item["name"] == "knowledge_agent")
+    assert payload["version"] == "1.0.0"
     assert payload["content_sha256"]
     assert payload["permissions"] == ["model", "read_knowledge"]
     assert payload["budget"] == {
@@ -324,42 +300,6 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
         "max_output_tokens": 32768,
         "timeout_seconds": 600,
     }
-    assert missing.status_code == 404
-    assert missing.json()["code"] == "SKILL_NOT_FOUND"
-
-
-@pytest.mark.asyncio
-async def test_skill_activation_uses_revision_cas_and_only_installed_versions() -> None:
-    app = create_app(
-        model_gateway=FakeModelGateway(),
-        enable_qa_execution=False,
-        qa_repository=InMemoryGroundedQARepository(),
-        qa_event_store=QAEventLog(),
-        skill_activation_store=InMemorySkillActivationStore(),
-    )
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        activated = await client.put(
-            "/api/v1/skills/knowledge_agent/active",
-            json={"version": "0.3.0", "expected_revision": 1},
-        )
-        stale = await client.post(
-            "/api/v1/skills/knowledge_agent/rollback",
-            json={"version": "0.3.0", "expected_revision": 1},
-        )
-        missing = await client.put(
-            "/api/v1/skills/knowledge_agent/active",
-            json={"version": "9.9.9", "expected_revision": 2},
-        )
-        listed = await client.get("/api/v1/skills")
-
-    assert activated.status_code == 200
-    assert activated.json()["revision"] == 2
-    assert stale.status_code == 409
-    assert stale.json()["code"] == "SKILL_ACTIVATION_CONFLICT"
-    assert missing.status_code == 404
-    assert missing.json()["code"] == "SKILL_NOT_FOUND"
-    knowledge_agent = next(item for item in listed.json() if item["name"] == "knowledge_agent")
-    assert knowledge_agent["active_revision"] == 2
 
 
 @pytest.mark.asyncio
@@ -399,7 +339,7 @@ async def test_document_organization_skill_fixes_scope_on_the_shared_qa_run() ->
 
     assert submitted.status_code == 202
     assert submitted.json()["skill"]["name"] == "summarize_document"
-    assert submitted.json()["skill"]["version"] == "0.1.0"
+    assert submitted.json()["skill"]["version"] == "1.0.0"
     assert submitted.json()["fixed_scope"] == {
         "source_ids": [str(UUID(int=30))],
         "document_ids": [str(UUID(int=31))],
@@ -482,38 +422,12 @@ async def test_knowledge_agent_uses_the_shared_qa_run_and_fixed_skill_identity()
 
     assert submitted.status_code == 202
     assert submitted.json()["skill"]["name"] == "knowledge_agent"
-    assert submitted.json()["skill"]["version"] == "0.9.0"
+    assert submitted.json()["skill"]["version"] == "1.0.0"
     assert submitted.json()["fixed_scope"] == {
         "source_ids": [],
         "document_ids": [],
         "version_ids": [],
     }
-
-
-@pytest.mark.asyncio
-async def test_generic_run_facade_rejects_legacy_knowledge_qa_for_new_runs() -> None:
-    app = create_app(
-        model_gateway=FakeModelGateway(),
-        enable_qa_execution=False,
-        qa_repository=InMemoryGroundedQARepository(),
-        qa_event_store=QAEventLog(),
-        skill_activation_store=InMemorySkillActivationStore(),
-    )
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        created = await client.post(
-            f"/api/v1/spaces/{UUID(int=3)}/conversations", json={"owner_id": "local-user"}
-        )
-        rejected = await client.post(
-            "/api/v1/runs",
-            json={
-                "conversation_id": created.json()["conversation_id"],
-                "skill_name": "knowledge_qa",
-                "question": "Do not use the legacy Skill.",
-                "idempotency_key": "legacy-skill",
-            },
-        )
-
-    assert rejected.status_code == 422
 
 
 @pytest.mark.asyncio

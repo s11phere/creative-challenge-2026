@@ -53,7 +53,7 @@ CHUNK_ID = UUID("10000000-0000-0000-0000-000000000005")
 
 def _versions() -> QARunVersions:
     return QARunVersions(
-        skill_version="knowledge_qa-0.1.0-provisional",
+        skill_version="1.0.0",
         profile_version="qa-profile-v1",
         retrieval_profile_version="retrieval-profile-v1",
         model_identity="fake-fast-chat-v1",

@@ -2,7 +2,7 @@
   "schema_version": "assistant-contract-manifest-v1",
   "contract_version": "v1",
   "artifacts": {
-    "base-system-prompt-v1.txt": "59dd06b31ccdef5c5fc890031f2488eb37cd63589f96b244e5213ed0e5c71769",
+    "base-system-prompt-v7.txt": "f15363984c11eedb18737d5cb1b96a0874ca4e082652d0da5b6e50dde16efc28",
     "router-decision-v1.schema.json": "26666337302236e1188b1f3982d1c2fcaebd684b4d466184e35a2b13c278bb21",
     "command-catalog-v1.schema.json": "80586e0df36a980019753ab67cdb679cc254faf270df294f76f29417f5dfc8b5",
     "clarification-v1.schema.json": "af6d9249f6a30a92214fba2b91b4f7cef5dd42f1c9be33cdc0155ece00edb88a",

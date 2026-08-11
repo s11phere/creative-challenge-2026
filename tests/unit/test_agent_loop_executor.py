@@ -154,7 +154,7 @@ async def test_loop_observes_multiple_tools_then_finalizes_once() -> None:
         state_store=state_store,
         event_store=events,
         finalizer=finalizer,
-        tool_skill_refs={definition.ref: ToolRef("knowledge_agent", "0.7.0")},
+        tool_skill_refs={definition.ref: ToolRef("knowledge_agent", "1.0.0")},
     ).execute(
         loop_run(permissions=definition.permissions),
         cast(PinnedSkill, object()),

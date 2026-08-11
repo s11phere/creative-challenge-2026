@@ -39,7 +39,7 @@ from application.qa.service import (
     GroundedQAExecutionProfile,
 )
 
-from .knowledge_qa import qa_failure
+from .grounded_qa_skill import qa_failure
 
 type EnsureQARun = Callable[[ToolExecutionContext, QARetrievalScope], Awaitable[QARunRecord]]
 type AdditionalToolRegistrar = Callable[[InMemoryToolRegistry], tuple[ToolDefinition, ...]]
@@ -342,8 +342,6 @@ class KnowledgeLoopTools:
             gap_signals.append("no_matched_evidence")
         elif matched_count <= context_only_count:
             gap_signals.append("matched_evidence_limited")
-        if observations and max(item.source_count for item in observations) < 2:
-            gap_signals.append("single_source_coverage")
         facts.inspections += 1
         facts.last_inspected_search_count = len(observations)
         facts.gap_signals = tuple(str(signal) for signal in gap_signals)
@@ -563,7 +561,7 @@ class KnowledgeLoopTools:
         """
         facts = self._facts_for(run.context.run_id)
         completed = facts.answer_run
-        if self._config.versions.skill_version in {"0.7.0", "0.8.0", "0.9.0"}:
+        if self._config.versions.skill_version == "1.0.0":
             required_document = _explicit_document_summary_reference(state.task.goal)
             if required_document is not None and not facts.document_skill_used:
                 if self.summary_tool is None:
@@ -600,9 +598,10 @@ class KnowledgeLoopTools:
                 for observation in state.observations
             ):
                 facts.started = True
-            if not facts.started:
+            if not facts.started and self._ensure_qa_run is not None:
                 return decision
             _restore_finalization_from_checkpoint(facts, state)
+            completed = facts.answer_run
             if facts.clarification_needed:
                 if decision.action is LLMDecisionAction.CLARIFY:
                     return decision
@@ -610,6 +609,76 @@ class KnowledgeLoopTools:
                     action=LLMDecisionAction.CLARIFY,
                     reason="A document selection is needed before the request can continue.",
                 )
+            # Standalone QA execution is a strict workflow. The Assistant-hosted loop may still
+            # yield an ordinary conversational decision until it has selected a knowledge Tool.
+            if self._ensure_qa_run is None and not facts.finalization_ready and completed is None:
+                if (
+                    decision.action is LLMDecisionAction.CALL_TOOL
+                    and decision.tool_name == "knowledge_search"
+                    and _valid_search_arguments(decision.arguments)
+                    and facts.searches
+                    and (
+                        str(decision.arguments["query"]) in {item.query for item in facts.searches}
+                        or _is_meta_search_query(str(decision.arguments["query"]))
+                    )
+                ):
+                    if facts.last_inspected_search_count < len(facts.searches):
+                        return LLMDecision(
+                            action=LLMDecisionAction.CALL_TOOL,
+                            tool_name="knowledge_inspect",
+                            arguments={"inspection_round": facts.inspections + 1},
+                            reason="server-required retrieval coverage inspection",
+                        )
+                    return LLMDecision(
+                        action=LLMDecisionAction.CALL_TOOL,
+                        tool_name="grounded_answer",
+                        arguments={},
+                        reason="server-recovered repeated or meta retrieval query",
+                    )
+                if not facts.searches:
+                    if (
+                        decision.action is LLMDecisionAction.CALL_TOOL
+                        and decision.tool_name == "knowledge_search"
+                        and _valid_search_arguments(decision.arguments)
+                    ):
+                        return decision
+                    return LLMDecision(
+                        action=LLMDecisionAction.CALL_TOOL,
+                        tool_name="knowledge_search",
+                        arguments={"query": _bounded_query(state.task.goal)},
+                        reason="server-required initial knowledge search",
+                    )
+                if facts.last_inspected_search_count < len(facts.searches):
+                    return LLMDecision(
+                        action=LLMDecisionAction.CALL_TOOL,
+                        tool_name="knowledge_inspect",
+                        arguments={"inspection_round": facts.inspections + 1},
+                        reason="server-required retrieval coverage inspection",
+                    )
+                if _needs_followup_search(facts) and len(facts.searches) < 2:
+                    if (
+                        decision.action is LLMDecisionAction.CALL_TOOL
+                        and decision.tool_name == "knowledge_search"
+                        and _valid_search_arguments(decision.arguments)
+                    ):
+                        return decision
+                    return LLMDecision(
+                        action=LLMDecisionAction.CALL_TOOL,
+                        tool_name="knowledge_search",
+                        arguments={"query": _followup_query(facts, state.task.goal)},
+                        reason="server-required follow-up for weak retrieval coverage",
+                    )
+                if (
+                    decision.action is not LLMDecisionAction.CALL_TOOL
+                    or decision.tool_name != "grounded_answer"
+                    or decision.arguments
+                ):
+                    return LLMDecision(
+                        action=LLMDecisionAction.CALL_TOOL,
+                        tool_name="grounded_answer",
+                        arguments={},
+                        reason="server-required grounded QA execution",
+                    )
             if (
                 decision.action is LLMDecisionAction.CALL_TOOL
                 and decision.tool_name == "knowledge_search"
@@ -639,8 +708,21 @@ class KnowledgeLoopTools:
             # are rehydrated. A new bounded query is allowed to rebuild those facts; do not
             # manufacture a query from an instruction such as "use knowledge_search".
             # A terminal answer can never bypass QA-owned verification and publication.  Unlike
-            # 0.6.0 this policy does not prescribe retrieval order; individual Tools return a
+            # This policy does not prescribe retrieval order; individual Tools return a
             # local, model-visible next-step recommendation when their precondition is unmet.
+            if not facts.finalization_ready and completed is not None and not facts.verified:
+                if (
+                    decision.action is LLMDecisionAction.CALL_TOOL
+                    and decision.tool_name == "verify_answer"
+                    and not decision.arguments
+                ):
+                    return decision
+                return LLMDecision(
+                    action=LLMDecisionAction.CALL_TOOL,
+                    tool_name="verify_answer",
+                    arguments={},
+                    reason="server-required QA verification",
+                )
             if not facts.finalization_ready and decision.action is not LLMDecisionAction.CALL_TOOL:
                 return LLMDecision(
                     action=LLMDecisionAction.CALL_TOOL,
@@ -664,8 +746,7 @@ class KnowledgeLoopTools:
                 )
             )
         if completed is None:
-            if self._config.versions.skill_version != "0.6.0":
-                return decision
+            return decision
             if not facts.searches:
                 if (
                     decision.action is LLMDecisionAction.CALL_TOOL

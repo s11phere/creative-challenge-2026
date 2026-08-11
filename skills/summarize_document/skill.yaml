@@ -1,6 +1,6 @@
-manifest_version: "1"
+manifest_version: "2"
 name: summarize_document
-version: 0.1.0
+version: 1.0.0
 description: Summarize one fixed published document version with grounded citations.
 input_schema: schemas/input.json
 output_schema: schemas/output.json
@@ -19,3 +19,16 @@ compatibility:
   checkpoint_schema_versions: [1]
 prompts: [prompts/boundary.md]
 evals: [evals/cases.jsonl]
+invocation:
+  command: summarize
+  aliases: [summary]
+  argument_hint: "<文档或主题> [重点]"
+  trigger:
+    summary: "对当前 Space 中的一个已发布文档生成带引用摘要"
+    when:
+      - "用户明确要求总结、提炼或概览某个库内文档"
+    avoid_when:
+      - "用户只是要求总结刚刚输入的一小段文字"
+    examples:
+      - "总结操作系统笔记中的内存章节"
+  input_mode: document

@@ -62,7 +62,7 @@ ANSWER_MESSAGE_ID = UUID(int=19)
 
 def _versions() -> QARunVersions:
     return QARunVersions(
-        skill_version="knowledge_qa-v1",
+        skill_version="1.0.0",
         profile_version="grounded-qa-provisional-v1",
         retrieval_profile_version="stage3-default-pending-formal-freeze",
         model_identity="fake-fast-chat-v1",
@@ -73,14 +73,14 @@ def _versions() -> QARunVersions:
     )
 
 
-def test_legacy_versions_without_skill_digest_remain_readable() -> None:
+def test_versions_without_optional_skill_digest_use_the_current_skill_identity() -> None:
     payload = _versions().__dict__.copy()
     payload.pop("skill_name")
     payload.pop("skill_content_sha256")
 
     restored = TypeAdapter(QARunVersions).validate_python(payload)
 
-    assert restored.skill_name == "knowledge_qa"
+    assert restored.skill_name == "knowledge_agent"
     assert restored.skill_content_sha256 is None
 
 

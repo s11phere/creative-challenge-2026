@@ -254,7 +254,7 @@ async def test_v2_effort_command_updates_only_future_conversation_runs() -> None
 
 
 @pytest.mark.asyncio
-async def test_v2_ordinary_multi_turns_complete_without_retrieval_and_sse_is_content_free() -> None:
+async def test_v2_ordinary_multi_turns_are_enqueued_and_sse_is_content_free() -> None:
     repository = InMemoryGroundedQARepository()
     enqueued: list[UUID] = []
 
@@ -286,28 +286,18 @@ async def test_v2_ordinary_multi_turns_complete_without_retrieval_and_sse_is_con
             json={"content": "Synthetic first turn.", "idempotency_key": "ordinary-1"},
         )
         first_id = UUID(first.json()["run_id"])
-        await repository.claim_conversation_run(
-            first_id, lease_owner="test-worker", lease_seconds=60
-        )
-        await app.state.assistant_agent_service.execute(first_id)
-        first_completed = await client.get(f"/api/v2/runs/{first_id}")
         second = await client.post(
             f"/api/v2/conversations/{conversation_id}/turns",
             json={"content": "Synthetic second turn.", "idempotency_key": "ordinary-2"},
         )
         second_id = UUID(second.json()["run_id"])
-        await repository.claim_conversation_run(
-            second_id, lease_owner="test-worker", lease_seconds=60
-        )
-        await app.state.assistant_agent_service.execute(second_id)
-        second_completed = await client.get(f"/api/v2/runs/{second_id}")
         stream = await client.get(f"/api/v2/runs/{second_id}/events")
 
     assert enqueued == [first_id, second_id]
-    assert first_completed.json()["status"] == ConversationRunStatus.COMPLETED.value
-    assert second_completed.json()["status"] == ConversationRunStatus.COMPLETED.value
-    assert first_completed.json()["assistant_message"]["content"].startswith("fake-response-")
-    assert second_completed.json()["assistant_message"]["content"].startswith("fake-response-")
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert first.json()["status"] == ConversationRunStatus.CREATED.value
+    assert second.json()["status"] == ConversationRunStatus.CREATED.value
     assert stream.status_code == 200
     assert stream.headers["content-type"].startswith("text/event-stream")
     stream_body = stream.text
@@ -318,11 +308,7 @@ async def test_v2_ordinary_multi_turns_complete_without_retrieval_and_sse_is_con
         for line in stream_body.splitlines()
         if line.startswith("data: ")
     ]
-    assert [payload["type"] for payload in payloads] == [
-        AssistantEventType.ACCEPTED.value,
-        AssistantEventType.ROUTING.value,
-        AssistantEventType.COMPLETED.value,
-    ]
+    assert [payload["type"] for payload in payloads] == [AssistantEventType.ACCEPTED.value]
 
 
 @pytest.mark.asyncio
@@ -496,8 +482,7 @@ async def test_v2_explicit_skill_command_bypasses_model_and_is_idempotent(
             raise AssertionError("Explicit command must not use the Assistant router model")
 
     repository = InMemoryGroundedQARepository()
-    monkeypatch.setattr(settings, "knowledge_agent_skill_version", "0.6.0")
-    monkeypatch.setattr(settings, "agent_loop_v5_enabled", True)
+    monkeypatch.setattr(settings, "knowledge_agent_skill_version", "1.0.0")
     events = AssistantEventLog()
     app = create_app(
         model_gateway=NoChatGateway(),
@@ -525,7 +510,7 @@ async def test_v2_explicit_skill_command_bypasses_model_and_is_idempotent(
     assert first.json()["command"] == "ask"
     assert first.json()["run"]["run_kind"] == "skill"
     assert first.json()["run"]["selection"]["source"] == "command"
-    assert first.json()["run"]["selection"]["skill"]["version"] == "0.6.0"
+    assert first.json()["run"]["selection"]["skill"]["version"] == "1.0.0"
     assert second.json()["run"]["run_id"] == first.json()["run"]["run_id"]
     replayed = await events.replay(UUID(first.json()["run"]["run_id"]))
     assert [event.event_type for event in replayed] == [

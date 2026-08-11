@@ -29,10 +29,8 @@ from agent_runtime import (
     register_side_effect_tools,
 )
 from application.assistant import (
-    AssistantAgentService,
     AssistantMetrics,
     AssistantSkillContext,
-    AssistantSkillInvocationService,
     AutonomousAssistantLoopService,
     ConversationCompactionService,
     ConversationContextService,
@@ -43,11 +41,10 @@ from domain.agent_runtime import ToolPermission
 from domain.assistant_sse import AssistantEventType
 from domain.conversation_run import ConversationRunKind, ConversationRunStatus
 from domain.grounded_qa import QAAttempt, QAEvent, QAStatus
-from domain.qa_persistence import QARetrievalScope, QARunRecord, QARunVersions
+from domain.qa_persistence import QARetrievalScope, QARunRecord
 from infrastructure.agent_events import PostgresAgentRunEventStore
 from infrastructure.assistant_events import PostgresAssistantEventStore
 from infrastructure.assistant_resources import PostgresAssistantResourceResolver
-from infrastructure.assistant_skill_projection import AssistantQASkillProjection
 from infrastructure.config import settings
 from infrastructure.conversation_runs import PostgresConversationRunRepository
 from infrastructure.database import Database
@@ -63,7 +60,6 @@ from infrastructure.qa_execution import (
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
 from infrastructure.runtime_approval import PostgresApprovalPort
 from infrastructure.runtime_state import PostgresRuntimeStateStore
-from infrastructure.skill_catalog import FileSystemSkillCatalog
 from infrastructure.telemetry_context import (
     bind_observability_context,
     new_trace_id,
@@ -77,7 +73,7 @@ from opentelemetry.trace import SpanKind
 from sqlalchemy.pool import NullPool
 
 from worker.broker import broker
-from worker.qa_tasks import _create_gateway, enqueue_qa_run
+from worker.qa_tasks import _create_gateway
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("worker.assistant")
@@ -150,11 +146,6 @@ def _run_assistant_sync(run_id: UUID, trace_id: str) -> bool:
             loop.close()
 
 
-def _start_qa(run_id: UUID) -> bool:
-    enqueue_qa_run(run_id=str(run_id), trace_id=new_trace_id(), event_version=1)
-    return True
-
-
 async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id: str) -> bool:
     runs = PostgresConversationRunRepository(database)
     lease_owner = str(uuid4())
@@ -170,52 +161,16 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
     context = ConversationContextService(data=qa_repository, runs=runs)
     metrics = AssistantMetrics()
 
-    async def _versions(skill_name: str) -> QARunVersions:
-        return qa_execution_versions(registry, skill_name=skill_name)
-
-    resources = PostgresAssistantResourceResolver(database)
-    projection = AssistantQASkillProjection(
-        repository=qa_repository,
-        parent_runs=runs,
-        versions=_versions,
-        start=lambda uid: _start_qa(uid),
-    )
-    invoker = AssistantSkillInvocationService(
-        runs=runs,
-        catalog=FileSystemSkillCatalog(registry, include_manifest_v2=True),
-        registry=registry,
-        projection=projection,
-        resources=resources,
-    )
-    legacy_service = AssistantAgentService(
-        runs=runs,
-        messages=qa_repository,
+    service = await _autonomous_loop_service(
         gateway=gateway,
-        events=PostgresAssistantEventStore(database),
-        skill_catalog=FileSystemSkillCatalog(registry, include_manifest_v2=True),
-        skill_invoker=invoker,
+        registry=registry,
+        runs=runs,
+        qa_repository=qa_repository,
         context=context,
         metrics=metrics,
+        run_id=run_id,
+        trace_id=trace_id,
     )
-    service: AssistantAgentService | AutonomousAssistantLoopService
-    if (
-        claimed.run_kind is ConversationRunKind.ASSISTANT_TURN
-        and claimed.router_version == "assistant-agent-loop-v1"
-        and claimed.core_prompt_version
-        in {"assistant-base-prompt-v5", "assistant-base-prompt-v6", "assistant-base-prompt-v7"}
-    ):
-        service = await _autonomous_loop_service(
-            gateway=gateway,
-            registry=registry,
-            runs=runs,
-            qa_repository=qa_repository,
-            context=context,
-            metrics=metrics,
-            run_id=run_id,
-            trace_id=trace_id,
-        )
-    else:
-        service = legacy_service
     compaction = ConversationCompactionService(
         context=context,
         data=qa_repository,
@@ -278,7 +233,7 @@ async def _autonomous_loop_service(
     skill_registry = registry
     assert isinstance(skill_registry, FileSystemSkillRegistry)
     resources = PostgresAssistantResourceResolver(database)
-    assistant_pin = skill_registry.pin("assistant_agent", "0.2.0")
+    assistant_pin = skill_registry.pin("assistant_agent", "1.0.0")
     assistant_package = skill_registry.validate_pin(assistant_pin)
     knowledge_pin = skill_registry.pin("knowledge_agent")
     active_skill_contexts: list[AssistantSkillContext] = []

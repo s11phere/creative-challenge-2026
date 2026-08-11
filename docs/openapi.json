@@ -2823,55 +2823,6 @@
         "title": "SelectionResponse",
         "type": "object"
       },
-      "SkillActivationRequest": {
-        "properties": {
-          "expected_revision": {
-            "minimum": 1.0,
-            "title": "Expected Revision",
-            "type": "integer"
-          },
-          "version": {
-            "maxLength": 100,
-            "minLength": 1,
-            "title": "Version",
-            "type": "string"
-          }
-        },
-        "required": [
-          "version",
-          "expected_revision"
-        ],
-        "title": "SkillActivationRequest",
-        "type": "object"
-      },
-      "SkillActivationResponse": {
-        "properties": {
-          "content_sha256": {
-            "title": "Content Sha256",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "revision": {
-            "title": "Revision",
-            "type": "integer"
-          },
-          "version": {
-            "title": "Version",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "version",
-          "content_sha256",
-          "revision"
-        ],
-        "title": "SkillActivationResponse",
-        "type": "object"
-      },
       "SkillBudgetResponse": {
         "properties": {
           "max_input_tokens": {
@@ -2905,49 +2856,6 @@
         "title": "SkillBudgetResponse",
         "type": "object"
       },
-      "SkillCleanupRequest": {
-        "properties": {
-          "content_sha256": {
-            "maxLength": 64,
-            "minLength": 64,
-            "title": "Content Sha256",
-            "type": "string"
-          }
-        },
-        "required": [
-          "content_sha256"
-        ],
-        "title": "SkillCleanupRequest",
-        "type": "object"
-      },
-      "SkillCleanupResponse": {
-        "properties": {
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "references": {
-            "title": "References",
-            "type": "integer"
-          },
-          "removed": {
-            "title": "Removed",
-            "type": "boolean"
-          },
-          "version": {
-            "title": "Version",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "version",
-          "removed",
-          "references"
-        ],
-        "title": "SkillCleanupResponse",
-        "type": "object"
-      },
       "SkillIdentityResponse": {
         "properties": {
           "content_sha256": {
@@ -2971,57 +2879,8 @@
         "title": "SkillIdentityResponse",
         "type": "object"
       },
-      "SkillSummaryResponse": {
+      "SkillResponse": {
         "properties": {
-          "active_revision": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Active Revision"
-          },
-          "active_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Active Version"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "versions": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Versions",
-            "type": "array"
-          }
-        },
-        "required": [
-          "name",
-          "active_version",
-          "active_revision",
-          "versions"
-        ],
-        "title": "SkillSummaryResponse",
-        "type": "object"
-      },
-      "SkillVersionResponse": {
-        "properties": {
-          "active": {
-            "title": "Active",
-            "type": "boolean"
-          },
           "budget": {
             "$ref": "#/components/schemas/SkillBudgetResponse"
           },
@@ -3061,12 +2920,11 @@
           "version",
           "content_sha256",
           "description",
-          "active",
           "permissions",
           "required_capabilities",
           "budget"
         ],
-        "title": "SkillVersionResponse",
+        "title": "SkillResponse",
         "type": "object"
       },
       "SourceDetailResponse": {
@@ -5136,6 +4994,7 @@
     },
     "/api/v1/skills": {
       "get": {
+        "description": "Expose the single installed version of every current Skill.",
         "operationId": "list_skills_api_v1_skills_get",
         "responses": {
           "200": {
@@ -5143,7 +5002,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/SkillSummaryResponse"
+                    "$ref": "#/components/schemas/SkillResponse"
                   },
                   "title": "Response List Skills Api V1 Skills Get",
                   "type": "array"
@@ -5154,277 +5013,6 @@
           }
         },
         "summary": "List Skills",
-        "tags": [
-          "skills"
-        ]
-      }
-    },
-    "/api/v1/skills/{skill_name}/active": {
-      "put": {
-        "operationId": "activate_skill_api_v1_skills__skill_name__active_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "skill_name",
-            "required": true,
-            "schema": {
-              "title": "Skill Name",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SkillActivationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SkillActivationResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Activate Skill",
-        "tags": [
-          "skills"
-        ]
-      }
-    },
-    "/api/v1/skills/{skill_name}/rollback": {
-      "post": {
-        "operationId": "rollback_skill_api_v1_skills__skill_name__rollback_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "skill_name",
-            "required": true,
-            "schema": {
-              "title": "Skill Name",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SkillActivationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SkillActivationResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Rollback Skill",
-        "tags": [
-          "skills"
-        ]
-      }
-    },
-    "/api/v1/skills/{skill_name}/versions": {
-      "get": {
-        "operationId": "list_skill_versions_api_v1_skills__skill_name__versions_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "skill_name",
-            "required": true,
-            "schema": {
-              "title": "Skill Name",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/SkillVersionResponse"
-                  },
-                  "title": "Response List Skill Versions Api V1 Skills  Skill Name  Versions Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Skill Versions",
-        "tags": [
-          "skills"
-        ]
-      }
-    },
-    "/api/v1/skills/{skill_name}/versions/{version}/cleanup": {
-      "post": {
-        "operationId": "cleanup_skill_version_api_v1_skills__skill_name__versions__version__cleanup_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "skill_name",
-            "required": true,
-            "schema": {
-              "title": "Skill Name",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "version",
-            "required": true,
-            "schema": {
-              "title": "Version",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SkillCleanupRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SkillCleanupResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Cleanup Skill Version",
         "tags": [
           "skills"
         ]

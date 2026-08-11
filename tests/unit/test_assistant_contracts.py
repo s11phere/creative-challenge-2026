@@ -36,7 +36,7 @@ def test_frozen_assistant_contract_artifacts_match_manifest() -> None:
     artifacts = manifest["artifacts"]
     assert isinstance(artifacts, dict)
     assert set(artifacts) == {
-        "base-system-prompt-v1.txt",
+        "base-system-prompt-v7.txt",
         "router-decision-v1.schema.json",
         "command-catalog-v1.schema.json",
         "clarification-v1.schema.json",
@@ -67,7 +67,7 @@ def test_router_decision_schema_accepts_only_safe_declared_shapes() -> None:
         {
             "schema_version": "assistant-router-decision-v1",
             "action": "invoke_skill",
-            "skill_name": "knowledge_qa",
+            "skill_name": "knowledge_agent",
             "arguments": {"question": "Synthetic question."},
         }
     )
@@ -77,7 +77,7 @@ def test_router_decision_schema_accepts_only_safe_declared_shapes() -> None:
             {
                 "schema_version": "assistant-router-decision-v1",
                 "action": "invoke_skill",
-                "skill_name": "knowledge_qa",
+                "skill_name": "knowledge_agent",
                 "arguments": {"document_id": "model-chosen-id"},
             }
         )
