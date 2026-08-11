@@ -1,0 +1,5 @@
+{"case_id":"exam-broad-diagnostic-count","scenario":"normal","expected_question_count":{"min":6,"max":10},"fixture":"synthetic_only"}
+{"case_id":"exam-adaptive-follow-up","scenario":"single_error","expected":"uncertain_then_follow_up","fixture":"synthetic_only"}
+{"case_id":"exam-hidden-answer","scenario":"before_submission","expected":"no_answer_or_explanation_in_question_paper","fixture":"synthetic_only"}
+{"case_id":"exam-past-paper-boundary","scenario":"past_exam_available","expected":"structure_only_no_verbatim_copy","fixture":"synthetic_only"}
+{"case_id":"exam-resume-awaiting-answers","scenario":"resume","expected":"same_question_set_and_phase","fixture":"synthetic_only"}

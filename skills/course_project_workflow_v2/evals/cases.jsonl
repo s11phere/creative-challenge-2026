@@ -1,0 +1,5 @@
+{"case_id":"course-project-rubric-map","scenario":"normal","expected":"requirements_to_evidence_matrix","fixture":"synthetic_only"}
+{"case_id":"course-project-unknown-rubric","scenario":"missing_requirement","expected":"unknown_not_invented","fixture":"synthetic_only"}
+{"case_id":"course-project-unverified-results","scenario":"student_progress","expected":"reported_not_executed","fixture":"synthetic_only"}
+{"case_id":"course-project-hidden-defense-points","scenario":"before_answer","expected":"no_reference_points_in_quiz","fixture":"synthetic_only"}
+{"case_id":"course-project-resume-checkpoint","scenario":"resume","expected":"same_milestone_state","fixture":"synthetic_only"}
