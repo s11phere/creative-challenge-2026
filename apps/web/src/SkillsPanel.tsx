@@ -7,6 +7,7 @@ import {
   deletePersonalSkill,
   fetchPersonalSkills,
   fetchSkills,
+  updatePersonalSkill,
   type PersonalSkill,
   type SkillVersion,
 } from './qa'

@@ -10,7 +10,13 @@ from domain.conversation_context import ConversationSensitivity
 from domain.usage_traces import UsageOutcome, UsagePatternSnapshot, UsageTrace, pattern_key
 from infrastructure.config import settings
 from infrastructure.database import Database
-from infrastructure.orm import ConversationModel, ConversationRunModel, UsagePatternModel
+from infrastructure.orm import (
+    ConversationModel,
+    ConversationRunModel,
+    QAMessageModel,
+    SpaceModel,
+    UsagePatternModel,
+)
 from infrastructure.usage_traces import PostgresUsagePatternRepository, PostgresUsageTraceRepository
 from sqlalchemy import delete
 
@@ -24,9 +30,22 @@ pytestmark = [
 
 
 async def _create_parent_run(database: Database) -> tuple[object, object]:
-    """Insert a minimal Conversation + completed Skill ConversationRun."""
+    """Insert a minimal Space + Conversation + user message + completed Skill run."""
     conversation_id = uuid4()
     run_id = uuid4()
+    message_id = uuid4()
+    # Space is committed first because conversations.space_id is a FK to
+    # spaces.id and these mappers declare no relationships, so SQLAlchemy
+    # cannot order the inserts in a single flush. The rest of the chain is
+    # flushed step-by-step so each FK is satisfied before the next insert.
+    async with database.transaction() as session:
+        session.add(
+            SpaceModel(
+                id=conversation_id,
+                name="usage-trace-integration",
+                owner_id="usage-trace-integration",
+            )
+        )
     async with database.transaction() as session:
         session.add(
             ConversationModel(
@@ -35,13 +54,27 @@ async def _create_parent_run(database: Database) -> tuple[object, object]:
                 owner_id="usage-trace-integration",
             )
         )
+        await session.flush()
+        # conversation_runs.user_message_id FKs to qa_messages.id (run_id stays
+        # NULL here to avoid the qa_messages <-> conversation_runs cycle).
+        session.add(
+            QAMessageModel(
+                id=message_id,
+                conversation_id=conversation_id,
+                space_id=conversation_id,
+                role="user",
+                content="What is the summary?",
+                run_id=None,
+            )
+        )
+        await session.flush()
         session.add(
             ConversationRunModel(
                 id=run_id,
                 conversation_id=conversation_id,
                 space_id=conversation_id,
                 caller_id="usage-trace-integration",
-                user_message_id=uuid4(),
+                user_message_id=message_id,
                 idempotency_key=f"usage-trace-{run_id.hex}",
                 run_kind="skill",
                 selection_source="auto",
@@ -89,6 +122,8 @@ async def test_usage_trace_repository_roundtrip_and_idempotent_save() -> None:
             await session.execute(
                 delete(ConversationRunModel).where(ConversationRunModel.id == run_id)
             )
+            # Deleting the Space cascades to the conversation and its runs.
+            await session.execute(delete(SpaceModel).where(SpaceModel.id == conversation_id))
         await database.dispose()
 
 
@@ -178,4 +213,6 @@ async def test_distill_all_recomputes_queryable_patterns() -> None:
                 delete(ConversationRunModel).where(ConversationRunModel.id == run_id)
             )
             await session.execute(delete(UsagePatternModel))
+            # Deleting the Space cascades to the conversation and its runs.
+            await session.execute(delete(SpaceModel).where(SpaceModel.id == conversation_id))
         await database.dispose()
