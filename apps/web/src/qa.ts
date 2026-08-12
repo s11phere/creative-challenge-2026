@@ -302,6 +302,56 @@ export function fetchSkills(signal?: AbortSignal): Promise<SkillVersion[]> {
   return request('/api/v1/skills', { signal })
 }
 
+export type PersonalSkill = {
+  name: string
+  version: string
+  content_sha256: string
+  description: string
+  active: boolean
+  permissions: string[]
+  required_capabilities: string[]
+  budget: {
+    max_steps: number
+    max_tool_calls: number
+    max_input_tokens: number
+    max_output_tokens: number
+    timeout_seconds: number
+  }
+  invocation: {
+    command: string
+    aliases: string[]
+    argument_hint: string
+    input_mode: string
+    execution_mode: string
+  } | null
+}
+
+export function fetchPersonalSkills(signal?: AbortSignal): Promise<PersonalSkill[]> {
+  return request('/api/v1/skills/personal', { signal })
+}
+
+export function createPersonalSkill(name: string, files: Record<string, string>): Promise<PersonalSkill> {
+  return request('/api/v1/skills/personal', {
+    method: 'POST',
+    body: JSON.stringify({ name, files }),
+  })
+}
+
+export function updatePersonalSkill(name: string, files: Record<string, string>): Promise<PersonalSkill> {
+  return request(`/api/v1/skills/personal/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ files }),
+  })
+}
+
+export function deletePersonalSkill(name: string): Promise<{ status: string }> {
+  return request(`/api/v1/skills/personal/${encodeURIComponent(name)}`, { method: 'DELETE' })
+}
+
+export function activatePersonalSkill(name: string): Promise<PersonalSkill> {
+  return request(`/api/v1/skills/personal/${encodeURIComponent(name)}/activate`, { method: 'POST' })
+}
+
 export function fetchCitationExcerpt(
   runId: string,
   evidenceId: string,

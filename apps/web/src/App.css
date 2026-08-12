@@ -3229,6 +3229,45 @@
   white-space: nowrap;
 }
 
+.personal-skills-heading {
+  margin-top: 18px;
+}
+
+.personal-skill-editor {
+  margin: 8px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.personal-skill-editor-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.personal-skill-editor label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.personal-skill-editor input,
+.personal-skill-editor textarea {
+  padding: 7px 9px;
+  color: var(--text);
+  background: var(--background);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font: inherit;
+  font-family: var(--font-mono, monospace);
+}
+
+.personal-skill-editor input:disabled {
+  opacity: 0.6;
+}
+
 .skill-versions {
   padding: 0 14px 14px 58px;
   border-top: 1px solid var(--border);

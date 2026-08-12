@@ -148,6 +148,16 @@ uv run python scripts/distill_usage_patterns.py --json
 
 `--enqueue` 可把蒸馏调度到 Dramatiq Worker（需 Redis）；Phase 6 前这些模式只产出、不消费。
 
+个性化 Phase 3（个人 Skill 存储与信任模型）让用户可写自己的 Skill，但严格复用内置校验与信任边界：
+个人 Skill 存放于 `PERSONAL_SKILLS_DIR`（默认 `./data/personal_skills`），只组合既有 handler/tool、
+不引入新 Python 行为，且不得覆盖内置 Skill 名（ADR-018）。CRUD + 激活经 `/api/v1/skills/personal`，
+激活沿用 `skill_activations` 持久化并在 API/worker 启动时重放；`SkillsPanel` 提供基础 CRUD 入口。
+调试可先验证个人根能加载：
+
+```powershell
+uv run python -c "from infrastructure.qa_execution import assistant_skill_registry; r=assistant_skill_registry(); print(r.personal_names())"
+```
+
 发布 Assistant 时应先使用 `MODEL_PROVIDER=fake` 或获批准的本地 Chat stub。启用外部 Chat Provider 仍需满足现有的
 `MODEL_ALLOW_EXTERNAL`、来源策略、部署策略和用户可见同意检查；Web 发布配置不会绕过这些边界。应监控路由误判、
 澄清循环、取消率、恢复失败以及实际 token/延迟回归。

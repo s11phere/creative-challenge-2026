@@ -390,6 +390,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/skills/grounded_qa_skill.py` | 当前 Grounded QA Adapter；为文档摘要、比较和复习卡将 Runtime 上下文映射到唯一 QA Port 并投影其结构化结果 |
 | `src/application/skills/organization.py` | 校验知识整理 Skill 的 Space 归属和当前 published Source/Document/DocumentVersion，并生成固定检索范围 |
 | `src/application/skills/evaluation.py` | Skill eval case/check 类型、`SkillEvalJudge` Protocol + 确定性 `StructuralSkillEvalJudge`、失败分类与聚合指标；body-free 判定（LLM judge 留缝） |
+| `src/application/skills/personal.py` | 个性化 Phase 3 个人 Skill：`PersonalSkillStore` CRUD + 激活（复用 `skill_activations`）、`PersonalSkillView` body-free 投影、错误码；写操作经 `PersonalSkillRegistry` 全量校验 |
 | `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
 | `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
 | `src/application/usage_traces/record.py` | 个性化 Phase 2 使用痕迹：从已完成 ConversationRun 组装脱敏 `UsageTrace`（outcome 分类、input_summary 截断+密钥打码）、幂等持久化 |

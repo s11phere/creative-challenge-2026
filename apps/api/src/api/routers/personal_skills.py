@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from agent_runtime import SkillRegistryError
 from application.skills import PersonalSkillError, PersonalSkillView
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Request, status
 from pydantic import BaseModel, Field
 
 from ..errors import AppError
@@ -124,13 +124,13 @@ def update_personal_skill(
     return _to_response(view)
 
 
-@router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_personal_skill(request: Request, name: str) -> Response:
+@router.delete("/{name}", response_model=dict[str, str])
+def delete_personal_skill(request: Request, name: str) -> dict[str, str]:
     try:
         request.app.state.personal_skill_store.delete(name)
     except (PersonalSkillError, SkillRegistryError) as exc:
         raise _app_error(exc) from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return {"status": "deleted"}
 
 
 @router.post("/{name}/activate", response_model=PersonalSkillResponse)
