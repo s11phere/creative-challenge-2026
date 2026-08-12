@@ -416,6 +416,14 @@ If PowerShell reports that the `Count` property is missing, use the current
 `scripts/start-local.ps1`. The script normalizes Skill files and managed Compose projects to arrays
 before checking `.Count`, so both a single result and an empty result are supported. This check runs
 before Docker startup and does not remove volumes or application data.
+
+## `start-local.ps1` reports that a local port is already allocated
+
+The startup script discovers all prior `creative-challenge-local-*` Compose projects that use
+`deploy/compose.yaml`, stops them with `down --remove-orphans`, and preserves their named volumes
+before starting the current trusted-Skill-fingerprint project. If an older script leaves a local
+stack behind, update the script and run it again; do not use `down --volumes` to resolve the
+conflict.
 # 当前版本提示（2026-08-11）
 
 当前只运行 Assistant 主路径和固定 Skill `1.0.0`。不要设置已删除的 `AGENT_LOOP_V5_ENABLED`、

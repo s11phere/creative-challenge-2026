@@ -131,18 +131,31 @@ function Get-ManagedComposeProjects {
     }
 
     $expectedPath = [System.IO.Path]::GetFullPath($ComposePath)
-    $projects = @($rawProjects | ConvertFrom-Json)
-    return @($projects | Where-Object {
-        $configFilesProperty = $_.PSObject.Properties['ConfigFiles']
-        $nameProperty = $_.PSObject.Properties['Name']
+    # Assign first so a JSON array remains a collection of projects in Windows PowerShell.
+    $decodedProjects = $rawProjects | ConvertFrom-Json
+    $projects = @($decodedProjects)
+    $managedProjectNames = foreach ($project in $projects) {
+        $configFilesProperty = $project.PSObject.Properties['ConfigFiles']
+        $nameProperty = $project.PSObject.Properties['Name']
         if ($null -eq $configFilesProperty -or $null -eq $nameProperty) {
-            return $false
+            continue
         }
-        $matchesConfig = ([string]$configFilesProperty.Value) -split ',' | ForEach-Object {
-            [System.IO.Path]::GetFullPath($_.Trim()) -eq $expectedPath
-        } | Where-Object { $_ } | Select-Object -First 1
-        $matchesConfig -and ($nameProperty.Value -eq $LegacyProjectName -or $nameProperty.Value -like "creative-challenge-local-*")
-    } | ForEach-Object { $_.Name })
+
+        $matchesConfig = $false
+        foreach ($configuredPath in ([string]$configFilesProperty.Value) -split ',') {
+            if ([System.IO.Path]::GetFullPath($configuredPath.Trim()) -eq $expectedPath) {
+                $matchesConfig = $true
+                break
+            }
+        }
+        if ($matchesConfig -and (
+                $nameProperty.Value -eq $LegacyProjectName -or
+                $nameProperty.Value -like "creative-challenge-local-*"
+            )) {
+            [string]$nameProperty.Value
+        }
+    }
+    return @($managedProjectNames)
 }
 
 function Stop-ManagedComposeProjects {
