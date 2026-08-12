@@ -80,6 +80,7 @@ def _source_to_domain(row: SourceModel) -> Source:
         space_id=row.space_id,
         source_type=SourceType(row.source_type),
         uri=row.uri,
+        name=row.name,
         sync_cursor=row.sync_cursor,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -92,6 +93,7 @@ def _source_from_domain(source: Source) -> SourceModel:
         space_id=source.space_id,
         source_type=source.source_type.value,
         uri=source.uri,
+        name=source.name,
         sync_cursor=source.sync_cursor,
         created_at=source.created_at,
         updated_at=source.updated_at,
@@ -311,6 +313,7 @@ class SourceRepository:
         values: dict[str, Any] = {
             "source_type": source.source_type.value,
             "uri": source.uri,
+            "name": source.name,
             "sync_cursor": source.sync_cursor,
             "updated_at": datetime.now(UTC),
         }
@@ -346,6 +349,15 @@ class DocumentRepository:
     async def get_by_source(self, source_id: uuid.UUID) -> list[Document]:
         result = await self._session.execute(
             select(DocumentModel).where(DocumentModel.source_id == source_id)
+        )
+        return [_document_to_domain(row) for row in result.scalars()]
+
+    async def get_by_sources(self, source_ids: list[uuid.UUID]) -> list[Document]:
+        """Batch-fetch documents across sources (avoids N+1 in list endpoints)."""
+        if not source_ids:
+            return []
+        result = await self._session.execute(
+            select(DocumentModel).where(DocumentModel.source_id.in_(source_ids))
         )
         return [_document_to_domain(row) for row in result.scalars()]
 
@@ -394,6 +406,15 @@ class DocumentVersionRepository:
     async def get_by_document(self, document_id: uuid.UUID) -> list[DocumentVersion]:
         result = await self._session.execute(
             select(DocumentVersionModel).where(DocumentVersionModel.document_id == document_id)
+        )
+        return [_version_to_domain(row) for row in result.scalars()]
+
+    async def get_by_documents(self, document_ids: list[uuid.UUID]) -> list[DocumentVersion]:
+        """Batch-fetch versions across documents (avoids N+1 in list endpoints)."""
+        if not document_ids:
+            return []
+        result = await self._session.execute(
+            select(DocumentVersionModel).where(DocumentVersionModel.document_id.in_(document_ids))
         )
         return [_version_to_domain(row) for row in result.scalars()]
 

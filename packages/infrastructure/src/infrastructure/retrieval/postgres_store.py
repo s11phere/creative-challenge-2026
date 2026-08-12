@@ -204,6 +204,7 @@ class PostgresRetrievalStore:
                 DocumentModel.id.label("document_id"),
                 SourceModel.id.label("source_id"),
                 SourceModel.uri.label("source_uri"),
+                SourceModel.name.label("source_name"),
                 DocumentModel.stable_key.label("stable_key"),
                 ChunkModel.text.label("chunk_text"),
                 ChunkModel.chunk_hash.label("chunk_hash"),
@@ -291,6 +292,7 @@ class PostgresRetrievalStore:
             DocumentModel.id.label("document_id"),
             SourceModel.id.label("source_id"),
             SourceModel.uri.label("source_uri"),
+            SourceModel.name.label("source_name"),
             DocumentModel.stable_key.label("stable_key"),
             shortlist.c.chunk_text,
             shortlist.c.chunk_hash,
@@ -336,7 +338,12 @@ class PostgresRetrievalStore:
                     version_id=row["version_id"],
                     document_id=row["document_id"],
                     source_id=row["source_id"],
-                    source_key=str(row["source_uri"] or row["stable_key"] or row["source_id"]),
+                    source_key=str(
+                        row["source_name"]
+                        or row["source_uri"]
+                        or row["stable_key"]
+                        or row["source_id"]
+                    ),
                     text=str(row["chunk_text"]),
                     chunk_hash=str(row["chunk_hash"]),
                     locators=locators_from_meta(row["chunk_meta"]),

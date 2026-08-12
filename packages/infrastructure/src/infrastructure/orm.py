@@ -117,6 +117,7 @@ class SourceModel(Base):
     )
     source_type: Mapped[str] = mapped_column(String(50), default="upload")
     uri: Mapped[str] = mapped_column(String(1024), default="")
+    name: Mapped[str] = mapped_column(String(255), default="", server_default="", nullable=False)
     sync_cursor: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(

@@ -234,7 +234,7 @@ def _candidate(
 
 
 def _source_label(source: Source) -> str:
-    value = PurePosixPath(source.uri.replace("\\", "/")).name or "Untitled source"
+    value = source.name or PurePosixPath(source.uri.replace("\\", "/")).name or "Untitled source"
     return value[:280]
 
 

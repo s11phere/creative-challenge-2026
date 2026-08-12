@@ -128,6 +128,7 @@ class SourceRegistrationService:
         *,
         source_type: SourceType = SourceType.UPLOAD,
         uri: str = "",
+        name: str = "",
         source_id: UUID | None = None,
     ) -> RegisteredSource:
         """Create a new ``Source``, or return an existing one if *source_id* is given.
@@ -152,6 +153,7 @@ class SourceRegistrationService:
             space_id=space_id,
             source_type=source_type,
             uri=uri,
+            name=name,
         )
         created = await self._source_repo.create(source)
         return RegisteredSource(source=created, is_new=True)
