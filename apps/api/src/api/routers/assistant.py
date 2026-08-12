@@ -181,6 +181,11 @@ async def submit_turn(
                 )
                 assert executed.run is not None
                 await _publish_command_events(executed.run, request)
+                if (
+                    request.app.state.qa_execution_enabled
+                    and executed.run.run_kind is ConversationRunKind.ASSISTANT_TURN
+                ):
+                    request.app.state.assistant_runtime.start(executed.run.run_id)
                 await _schedule_context_compaction(executed.run, request)
                 return await _command_response(executed, request)
             if parsed.descriptor.name == "help":

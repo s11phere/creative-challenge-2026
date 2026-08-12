@@ -58,6 +58,26 @@ recoverable execution.
    to avoid an accidental overwrite, then routes back through the normal approval-gated write
    Tool. It does not prescribe retrieval order or bypass Tool registration, approval, or model
    visibility policy. `0.1.0` remains installed for historical references.
+10. Manifest-v2 invocation metadata may opt into `execution_mode: agent_loop`; omission continues
+    to mean `projected`. An explicit command for an `agent_loop` Skill preserves the original user
+    message and command selection source on a normal `assistant_turn`, then enters this same Worker
+    loop instead of creating a fixed Skill projection. `research_reading_workflow 1.1.0` is the
+    first use. Its registered read-only `research_discover` and `research_prepare` adapters map to
+    that fixed Skill identity, use the existing SearchService/resource resolver, and create the
+    existing QA projection in the parent Run after one or two-to-eight current published documents
+    have been resolved.
+11. Research answer shape is a closed, server-owned `answer_mode` enum on `AgentRetrievalPlan`.
+    Only the registered adapter selects deep-read or literature-review formatting; neither user
+    text nor model Tool arguments can inject prompt instructions. Candidate discovery exposes at
+    most eight safe labels and requires confirmation. Research generation uses the versioned
+    `research-grounded-answer-v2` model-output contract rather than treating sections as prompt
+    suggestions. Literature reviews require distinct per-paper briefs, at least three
+    citation-backed matrix rows, at least two thematic sections, and explicit consensus,
+    condition-dependent differences, conflicts, gaps, and limitations. Cross-paper synthesis must
+    cite at least two pinned documents; an invalid structure consumes the existing single repair
+    attempt and is not published if repair fails. The validated object is rendered into the
+    existing grounded Claims/Citations and published through the same QA Run. Optional Markdown
+    output remains the existing workspace `fs_write` path and approval contract.
 
 ## Alternatives
 
@@ -67,6 +87,8 @@ recoverable execution.
   inputs and cannot enforce permissions, Space boundaries, idempotency, or terminal publication.
 - Create one independent Worker Run per Skill call: rejected because it breaks one-turn recovery,
   cancellation, usage accounting, and single-publication semantics.
+- Add a deterministic parallel Research workflow: rejected because clarification, checkpointing,
+  citations, publication, and optional workspace writes already belong to the accepted loop.
 
 ## Consequences
 
@@ -74,9 +96,9 @@ The loop can make multiple serial Tool/Skill calls and can answer ordinary conve
 activating knowledge retrieval. Tool schemas and local next-step guidance improve model behavior,
 while server checks remain deliberately narrow. New Runs pin `assistant_agent 0.2.0`; the current
 production adapter exposes the v9 knowledge Tools plus the read-only `summarize_document` adapter
-when the server resource resolver is available; additional Skill adapters can be registered without
-changing the outer Loop contract. This rollout is provisional and must not be described as a formal
-quality acceptance.
+when the server resource resolver is available. It also exposes the active Research 1.1 adapters;
+the exam and course-project workflow packages remain inactive. This rollout is provisional and must
+not be described as a formal quality acceptance.
 
 ## Reassessment Triggers
 

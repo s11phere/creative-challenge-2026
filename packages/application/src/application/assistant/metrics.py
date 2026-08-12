@@ -23,6 +23,7 @@ _SAFE_COMMANDS = frozenset(
         "effort",
         "help",
         "new",
+        "research",
         "skills",
         "stop",
         "summarize",

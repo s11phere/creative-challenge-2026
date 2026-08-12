@@ -11,9 +11,9 @@ from infrastructure.skill_catalog import FileSystemSkillCatalog
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SKILL_ROOT = REPOSITORY_ROOT / "skills"
 WORKFLOW_SKILLS = {
-    "research_reading_workflow": "research_reading_workflow",
-    "exam_preparation_workflow": "exam_preparation_workflow",
-    "course_project_workflow": "course_project_workflow",
+    "research_reading_workflow": ("research_reading_workflow", "1.1.0"),
+    "exam_preparation_workflow": ("exam_preparation_workflow", "1.0.0"),
+    "course_project_workflow": ("course_project_workflow", "1.0.0"),
 }
 
 
@@ -26,9 +26,9 @@ def test_student_workflow_packages_load_pin_and_remain_inactive() -> None:
     registry = FileSystemSkillRegistry(SKILL_ROOT)
     registry.reload()
 
-    for name in WORKFLOW_SKILLS:
-        package = registry.get(name, "1.0.0")
-        pin = registry.pin(name, "1.0.0")
+    for name, (_directory, version) in WORKFLOW_SKILLS.items():
+        package = registry.get(name, version)
+        pin = registry.pin(name, version)
 
         assert package.manifest.manifest_version == "2"
         assert package.manifest.permissions
@@ -37,7 +37,8 @@ def test_student_workflow_packages_load_pin_and_remain_inactive() -> None:
 
     active_catalog = FileSystemSkillCatalog(assistant_skill_registry(), include_manifest_v2=True)
     active_names = {item.name for item in active_catalog.list_active_invocations()}
-    assert active_names.isdisjoint(WORKFLOW_SKILLS)
+    assert "research_reading_workflow" in active_names
+    assert active_names.isdisjoint({"exam_preparation_workflow", "course_project_workflow"})
 
 
 def test_student_workflow_commands_and_aliases_are_unique() -> None:
@@ -45,14 +46,42 @@ def test_student_workflow_commands_and_aliases_are_unique() -> None:
     registry.reload()
     command_owners: dict[str, str] = {}
 
-    for name in WORKFLOW_SKILLS:
-        invocation = registry.get(name, "1.0.0").manifest.invocation
+    for name, (_directory, version) in WORKFLOW_SKILLS.items():
+        invocation = registry.get(name, version).manifest.invocation
         assert invocation is not None
         for command in invocation.commands:
             assert command not in command_owners, (
                 f"command {command!r} is shared by {name!r} and {command_owners[command]!r}"
             )
             command_owners[command] = name
+
+
+def test_research_contract_is_rag_only_and_uses_the_agent_loop() -> None:
+    registry = FileSystemSkillRegistry(SKILL_ROOT)
+    registry.reload()
+    package = registry.get("research_reading_workflow", "1.1.0")
+    invocation = package.manifest.invocation
+    assert invocation is not None
+    assert invocation.execution_mode == "agent_loop"
+
+    input_schema = _schema("research_reading_workflow", "input.json")
+    input_properties = input_schema["properties"]
+    assert isinstance(input_properties, dict)
+    assert {
+        "reproduction_constraints",
+        "experiment_observations",
+        "candidate_hypotheses",
+    }.isdisjoint(input_properties)
+
+    output_schema = _schema("research_reading_workflow", "output.json")
+    output_properties = output_schema["properties"]
+    assert isinstance(output_properties, dict)
+    assert {
+        "reproduction_plan",
+        "candidate_hypotheses",
+        "experiment_observations",
+    }.isdisjoint(output_properties)
+    assert output_properties["schema_version"] == {"const": "research-reading-workflow-output-v2"}
 
 
 def test_exam_question_papers_cannot_contain_answers_or_explanations() -> None:
@@ -91,7 +120,7 @@ def test_defense_questions_cannot_contain_hidden_reference_points() -> None:
 
 
 def test_eval_cases_are_synthetic_only() -> None:
-    for package_directory in WORKFLOW_SKILLS.values():
+    for package_directory, _version in WORKFLOW_SKILLS.values():
         cases_path = SKILL_ROOT / package_directory / "evals" / "cases.jsonl"
         cases = [
             json.loads(line)

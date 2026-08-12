@@ -32,6 +32,7 @@ from domain.grounded_qa import QAOutcome, QAStatus
 from domain.qa_persistence import QARetrievalScope, QARunRecord, QARunVersions
 from domain.retrieval import SearchFilters, SearchHit, SearchRequest
 
+from application.qa.answer_mode import GroundedAnswerMode
 from application.qa.query_planning import SearchServicePort
 from application.qa.service import (
     AgentRetrievalPlan,
@@ -49,6 +50,10 @@ class ResourceScopeResolver(Protocol):
     """Minimal resource port needed by a model-visible document Skill adapter."""
 
     async def resolve(self, *, space_id: UUID, resource_type: str, reference: str) -> object: ...
+
+    async def describe_documents(
+        self, *, space_id: UUID, document_ids: tuple[UUID, ...], limit: int = 8
+    ) -> tuple[object, ...]: ...
 
 
 @dataclass(frozen=True)
@@ -98,6 +103,8 @@ class _RunFacts:
     document_skill_used: bool = False
     document_scopes: list[QARetrievalScope] = field(default_factory=list)
     clarification_needed: bool = False
+    research_mode: GroundedAnswerMode = GroundedAnswerMode.DEFAULT
+    research_source_count: int = 0
 
 
 class KnowledgeLoopTools:
@@ -133,7 +140,11 @@ class KnowledgeLoopTools:
             "verify_answer": self.verify_answer,
             "finalize_answer": self.finalize_answer,
             **(
-                {"summarize_document": self.summarize_document}
+                {
+                    "summarize_document": self.summarize_document,
+                    "research_discover": self.research_discover,
+                    "research_prepare": self.research_prepare,
+                }
                 if config.resource_resolver is not None
                 else {}
             ),
@@ -155,6 +166,16 @@ class KnowledgeLoopTools:
             if config.resource_resolver is not None
             else None
         )
+        self.research_discover_tool = (
+            registry.register(_research_discover_definition(config.tool_version))
+            if config.resource_resolver is not None
+            else None
+        )
+        self.research_prepare_tool = (
+            registry.register(_research_prepare_definition(config.tool_version))
+            if config.resource_resolver is not None
+            else None
+        )
         self.additional_tools = (
             extra_tool_registrar(registry) if extra_tool_registrar is not None else ()
         )
@@ -171,8 +192,138 @@ class KnowledgeLoopTools:
         ]
         if self.summary_tool is not None:
             tools.insert(2, self.summary_tool.ref)
+        if self.research_discover_tool is not None and self.research_prepare_tool is not None:
+            tools[2:2] = [self.research_discover_tool.ref, self.research_prepare_tool.ref]
         tools.extend(tool.ref for tool in self.additional_tools)
         return tuple(tools)
+
+    async def research_discover(
+        self, arguments: dict[str, JSONValue], context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        topic = _research_topic(arguments)
+        facts = self._facts_for(context.run.run_id)
+        facts.started = True
+        result = await self._search.search(
+            SearchRequest(query=topic, space_id=context.run.space_id),
+            self._config.profile.retrieval,
+        )
+        resolver = self._config.resource_resolver
+        assert resolver is not None
+        documents = await resolver.describe_documents(
+            space_id=context.run.space_id,
+            document_ids=tuple(hit.document_id for hit in result.hits),
+            limit=8,
+        )
+        labels = [
+            str(getattr(getattr(item, "candidate", None), "label", ""))[:280] for item in documents
+        ]
+        labels = [label for label in labels if label]
+        facts.clarification_needed = True
+        return self._with_guidance(
+            {
+                "trust": "untrusted",
+                "status": "candidates_available" if labels else "not_found",
+                "candidate_count": len(labels),
+                "candidate_labels": cast(list[JSONValue], labels),
+            },
+            recommended_next="clarify",
+        )
+
+    async def research_prepare(
+        self, arguments: dict[str, JSONValue], context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        mode, references, focus = _research_prepare_arguments(arguments)
+        facts = self._facts_for(context.run.run_id)
+        facts.started = True
+        resolver = self._config.resource_resolver
+        assert resolver is not None
+        scopes: list[QARetrievalScope] = []
+        labels: list[str] = []
+        try:
+            for reference in references:
+                resolved = await resolver.resolve(
+                    space_id=context.run.space_id,
+                    resource_type="document",
+                    reference=reference,
+                )
+                scope = getattr(resolved, "scope", None)
+                if not isinstance(scope, QARetrievalScope):
+                    raise ValueError("RESOURCE_SCOPE_INVALID")
+                scopes.append(scope)
+                label = str(getattr(getattr(resolved, "candidate", None), "label", ""))[:280]
+                if label:
+                    labels.append(label)
+        except ValueError as exc:
+            facts.clarification_needed = True
+            candidates = getattr(exc, "candidates", ())
+            candidate_labels = [
+                str(getattr(candidate, "label", ""))[:280]
+                for candidate in candidates
+                if getattr(candidate, "label", "")
+            ][:8]
+            return self._with_guidance(
+                {
+                    "trust": "untrusted",
+                    "status": (
+                        "ambiguous"
+                        if str(getattr(exc, "code", "")).endswith("CONFLICT")
+                        else "not_found"
+                    ),
+                    "mode": mode.value,
+                    "candidate_count": len(candidate_labels),
+                    "candidate_labels": cast(list[JSONValue], candidate_labels),
+                    "selected_source_count": 0,
+                    "coverage_count": 0,
+                    "citation_count": 0,
+                },
+                recommended_next="clarify",
+            )
+        union = _union_scopes(scopes)
+        facts.document_skill_used = True
+        facts.document_scopes.append(union)
+        facts.research_mode = mode
+        facts.research_source_count = len(union.document_ids)
+        if facts.answer_run is None and self._ensure_qa_run is not None:
+            facts.answer_run = await self._ensure_qa_run(context, union)
+        queries = _research_queries(mode, focus)
+        before = len(facts.searches)
+        for query in queries[: self._config.profile.planning.max_subqueries - 1]:
+            await self._search_for_facts(query, union, facts, context)
+        observations = facts.searches[before:]
+        return self._with_guidance(
+            {
+                "trust": "untrusted",
+                "status": "prepared",
+                "mode": mode.value,
+                "candidate_count": len(labels),
+                "selected_source_count": facts.research_source_count,
+                "coverage_count": sum(item.matched_count for item in observations),
+                "citation_count": 0,
+            },
+            recommended_next="knowledge_inspect",
+        )
+
+    async def _search_for_facts(
+        self,
+        query: str,
+        scope: QARetrievalScope,
+        facts: _RunFacts,
+        context: ToolExecutionContext,
+    ) -> None:
+        result = await self._search.search(
+            SearchRequest(
+                query=query,
+                space_id=context.run.space_id,
+                filters=SearchFilters(
+                    source_ids=scope.source_ids,
+                    document_ids=scope.document_ids,
+                    version_ids=scope.version_ids,
+                ),
+            ),
+            self._config.profile.retrieval,
+        )
+        if len(facts.searches) < self._config.max_search_observations:
+            facts.searches.append(_observation(query, result.hits, scope=scope))
 
     async def summarize_document(
         self, arguments: dict[str, JSONValue], context: ToolExecutionContext
@@ -417,7 +568,10 @@ class KnowledgeLoopTools:
             ]
             # SearchService retains the user question as the trusted base request.  Tool-selected
             # queries can only add bounded recall hints to the existing QA planning profile.
-            plan = AgentRetrievalPlan(additional_queries=additional_queries)
+            plan = AgentRetrievalPlan(
+                additional_queries=additional_queries,
+                answer_mode=facts.research_mode,
+            )
             facts.answer_run = await self._qa.execute(
                 context.run.run_id,
                 profile=self._config.profile,
@@ -454,6 +608,26 @@ class KnowledgeLoopTools:
                 },
                 recommended_next="knowledge_search",
             )
+        if (
+            facts.research_mode is GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW
+            and facts.research_source_count < 2
+        ):
+            facts.verified = False
+            facts.clarification_needed = True
+            return self._with_guidance(
+                {
+                    "ready": False,
+                    "outcome": completed.result.outcome.value
+                    if completed.result is not None
+                    else "pending",
+                    "claim_count": 0,
+                    "citation_count": 0,
+                    "current_run_only": True,
+                    "conflict": False,
+                    "terminal_reason": "research_sources_insufficient",
+                },
+                recommended_next="clarify",
+            )
         if completed.run_id != context.run.run_id or completed.result is None:
             raise NodeExecutionError(
                 "SKILL_QA_RUN_INVALID",
@@ -468,6 +642,8 @@ class KnowledgeLoopTools:
                 set(claim.evidence_ids) <= citation_ids for claim in result.answer.claims
             )
             ready = bool(citations) and bool(result.answer.claims) and claims_valid
+            if facts.research_mode is GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW:
+                ready = ready and len({citation.document_id for citation in citations}) >= 2
             terminal_reason = "answer_verified" if ready else "citation_incomplete"
             facts.verified = ready
             return self._with_guidance(
@@ -560,6 +736,7 @@ class KnowledgeLoopTools:
         the post-answer verification/finalization gates.
         """
         facts = self._facts_for(run.context.run_id)
+        _restore_research_facts(facts, state)
         completed = facts.answer_run
         if self._config.versions.skill_version == "1.0.0":
             required_document = _explicit_document_summary_reference(state.task.goal)
@@ -710,7 +887,12 @@ class KnowledgeLoopTools:
             # A terminal answer can never bypass QA-owned verification and publication.  Unlike
             # This policy does not prescribe retrieval order; individual Tools return a
             # local, model-visible next-step recommendation when their precondition is unmet.
-            if not facts.finalization_ready and completed is not None and not facts.verified:
+            if (
+                not facts.finalization_ready
+                and completed is not None
+                and completed.status in {QAStatus.COMPLETED, QAStatus.REFUSED}
+                and not facts.verified
+            ):
                 if (
                     decision.action is LLMDecisionAction.CALL_TOOL
                     and decision.tool_name == "verify_answer"
@@ -1088,6 +1270,108 @@ def _summarize_document_definition(version: str) -> ToolDefinition:
         ),
         permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
         handler_name="summarize_document",
+        model_visible=True,
+        max_retries=1,
+    )
+
+
+def _research_discover_definition(version: str) -> ToolDefinition:
+    return ToolDefinition(
+        name="research_discover",
+        version=version,
+        description=(
+            "Find up to eight safe published-document labels for a research topic in the "
+            "current Space. Use only when the user has not named documents."
+        ),
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["topic"],
+            "properties": {"topic": {"type": "string", "minLength": 1, "maxLength": 512}},
+        },
+        output_schema=_with_guidance_schema(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["trust", "status", "candidate_count", "candidate_labels"],
+                "properties": {
+                    "trust": {"const": "untrusted"},
+                    "status": {"enum": ["candidates_available", "not_found"]},
+                    "candidate_count": {"type": "integer", "minimum": 0, "maximum": 8},
+                    "candidate_labels": {
+                        "type": "array",
+                        "maxItems": 8,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 280},
+                    },
+                },
+            },
+            version=version,
+            next_actions=("clarify",),
+        ),
+        permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
+        handler_name="research_discover",
+        model_visible=True,
+        max_retries=1,
+    )
+
+
+def _research_prepare_definition(version: str) -> ToolDefinition:
+    return ToolDefinition(
+        name="research_prepare",
+        version=version,
+        description=(
+            "Resolve and pin one paper for deep reading or two to eight papers for a literature "
+            "review, then collect bounded retrieval coverage metadata."
+        ),
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["mode", "document_references"],
+            "properties": {
+                "mode": {"enum": ["deep_read", "literature_review"]},
+                "document_references": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 280},
+                },
+                "focus": {"type": "string", "maxLength": 512},
+            },
+        },
+        output_schema=_with_guidance_schema(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "trust",
+                    "status",
+                    "mode",
+                    "candidate_count",
+                    "selected_source_count",
+                    "coverage_count",
+                    "citation_count",
+                ],
+                "properties": {
+                    "trust": {"const": "untrusted"},
+                    "status": {"enum": ["prepared", "not_found", "ambiguous"]},
+                    "mode": {"enum": ["research_deep_read", "research_literature_review"]},
+                    "candidate_count": {"type": "integer", "minimum": 0, "maximum": 8},
+                    "candidate_labels": {
+                        "type": "array",
+                        "maxItems": 8,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 280},
+                    },
+                    "selected_source_count": {"type": "integer", "minimum": 0, "maximum": 8},
+                    "coverage_count": {"type": "integer", "minimum": 0},
+                    "citation_count": {"const": 0},
+                },
+            },
+            version=version,
+            next_actions=("knowledge_inspect", "clarify"),
+        ),
+        permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
+        handler_name="research_prepare",
         model_visible=True,
         max_retries=1,
     )
@@ -1485,6 +1769,107 @@ def _explicit_document_summary_reference(goal: str) -> str | None:
         if _DOCUMENT_SUMMARY_INTENT_PATTERN.search(goal[start:end]):
             return match.group(1)
     return None
+
+
+def _research_topic(arguments: dict[str, JSONValue]) -> str:
+    if set(arguments) != {"topic"}:
+        raise NodeExecutionError(
+            "SKILL_INPUT_INVALID", RunErrorCategory.INPUT, "Research topic input is invalid."
+        )
+    topic = arguments.get("topic")
+    if not isinstance(topic, str) or not 1 <= len(topic.strip()) <= 512:
+        raise NodeExecutionError(
+            "SKILL_INPUT_INVALID", RunErrorCategory.INPUT, "Research topic input is invalid."
+        )
+    return topic.strip()
+
+
+def _research_prepare_arguments(
+    arguments: dict[str, JSONValue],
+) -> tuple[GroundedAnswerMode, tuple[str, ...], str | None]:
+    if set(arguments) - {"mode", "document_references", "focus"}:
+        raise NodeExecutionError(
+            "SKILL_INPUT_INVALID", RunErrorCategory.INPUT, "Research preparation input is invalid."
+        )
+    raw_mode = arguments.get("mode")
+    raw_references = arguments.get("document_references")
+    focus = arguments.get("focus")
+    if raw_mode not in {"deep_read", "literature_review"} or not isinstance(raw_references, list):
+        raise NodeExecutionError(
+            "SKILL_INPUT_INVALID", RunErrorCategory.INPUT, "Research preparation input is invalid."
+        )
+    references = tuple(
+        item.strip()
+        for item in raw_references
+        if isinstance(item, str) and 1 <= len(item.strip()) <= 280
+    )
+    expected = 1 if raw_mode == "deep_read" else None
+    valid_count = len(references) == expected if expected is not None else 2 <= len(references) <= 8
+    if (
+        len(references) != len(raw_references)
+        or len(set(references)) != len(references)
+        or not valid_count
+    ):
+        raise NodeExecutionError(
+            "SKILL_INPUT_INVALID",
+            RunErrorCategory.INPUT,
+            "Deep reading requires one document; literature review requires two to eight.",
+        )
+    if focus is not None and (not isinstance(focus, str) or len(focus) > 512):
+        raise NodeExecutionError(
+            "SKILL_INPUT_INVALID", RunErrorCategory.INPUT, "Research focus is invalid."
+        )
+    mode = (
+        GroundedAnswerMode.RESEARCH_DEEP_READ
+        if raw_mode == "deep_read"
+        else GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW
+    )
+    return mode, references, focus.strip() if isinstance(focus, str) and focus.strip() else None
+
+
+def _union_scopes(scopes: list[QARetrievalScope]) -> QARetrievalScope:
+    return QARetrievalScope(
+        source_ids=frozenset(value for scope in scopes for value in scope.source_ids),
+        document_ids=frozenset(value for scope in scopes for value in scope.document_ids),
+        version_ids=frozenset(value for scope in scopes for value in scope.version_ids),
+    )
+
+
+def _research_queries(mode: GroundedAnswerMode, focus: str | None) -> tuple[str, ...]:
+    suffix = f" Focus: {focus}" if focus else ""
+    if mode is GroundedAnswerMode.RESEARCH_DEEP_READ:
+        return (
+            f"research problem and contributions.{suffix}",
+            f"method concepts formulas and assumptions.{suffix}",
+            f"datasets metrics experiments and results.{suffix}",
+        )
+    return (
+        f"research questions and contributions across papers.{suffix}",
+        f"method differences and assumptions across papers.{suffix}",
+        f"datasets metrics results and limitations across papers.{suffix}",
+    )
+
+
+def _restore_research_facts(facts: _RunFacts, state: AgentLoopState) -> None:
+    """Recover Research mode gates from bounded checkpoint observations."""
+    if facts.research_mode is not GroundedAnswerMode.DEFAULT:
+        return
+    for observation in reversed(state.observations):
+        if observation.tool_name != "research_prepare" or not isinstance(
+            observation.model_output, dict
+        ):
+            continue
+        mode = observation.model_output.get("mode")
+        count = observation.model_output.get("selected_source_count")
+        if mode in {
+            GroundedAnswerMode.RESEARCH_DEEP_READ.value,
+            GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW.value,
+        }:
+            facts.research_mode = GroundedAnswerMode(mode)
+        if isinstance(count, int) and not isinstance(count, bool):
+            facts.research_source_count = count
+        facts.document_skill_used = True
+        break
 
 
 def _require_empty(arguments: dict[str, JSONValue]) -> None:

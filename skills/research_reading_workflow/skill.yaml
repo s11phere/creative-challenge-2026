@@ -1,16 +1,19 @@
 manifest_version: "2"
 name: research_reading_workflow
-version: 1.0.0
-description: Provisional multi-stage workflow for evidence-grounded research reading, synthesis, reproduction planning, and research output.
+version: 1.1.0
+description: Provisional RAG workflow for one-paper deep reading or evidence-grounded review of two to eight papers.
 input_schema: schemas/input.json
 output_schema: schemas/output.json
 required_tools:
-  - name: grounded_qa
-    version: 1.0.0
+  - {name: research_discover, version: 1.1.0}
+  - {name: research_prepare, version: 1.1.0}
+  - {name: grounded_answer, version: 1.1.0}
+  - {name: verify_answer, version: 1.1.0}
+  - {name: finalize_answer, version: 1.1.0}
 required_capabilities: [fast_chat]
 permissions: [read_knowledge, model]
 budgets:
-  max_steps: 12
+  max_steps: 16
   max_tool_calls: 12
   max_input_tokens: 65536
   max_output_tokens: 16384
@@ -24,15 +27,17 @@ evals: [evals/cases.jsonl]
 invocation:
   command: research
   aliases: [literature]
-  argument_hint: "<研究目标与资料范围>"
+  argument_hint: "<论文名称或研究主题>"
   trigger:
-    summary: "组织论文筛选、分层阅读、证据综合、研究缺口与复现实验计划"
+    summary: "精读一篇论文，或对当前 Space 中 2–8 篇论文生成带引用的证据矩阵和主题综述"
     when:
-      - "用户希望系统阅读多篇论文、形成文献综述或设计复现实验"
-      - "用户需要从知识库资料中提炼研究问题、证据矩阵或研究缺口"
+      - "用户希望精读一篇论文并理解方法、公式、实验和局限"
+      - "用户希望综合多篇论文，区分共识、条件差异、冲突和资料空白"
     avoid_when:
-      - "用户只询问单个事实或只要求总结一篇普通文档"
-      - "用户要求直接代写没有资料支撑的论文结论"
+      - "用户只询问单个事实或总结普通非论文文档"
+      - "用户要求执行复现实验、代码或生成无证据的研究结论"
     examples:
-      - "围绕图神经网络鲁棒性整理这些论文，并给出复现实验路线"
-  input_mode: sources
+      - "精读 Transformer 论文，并用本科生能理解的方式解释核心方法"
+      - "综合这四篇图神经网络论文，给出证据矩阵和主题综述"
+  input_mode: question
+  execution_mode: agent_loop

@@ -75,10 +75,11 @@ logger = logging.getLogger(__name__)
 
 _ROOT = Path(__file__).resolve().parents[4]
 _SCHEMA = _ROOT / "cases/evals/configs/grounded-answer-v1.schema.json"
+_RESEARCH_SCHEMA = _ROOT / "cases/evals/configs/research-grounded-answer-v2.schema.json"
 _PROMPT = _ROOT / "cases/evals/prompts/grounded-qa-v1-provisional.txt"
 _EVIDENCE = re.compile(
-    r'<evidence id="([0-9a-f-]+)"[^>]*>\s*<<<UNTRUSTED_EVIDENCE>>>\s*(.*?)\s*'
-    r"<<<END_UNTRUSTED_EVIDENCE>>>",
+    r'<evidence id="(?P<evidence_id>[0-9a-f-]+)"(?P<attributes>[^>]*)>\s*'
+    r"<<<UNTRUSTED_EVIDENCE>>>\s*(?P<text>.*?)\s*<<<END_UNTRUSTED_EVIDENCE>>>",
     re.DOTALL,
 )
 _TERMINAL = frozenset(
@@ -105,8 +106,8 @@ class StructuredFakeGateway:
         if not isinstance(self._delegate, FakeModelGateway):
             return await self._delegate.chat(request, capability=capability)
         user_content = request.messages[-1].content
-        match = _EVIDENCE.search(user_content)
-        if match is None:
+        matches = tuple(_EVIDENCE.finditer(user_content))
+        if not matches:
             payload: dict[str, object] = {
                 "schema_version": "grounded-answer-v1",
                 "result_type": "refuse",
@@ -115,19 +116,39 @@ class StructuredFakeGateway:
                 "limitations": ["Provisional local answer mode."],
             }
         else:
-            evidence_id, raw_text = match.groups()
+            evidence_id = matches[0].group("evidence_id")
+            raw_text = matches[0].group("text")
             claim = " ".join(raw_text.split())[:1200]
-            payload = {
-                "schema_version": "grounded-answer-v1",
-                "result_type": "answer",
-                "answer": claim,
-                "claims": [
-                    {"claim_id": "extractive-1", "text": claim, "evidence_ids": [evidence_id]}
-                ],
-                "limitations": [
-                    "Deterministic extractive fallback; answer quality is not formally frozen."
-                ],
+            instructions = "\n".join(item.content for item in request.messages).casefold()
+            document_ids = {
+                document_match.group(1)
+                for item in matches
+                if (
+                    document_match := re.search(
+                        r'document_id="([0-9a-f-]+)"', item.group("attributes")
+                    )
+                )
             }
+            if len(document_ids) >= 2 or "evidence matrix" in instructions:
+                payload = _fake_research_answer(matches, mode="literature_review")
+            elif "common misconceptions" in instructions:
+                payload = _fake_research_answer(matches, mode="deep_read")
+            else:
+                payload = {
+                    "schema_version": "grounded-answer-v1",
+                    "result_type": "answer",
+                    "answer": claim,
+                    "claims": [
+                        {
+                            "claim_id": "extractive-1",
+                            "text": claim,
+                            "evidence_ids": [evidence_id],
+                        }
+                    ],
+                    "limitations": [
+                        "Deterministic extractive fallback; answer quality is not formally frozen."
+                    ],
+                }
         text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         return ChatResponse(
             text=text,
@@ -158,6 +179,123 @@ class StructuredFakeGateway:
 
     async def aclose(self) -> None:
         return None
+
+
+def _fake_research_answer(matches: tuple[re.Match[str], ...], *, mode: str) -> dict[str, object]:
+    """Return a readable, citation-backed local preview without claiming model-level quality."""
+    excerpts: list[tuple[str, str, str]] = []
+    seen_documents: set[str] = set()
+    for match in matches:
+        document_match = re.search(r'document_id="([0-9a-f-]+)"', match.group("attributes"))
+        document_id = document_match.group(1) if document_match else match.group("evidence_id")
+        if document_id in seen_documents:
+            continue
+        seen_documents.add(document_id)
+        excerpts.append(
+            (
+                match.group("evidence_id"),
+                document_id,
+                " ".join(match.group("text").split())[:900],
+            )
+        )
+    if mode == "deep_read":
+        evidence_id, _document_id, excerpt = excerpts[0]
+        item = {"text": excerpt, "evidence_ids": [evidence_id]}
+        return {
+            "schema_version": "research-grounded-answer-v2",
+            "result_type": "answer",
+            "mode": "research_deep_read",
+            "research_question": item,
+            "contributions": [item],
+            "method_explanation": [
+                {
+                    "text": "Identify the intervention, baseline, and controlled conditions "
+                    "before interpreting the reported result.",
+                    "evidence_ids": [evidence_id],
+                }
+            ],
+            "data_and_metrics": [item],
+            "results": [item],
+            "paper_limitations": [item],
+            "misconceptions": [
+                {
+                    "text": "A retrieval improvement is not automatically an improvement in "
+                    "final-answer quality.",
+                    "evidence_ids": [evidence_id],
+                }
+            ],
+            "follow_up_questions": [
+                "Which assumptions, evaluation settings, and missing evidence should be "
+                "checked next?"
+            ],
+            "limitations": [
+                "Deterministic fake-provider preview; development/provisional quality only."
+            ],
+        }
+    evidence_ids = [item[0] for item in excerpts]
+    observations = [
+        {
+            "paper_label": f"Paper {index}",
+            "text": excerpt[:500],
+            "evidence_ids": [evidence_id],
+        }
+        for index, (evidence_id, _document_id, excerpt) in enumerate(excerpts, 1)
+    ]
+    combined = {
+        "text": "The selected papers study evidence retrieval under different methods "
+        "and evaluation conditions.",
+        "evidence_ids": evidence_ids,
+    }
+    return {
+        "schema_version": "research-grounded-answer-v2",
+        "result_type": "answer",
+        "mode": "research_literature_review",
+        "paper_briefs": [
+            {
+                "paper_label": f"Paper {index}",
+                "text": excerpt,
+                "evidence_ids": [evidence_id],
+            }
+            for index, (evidence_id, _document_id, excerpt) in enumerate(excerpts, 1)
+        ],
+        "evidence_matrix": [
+            {
+                "dimension": dimension,
+                "observations": observations,
+                "synthesis": synthesis,
+                "evidence_ids": evidence_ids,
+                "comparability": comparability,
+            }
+            for dimension, synthesis, comparability in (
+                (
+                    "Research question",
+                    "Both papers address grounded retrieval behavior.",
+                    "comparable",
+                ),
+                (
+                    "Method",
+                    "The papers use distinct retrieval interventions.",
+                    "conditionally_comparable",
+                ),
+                (
+                    "Evaluation",
+                    "Different metrics or datasets must not be directly ranked.",
+                    "not_comparable",
+                ),
+            )
+        ],
+        "thematic_review": [
+            {"theme": "Retrieval strategy", **combined},
+            {"theme": "Evaluation boundaries", **combined},
+        ],
+        "consensus": [combined],
+        "apparent_differences": [combined],
+        "genuine_conflicts": [],
+        "evidence_gaps": ["The selected evidence does not establish downstream answer quality."],
+        "limitations": [
+            "Deterministic fake-provider preview; development/provisional quality only."
+        ],
+    }
 
 
 class StructuredAgentGateway:
@@ -305,7 +443,7 @@ def _knowledge_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
     return {"action": "complete", "reason": "Grounded QA verified the current Run."}
 
 
-def _assistant_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
+def _assistant_loop_decision(content: str) -> dict[str, object]:
     """Use Tool-provided next-step metadata, while keeping ordinary fake turns direct."""
     try:
         request = json.loads(content)
@@ -320,6 +458,9 @@ def _assistant_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
     workspace_enabled = isinstance(workspace, dict) and workspace.get("tools_enabled") is True
     last = observations[-1] if observations else {}
     if not isinstance(last, dict) or not last.get("tool_name"):
+        research = _fake_research_request(question)
+        if research is not None:
+            return research
         if _requires_fake_knowledge_tool(question):
             return {
                 "action": "call_tool",
@@ -362,6 +503,8 @@ def _assistant_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
         if recommended == "knowledge_search":
             arguments["query"] = _fake_knowledge_query(question)
         return {"action": "call_tool", "tool_name": recommended, "arguments": arguments}
+    if recommended == "clarify":
+        return {"action": "clarify", "reason": "Please confirm or correct the paper selection."}
     if recommended == "refuse":
         return {"action": "refuse", "reason": "Grounded QA verified a safe terminal refusal."}
     if recommended == "complete":
@@ -376,6 +519,56 @@ def _assistant_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
     if next_tool is not None:
         return {"action": "call_tool", "tool_name": next_tool, "arguments": {}}
     return {"action": "complete", "reason": "Grounded QA verified the current Run."}
+
+
+def _fake_research_request(question: object) -> dict[str, object] | None:
+    """Deterministic synthetic routing only; production providers decide from Tool schemas."""
+    if not isinstance(question, str):
+        return None
+    normalized = question.casefold()
+    if "/research" not in normalized and not any(
+        marker in normalized
+        for marker in ("论文精读", "文献综述", "literature review", "deep read")
+    ):
+        return None
+    file_references = tuple(
+        dict.fromkeys(
+            match.strip("\"'“”‘’()[]{}")
+            for match in re.findall(r"(?<![\w./-])([^\s,，、;；]+\.(?:pdf|md|txt))", question, re.I)
+            if match.strip("\"'“”‘’()[]{}")
+        )
+    )
+    named_references = tuple(
+        dict.fromkeys(
+            match.strip()
+            for match in re.findall(
+                r"(?:paper|论文)\s*([a-z0-9][a-z0-9 ._-]{0,80})", question, re.I
+            )
+            if match.strip()
+        )
+    )
+    references = file_references or named_references
+    if len(references) >= 2:
+        return {
+            "action": "call_tool",
+            "tool_name": "research_prepare",
+            "arguments": {
+                "mode": "literature_review",
+                "document_references": list(references[:8]),
+            },
+        }
+    if len(references) == 1:
+        return {
+            "action": "call_tool",
+            "tool_name": "research_prepare",
+            "arguments": {"mode": "deep_read", "document_references": list(references)},
+        }
+    topic = re.sub(r"^\s*/(?:research|literature)\s*", "", question, flags=re.I).strip()
+    return {
+        "action": "call_tool",
+        "tool_name": "research_discover",
+        "arguments": {"topic": topic[:512] or "research topic"},
+    }
 
 
 def _requires_fake_knowledge_tool(question: object) -> bool:
@@ -493,8 +686,13 @@ def qa_skill_registry() -> FileSystemSkillRegistry:
 def assistant_skill_registry() -> FileSystemSkillRegistry:
     """Build the v2 invocation catalog with knowledge_agent as the sole QA entry."""
     registry = qa_skill_registry()
-    for name in ("summarize_document", "compare_sources", "create_review_cards"):
-        registry.activate(name, "1.0.0")
+    for name, version in (
+        ("summarize_document", "1.0.0"),
+        ("compare_sources", "1.0.0"),
+        ("create_review_cards", "1.0.0"),
+        ("research_reading_workflow", "1.1.0"),
+    ):
+        registry.activate(name, version)
     return registry
 
 
@@ -541,7 +739,10 @@ class GroundedQAExecutor:
             context_builder=ContextBuilder(),
             generator=GroundedAnswerGenerator(
                 gateway=generation_gateway,
-                parser=StructuredAnswerParser(json.loads(_SCHEMA.read_text(encoding="utf-8"))),
+                parser=StructuredAnswerParser(
+                    json.loads(_SCHEMA.read_text(encoding="utf-8")),
+                    research_schema=json.loads(_RESEARCH_SCHEMA.read_text(encoding="utf-8")),
+                ),
                 verifier=EvidenceVerifier(PostgresCitationTargetPort(self._database)),
                 profile=self._generation,
                 prompt_contract=_PROMPT.read_text(encoding="utf-8"),

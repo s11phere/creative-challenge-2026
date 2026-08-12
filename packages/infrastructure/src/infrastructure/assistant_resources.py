@@ -54,5 +54,18 @@ class PostgresAssistantResourceResolver(NaturalLanguageResourceResolver):
                 candidate_id=candidate_id,
             )
 
+    async def describe_documents(
+        self, *, space_id: UUID, document_ids: tuple[UUID, ...], limit: int = 8
+    ) -> tuple[ResolvedResource, ...]:
+        async with self._database.session() as session:
+            resolver = NaturalLanguageResourceResolver(
+                sources=SourceRepository(session),
+                documents=DocumentRepository(session),
+                versions=DocumentVersionRepository(session),
+            )
+            return await resolver.describe_documents(
+                space_id=space_id, document_ids=document_ids, limit=limit
+            )
+
 
 __all__ = ["PostgresAssistantResourceResolver"]

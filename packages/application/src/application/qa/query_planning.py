@@ -166,7 +166,12 @@ class QASearchCoordinator:
                 if existing is None or key < existing[0]:
                     by_chunk[hit.chunk_id] = (key, hit)
 
-        ordered = sorted(by_chunk.values(), key=lambda item: item[0])[:limit]
+        ranked = sorted(by_chunk.values(), key=lambda item: item[0])
+        ordered = _preserve_selected_document_coverage(
+            ranked,
+            selected_document_ids=base_request.filters.document_ids,
+            limit=limit,
+        )
         hits = tuple(replace(hit, final_rank=rank) for rank, (_key, hit) in enumerate(ordered, 1))
         return MergedSearchResult(
             hits=hits,
@@ -235,6 +240,25 @@ def _same_hit_identity(left: SearchHit, right: SearchHit) -> bool:
         right.safe_summary,
         right.locators,
     )
+
+
+def _preserve_selected_document_coverage(
+    ranked: list[tuple[tuple[bool, float, int, int, str], SearchHit]],
+    *,
+    selected_document_ids: frozenset[object],
+    limit: int,
+) -> list[tuple[tuple[bool, float, int, int, str], SearchHit]]:
+    """Keep one ranked hit per explicitly selected document before filling remaining slots."""
+    if len(selected_document_ids) < 2 or limit < 2:
+        return ranked[:limit]
+    first_by_document: dict[object, tuple[tuple[bool, float, int, int, str], SearchHit]] = {}
+    for item in ranked:
+        if item[1].document_id in selected_document_ids:
+            first_by_document.setdefault(item[1].document_id, item)
+    selected = sorted(first_by_document.values(), key=lambda item: item[0])[:limit]
+    selected_chunks = {item[1].chunk_id for item in selected}
+    selected.extend(item for item in ranked if item[1].chunk_id not in selected_chunks)
+    return selected[:limit]
 
 
 __all__ = [

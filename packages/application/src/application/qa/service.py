@@ -38,6 +38,7 @@ from domain.qa_persistence import (
 )
 from domain.retrieval import RetrievalError, RetrievalProfileV1, SearchFilters, SearchRequest
 
+from .answer_mode import GroundedAnswerMode
 from .context_builder import ContextBuilder, ConversationRole, ConversationTurn
 from .evidence import EvidenceBindingService
 from .generation import GenerationResult, GroundedAnswerGenerator
@@ -68,6 +69,7 @@ class AgentRetrievalPlan:
     max_tokens_per_evidence: int | None = None
     max_evidence_per_source: int | None = None
     max_chunks_per_document: int | None = None
+    answer_mode: GroundedAnswerMode = GroundedAnswerMode.DEFAULT
 
     def apply(self, profile: QAPlanningProfileV1) -> QAPlanningProfileV1:
         values = {
@@ -255,8 +257,22 @@ class GroundedQAService:
             run = await self._repository.transition_run(run_id, QAEvent.VERIFY)
 
             started = perf_counter()
-            generated = await self._generator.generate(question=question, context=context)
-            generated = _enforce_question_type_grounding(generated, planning.plan.question_type)
+            generated = await self._generator.generate(
+                question=question,
+                context=context,
+                answer_mode=(
+                    agent_plan.answer_mode if agent_plan is not None else GroundedAnswerMode.DEFAULT
+                ),
+            )
+            answer_mode = (
+                agent_plan.answer_mode if agent_plan is not None else GroundedAnswerMode.DEFAULT
+            )
+            if answer_mode is GroundedAnswerMode.DEFAULT:
+                generated = _enforce_question_type_grounding(generated, planning.plan.question_type)
+            generated = _enforce_answer_mode_grounding(
+                generated,
+                answer_mode,
+            )
             timings.append(QAPhaseTiming(QAPhase.GENERATION, _elapsed_ms(started)))
             await self._ensure_not_cancelled(run_id)
 
@@ -483,6 +499,29 @@ def _enforce_question_type_grounding(
             ),
         )
     return generated
+
+
+def _enforce_answer_mode_grounding(
+    generated: GenerationResult, answer_mode: GroundedAnswerMode
+) -> GenerationResult:
+    """Fail closed before publication when a Research format lacks source coverage."""
+    if answer_mode is not GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW:
+        return generated
+    answer = generated.result.answer
+    # One upload connector can own several papers, so paper coverage is represented by
+    # distinct pinned documents rather than connector/source rows.
+    if answer is not None and len({citation.document_id for citation in answer.citations}) >= 2:
+        return generated
+    return replace(
+        generated,
+        result=QAResult(
+            outcome=QAOutcome.REFUSE,
+            refusal=Refusal(
+                RefusalReason.INSUFFICIENT_EVIDENCE,
+                "A literature review requires cited evidence from at least two selected papers.",
+            ),
+        ),
+    )
 
 
 def _usage(generated: GenerationResult, timings: list[QAPhaseTiming]) -> QARunUsage:

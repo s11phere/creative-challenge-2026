@@ -82,6 +82,7 @@ def _hit(
     chunk_id: UUID,
     *,
     rank: int,
+    document_id: UUID = DOCUMENT_ID,
     context_only: bool = False,
     text: str = "evidence",
     rerank_score: float | None = None,
@@ -89,7 +90,7 @@ def _hit(
     return SearchHit(
         chunk_id=chunk_id,
         version_id=VERSION_ID,
-        document_id=DOCUMENT_ID,
+        document_id=document_id,
         source_id=SOURCE_ID,
         source_key="fixture/source",
         text=text,
@@ -246,6 +247,34 @@ async def test_multi_query_merge_ranks_high_rerank_hits_across_queries() -> None
     )
     assert tuple(hit.chunk_id for hit in merged.hits) == (UUID(int=3), UUID(int=2), UUID(int=1))
     assert merged.hits[0].final_rank == 1
+
+
+@pytest.mark.asyncio
+async def test_scoped_multi_document_search_preserves_one_hit_per_selected_document() -> None:
+    other_document = UUID(int=30)
+    result = SearchResult(
+        hits=(
+            _hit(UUID(int=31), rank=1, rerank_score=0.9),
+            _hit(UUID(int=32), rank=2, rerank_score=0.8),
+            _hit(UUID(int=33), rank=3, document_id=other_document, rerank_score=0.1),
+        ),
+        diagnostics=_diagnostics(),
+    )
+    service = FakeSearchService((result,))
+    plan = (await QueryPlanner().plan(_question(), QAPlanningProfileV1())).plan
+
+    merged = await QASearchCoordinator(service).search(
+        base_request=SearchRequest(
+            query=plan.original_question,
+            space_id=SPACE_ID,
+            filters=SearchFilters(document_ids=frozenset({DOCUMENT_ID, other_document})),
+        ),
+        plan=plan,
+        profile=RetrievalProfileV1(embedding_version="embedding-v1"),
+        limit=2,
+    )
+
+    assert {hit.document_id for hit in merged.hits} == {DOCUMENT_ID, other_document}
 
 
 @pytest.mark.asyncio

@@ -47,6 +47,7 @@ class SkillInvocationView:
     description: str
     argument_hint: str
     input_mode: str
+    execution_mode: str = "projected"
     trigger_when: tuple[str, ...] = ()
     trigger_avoid_when: tuple[str, ...] = ()
     trigger_examples: tuple[str, ...] = ()

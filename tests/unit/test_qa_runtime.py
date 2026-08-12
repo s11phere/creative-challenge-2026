@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -18,6 +19,17 @@ from infrastructure.qa_execution import (
     qa_skill_registry,
 )
 from model_gateway import ChatMessage, ChatRequest, ChatRole, FakeModelGateway
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_runtime_images_include_every_generation_contract() -> None:
+    schema = "cases/evals/configs/research-grounded-answer-v2.schema.json"
+    dockerignore = (REPOSITORY_ROOT / ".dockerignore").read_text(encoding="utf-8")
+    assert f"!{schema}" in dockerignore
+    for dockerfile in ("deploy/Dockerfile.api", "deploy/Dockerfile.worker"):
+        content = (REPOSITORY_ROOT / dockerfile).read_text(encoding="utf-8")
+        assert f"COPY {schema} {schema}" in content
 
 
 @pytest.mark.asyncio
@@ -59,6 +71,37 @@ async def test_structured_fake_gateway_refuses_without_evidence() -> None:
         "reason": "insufficient_evidence",
         "message": "No usable evidence was retrieved.",
         "limitations": ["Provisional local answer mode."],
+    }
+
+
+@pytest.mark.asyncio
+async def test_structured_fake_gateway_returns_readable_research_review() -> None:
+    gateway = StructuredFakeGateway(FakeModelGateway())
+    evidence = "\n".join(
+        f'<evidence id="{UUID(int=index)}" trust="untrusted_document" '
+        f'source_id="{UUID(int=index + 10)}" document_id="{UUID(int=index + 20)}">\n'
+        "<<<UNTRUSTED_EVIDENCE>>>\n"
+        f"Synthetic paper {index} uses a distinct metric.\n"
+        "<<<END_UNTRUSTED_EVIDENCE>>>\n</evidence>"
+        for index in (1, 2)
+    )
+    response = await gateway.chat(
+        ChatRequest(
+            messages=(
+                ChatMessage(ChatRole.SYSTEM, "Produce an evidence matrix."),
+                ChatMessage(ChatRole.USER, evidence),
+            )
+        )
+    )
+
+    payload = json.loads(response.text)
+    assert payload["schema_version"] == "research-grounded-answer-v2"
+    assert payload["mode"] == "research_literature_review"
+    assert len(payload["paper_briefs"]) == 2
+    assert len(payload["evidence_matrix"]) >= 3
+    assert set(payload["evidence_matrix"][0]["evidence_ids"]) == {
+        str(UUID(int=1)),
+        str(UUID(int=2)),
     }
 
 
