@@ -49,6 +49,15 @@ def _print_text(traces: tuple[UsageTrace, ...]) -> None:
         )
 
 
+async def _query(
+    database: Database, *, limit: int, since: datetime | None
+) -> tuple[UsageTrace, ...]:
+    try:
+        return await PostgresUsageTraceRepository(database).list(limit=limit, since=since)
+    finally:
+        await database.dispose()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int, default=50, help="Maximum traces to list")
@@ -72,14 +81,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     database = Database(settings.database_url)
     try:
-        traces = asyncio.run(
-            PostgresUsageTraceRepository(database).list(limit=args.limit, since=since)
-        )
+        traces = asyncio.run(_query(database, limit=args.limit, since=since))
     except Exception as exc:
         print(f"usage trace query rejected: {exc}", file=sys.stderr)
         return 2
-    finally:
-        asyncio.run(database.dispose())
 
     if args.json:
         print(json.dumps([_render(trace) for trace in traces], ensure_ascii=False, indent=2))

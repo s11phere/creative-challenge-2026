@@ -67,19 +67,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"usage_patterns_distill enqueued (message_id={message.message_id})")
         return 0
 
-    database = Database(settings.database_url)
-    try:
-        patterns = asyncio.run(
-            UsagePatternService(
+    async def _distill(database: Database) -> tuple[UsagePatternSnapshot, ...]:
+        try:
+            return await UsagePatternService(
                 traces=PostgresUsageTraceRepository(database),
                 patterns=PostgresUsagePatternRepository(database),
             ).distill_all()
-        )
+        finally:
+            await database.dispose()
+
+    database = Database(settings.database_url)
+    try:
+        patterns = asyncio.run(_distill(database))
     except Exception as exc:
         print(f"usage pattern distill rejected: {exc}", file=sys.stderr)
         return 2
-    finally:
-        asyncio.run(database.dispose())
 
     if args.json:
         print(json.dumps([_render(pattern) for pattern in patterns], ensure_ascii=False, indent=2))
