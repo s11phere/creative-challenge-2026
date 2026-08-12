@@ -172,6 +172,56 @@ SKILL_MANIFEST_SCHEMA: dict[str, JSONValue] = {
 }
 
 
+EVAL_CHECK_TYPES: tuple[str, ...] = (
+    "output_matches_schema",
+    "output_has_key",
+    "cites_sources",
+    "trace_tool_called",
+    "finalized",
+)
+
+EVAL_CASE_SCHEMA: dict[str, JSONValue] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    # Existing eval cases carry survey-only labels (scenario/mode/expected_question_count),
+    # so only case_id is required and additional properties stay allowed.
+    "required": ["case_id"],
+    "properties": {
+        "case_id": {"type": "string", "minLength": 1},
+        "input": {"type": ["object", "null"]},
+        "expected": {"type": ["string", "object"]},
+        "fixture": {"type": "string", "minLength": 1},
+        "checks": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/check"},
+        },
+    },
+    "$defs": {
+        "check": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["type"],
+            "properties": {
+                "type": {"enum": list(EVAL_CHECK_TYPES)},
+                "key": {"type": "string", "minLength": 1},
+                "tool": {"type": "string", "minLength": 1},
+                "min": {"type": "integer", "minimum": 1},
+            },
+            "allOf": [
+                {
+                    "if": {"properties": {"type": {"const": "output_has_key"}}},
+                    "then": {"required": ["key"]},
+                },
+                {
+                    "if": {"properties": {"type": {"const": "trace_tool_called"}}},
+                    "then": {"required": ["tool"]},
+                },
+            ],
+        }
+    },
+}
+
+
 class SkillRegistryErrorCode(StrEnum):
     INVALID_MANIFEST = "SKILL_INVALID_MANIFEST"
     INVALID_PACKAGE = "SKILL_INVALID_PACKAGE"
@@ -382,6 +432,8 @@ class FileSystemSkillRegistry:
         }
         for reference in referenced_files:
             self._resolve_package_file(package_root, reference)
+        for eval_reference in manifest.evals:
+            self._validate_eval_cases(self._resolve_package_file(package_root, eval_reference))
         if PurePosixPath(manifest.entrypoint).suffix not in {".yaml", ".yml", ".json"}:
             raise SkillRegistryError(
                 SkillRegistryErrorCode.INVALID_MANIFEST,
@@ -753,6 +805,34 @@ class FileSystemSkillRegistry:
             evals=tuple(cast(list[str], data["evals"])),
             invocation=invocation,
         )
+
+    @classmethod
+    def _validate_eval_cases(cls, path: Path) -> None:
+        """Validate a JSONL eval case file against EVAL_CASE_SCHEMA at package load."""
+        content = cls._normalized_content(path).decode("utf-8")
+        validator = Draft202012Validator(EVAL_CASE_SCHEMA)
+        for line_number, line in enumerate(content.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                loaded: Any = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.INVALID_MANIFEST,
+                    f"Skill eval case JSON is invalid on line {line_number}: {path.name}",
+                ) from exc
+            if not isinstance(loaded, dict):
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.INVALID_MANIFEST,
+                    f"Skill eval cases must be JSON objects on line {line_number}: {path.name}",
+                )
+            error = next(validator.iter_errors(loaded), None)
+            if error is not None:
+                location = "/".join(str(part) for part in error.absolute_path) or "root"
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.INVALID_MANIFEST,
+                    f"Skill eval case validation failed at {location}: {path.name}",
+                )
 
     def _load_json_schema(
         self,
