@@ -392,6 +392,8 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/skills/evaluation.py` | Skill eval case/check 类型、`SkillEvalJudge` Protocol + 确定性 `StructuralSkillEvalJudge`、失败分类与聚合指标；body-free 判定（LLM judge 留缝） |
 | `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
 | `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
+| `src/application/usage_traces/record.py` | 个性化 Phase 2 使用痕迹：从已完成 ConversationRun 组装脱敏 `UsageTrace`（outcome 分类、input_summary 截断+密钥打码）、幂等持久化 |
+| `src/application/usage_traces/distill.py` | 蒸馏：确定性 input_type/task_category 分类 + 按 (skill, 类别, 工具序列, 输入类型) 聚合出 `UsagePatternSnapshot` 并整体替换持久化快照 |
 
 **依赖**：`agent-runtime`、`domain`、`model-gateway`、`jsonschema`。其中 `agent-runtime` 仅供
 Application 层的 Skill Adapter 编排使用；通用 Runtime 不反向依赖业务 Application。

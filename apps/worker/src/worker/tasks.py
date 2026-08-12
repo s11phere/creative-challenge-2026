@@ -30,6 +30,7 @@ def setup_worker() -> None:
     """Configure process-local observability when Dramatiq imports the broker."""
     configure_observability(settings, service_name="worker")
     import worker.ingestion_tasks  # noqa: F401 — register ingestion actors
+    import worker.usage_traces  # noqa: F401 — register usage-trace actors
     from worker import assistant_tasks, qa_tasks
 
     try:

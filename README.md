@@ -136,6 +136,18 @@ uv run python scripts/evaluate_skills.py --all --output tmp/skill-eval.json
 `--model settings` 可切换诊断模型，`--database <url>` 启用 Grounded QA Skill 的生产适配器探针；
 报告只序列化 body-free 证据，不落 output/正文。
 
+个性化 Phase 2（使用痕迹记录与蒸馏）只记录、不注入 Agent：每次 Skill 调用 / Assistant turn 结束时在
+Worker 落一条脱敏 `usage_traces`（`input_summary` 截断 + 长 hex 密钥打码，不存完整 Prompt / 私密正文），
+并按需蒸馏出 (skill, 任务类别, 工具序列, 输入类型) 的 `usage_patterns` 聚合，为后续跨会话记忆与自动提取备料。
+调试/按需查看：
+
+```powershell
+uv run python scripts/query_usage_traces.py --limit 20
+uv run python scripts/distill_usage_patterns.py --json
+```
+
+`--enqueue` 可把蒸馏调度到 Dramatiq Worker（需 Redis）；Phase 6 前这些模式只产出、不消费。
+
 发布 Assistant 时应先使用 `MODEL_PROVIDER=fake` 或获批准的本地 Chat stub。启用外部 Chat Provider 仍需满足现有的
 `MODEL_ALLOW_EXTERNAL`、来源策略、部署策略和用户可见同意检查；Web 发布配置不会绕过这些边界。应监控路由误判、
 澄清循环、取消率、恢复失败以及实际 token/延迟回归。

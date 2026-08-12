@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from application.usage_traces import UsagePatternService
 from domain.conversation_context import ConversationSensitivity
 from domain.usage_traces import UsageOutcome, UsagePatternSnapshot, UsageTrace, pattern_key
 from infrastructure.config import settings
@@ -139,5 +140,42 @@ async def test_usage_pattern_repository_replace_all_and_list() -> None:
         assert len(await repository.list()) == 1
     finally:
         async with database.transaction() as session:
+            await session.execute(delete(UsagePatternModel))
+        await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_distill_all_recomputes_queryable_patterns() -> None:
+    database = Database(settings.database_url)
+    run_id, conversation_id = await _create_parent_run(database)
+    traces = PostgresUsageTraceRepository(database)
+    patterns = PostgresUsagePatternRepository(database)
+    try:
+        await traces.save(
+            UsageTrace(
+                run_id=run_id,
+                conversation_id=conversation_id,
+                input_summary="请总结这篇文档的重点",
+                tools_used=("knowledge_search", "grounded_answer"),
+                outcome=UsageOutcome.COMPLETED,
+                model="fake",
+                sensitivity=ConversationSensitivity.PRIVATE_LOCAL,
+                skill_name="knowledge_agent",
+            )
+        )
+        service = UsagePatternService(traces=traces, patterns=patterns)
+        distilled = await service.distill_all()
+
+        assert len(distilled) == 1
+        assert distilled[0].frequency == 1
+        assert distilled[0].task_category == "summarize"
+        assert distilled[0].input_type == "zh"
+        # The snapshot is persisted and queryable through the pattern repository.
+        assert len(await patterns.list()) == 1
+    finally:
+        async with database.transaction() as session:
+            await session.execute(
+                delete(ConversationRunModel).where(ConversationRunModel.id == run_id)
+            )
             await session.execute(delete(UsagePatternModel))
         await database.dispose()
