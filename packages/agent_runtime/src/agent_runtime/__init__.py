@@ -51,6 +51,7 @@ from .side_effect_tools import (
 )
 from .skills import (
     FileSystemSkillRegistry,
+    PersonalSkillRegistry,
     PinnedSkill,
     SkillCompatibility,
     SkillInvocation,
@@ -93,6 +94,7 @@ __all__ = [
     "NodeOutcome",
     "NodeResult",
     "ManifestAllowedFile",
+    "PersonalSkillRegistry",
     "PinnedSkill",
     "RuntimeAuditEvent",
     "RuntimeAuditEventType",

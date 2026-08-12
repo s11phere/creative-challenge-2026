@@ -1854,6 +1854,178 @@
         "title": "ModelDependencyCheck",
         "type": "object"
       },
+      "PersonalSkillBudgetResponse": {
+        "properties": {
+          "max_input_tokens": {
+            "title": "Max Input Tokens",
+            "type": "integer"
+          },
+          "max_output_tokens": {
+            "title": "Max Output Tokens",
+            "type": "integer"
+          },
+          "max_steps": {
+            "title": "Max Steps",
+            "type": "integer"
+          },
+          "max_tool_calls": {
+            "title": "Max Tool Calls",
+            "type": "integer"
+          },
+          "timeout_seconds": {
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_steps",
+          "max_tool_calls",
+          "max_input_tokens",
+          "max_output_tokens",
+          "timeout_seconds"
+        ],
+        "title": "PersonalSkillBudgetResponse",
+        "type": "object"
+      },
+      "PersonalSkillCreateRequest": {
+        "properties": {
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "minProperties": 1,
+            "title": "Files",
+            "type": "object"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "files"
+        ],
+        "title": "PersonalSkillCreateRequest",
+        "type": "object"
+      },
+      "PersonalSkillInvocationResponse": {
+        "properties": {
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
+          "argument_hint": {
+            "title": "Argument Hint",
+            "type": "string"
+          },
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "execution_mode": {
+            "title": "Execution Mode",
+            "type": "string"
+          },
+          "input_mode": {
+            "title": "Input Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "aliases",
+          "argument_hint",
+          "input_mode",
+          "execution_mode"
+        ],
+        "title": "PersonalSkillInvocationResponse",
+        "type": "object"
+      },
+      "PersonalSkillResponse": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/PersonalSkillBudgetResponse"
+          },
+          "content_sha256": {
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "invocation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonalSkillInvocationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "array"
+          },
+          "required_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Capabilities",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "content_sha256",
+          "description",
+          "active",
+          "permissions",
+          "required_capabilities",
+          "budget"
+        ],
+        "title": "PersonalSkillResponse",
+        "type": "object"
+      },
+      "PersonalSkillUpdateRequest": {
+        "properties": {
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "minProperties": 1,
+            "title": "Files",
+            "type": "object"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "PersonalSkillUpdateRequest",
+        "type": "object"
+      },
       "QuestionRequest": {
         "properties": {
           "idempotency_key": {
@@ -2943,6 +3115,336 @@
         "title": "SkillBudgetResponse",
         "type": "object"
       },
+      "SkillDraftCreateRequest": {
+        "properties": {
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "minProperties": 1,
+            "title": "Files",
+            "type": "object"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "files"
+        ],
+        "title": "SkillDraftCreateRequest",
+        "type": "object"
+      },
+      "SkillDraftEvalCaseResponse": {
+        "properties": {
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "evidence": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "executed": {
+            "title": "Executed",
+            "type": "boolean"
+          },
+          "failure_categories": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Failure Categories",
+            "type": "array"
+          },
+          "latency_ms": {
+            "title": "Latency Ms",
+            "type": "number"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "status",
+          "failure_categories",
+          "executed",
+          "latency_ms",
+          "evidence"
+        ],
+        "title": "SkillDraftEvalCaseResponse",
+        "type": "object"
+      },
+      "SkillDraftEvalMetricsResponse": {
+        "properties": {
+          "check_pass_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Pass Rate"
+          },
+          "checks_executed": {
+            "title": "Checks Executed",
+            "type": "integer"
+          },
+          "checks_passed": {
+            "title": "Checks Passed",
+            "type": "integer"
+          },
+          "errored": {
+            "title": "Errored",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "failure_category_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Failure Category Counts",
+            "type": "object"
+          },
+          "inconclusive": {
+            "title": "Inconclusive",
+            "type": "integer"
+          },
+          "pass_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Rate"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "passed",
+          "failed",
+          "inconclusive",
+          "errored",
+          "pass_rate",
+          "failure_category_counts",
+          "checks_executed",
+          "checks_passed",
+          "check_pass_rate"
+        ],
+        "title": "SkillDraftEvalMetricsResponse",
+        "type": "object"
+      },
+      "SkillDraftEvalResponse": {
+        "properties": {
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/SkillDraftEvalCaseResponse"
+            },
+            "title": "Cases",
+            "type": "array"
+          },
+          "gate_passed": {
+            "title": "Gate Passed",
+            "type": "boolean"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/SkillDraftEvalMetricsResponse"
+          },
+          "skill_name": {
+            "title": "Skill Name",
+            "type": "string"
+          },
+          "skill_version": {
+            "title": "Skill Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_name",
+          "skill_version",
+          "gate_passed",
+          "metrics",
+          "cases"
+        ],
+        "title": "SkillDraftEvalResponse",
+        "type": "object"
+      },
+      "SkillDraftFilesResponse": {
+        "properties": {
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "files"
+        ],
+        "title": "SkillDraftFilesResponse",
+        "type": "object"
+      },
+      "SkillDraftResponse": {
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "file_count": {
+            "title": "File Count",
+            "type": "integer"
+          },
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "complete",
+          "valid",
+          "file_count",
+          "files"
+        ],
+        "title": "SkillDraftResponse",
+        "type": "object"
+      },
+      "SkillDraftUpdateRequest": {
+        "properties": {
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "minProperties": 1,
+            "title": "Files",
+            "type": "object"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "SkillDraftUpdateRequest",
+        "type": "object"
+      },
+      "SkillDraftValidationResponse": {
+        "properties": {
+          "content_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Sha256"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "name",
+          "valid"
+        ],
+        "title": "SkillDraftValidationResponse",
+        "type": "object"
+      },
       "SkillIdentityResponse": {
         "properties": {
           "content_sha256": {
@@ -3012,6 +3514,44 @@
           "budget"
         ],
         "title": "SkillResponse",
+        "type": "object"
+      },
+      "SkillSuggestionResponse": {
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "frequency": {
+            "title": "Frequency",
+            "type": "integer"
+          },
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "title": "Last Seen At",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "category",
+          "frequency",
+          "last_seen_at",
+          "description",
+          "hint"
+        ],
+        "title": "SkillSuggestionResponse",
         "type": "object"
       },
       "SourceDetailResponse": {
@@ -5133,6 +5673,646 @@
         "summary": "List Skills",
         "tags": [
           "skills"
+        ]
+      }
+    },
+    "/api/v1/skills/personal": {
+      "get": {
+        "description": "List installed personal Skills (body-free metadata).",
+        "operationId": "list_personal_skills_api_v1_skills_personal_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PersonalSkillResponse"
+                  },
+                  "title": "Response List Personal Skills Api V1 Skills Personal Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Personal Skills",
+        "tags": [
+          "personal-skills"
+        ]
+      },
+      "post": {
+        "description": "Create one writable personal Skill; every file is validated before publishing.",
+        "operationId": "create_personal_skill_api_v1_skills_personal_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonalSkillCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalSkillResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Personal Skill",
+        "tags": [
+          "personal-skills"
+        ]
+      }
+    },
+    "/api/v1/skills/personal/drafts": {
+      "get": {
+        "operationId": "list_drafts_api_v1_skills_personal_drafts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SkillDraftResponse"
+                  },
+                  "title": "Response List Drafts Api V1 Skills Personal Drafts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Drafts",
+        "tags": [
+          "skill-drafts"
+        ]
+      },
+      "post": {
+        "operationId": "create_draft_api_v1_skills_personal_drafts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillDraftCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDraftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Draft",
+        "tags": [
+          "skill-drafts"
+        ]
+      }
+    },
+    "/api/v1/skills/personal/drafts/suggestions": {
+      "get": {
+        "description": "Frequency-thresholded usage-pattern candidates (read-only, human-confirmed).",
+        "operationId": "skill_suggestions_api_v1_skills_personal_drafts_suggestions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SkillSuggestionResponse"
+                  },
+                  "title": "Response Skill Suggestions Api V1 Skills Personal Drafts Suggestions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Skill Suggestions",
+        "tags": [
+          "skill-drafts"
+        ]
+      }
+    },
+    "/api/v1/skills/personal/drafts/{name}": {
+      "delete": {
+        "operationId": "reject_draft_api_v1_skills_personal_drafts__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Reject Draft Api V1 Skills Personal Drafts  Name  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reject Draft",
+        "tags": [
+          "skill-drafts"
+        ]
+      },
+      "get": {
+        "operationId": "get_draft_api_v1_skills_personal_drafts__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDraftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Draft",
+        "tags": [
+          "skill-drafts"
+        ]
+      },
+      "put": {
+        "operationId": "update_draft_api_v1_skills_personal_drafts__name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillDraftUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDraftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Draft",
+        "tags": [
+          "skill-drafts"
+        ]
+      }
+    },
+    "/api/v1/skills/personal/drafts/{name}/activate": {
+      "post": {
+        "operationId": "activate_draft_api_v1_skills_personal_drafts__name__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Activate Draft Api V1 Skills Personal Drafts  Name  Activate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activate Draft",
+        "tags": [
+          "skill-drafts"
+        ]
+      }
+    },
+    "/api/v1/skills/personal/drafts/{name}/eval": {
+      "post": {
+        "operationId": "run_draft_eval_api_v1_skills_personal_drafts__name__eval_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDraftEvalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Draft Eval",
+        "tags": [
+          "skill-drafts"
+        ]
+      }
+    },
+    "/api/v1/skills/personal/drafts/{name}/files": {
+      "get": {
+        "operationId": "get_draft_files_api_v1_skills_personal_drafts__name__files_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDraftFilesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Draft Files",
+        "tags": [
+          "skill-drafts"
+        ]
+      }
+    },
+    "/api/v1/skills/personal/drafts/{name}/validate": {
+      "post": {
+        "operationId": "validate_draft_api_v1_skills_personal_drafts__name__validate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDraftValidationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate Draft",
+        "tags": [
+          "skill-drafts"
+        ]
+      }
+    },
+    "/api/v1/skills/personal/{name}": {
+      "delete": {
+        "operationId": "delete_personal_skill_api_v1_skills_personal__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Personal Skill Api V1 Skills Personal  Name  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Personal Skill",
+        "tags": [
+          "personal-skills"
+        ]
+      },
+      "get": {
+        "operationId": "get_personal_skill_api_v1_skills_personal__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalSkillResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Personal Skill",
+        "tags": [
+          "personal-skills"
+        ]
+      },
+      "put": {
+        "operationId": "update_personal_skill_api_v1_skills_personal__name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonalSkillUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalSkillResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Personal Skill",
+        "tags": [
+          "personal-skills"
+        ]
+      }
+    },
+    "/api/v1/skills/personal/{name}/activate": {
+      "post": {
+        "operationId": "activate_personal_skill_api_v1_skills_personal__name__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalSkillResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activate Personal Skill",
+        "tags": [
+          "personal-skills"
         ]
       }
     },

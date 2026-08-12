@@ -18,6 +18,7 @@ from agent_runtime import (
     FileWritePolicy,
     InMemoryToolRegistry,
     JSONValue,
+    PersonalSkillRegistry,
     ReadOnlyFileTools,
     ShellExecutionPolicy,
     SideEffectTools,
@@ -36,7 +37,15 @@ from application.assistant import (
     ConversationContextService,
     ConversationFinalizer,
 )
-from application.skills import KnowledgeLoopTools, KnowledgeLoopToolsConfig
+from application.skills import (
+    DraftSkillEvalRunner,
+    KnowledgeLoopTools,
+    KnowledgeLoopToolsConfig,
+    PersonalSkillStore,
+    SkillCreatorTools,
+    SkillDraftStore,
+    register_skill_creator_tools,
+)
 from domain.agent_runtime import ToolPermission
 from domain.assistant_sse import AssistantEventType
 from domain.conversation_run import ConversationRunKind, ConversationRunStatus
@@ -60,6 +69,7 @@ from infrastructure.qa_execution import (
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
 from infrastructure.runtime_approval import PostgresApprovalPort
 from infrastructure.runtime_state import PostgresRuntimeStateStore
+from infrastructure.skill_lifecycle import PostgresSkillActivationStore
 from infrastructure.telemetry_context import (
     bind_observability_context,
     new_trace_id,
@@ -74,6 +84,7 @@ from sqlalchemy.pool import NullPool
 
 from worker.broker import broker
 from worker.qa_tasks import _create_gateway
+from worker.usage_traces import record_usage_trace
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("worker.assistant")
@@ -146,6 +157,21 @@ def _run_assistant_sync(run_id: UUID, trace_id: str) -> bool:
             loop.close()
 
 
+async def _apply_personal_skill_activations(registry: PersonalSkillRegistry) -> None:
+    """Re-apply durable personal-Skill activations; failures never break the Run."""
+    try:
+        store = PostgresSkillActivationStore(database)
+        persisted = await store.list()
+        activations = {
+            item.name: item.version
+            for item in persisted
+            if registry.is_personal(item.name) and item.version in registry.versions(item.name)
+        }
+        registry.activate_all(activations)
+    except Exception:
+        logger.exception("personal_skill_activation_apply_failed")
+
+
 async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id: str) -> bool:
     runs = PostgresConversationRunRepository(database)
     lease_owner = str(uuid4())
@@ -157,6 +183,7 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
     if claimed is None:
         return False
     registry = assistant_skill_registry()
+    await _apply_personal_skill_activations(registry)
     qa_repository = PostgresGroundedQARepository(database)
     context = ConversationContextService(data=qa_repository, runs=runs)
     metrics = AssistantMetrics()
@@ -180,18 +207,21 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
     )
     events = PostgresAssistantEventStore(database)
     if claimed.run_kind is ConversationRunKind.CONTEXT_COMPACTION:
-        return await _run_compaction_with_lease(
+        completed = await _run_compaction_with_lease(
             compaction=compaction,
             events=events,
             runs=runs,
             run_id=run_id,
             lease_owner=lease_owner,
         )
+        await record_usage_trace(run_id)
+        return completed
     if claimed.status in _TERMINAL:
         if isinstance(service, AutonomousAssistantLoopService):
             await service.execute(run_id, trace_id=trace_id)
         else:
             await service.execute(run_id)
+        await record_usage_trace(run_id)
         return True
 
     stop = asyncio.Event()
@@ -214,6 +244,7 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
         stop.set()
         await heartbeat
         await runs.release_conversation_run_lease(run_id, lease_owner=lease_owner)
+        await record_usage_trace(run_id)
 
 
 async def _autonomous_loop_service(
@@ -228,10 +259,10 @@ async def _autonomous_loop_service(
     trace_id: str,
 ) -> AutonomousAssistantLoopService:
     """Build the top-level Loop from existing QA ports and trusted Skill packages."""
-    from agent_runtime import FileSystemSkillRegistry, SkillRegistryError
+    from agent_runtime import SkillRegistryError
 
     skill_registry = registry
-    assert isinstance(skill_registry, FileSystemSkillRegistry)
+    assert isinstance(skill_registry, PersonalSkillRegistry)
     resources = PostgresAssistantResourceResolver(database)
     assistant_pin = skill_registry.pin("assistant_agent", "1.0.0")
     assistant_package = skill_registry.validate_pin(assistant_pin)
@@ -286,9 +317,28 @@ async def _autonomous_loop_service(
     conversation = await qa_repository.get_conversation(parent.conversation_id)
     if conversation is None:
         raise ValueError("CONVERSATION_NOT_FOUND")
-    extra_handlers: dict[str, ToolHandler] | None = None
-    extra_tool_registrar: Callable[[InMemoryToolRegistry], tuple[ToolDefinition, ...]] | None = None
-    extra_permissions: frozenset[ToolPermission] = frozenset()
+    creator_drafts = SkillDraftStore(
+        registry=skill_registry,
+        personal_store=PersonalSkillStore(
+            registry=skill_registry,
+            store=PostgresSkillActivationStore(database),
+        ),
+        eval_runner=DraftSkillEvalRunner(registry=skill_registry),
+    )
+    creator_tools = SkillCreatorTools(draft_store=creator_drafts)
+    extra_handlers: dict[str, ToolHandler] = dict(creator_tools.handlers())
+    extra_permissions: frozenset[ToolPermission] = frozenset(
+        {ToolPermission.READ_KNOWLEDGE, ToolPermission.WRITE_KNOWLEDGE}
+    )
+
+    def register_creator_tools(
+        registry: InMemoryToolRegistry,
+    ) -> tuple[ToolDefinition, ...]:
+        return register_skill_creator_tools(registry)
+
+    extra_tool_registrar: Callable[[InMemoryToolRegistry], tuple[ToolDefinition, ...]] = (
+        register_creator_tools
+    )
     workspace_context: dict[str, JSONValue] = {"selected": False, "tools_enabled": False}
     if conversation.workspace_path is not None:
         workspace = None
@@ -329,17 +379,22 @@ async def _autonomous_loop_service(
                 ),
                 cancellation_probe=cancellation_probe,
             )
-            extra_handlers = {**file_tools.handlers(), **side_effect_tools.handlers()}
+            extra_handlers = {
+                **file_tools.handlers(),
+                **side_effect_tools.handlers(),
+                **creator_tools.handlers(),
+            }
 
-            def register_workspace_tools(
+            def register_all_tools(
                 registry: InMemoryToolRegistry,
             ) -> tuple[ToolDefinition, ...]:
                 return (
                     *register_read_only_file_tools(registry),
                     *register_side_effect_tools(registry),
+                    *register_skill_creator_tools(registry),
                 )
 
-            extra_tool_registrar = register_workspace_tools
+            extra_tool_registrar = register_all_tools
             extra_permissions = frozenset(
                 {
                     ToolPermission.READ_KNOWLEDGE,

@@ -64,13 +64,20 @@ if [ "$HAS_BACKEND" -eq 1 ]; then
 fi
 
 if [ "$HAS_FRONTEND" -eq 1 ]; then
-  if command -v pnpm >/dev/null 2>&1; then
+  # 与 CLAUDE.md 前端命令保持一致：corepack 固定 10.20.0，避免系统 pnpm
+  # 版本与 packageManager 字段冲突导致版本检查失败。
+  if command -v corepack >/dev/null 2>&1; then
+    say "pnpm lint (apps/web)"
+    corepack pnpm@10.20.0 --dir apps/web lint || fail "前端 lint 失败"
+    say "pnpm typecheck (apps/web)"
+    corepack pnpm@10.20.0 --dir apps/web typecheck || fail "前端 typecheck 失败"
+  elif command -v pnpm >/dev/null 2>&1; then
     say "pnpm lint (apps/web)"
     pnpm --dir apps/web lint || fail "前端 lint 失败"
     say "pnpm typecheck (apps/web)"
     pnpm --dir apps/web typecheck || fail "前端 typecheck 失败"
   else
-    say "未找到 pnpm，跳过前端检查（CI 仍会执行）"
+    say "未找到 corepack/pnpm，跳过前端检查（CI 仍会执行）"
   fi
 fi
 

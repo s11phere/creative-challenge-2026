@@ -13,9 +13,9 @@ from agent_runtime import (
     AgentLoopResult,
     DeterministicWorkflowExecutor,
     FileSystemSkillRegistry,
+    PersonalSkillRegistry,
     RuntimeExecutionResult,
     SkillRegistryError,
-    SkillRegistryErrorCode,
 )
 from application.qa import (
     ContextBuilder,
@@ -675,15 +675,18 @@ def qa_execution_versions(
     )
 
 
-def qa_skill_registry() -> FileSystemSkillRegistry:
-    """Load all trusted Skills and activate the sole new knowledge entry point."""
-    registry = FileSystemSkillRegistry(Path(settings.skill_root_path))
+def qa_skill_registry() -> PersonalSkillRegistry:
+    """Load all trusted and personal Skills and activate the knowledge entry point."""
+    registry = PersonalSkillRegistry(
+        Path(settings.skill_root_path),
+        personal_root=Path(settings.personal_skills_dir),
+    )
     registry.reload()
     registry.activate("knowledge_agent", settings.knowledge_agent_skill_version)
     return registry
 
 
-def assistant_skill_registry() -> FileSystemSkillRegistry:
+def assistant_skill_registry() -> PersonalSkillRegistry:
     """Build the v2 invocation catalog with knowledge_agent as the sole QA entry."""
     registry = qa_skill_registry()
     for name, version in (
@@ -691,6 +694,9 @@ def assistant_skill_registry() -> FileSystemSkillRegistry:
         ("compare_sources", "1.0.0"),
         ("create_review_cards", "1.0.0"),
         ("research_reading_workflow", "1.1.0"),
+        # Prompts-only creator: its instructions enter the assistant loop's
+        # active contexts so the Skill Creator Tools are always guided.
+        ("skill_creator", "1.0.0"),
     ):
         registry.activate(name, version)
     return registry
@@ -1028,13 +1034,9 @@ def _skill_output_schema(skill_name: str) -> str:
         "create_review_cards": "review-cards-skill-output-v1",
         "knowledge_agent": "knowledge-agent-skill-output-v1",
     }
-    try:
-        return schemas[skill_name]
-    except KeyError as exc:
-        raise SkillRegistryError(
-            SkillRegistryErrorCode.NOT_FOUND,
-            "No Grounded QA adapter is registered for this Skill.",
-        ) from exc
+    # Personal Skills (ADR-018) compose the same Grounded QA handlers, so an
+    # unlisted Skill name falls back to the generic projected output shape.
+    return schemas.get(skill_name, "personal-skill-output-v1")
 
 
 def _safe_error(error: BaseException) -> dict[str, str]:

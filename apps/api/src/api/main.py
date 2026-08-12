@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal, cast
 
+from agent_runtime import PersonalSkillRegistry
 from application.assistant import (
     AssistantCommandCatalog,
     AssistantCommandParser,
@@ -28,9 +29,13 @@ from application.qa import (
 )
 from application.skills import (
     DerivedKnowledgeWriter,
+    DraftSkillEvalRunner,
+    PersonalSkillStore,
     SkillActivationStore,
     SkillCatalogPort,
+    SkillDraftStore,
     SkillLifecycleService,
+    SkillSuggestionService,
 )
 from domain.agent_runtime import ApprovalPort
 from domain.agent_sse import AgentRunEventLog, AgentRunEventStore
@@ -64,6 +69,7 @@ from infrastructure.skill_lifecycle import (
 )
 from infrastructure.skill_references import PostgresSkillReferenceChecker
 from infrastructure.telemetry import configure_observability
+from infrastructure.usage_traces import PostgresUsagePatternRepository
 from infrastructure.workspaces import WorkspaceRoot
 from model_gateway import (
     GatewayConfig,
@@ -79,7 +85,16 @@ from .assistant_runtime import AssistantWorkerDispatcher
 from .errors import ErrorResponse, register_error_handlers
 from .observability import TraceMiddleware
 from .qa_runtime import QAWorkerDispatcher
-from .routers import agent_events, assistant, qa, search, skills, sources
+from .routers import (
+    agent_events,
+    assistant,
+    personal_skills,
+    qa,
+    search,
+    skill_drafts,
+    skills,
+    sources,
+)
 
 
 class LiveResponse(BaseModel):
@@ -206,7 +221,8 @@ def create_app(
             }
         ),
     )
-    assistant_catalog = FileSystemSkillCatalog(assistant_skill_registry(), include_manifest_v2=True)
+    assistant_registry = assistant_skill_registry()
+    assistant_catalog = FileSystemSkillCatalog(assistant_registry, include_manifest_v2=True)
     qa_event_log = qa_event_store or PostgresQAEventStore(database)
     if assistant_event_store is not None:
         assistant_event_log = assistant_event_store
@@ -238,7 +254,6 @@ def create_app(
         skill_registry=skill_registry,
         skill_lifecycle=skill_lifecycle,
     )
-    assistant_registry = assistant_skill_registry()
 
     async def _assistant_versions(skill_name: str) -> QARunVersions:
         return qa_execution_versions(assistant_registry, skill_name=skill_name)
@@ -255,6 +270,18 @@ def create_app(
         registry=assistant_registry,
         projection=projection,
         resources=PostgresAssistantResourceResolver(database),
+    )
+    personal_skill_store = PersonalSkillStore(
+        registry=assistant_registry,
+        store=activation_store,
+    )
+    skill_draft_store = SkillDraftStore(
+        registry=assistant_registry,
+        personal_store=personal_skill_store,
+        eval_runner=DraftSkillEvalRunner(registry=assistant_registry),
+    )
+    skill_suggestion_service = SkillSuggestionService(
+        patterns=PostgresUsagePatternRepository(database)
     )
     assistant_command_catalog = AssistantCommandCatalog(assistant_catalog)
     assistant_command_service = AssistantCommandService(
@@ -291,6 +318,7 @@ def create_app(
             if enable_qa_execution:
                 for active_skill in active_skill_versions:
                     await skill_lifecycle.current(active_skill)
+                await _activate_personal_skills(assistant_registry, activation_store)
                 await qa_runtime.recover()
                 await assistant_runtime.recover()
             yield
@@ -326,8 +354,12 @@ def create_app(
     app.state.qa_execution_enabled = enable_qa_execution
     app.state.skill_catalog = skill_catalog
     app.state.skill_registry = skill_registry
+    app.state.assistant_registry = assistant_registry
     app.state.skill_reference_checker = PostgresSkillReferenceChecker(database)
     app.state.skill_lifecycle = skill_lifecycle
+    app.state.personal_skill_store = personal_skill_store
+    app.state.skill_draft_store = skill_draft_store
+    app.state.skill_suggestion_service = skill_suggestion_service
     app.state.organization_scope = PostgresKnowledgeOrganizationScope(database)
     app.state.approval_port = approval_port or PostgresApprovalPort(database)
     app.state.derived_knowledge_store = derived_knowledge_store or PostgresDerivedKnowledgeStore(
@@ -347,6 +379,10 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(assistant.router)
     app.include_router(agent_events.router)
     app.include_router(skills.router)
+    # Draft routes must precede the personal `/{name}` routes so a draft named
+    # "drafts" or the "/suggestions" path is never captured as a skill name.
+    app.include_router(skill_drafts.router)
+    app.include_router(personal_skills.router)
 
     @app.get(
         "/api/v1/health/live",
@@ -431,6 +467,20 @@ def _register_routes(app: FastAPI) -> None:
             max_upload_size_mb=settings.max_upload_size_mb,
             max_upload_size_bytes=settings.max_upload_size_mb * 1024 * 1024,
         )
+
+
+async def _activate_personal_skills(
+    registry: PersonalSkillRegistry,
+    activation_store: SkillActivationStore,
+) -> None:
+    """Re-apply persisted personal-Skill activations after a fresh registry scan."""
+    persisted = await activation_store.list()
+    activations = {
+        item.name: item.version
+        for item in persisted
+        if registry.is_personal(item.name) and item.version in registry.versions(item.name)
+    }
+    registry.activate_all(activations)
 
 
 def _create_configured_model_gateway() -> ModelGateway:

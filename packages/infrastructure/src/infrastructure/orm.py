@@ -829,6 +829,72 @@ class RuntimeApprovalModel(Base):
     )
 
 
+# ---------------------------------------------------------------------------
+# Usage traces and distilled patterns (personalization Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class UsageTraceModel(Base):
+    """One sanitized usage trace per finished ConversationRun (append-only)."""
+
+    __tablename__ = "usage_traces"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("conversation_runs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    skill_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    command: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    input_summary: Mapped[str] = mapped_column(String(1024), nullable=False)
+    tools_used: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    sensitivity: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    __table_args__ = (
+        CheckConstraint(
+            "(skill_name IS NOT NULL AND command IS NULL) OR "
+            "(skill_name IS NULL AND command IS NOT NULL)",
+            name="ck_usage_traces_identity",
+        ),
+        CheckConstraint(
+            "outcome IN ('completed', 'failed', 'refused', 'clarified')",
+            name="ck_usage_traces_outcome",
+        ),
+        CheckConstraint(
+            "sensitivity IN ('public_demo', 'private_local', 'restricted')",
+            name="ck_usage_traces_sensitivity",
+        ),
+        Index("idx_usage_traces_conversation_created", "conversation_id", "created_at"),
+    )
+
+
+class UsagePatternModel(Base):
+    """Current distilled aggregate snapshot across usage-trace dimensions."""
+
+    __tablename__ = "usage_patterns"
+
+    key: Mapped[str] = mapped_column(String(512), primary_key=True)
+    skill_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    task_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    tool_sequence: Mapped[str] = mapped_column(String(1024), nullable=False)
+    input_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    frequency: Mapped[int] = mapped_column(Integer, nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+    __table_args__ = (CheckConstraint("frequency >= 1", name="ck_usage_patterns_frequency"),)
+
+
 class DerivedKnowledgeItemModel(Base):
     """Idempotent, citation-backed derived knowledge produced by a Skill."""
 

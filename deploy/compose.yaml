@@ -106,6 +106,7 @@ services:
       MODEL_MAX_RETRIES: ${MODEL_MAX_RETRIES:-2}
       MODEL_RETRY_BACKOFF_SECONDS: ${MODEL_RETRY_BACKOFF_SECONDS:-0.1}
       SKILL_ROOT_PATH: ${SKILL_ROOT_PATH:-./skills}
+      PERSONAL_SKILLS_DIR: /data/personal-skills
       KNOWLEDGE_AGENT_SKILL_VERSION: ${KNOWLEDGE_AGENT_SKILL_VERSION:-1.0.0}
       AGENT_WORKSPACE_ROOT_PATH: /data/agent-workspaces
       AGENT_WORKSPACE_COMMAND_ALIASES: ${AGENT_WORKSPACE_COMMAND_ALIASES:-python,git,uv,node,pnpm,npm}
@@ -142,6 +143,7 @@ services:
     volumes:
       - blobdata:/app/data/blobs
       - ${AGENT_WORKSPACE_HOST_PATH:-../data/workspaces}:/data/agent-workspaces
+      - personalskills:/data/personal-skills
 
   worker:
     image: agent-knowledge-worker:local
@@ -199,6 +201,7 @@ services:
       QA_DEBUG_TRACE_PATH: /data/qa-debug
       QA_DEBUG_TRACE_MAX_BYTES: ${QA_DEBUG_TRACE_MAX_BYTES:-10000000}
       SKILL_ROOT_PATH: ${SKILL_ROOT_PATH:-./skills}
+      PERSONAL_SKILLS_DIR: /data/personal-skills
       KNOWLEDGE_AGENT_SKILL_VERSION: ${KNOWLEDGE_AGENT_SKILL_VERSION:-1.0.0}
       AGENT_WORKSPACE_ROOT_PATH: /data/agent-workspaces
       AGENT_WORKSPACE_COMMAND_ALIASES: ${AGENT_WORKSPACE_COMMAND_ALIASES:-python,git,uv,node,pnpm,npm}
@@ -227,6 +230,7 @@ services:
       - blobdata:/app/data/blobs
       - ${QA_DEBUG_TRACE_HOST_PATH:-../tmp/qa-debug}:/data/qa-debug
       - ${AGENT_WORKSPACE_HOST_PATH:-../data/workspaces}:/data/agent-workspaces
+      - personalskills:/data/personal-skills
 
   web:
     image: agent-knowledge-web:local
@@ -324,6 +328,7 @@ volumes:
   pgdata:
   redisdata:
   blobdata:
+  personalskills:
   # Allow reusing a prewarmed model cache (for example after a first-download
   # interruption) without changing the service mount or model configuration.
   teidata:

@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     diagnostic_task_timeout_ms: int = Field(default=10_000, ge=1_000)
     diagnostic_task_max_retries: int = Field(default=3, ge=0)
     diagnostic_task_min_backoff_ms: int = Field(default=1_000, ge=100)
+    usage_trace_input_summary_max_chars: int = Field(default=512, ge=64, le=1024)
+    usage_pattern_distill_timeout_ms: int = Field(default=60_000, ge=10_000)
+    usage_pattern_distill_max_retries: int = Field(default=3, ge=0)
 
     # --- Ingestion ---
     max_upload_size_mb: int = Field(default=50, ge=1, le=500)
@@ -124,6 +127,7 @@ class Settings(BaseSettings):
 
     # --- Skill Registry ---
     skill_root_path: str = "./skills"
+    personal_skills_dir: str = "./data/personal_skills"
     knowledge_agent_skill_version: str = "1.0.0"
 
     # Workspace Tools are rooted here. The API and Worker must see the same mounted path.

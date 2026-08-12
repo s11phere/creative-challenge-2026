@@ -9,6 +9,38 @@ from .catalog import (
     SkillVersionView,
     SkillView,
 )
+from .creator_eval import DraftSkillEvalRunner
+from .creator_tools import (
+    SkillCreatorTools,
+    register_skill_creator_tools,
+    scaffold_skill_files,
+)
+from .drafts import (
+    SkillDraftError,
+    SkillDraftErrorCode,
+    SkillDraftStore,
+    SkillDraftValidationResult,
+    SkillDraftView,
+)
+from .evaluation import (
+    AggregateSkillEvalReport,
+    SkillEvalCase,
+    SkillEvalCaseResult,
+    SkillEvalCheck,
+    SkillEvalEvidence,
+    SkillEvalFailureCategory,
+    SkillEvalJudge,
+    SkillEvalMetrics,
+    SkillEvalObservation,
+    SkillEvalSkillReport,
+    SkillEvalStatus,
+    StructuralSkillEvalJudge,
+    aggregate_skill_eval_metrics,
+    aggregate_skill_reports,
+    build_skill_report,
+    invalid_case_result,
+    run_skill_evaluation,
+)
 from .grounded_qa_skill import DerivedKnowledgeWriter, GroundedQASkillAdapter, GroundedQASkillConfig
 from .knowledge_loop import KnowledgeLoopTools, KnowledgeLoopToolsConfig
 from .lifecycle import SkillLifecycleError, SkillLifecycleErrorCode, SkillLifecycleService
@@ -17,9 +49,21 @@ from .organization import (
     OrganizationScopeError,
     OrganizationScopeErrorCode,
 )
+from .personal import (
+    PersonalSkillError,
+    PersonalSkillErrorCode,
+    PersonalSkillStore,
+    PersonalSkillView,
+)
+from .suggestions import SkillSuggestionService, SkillSuggestionView
 
 __all__ = [
+    "AggregateSkillEvalReport",
+    "DraftSkillEvalRunner",
     "GroundedQASkillAdapter",
+    "SkillCreatorTools",
+    "register_skill_creator_tools",
+    "scaffold_skill_files",
     "GroundedQASkillConfig",
     "DerivedKnowledgeWriter",
     "KnowledgeLoopTools",
@@ -27,14 +71,41 @@ __all__ = [
     "KnowledgeOrganizationScopeService",
     "OrganizationScopeError",
     "OrganizationScopeErrorCode",
+    "PersonalSkillError",
+    "PersonalSkillErrorCode",
+    "PersonalSkillStore",
+    "PersonalSkillView",
     "SkillActivation",
     "SkillActivationStore",
     "SkillBudgetView",
+    "SkillDraftError",
+    "SkillSuggestionService",
+    "SkillSuggestionView",
+    "SkillDraftErrorCode",
+    "SkillDraftStore",
+    "SkillDraftValidationResult",
+    "SkillDraftView",
     "SkillCatalogPort",
+    "SkillEvalCase",
+    "SkillEvalCaseResult",
+    "SkillEvalCheck",
+    "SkillEvalEvidence",
+    "SkillEvalFailureCategory",
+    "SkillEvalJudge",
+    "SkillEvalMetrics",
+    "SkillEvalObservation",
+    "SkillEvalSkillReport",
+    "SkillEvalStatus",
     "SkillInvocationView",
     "SkillLifecycleError",
     "SkillLifecycleErrorCode",
     "SkillLifecycleService",
     "SkillVersionView",
     "SkillView",
+    "StructuralSkillEvalJudge",
+    "aggregate_skill_eval_metrics",
+    "aggregate_skill_reports",
+    "build_skill_report",
+    "invalid_case_result",
+    "run_skill_evaluation",
 ]

@@ -1,0 +1,218 @@
+from __future__ import annotations
+
+import os
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
+import pytest
+from application.usage_traces import UsagePatternService
+from domain.conversation_context import ConversationSensitivity
+from domain.usage_traces import UsageOutcome, UsagePatternSnapshot, UsageTrace, pattern_key
+from infrastructure.config import settings
+from infrastructure.database import Database
+from infrastructure.orm import (
+    ConversationModel,
+    ConversationRunModel,
+    QAMessageModel,
+    SpaceModel,
+    UsagePatternModel,
+)
+from infrastructure.usage_traces import PostgresUsagePatternRepository, PostgresUsageTraceRepository
+from sqlalchemy import delete
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        os.getenv("RUN_INTEGRATION") != "1",
+        reason="set RUN_INTEGRATION=1 with an isolated migrated PostgreSQL database",
+    ),
+]
+
+
+async def _create_parent_run(database: Database) -> tuple[object, object]:
+    """Insert a minimal Space + Conversation + user message + completed Skill run."""
+    conversation_id = uuid4()
+    run_id = uuid4()
+    message_id = uuid4()
+    # Space is committed first because conversations.space_id is a FK to
+    # spaces.id and these mappers declare no relationships, so SQLAlchemy
+    # cannot order the inserts in a single flush. The rest of the chain is
+    # flushed step-by-step so each FK is satisfied before the next insert.
+    async with database.transaction() as session:
+        session.add(
+            SpaceModel(
+                id=conversation_id,
+                name="usage-trace-integration",
+                owner_id="usage-trace-integration",
+            )
+        )
+    async with database.transaction() as session:
+        session.add(
+            ConversationModel(
+                id=conversation_id,
+                space_id=conversation_id,
+                owner_id="usage-trace-integration",
+            )
+        )
+        await session.flush()
+        # conversation_runs.user_message_id FKs to qa_messages.id (run_id stays
+        # NULL here to avoid the qa_messages <-> conversation_runs cycle).
+        session.add(
+            QAMessageModel(
+                id=message_id,
+                conversation_id=conversation_id,
+                space_id=conversation_id,
+                role="user",
+                content="What is the summary?",
+                run_id=None,
+            )
+        )
+        await session.flush()
+        session.add(
+            ConversationRunModel(
+                id=run_id,
+                conversation_id=conversation_id,
+                space_id=conversation_id,
+                caller_id="usage-trace-integration",
+                user_message_id=message_id,
+                idempotency_key=f"usage-trace-{run_id.hex}",
+                run_kind="skill",
+                selection_source="auto",
+                status="completed",
+                cancellation_requested=False,
+                router_version="router-v1",
+                core_prompt_version="prompt-v1",
+                model_identity="fake",
+                skill_name="knowledge_agent",
+                skill_version="1.0.0",
+                skill_content_sha256="a" * 64,
+                usage={},
+                result=None,
+            )
+        )
+    return run_id, conversation_id
+
+
+@pytest.mark.asyncio
+async def test_usage_trace_repository_roundtrip_and_idempotent_save() -> None:
+    database = Database(settings.database_url)
+    run_id, conversation_id = await _create_parent_run(database)
+    repository = PostgresUsageTraceRepository(database)
+    trace = UsageTrace(
+        run_id=run_id,
+        conversation_id=conversation_id,
+        input_summary="Summarize this document",
+        tools_used=("knowledge_search", "grounded_answer"),
+        outcome=UsageOutcome.COMPLETED,
+        model="fake",
+        sensitivity=ConversationSensitivity.PRIVATE_LOCAL,
+        skill_name="knowledge_agent",
+    )
+    try:
+        saved = await repository.save(trace)
+        assert saved == trace
+        assert await repository.get(run_id) == trace
+        # A second save for the same Run must not create a duplicate.
+        await repository.save(trace)
+        assert len(await repository.list(limit=100)) >= 1
+        listed = await repository.list(since=datetime.now(UTC) - timedelta(minutes=1))
+        assert any(item.run_id == run_id for item in listed)
+    finally:
+        async with database.transaction() as session:
+            await session.execute(
+                delete(ConversationRunModel).where(ConversationRunModel.id == run_id)
+            )
+            # Deleting the Space cascades to the conversation and its runs.
+            await session.execute(delete(SpaceModel).where(SpaceModel.id == conversation_id))
+        await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_usage_pattern_repository_replace_all_and_list() -> None:
+    database = Database(settings.database_url)
+    repository = PostgresUsagePatternRepository(database)
+    first = datetime(2026, 8, 1, tzinfo=UTC)
+    last = datetime(2026, 8, 12, tzinfo=UTC)
+    patterns = (
+        UsagePatternSnapshot(
+            key=pattern_key(
+                skill_name="knowledge_agent",
+                task_category="question",
+                tool_sequence="knowledge_search,grounded_answer",
+                input_type="zh",
+            ),
+            skill_name="knowledge_agent",
+            task_category="question",
+            tool_sequence="knowledge_search,grounded_answer",
+            input_type="zh",
+            frequency=5,
+            first_seen_at=first,
+            last_seen_at=last,
+        ),
+        UsagePatternSnapshot(
+            key=pattern_key(
+                skill_name=None,
+                task_category="general",
+                tool_sequence="none",
+                input_type="en",
+            ),
+            skill_name=None,
+            task_category="general",
+            tool_sequence="none",
+            input_type="en",
+            frequency=2,
+            first_seen_at=first,
+            last_seen_at=last,
+        ),
+    )
+    try:
+        await repository.replace_all(patterns)
+        listed = await repository.list()
+        assert len(listed) == 2
+        assert listed[0].frequency == 5  # frequency-desc ordering
+        # replace_all is a full snapshot swap, not an accumulation.
+        await repository.replace_all(patterns[:1])
+        assert len(await repository.list()) == 1
+    finally:
+        async with database.transaction() as session:
+            await session.execute(delete(UsagePatternModel))
+        await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_distill_all_recomputes_queryable_patterns() -> None:
+    database = Database(settings.database_url)
+    run_id, conversation_id = await _create_parent_run(database)
+    traces = PostgresUsageTraceRepository(database)
+    patterns = PostgresUsagePatternRepository(database)
+    try:
+        await traces.save(
+            UsageTrace(
+                run_id=run_id,
+                conversation_id=conversation_id,
+                input_summary="请总结这篇文档的重点",
+                tools_used=("knowledge_search", "grounded_answer"),
+                outcome=UsageOutcome.COMPLETED,
+                model="fake",
+                sensitivity=ConversationSensitivity.PRIVATE_LOCAL,
+                skill_name="knowledge_agent",
+            )
+        )
+        service = UsagePatternService(traces=traces, patterns=patterns)
+        distilled = await service.distill_all()
+
+        assert len(distilled) == 1
+        assert distilled[0].frequency == 1
+        assert distilled[0].task_category == "summarize"
+        assert distilled[0].input_type == "zh"
+        # The snapshot is persisted and queryable through the pattern repository.
+        assert len(await patterns.list()) == 1
+    finally:
+        async with database.transaction() as session:
+            await session.execute(
+                delete(ConversationRunModel).where(ConversationRunModel.id == run_id)
+            )
+            await session.execute(delete(UsagePatternModel))
+            # Deleting the Space cascades to the conversation and its runs.
+            await session.execute(delete(SpaceModel).where(SpaceModel.id == conversation_id))
+        await database.dispose()

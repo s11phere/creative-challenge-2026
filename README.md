@@ -124,9 +124,59 @@ uv run --frozen python scripts/evaluate_agent_loop.py --validate-only
 
 该命令不调用 Provider、不读取受控语料，也不会启用 formal holdout；其所有报告均为 development / provisional。
 
+Skill eval 门禁（个性化 Phase 1）让 `skills/*/evals/cases.jsonl` 可执行、可判定、可出报告。CLI 默认
+fake 模型、报告不阻塞任何流程：
+
+```powershell
+uv run python scripts/evaluate_skills.py --all --output tmp/skill-eval.json
+```
+
+无 `checks` 的既有 case 走最低判定（schema 合规 + finalized）并如实标注 `case_too_thin`，绝不误报 pass；
+行为标签编码为对 AgentRun trace 的结构化断言（`trace_tool_called` / `finalized`），不靠 LLM 判定。
+`--model settings` 可切换诊断模型，`--database <url>` 启用 Grounded QA Skill 的生产适配器探针；
+报告只序列化 body-free 证据，不落 output/正文。
+
+个性化 Phase 2（使用痕迹记录与蒸馏）只记录、不注入 Agent：每次 Skill 调用 / Assistant turn 结束时在
+Worker 落一条脱敏 `usage_traces`（`input_summary` 截断 + 长 hex 密钥打码，不存完整 Prompt / 私密正文），
+并按需蒸馏出 (skill, 任务类别, 工具序列, 输入类型) 的 `usage_patterns` 聚合，为后续跨会话记忆与自动提取备料。
+调试/按需查看：
+
+```powershell
+uv run python scripts/query_usage_traces.py --limit 20
+uv run python scripts/distill_usage_patterns.py --json
+```
+
+`--enqueue` 可把蒸馏调度到 Dramatiq Worker（需 Redis）；Phase 6 前这些模式只产出、不消费。
+
+个性化 Phase 3（个人 Skill 存储与信任模型）让用户可写自己的 Skill，但严格复用内置校验与信任边界：
+个人 Skill 存放于 `PERSONAL_SKILLS_DIR`（默认 `./data/personal_skills`），只组合既有 handler/tool、
+不引入新 Python 行为，且不得覆盖内置 Skill 名（ADR-018）。CRUD + 激活经 `/api/v1/skills/personal`，
+激活沿用 `skill_activations` 持久化并在 API/worker 启动时重放；`SkillsPanel` 提供基础 CRUD 入口。
+调试可先验证个人根能加载：
+
+```powershell
+uv run python -c "from infrastructure.qa_execution import assistant_skill_registry; r=assistant_skill_registry(); print(r.personal_names())"
+```
+
 发布 Assistant 时应先使用 `MODEL_PROVIDER=fake` 或获批准的本地 Chat stub。启用外部 Chat Provider 仍需满足现有的
 `MODEL_ALLOW_EXTERNAL`、来源策略、部署策略和用户可见同意检查；Web 发布配置不会绕过这些边界。应监控路由误判、
 澄清循环、取消率、恢复失败以及实际 token/延迟回归。
+
+个性化 Phase 4（Skill Creator，Path A）让用户经 Agent 引导创建/迭代个人 Skill，形成
+`draft → 校验 → eval 门禁 → 用户审批 → active` 生命周期：
+
+- `skills/skill_creator/` 是 manifest v2 + `invocation`（`command: create-skill`，别名 `skill`，
+  `execution_mode: agent_loop`），激活后其指令进入 assistant 循环 active contexts；
+  `/create-skill` 命令提交的 turn 由 assistant 循环驱动（与 `/research` 同路径）。assistant
+  循环始终注册六个 creator 工具（`skill_scaffold` / `skill_write` / `skill_validate` /
+  `skill_run_eval` / `skill_activate` / `skill_draft`），写类工具走既有 durable approval。
+- 草稿存放于 `PERSONAL_SKILLS_DIR/_drafts/<name>/`（下划线前缀跳过 reload 扫描），
+  CRUD + `/validate` + `/eval` + `/activate` 经 `/api/v1/skills/personal/drafts`；
+  eval 门禁复用 Phase 1 的 `StructuralSkillEvalJudge` + case/check/报告类型，确定性、
+  body-free、无需模型与数据库。`SkillsPanel` 展示 draft/active，支持运行 eval / 激活 / 拒绝。
+- 轻量模式建议（Phase 6 前奏）：`/api/v1/skills/personal/drafts/suggestions` 基于 Phase 2
+  的 `usage_patterns`，达到频率阈值且未被既有 skill 覆盖时才出现；点击「创建」进入预填
+  脚手架的 creator 流程，必须人工确认。
 
 QA；资源歧义只显示服务端生成的候选，不暴露内部 UUID。该自动路由和 Step 4 Command API
 均为临时能力；Step 5 才实现上下文压缩。

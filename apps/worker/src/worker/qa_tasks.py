@@ -32,6 +32,7 @@ from opentelemetry.trace import SpanKind
 from sqlalchemy.pool import NullPool
 
 from worker.broker import broker
+from worker.usage_traces import record_usage_trace
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("worker.qa")
@@ -177,6 +178,7 @@ async def _run_qa_async(run_id: UUID, trace_id: str, gateway: ModelGateway) -> b
         stop.set()
         await heartbeat
         await repository.release_run_lease(run_id, lease_owner=lease_owner)
+        await record_usage_trace(run_id)
 
 
 async def _wait_for_execution(
