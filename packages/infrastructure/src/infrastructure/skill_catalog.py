@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
-from agent_runtime import FileSystemSkillRegistry, SkillRegistryError, SkillRegistryErrorCode
-from application.skills import (
+from collections.abc import Mapping
+
+from agent_runtime import (
+    FileSystemSkillRegistry,
+    NativeSkillCatalog,
+    NativeSkillPin,
+    NativeSkillRoute,
+    NativeSkillSelection,
+    SkillRegistryError,
+    SkillRegistryErrorCode,
+    ToolRef,
+)
+from application.skills.catalog import (
     SkillBudgetView,
     SkillCatalogPort,
     SkillInvocationView,
@@ -127,4 +138,79 @@ class FileSystemSkillCatalog(SkillCatalogPort):
         return tuple(name for name in names if name in self._visible_names)
 
 
-__all__ = ["FileSystemSkillCatalog"]
+class FileSystemNativeSkillCatalog(NativeSkillCatalog):
+    """Progressive native-runtime adapter over active filesystem Skill routes.
+
+    The adapter mapping is deployment-owned. It intentionally makes a Skill
+    visible in the thin route catalog even when its runtime Tool adapter has
+    not been registered, but rejects selecting that route through the model.
+    """
+
+    def __init__(
+        self,
+        registry: FileSystemSkillRegistry,
+        catalog: SkillCatalogPort,
+        *,
+        tool_adapters: Mapping[ToolRef, tuple[ToolRef, ...]],
+    ) -> None:
+        self._registry = registry
+        self._catalog = catalog
+        self._tool_adapters = dict(tool_adapters)
+
+    def list_routes(self) -> tuple[NativeSkillRoute, ...]:
+        return tuple(self._route(item) for item in self._catalog.list_active_invocations())
+
+    def select(self, name: str) -> NativeSkillSelection:
+        routes = {route.pin.name: route for route in self.list_routes()}
+        route = routes.get(name)
+        if route is None or not route.adapter_available:
+            raise ValueError("Skill is not selectable through the native runtime")
+        return self._selection(route)
+
+    def resolve(self, pin: NativeSkillPin) -> NativeSkillSelection:
+        try:
+            pinned = self._registry.pin(pin.name, pin.version)
+        except SkillRegistryError as exc:
+            raise ValueError("Selected Skill is no longer available") from exc
+        if pinned.content_sha256 != pin.content_sha256:
+            raise ValueError("Selected Skill pin no longer matches its installed version")
+        invocation = self._registry.validate_pin(pinned).manifest.invocation
+        if invocation is None:
+            raise ValueError("Selected Skill has no native invocation route")
+        route = NativeSkillRoute(
+            pin=pin,
+            description=invocation.trigger_summary,
+            command=invocation.command,
+            adapter_available=ToolRef(pin.name, pin.version) in self._tool_adapters,
+        )
+        if not route.adapter_available:
+            raise ValueError("Selected Skill no longer has a native runtime adapter")
+        return self._selection(route)
+
+    def _route(self, item: SkillInvocationView) -> NativeSkillRoute:
+        return NativeSkillRoute(
+            pin=NativeSkillPin(
+                name=item.name,
+                version=item.version,
+                content_sha256=item.content_sha256,
+            ),
+            description=item.description,
+            command=item.command,
+            adapter_available=ToolRef(item.name, item.version) in self._tool_adapters,
+        )
+
+    def _selection(self, route: NativeSkillRoute) -> NativeSkillSelection:
+        try:
+            pinned = self._registry.pin(route.pin.name, route.pin.version)
+            if pinned.content_sha256 != route.pin.content_sha256:
+                raise ValueError("Selected Skill pin no longer matches its active route")
+            return NativeSkillSelection(
+                route=route,
+                instructions=self._registry.prompt_instructions(pinned),
+                allowed_tools=self._tool_adapters[ToolRef(route.pin.name, route.pin.version)],
+            )
+        except (KeyError, SkillRegistryError) as exc:
+            raise ValueError("Selected Skill cannot be loaded through the native runtime") from exc
+
+
+__all__ = ["FileSystemNativeSkillCatalog", "FileSystemSkillCatalog"]

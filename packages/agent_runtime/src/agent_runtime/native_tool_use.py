@@ -28,6 +28,7 @@ from domain.agent_runtime import (
     RunStep,
     RuntimeStateStore,
     ToolCallRecord,
+    ToolPermission,
     validate_recovery,
 )
 from domain.reasoning import ReasoningProfile
@@ -49,7 +50,12 @@ from model_gateway import (
 from .checkpoints import build_checkpoint, checkpoint_state_sha256
 from .executor import NodeExecutionError
 from .llm_decision import AgentToolRegistry
-from .skills import PinnedSkill
+from .native_skill_catalog import (
+    NativeSkillCatalog,
+    NativeSkillPin,
+    NativeSkillSelection,
+)
+from .skills import PinnedSkill, SkillRegistryError
 from .tools import (
     JSONValue,
     ToolDefinition,
@@ -66,8 +72,12 @@ type CancellationCheck = Callable[[AgentRun], Awaitable[bool]]
 type ClockMilliseconds = Callable[[], int]
 type ApprovalRequest = Callable[[AgentRunContext, ToolCallRecord], Awaitable[str]]
 
-_STATE_SCHEMA_VERSION = "native-tool-use-loop-state-v1"
+_STATE_SCHEMA_VERSION = "native-tool-use-loop-state-v2"
 _MAX_TERMINAL_TEXT_CHARS = 20_000
+_MAX_SELECTED_SKILLS = 2
+_DEFAULT_MAX_SELECTED_SKILL_INSTRUCTION_BYTES = 24 * 1024
+_LIST_SKILLS_TOOL_NAME = "list_skills"
+_INVOKE_SKILL_TOOL_NAME = "invoke_skill"
 
 
 class NativeToolUseFinalizer(Protocol):
@@ -202,6 +212,27 @@ class NativeToolUseObservation:
 
 
 @dataclass(frozen=True)
+class _NativeToolSurface:
+    definitions: tuple[ToolDefinition, ...]
+    bootstrap_tools: tuple[ChatToolDefinition, ...] = ()
+
+    @property
+    def by_name(self) -> Mapping[str, ToolDefinition]:
+        return {definition.name: definition for definition in self.definitions}
+
+    @property
+    def chat_tools(self) -> tuple[ChatToolDefinition, ...]:
+        return self.bootstrap_tools + tuple(
+            ChatToolDefinition(
+                name=definition.name,
+                description=definition.description,
+                input_schema=definition.input_schema,
+            )
+            for definition in self.definitions
+        )
+
+
+@dataclass(frozen=True)
 class NativeToolUseLoopState:
     """Local v2 recovery state. It is never an SSE or audit projection."""
 
@@ -209,6 +240,7 @@ class NativeToolUseLoopState:
     iteration: int = 0
     observations: tuple[NativeToolUseObservation, ...] = ()
     pending_call: NativeToolUseCall | None = None
+    selected_skills: tuple[NativeSkillPin, ...] = ()
     approval_id: str | None = None
     terminal_text: str | None = None
     publication_id: str | None = None
@@ -223,6 +255,11 @@ class NativeToolUseLoopState:
             raise ValueError("Native Tool-use call IDs must not repeat")
         if self.pending_call is not None and self.pending_call.call_id in set(call_ids):
             raise ValueError("Native Tool-use pending call was already observed")
+        selected_names = tuple(skill.name for skill in self.selected_skills)
+        if len(selected_names) > _MAX_SELECTED_SKILLS or len(selected_names) != len(
+            set(selected_names)
+        ):
+            raise ValueError("Native Tool-use selected Skill stack is invalid")
         if self.terminal_text is not None and (
             not self.terminal_text.strip() or len(self.terminal_text) > _MAX_TERMINAL_TEXT_CHARS
         ):
@@ -267,6 +304,15 @@ class NativeToolUseLoopState:
             raise ValueError("Native Tool-use approval has no pending Tool")
         return replace(self, approval_id=approval_id)
 
+    def select_skill(self, selection: NativeSkillSelection) -> NativeToolUseLoopState:
+        if self.pending_call is None:
+            raise ValueError("Native Tool-use Skill selection has no pending Tool")
+        if selection.pin.name in {skill.name for skill in self.selected_skills}:
+            return self
+        if len(self.selected_skills) >= _MAX_SELECTED_SKILLS:
+            raise ValueError("Native Tool-use selected Skill stack limit was reached")
+        return replace(self, selected_skills=self.selected_skills + (selection.pin,))
+
     def begin_finalization(self, terminal_text: str, publication_id: str) -> NativeToolUseLoopState:
         if self.pending_call is not None or self.terminal_text is not None:
             raise ValueError("Native Tool-use loop cannot finalize now")
@@ -284,6 +330,14 @@ class NativeToolUseLoopState:
             "iteration": self.iteration,
             "observations": [item.as_checkpoint() for item in self.observations],
             "pending_call": self.pending_call.as_checkpoint() if self.pending_call else None,
+            "selected_skills": [
+                {
+                    "name": skill.name,
+                    "version": skill.version,
+                    "content_sha256": skill.content_sha256,
+                }
+                for skill in self.selected_skills
+            ],
             "approval_id": self.approval_id,
             "terminal_text": self.terminal_text,
             "publication_id": self.publication_id,
@@ -294,7 +348,8 @@ class NativeToolUseLoopState:
         if value.get("schema_version") != _STATE_SCHEMA_VERSION:
             raise RecoveryRejectedError("checkpoint is not a native Tool-use loop state")
         observations = value.get("observations")
-        if not isinstance(observations, list):
+        selected_skills = value.get("selected_skills")
+        if not isinstance(observations, list) or not isinstance(selected_skills, list):
             raise RecoveryRejectedError("native Tool-use observations are invalid")
         goal = value.get("goal")
         iteration = value.get("iteration")
@@ -310,6 +365,9 @@ class NativeToolUseLoopState:
                 iteration=iteration,
                 observations=tuple(
                     NativeToolUseObservation.from_checkpoint(item) for item in observations
+                ),
+                selected_skills=tuple(
+                    _native_skill_pin_from_checkpoint(item) for item in selected_skills
                 ),
                 pending_call=(
                     NativeToolUseCall.from_checkpoint(value["pending_call"])
@@ -365,13 +423,19 @@ class NativeToolUseAgentLoopExecutor:
         approval_request: ApprovalRequest | None = None,
         approval_port: ApprovalPort | None = None,
         model_capability_registry: ModelCapabilityRegistry | None = None,
+        skill_catalog: NativeSkillCatalog | None = None,
+        max_selected_skill_instruction_bytes: int = (_DEFAULT_MAX_SELECTED_SKILL_INSTRUCTION_BYTES),
     ) -> None:
         names = tuple(ref.name for ref in allowed_tools)
         if len(names) != len(set(names)):
             raise ValueError("Native Tool-use Tools must have unique names")
         if not system_prompt.strip():
             raise ValueError("Native Tool-use system prompt must not be blank")
-        if emergency_ceiling < 1 or max_tokens_per_turn < 1:
+        if (
+            emergency_ceiling < 1
+            or max_tokens_per_turn < 1
+            or max_selected_skill_instruction_bytes < 1
+        ):
             raise ValueError("Native Tool-use limits must be positive")
         self._tool_registry = tool_registry
         self._allowed_tools = allowed_tools
@@ -389,6 +453,8 @@ class NativeToolUseAgentLoopExecutor:
         self._model_capability_registry = (
             model_capability_registry or default_model_capability_registry()
         )
+        self._skill_catalog = skill_catalog
+        self._max_selected_skill_instruction_bytes = max_selected_skill_instruction_bytes
 
     async def execute(
         self,
@@ -437,10 +503,12 @@ class NativeToolUseAgentLoopExecutor:
         raw_state = cast(dict[str, JSONValue], _json_copy(dict(checkpoint.state)))
         if checkpoint.state_sha256 != checkpoint_state_sha256(raw_state):
             raise RecoveryRejectedError("native Tool-use checkpoint digest is invalid")
+        state = NativeToolUseLoopState.from_checkpoint(raw_state)
+        self._validate_recovery_selected_skills(state)
         return await self._execute_from(
             run,
             input_data,
-            state=NativeToolUseLoopState.from_checkpoint(raw_state),
+            state=state,
             approval_id=approval_id,
         )
 
@@ -469,24 +537,16 @@ class NativeToolUseAgentLoopExecutor:
                     category=RunErrorCategory.DEPENDENCY,
                     message="Configured model capability does not support native Tool use.",
                 )
-            definitions = tuple(self._tool_registry.get(ref) for ref in self._allowed_tools)
-            for definition in definitions:
-                if not definition.model_visible:
-                    raise NodeExecutionError(
-                        code=ToolRegistryErrorCode.MODEL_OUTPUT_DENIED.value,
-                        category=RunErrorCategory.PERMISSION,
-                        message="Tool output is not approved for model visibility.",
-                    )
-            by_name = {definition.name: definition for definition in definitions}
             run = _move_to_planning(run)
 
             if state.terminal_text is not None:
                 return await self._publish_finalization(run, state, input_data)
             if state.pending_call is not None:
+                surface = self._tool_surface(state)
                 run, state, waiting = await self._complete_pending_tool(
                     run,
                     state,
-                    by_name,
+                    surface,
                     approval_id,
                 )
                 if waiting:
@@ -507,8 +567,9 @@ class NativeToolUseAgentLoopExecutor:
                         category=RunErrorCategory.BUDGET,
                         message="Native Tool-use loop emergency ceiling was reached.",
                     )
+                surface = self._tool_surface(state)
                 response = await self._model_gateway.chat(
-                    self._request(input_data, state, definitions),
+                    self._request(input_data, state, surface),
                     capability=CapabilityAlias.FAST_CHAT,
                 )
                 run = run.consume(
@@ -524,8 +585,9 @@ class NativeToolUseAgentLoopExecutor:
                     )
                 if response.tool_calls:
                     call = response.tool_calls[0]
-                    selected_definition = by_name.get(call.tool_name)
-                    if selected_definition is None:
+                    if call.tool_name not in surface.by_name and call.tool_name not in {
+                        tool.name for tool in surface.bootstrap_tools
+                    }:
                         raise NodeExecutionError(
                             code="RUN_NATIVE_TOOL_USE_TOOL_DENIED",
                             category=RunErrorCategory.PERMISSION,
@@ -543,7 +605,7 @@ class NativeToolUseAgentLoopExecutor:
                     run, state, waiting = await self._complete_pending_tool(
                         run,
                         state,
-                        by_name,
+                        surface,
                         approval_id,
                     )
                     approval_id = None
@@ -619,11 +681,15 @@ class NativeToolUseAgentLoopExecutor:
         self,
         input_data: Mapping[str, JSONValue],
         state: NativeToolUseLoopState,
-        definitions: tuple[ToolDefinition, ...],
+        surface: _NativeToolSurface,
     ) -> ChatRequest:
+        selected_instructions = self._selected_skill_instructions(state)
         return ChatRequest(
             messages=(
-                ChatMessage(role=ChatRole.SYSTEM, content=self._system_prompt),
+                ChatMessage(
+                    role=ChatRole.SYSTEM,
+                    content="\n\n".join((self._system_prompt, *selected_instructions)),
+                ),
                 ChatMessage(
                     role=ChatRole.USER,
                     content=json.dumps(
@@ -638,14 +704,7 @@ class NativeToolUseAgentLoopExecutor:
             temperature=0.0,
             max_tokens=self._max_tokens_per_turn,
             reasoning_profile=self._reasoning_profile,
-            tools=tuple(
-                ChatToolDefinition(
-                    name=definition.name,
-                    description=definition.description,
-                    input_schema=definition.input_schema,
-                )
-                for definition in definitions
-            ),
+            tools=surface.chat_tools,
             tool_call_history=tuple(item.call.as_chat_call() for item in state.observations),
             tool_results=tuple(item.as_chat_result() for item in state.observations),
         )
@@ -654,19 +713,24 @@ class NativeToolUseAgentLoopExecutor:
         self,
         run: AgentRun,
         state: NativeToolUseLoopState,
-        definitions: Mapping[str, ToolDefinition],
+        surface: _NativeToolSurface,
         approval_id: str | None,
     ) -> tuple[AgentRun, NativeToolUseLoopState, bool]:
         call = state.pending_call
         if call is None:
             raise RecoveryRejectedError("native Tool-use loop has no pending Tool")
-        definition = definitions.get(call.tool_name)
+        if self._skill_catalog is not None and call.tool_name in {
+            _LIST_SKILLS_TOOL_NAME,
+            _INVOKE_SKILL_TOOL_NAME,
+        }:
+            return await self._complete_bootstrap_tool(run, state)
+        definition = surface.by_name.get(call.tool_name)
         if definition is None:
             raise RecoveryRejectedError("native Tool-use checkpoint Tool is not allowed")
         invocation = ToolInvocation(
             ref=definition.ref,
             arguments=call.arguments,
-            allowed_tools=frozenset(self._allowed_tools),
+            allowed_tools=frozenset(definition.ref for definition in surface.definitions),
             granted_permissions=run.context.granted_permissions,
             resource_space_id=run.context.space_id,
             idempotency_key=self._idempotency_key(run, state.iteration, call),
@@ -707,6 +771,163 @@ class NativeToolUseAgentLoopExecutor:
             ) from exc
         run = await self._persist(result.run, state)
         return run, state, False
+
+    async def _complete_bootstrap_tool(
+        self, run: AgentRun, state: NativeToolUseLoopState
+    ) -> tuple[AgentRun, NativeToolUseLoopState, bool]:
+        catalog = self._skill_catalog
+        call = state.pending_call
+        if catalog is None or call is None:
+            raise RecoveryRejectedError("native Tool-use bootstrap Tool is unavailable")
+        if call.tool_name == _LIST_SKILLS_TOOL_NAME:
+            if call.arguments:
+                raise NodeExecutionError(
+                    code="RUN_NATIVE_TOOL_USE_BOOTSTRAP_INPUT_INVALID",
+                    category=RunErrorCategory.SCHEMA,
+                    message="list_skills does not accept arguments.",
+                )
+            observation: dict[str, JSONValue] = {
+                "skills": [
+                    {
+                        "name": route.pin.name,
+                        "version": route.pin.version,
+                        "description": route.description,
+                        "command": route.command,
+                        "adapter_available": route.adapter_available,
+                    }
+                    for route in catalog.list_routes()
+                ]
+            }
+        elif call.tool_name == _INVOKE_SKILL_TOOL_NAME:
+            name = _skill_name_argument(call.arguments)
+            try:
+                selection = catalog.select(name)
+                candidate_state = state.select_skill(selection)
+                self._selected_skill_instructions(candidate_state)
+                state = candidate_state
+            except ValueError as exc:
+                raise NodeExecutionError(
+                    code="RUN_NATIVE_TOOL_USE_SKILL_DENIED",
+                    category=RunErrorCategory.PERMISSION,
+                    message="Requested Skill is not available through the native runtime.",
+                ) from exc
+            observation = {
+                "name": selection.pin.name,
+                "version": selection.pin.version,
+                "selected": True,
+            }
+        else:
+            raise RecoveryRejectedError("native Tool-use bootstrap Tool is invalid")
+        run = run.consume(tool_calls=1)
+        result = ToolInvocationResult(
+            output=observation,
+            run=run,
+            record=ToolCallRecord(
+                tool_name=call.tool_name,
+                tool_version="1.0.0",
+                permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
+                idempotency_key=self._idempotency_key(run, state.iteration, call),
+                input_summary=tool_input_summary(call.arguments),
+                output_summary=_bootstrap_output_summary(call.tool_name, observation),
+            ),
+        )
+        try:
+            state = state.observe(result)
+        except ValueError as exc:
+            raise NodeExecutionError(
+                code="RUN_NATIVE_TOOL_RESULT_INVALID",
+                category=RunErrorCategory.SCHEMA,
+                message="Native Tool-use bootstrap result is invalid.",
+            ) from exc
+        run = await self._persist(run, state)
+        return run, state, False
+
+    def _tool_surface(self, state: NativeToolUseLoopState) -> _NativeToolSurface:
+        if self._skill_catalog is None:
+            definitions = tuple(self._tool_registry.get(ref) for ref in self._allowed_tools)
+            self._validate_model_visible_definitions(definitions)
+            return _NativeToolSurface(definitions=definitions)
+        selections = tuple(self._skill_catalog.resolve(pin) for pin in state.selected_skills)
+        selected_tools = tuple(ref for selection in selections for ref in selection.allowed_tools)
+        if not set(selected_tools).issubset(self._allowed_tools):
+            raise NodeExecutionError(
+                code="RUN_NATIVE_TOOL_USE_SKILL_TOOL_DENIED",
+                category=RunErrorCategory.PERMISSION,
+                message="Selected Skill exposes a Tool outside the server allowlist.",
+            )
+        definitions = tuple(self._tool_registry.get(ref) for ref in selected_tools)
+        self._validate_model_visible_definitions(definitions)
+        if {definition.name for definition in definitions} & {
+            _LIST_SKILLS_TOOL_NAME,
+            _INVOKE_SKILL_TOOL_NAME,
+        }:
+            raise NodeExecutionError(
+                code="RUN_NATIVE_TOOL_USE_SKILL_TOOL_CONFLICT",
+                category=RunErrorCategory.SCHEMA,
+                message="Selected Skills cannot shadow bootstrap Tool names.",
+            )
+        return _NativeToolSurface(
+            definitions=definitions,
+            bootstrap_tools=(
+                ChatToolDefinition(
+                    name=_LIST_SKILLS_TOOL_NAME,
+                    description="List active Skill routes without Skill instructions.",
+                    input_schema={"type": "object", "additionalProperties": False},
+                ),
+                ChatToolDefinition(
+                    name=_INVOKE_SKILL_TOOL_NAME,
+                    description="Select one active Skill by name for a later model turn.",
+                    input_schema={
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["name"],
+                        "properties": {"name": {"type": "string", "minLength": 1}},
+                    },
+                ),
+            ),
+        )
+
+    def _selected_skill_instructions(self, state: NativeToolUseLoopState) -> tuple[str, ...]:
+        if self._skill_catalog is None:
+            return ()
+        selections = tuple(self._skill_catalog.resolve(pin) for pin in state.selected_skills)
+        instructions = tuple(selection.instructions for selection in selections)
+        if sum(len(item.encode("utf-8")) for item in instructions) > (
+            self._max_selected_skill_instruction_bytes
+        ):
+            raise NodeExecutionError(
+                code="RUN_NATIVE_TOOL_USE_SKILL_CONTEXT_LIMIT",
+                category=RunErrorCategory.BUDGET,
+                message="Selected Skill instructions exceed the native context budget.",
+            )
+        return instructions
+
+    def _validate_recovery_selected_skills(self, state: NativeToolUseLoopState) -> None:
+        if state.selected_skills and self._skill_catalog is None:
+            raise RecoveryRejectedError("native Tool-use recovery has no Skill catalog")
+        if self._skill_catalog is not None:
+            try:
+                self._selected_skill_instructions(state)
+            except (SkillRegistryError, ValueError, NodeExecutionError) as exc:
+                raise RecoveryRejectedError(
+                    "native Tool-use selected Skill pin is invalid"
+                ) from exc
+
+    @staticmethod
+    def _validate_model_visible_definitions(definitions: tuple[ToolDefinition, ...]) -> None:
+        if len({definition.name for definition in definitions}) != len(definitions):
+            raise NodeExecutionError(
+                code="RUN_NATIVE_TOOL_USE_SKILL_TOOL_CONFLICT",
+                category=RunErrorCategory.SCHEMA,
+                message="Selected Skills expose conflicting Tool names.",
+            )
+        for definition in definitions:
+            if not definition.model_visible:
+                raise NodeExecutionError(
+                    code=ToolRegistryErrorCode.MODEL_OUTPUT_DENIED.value,
+                    category=RunErrorCategory.PERMISSION,
+                    message="Tool output is not approved for model visibility.",
+                )
 
     async def _invoke_with_retry(
         self,
@@ -879,6 +1100,46 @@ def _move_to_executing(run: AgentRun) -> AgentRun:
 
 def _publication_id(run: AgentRun) -> str:
     return f"assistant-publication:{run.context.run_id.hex}"
+
+
+def _native_skill_pin_from_checkpoint(value: object) -> NativeSkillPin:
+    if not isinstance(value, dict):
+        raise ValueError("native Skill pin checkpoint is invalid")
+    name = value.get("name")
+    version = value.get("version")
+    content_sha256 = value.get("content_sha256")
+    if not all(isinstance(item, str) for item in (name, version, content_sha256)):
+        raise ValueError("native Skill pin checkpoint is invalid")
+    return NativeSkillPin(
+        name=cast(str, name),
+        version=cast(str, version),
+        content_sha256=cast(str, content_sha256),
+    )
+
+
+def _skill_name_argument(arguments: Mapping[str, JSONValue]) -> str:
+    if set(arguments) != {"name"} or not isinstance(arguments.get("name"), str):
+        raise NodeExecutionError(
+            code="RUN_NATIVE_TOOL_USE_BOOTSTRAP_INPUT_INVALID",
+            category=RunErrorCategory.SCHEMA,
+            message="invoke_skill requires exactly one non-empty name.",
+        )
+    name = cast(str, arguments["name"]).strip()
+    if not name:
+        raise NodeExecutionError(
+            code="RUN_NATIVE_TOOL_USE_BOOTSTRAP_INPUT_INVALID",
+            category=RunErrorCategory.SCHEMA,
+            message="invoke_skill requires exactly one non-empty name.",
+        )
+    return name
+
+
+def _bootstrap_output_summary(tool_name: str, observation: Mapping[str, JSONValue]) -> str:
+    if tool_name == _LIST_SKILLS_TOOL_NAME:
+        skills = observation.get("skills")
+        return f"Listed {len(skills) if isinstance(skills, list) else 0} Skill routes."
+    name = observation.get("name")
+    return f"Selected Skill {name}." if isinstance(name, str) else "Selected a Skill."
 
 
 def _tool_error_category(code: ToolRegistryErrorCode) -> RunErrorCategory:

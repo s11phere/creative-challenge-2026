@@ -41,6 +41,12 @@ from .llm_decision import (
     parse_llm_decision,
 )
 from .loop import AgentLoopDebugTrace, AgentLoopExecutor, AgentLoopFinalizer, AgentLoopResult
+from .native_skill_catalog import (
+    NativeSkillCatalog,
+    NativeSkillPin,
+    NativeSkillRoute,
+    NativeSkillSelection,
+)
 from .native_tool_use import (
     NativeToolUseAgentLoopExecutor,
     NativeToolUseCall,
@@ -157,4 +163,8 @@ __all__ = [
     "NativeToolUseLoopResult",
     "NativeToolUseLoopState",
     "NativeToolUseObservation",
+    "NativeSkillCatalog",
+    "NativeSkillPin",
+    "NativeSkillRoute",
+    "NativeSkillSelection",
 ]

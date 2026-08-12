@@ -35,6 +35,7 @@ from .runtime_approval import (
     PostgresDerivedKnowledgeStore,
 )
 from .runtime_state import PostgresRuntimeStateStore
+from .skill_catalog import FileSystemNativeSkillCatalog, FileSystemSkillCatalog
 from .skill_references import PostgresSkillReferenceChecker, SkillReferenceReport
 
 __all__ = [
@@ -63,6 +64,8 @@ __all__ = [
     "PostgresAssistantEventStore",
     "PostgresAgentRunEventStore",
     "PostgresDerivedKnowledgeStore",
+    "FileSystemNativeSkillCatalog",
+    "FileSystemSkillCatalog",
     "SourceModel",
     "SourceRepository",
     "SpaceModel",

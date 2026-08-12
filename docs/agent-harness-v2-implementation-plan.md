@@ -157,6 +157,22 @@ Worker/Compose 或浏览器测试；本步骤仍是 provisional 工程实现。
 
 验收：未选 skill_creator 等 instructions 不会出现在任意 v2 请求；选择后仅该 Skill 的 instructions 和 Tool 可见。
 
+> 完成记录（2026-08-12）：已实现 `NativeSkillCatalog`、`NativeSkillPin`、薄路由条目及
+> `FileSystemNativeSkillCatalog`。配置该目录的 v2 executor 首轮只暴露 `list_skills` 和
+> `invoke_skill`；前者只返回 name/version/description/command/adapter 状态，后者由服务端验证
+> active route 和 hash pin。选择成功仅写入 body-free observation 与 checkpoint pin，下一轮才从
+> 受信 Registry 读取相应 prompt instructions，并暴露该 Skill 显式 adapter 的 Tool allowlist。
+> 未选择的 Skill（包括 `skill_creator`）不进入任何 v2 request；无 adapter、重复/第三个选择、
+> bootstrap 名称冲突、adapter 试图扩展服务器 Tool allowlist、pin 篡改和指令字节预算超限均 fail closed。恢复会重新解析已选 pin 并验证
+> Registry 内容哈希，checkpoint 不保存 instructions。v1 Assistant Loop 仍未接入此路径，故原有
+> eager prompt、API、checkpoint 和运行行为保持不变。
+>
+> 已运行：定向 pytest（native Tool-use、native Skill catalog、Skill Registry、Assistant command
+> 和 workflow Skill contract）`49 passed, 1 skipped`；`ruff format --check`、`ruff check`、
+> `mypy apps packages` 与 `git diff --check`。pytest 仅报告既有 `.pytest_cache` 无写权限警告。
+> 未运行 formal holdout、外部 Provider、数据库迁移、Worker/Compose 或浏览器测试。本步骤仍为
+> provisional 工程实现。
+
 ### Step 4：知识 Tool 收敛与服务端 gate 编排
 
 - 将 knowledge_search + knowledge_inspect 收敛为 knowledge_retrieve；将 grounded_answer + verify_answer + finalize_answer 收敛为 knowledge_answer 的服务端编排。

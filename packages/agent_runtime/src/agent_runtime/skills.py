@@ -612,6 +612,23 @@ class FileSystemSkillRegistry:
                 )
             return package
 
+    def prompt_instructions(self, pin: PinnedSkill) -> str:
+        """Read only hash-pinned prompt files from one trusted Skill package."""
+        with self._lock:
+            package = self.validate_pin(pin)
+            instructions = "\n\n".join(
+                self._normalized_content(self._resolve_package_file(package.root, path))
+                .decode("utf-8")
+                .strip()
+                for path in package.manifest.prompts
+            ).strip()
+            if not instructions:
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.INVALID_PACKAGE,
+                    "Skill prompt instructions cannot be blank.",
+                )
+            return instructions
+
     def validate_checkpoint_compatibility(
         self,
         pin: PinnedSkill,
