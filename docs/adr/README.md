@@ -27,3 +27,7 @@ orchestration, advisory knowledge next-step guidance, and preservation of the ex
 QA Application Port, checkpoint, cancellation, and single-publication contracts.
 ADR-016 records conversation-scoped local workspaces, their local-provider visibility boundary,
 relative-path Tools, and the durable approval flow for filesystem writes and command execution.
+ADR-017 simplifies the current Skill contracts to the single read-only `/api/v1/skills` view.
+ADR-018 records the personal Skill storage root, trust boundary, CRUD API, and activation reuse.
+ADR-019 records the Skill Creator draft lifecycle: `_drafts` storage, deterministic eval-as-gate,
+creator Tools with durable approval, and frequency-thresholded usage suggestions.

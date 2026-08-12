@@ -162,6 +162,21 @@ uv run python -c "from infrastructure.qa_execution import assistant_skill_regist
 `MODEL_ALLOW_EXTERNAL`、来源策略、部署策略和用户可见同意检查；Web 发布配置不会绕过这些边界。应监控路由误判、
 澄清循环、取消率、恢复失败以及实际 token/延迟回归。
 
+个性化 Phase 4（Skill Creator，Path A）让用户经 Agent 引导创建/迭代个人 Skill，形成
+`draft → 校验 → eval 门禁 → 用户审批 → active` 生命周期：
+
+- `skills/skill_creator/` 是 prompts-only 的 creator skill（manifest v1，与 `assistant_agent`
+  一致），激活后其指令进入 assistant 循环 active contexts；assistant 循环始终注册六个
+  creator 工具（`skill_scaffold` / `skill_write` / `skill_validate` / `skill_run_eval` /
+  `skill_activate` / `skill_draft`），写类工具走既有 durable approval。
+- 草稿存放于 `PERSONAL_SKILLS_DIR/_drafts/<name>/`（下划线前缀跳过 reload 扫描），
+  CRUD + `/validate` + `/eval` + `/activate` 经 `/api/v1/skills/personal/drafts`；
+  eval 门禁复用 Phase 1 的 `StructuralSkillEvalJudge` + case/check/报告类型，确定性、
+  body-free、无需模型与数据库。`SkillsPanel` 展示 draft/active，支持运行 eval / 激活 / 拒绝。
+- 轻量模式建议（Phase 6 前奏）：`/api/v1/skills/personal/drafts/suggestions` 基于 Phase 2
+  的 `usage_patterns`，达到频率阈值且未被既有 skill 覆盖时才出现；点击「创建」进入预填
+  脚手架的 creator 流程，必须人工确认。
+
 QA；资源歧义只显示服务端生成的候选，不暴露内部 UUID。该自动路由和 Step 4 Command API
 均为临时能力；Step 5 才实现上下文压缩。
 真实本地组合使用外部 OpenAI-compatible `fast_chat`、

@@ -10,6 +10,11 @@ current pinned identity. Historical Skill packages, prompt versions, version act
 rollback, cleanup APIs, and the `knowledge_qa` adapter have been removed; persisted Runs are not
 recovered through compatibility code.
 
+Phase 4 (Skill Creator) adds the prompts-only `skill_creator 1.0.0` to the assistant catalog's
+active contexts and six creator Tools to the autonomous loop. Personal-Skill drafts live under
+`PERSONAL_SKILLS_DIR/_drafts/<name>/` with an explicit `draft → 校验 → eval 门禁 → 人工确认 →
+active` lifecycle (ADR-019); their execution reuses the Grounded QA adapter path.
+
 The Web exposes only the Assistant conversation path. It has no v1 compatibility selector or Vite
 release controls. The `AutonomousAssistantLoopService` dispatches selected Skills through the same
 durable QA Run/Worker/SSE path. The later Evolution-step passages are retained as implementation
@@ -391,6 +396,10 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/skills/organization.py` | 校验知识整理 Skill 的 Space 归属和当前 published Source/Document/DocumentVersion，并生成固定检索范围 |
 | `src/application/skills/evaluation.py` | Skill eval case/check 类型、`SkillEvalJudge` Protocol + 确定性 `StructuralSkillEvalJudge`、失败分类与聚合指标；body-free 判定（LLM judge 留缝） |
 | `src/application/skills/personal.py` | 个性化 Phase 3 个人 Skill：`PersonalSkillStore` CRUD + 激活（复用 `skill_activations`）、`PersonalSkillView` body-free 投影、错误码；写操作经 `PersonalSkillRegistry` 全量校验 |
+| `src/application/skills/creator_eval.py` | Phase 4 draft 确定性 eval 门禁：`DraftSkillEvalRunner` 以 fixture handler 跑 `DeterministicWorkflowExecutor`，复用 `StructuralSkillEvalJudge` / case/check/报告类型，无模型无数据库无正文 |
+| `src/application/skills/drafts.py` | Phase 4 draft 生命周期：`SkillDraftStore` CRUD + validate + eval 门禁 + activate（eval 通过才 promote + 持久化激活），`SkillDraftView`/`SkillDraftError` 稳定错误码 |
+| `src/application/skills/creator_tools.py` | Phase 4 六个模型可见工具（scaffold/write/validate/run_eval/activate/draft）+ `scaffold_skill_files` 脚手架生成；写类工具走 durable approval，handler 返回 body-free payload |
+| `src/application/skills/suggestions.py` | Phase 6 前奏：`SkillSuggestionService` 基于 `usage_patterns` 频率阈值产出人工确认的候选，过滤 general/已绑定/已覆盖模式 |
 | `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
 | `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
 | `src/application/usage_traces/record.py` | 个性化 Phase 2 使用痕迹：从已完成 ConversationRun 组装脱敏 `UsageTrace`（outcome 分类、input_summary 截断+密钥打码）、幂等持久化 |

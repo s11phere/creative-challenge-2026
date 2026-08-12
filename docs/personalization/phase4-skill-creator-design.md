@@ -1,6 +1,7 @@
 # Phase 4：Skill Creator 工具（Path A）
 
 日期：2026-08-12
+状态：✅ 已实施（2026-08-12，4 个功能 commit + 验收 commit）
 依赖：Phase 1（eval 门禁）、Phase 3（个人 skill 存储）
 产出：`skill_creator` skill 包 + 个人 skill 工具 + draft 生命周期 + SkillsPanel 审批 UX
 

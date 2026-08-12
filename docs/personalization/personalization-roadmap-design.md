@@ -28,7 +28,7 @@
 | 1 | Eval 门禁（报告先行） | 让 skill eval 可执行、可判定、可出报告 | — | CLI 报告 ✅ 2026-08-12 |
 | 2 | 使用痕迹记录 | 从 AgentRun 沉淀结构化痕迹，数据随使用积累 | — | 表 + 蒸馏任务 ✅ 2026-08-12 |
 | 3 | 个人 Skill 存储 + 信任模型 | 个人 skill 可写、运行时加载、独立信任边界 | — | API + 存储根 + ADR ✅ 2026-08-12 |
-| 4 | Skill Creator（Path A） | Agent 引导创建个人 skill，eval 门禁 + draft 审批 | 1、3 | skill 包 + 工具 + UX |
+| 4 | Skill Creator（Path A） | Agent 引导创建个人 skill，eval 门禁 + draft 审批 | 1、3 | skill 包 + 工具 + UX ✅ 2026-08-12 |
 | 5 | 跨会话长期记忆 | agent 跨会话记得用户 | 2 | 记忆表 + 蒸馏 + 注入 |
 | 6 | 自动提取（Path B） | 从痕迹识别重复模式，提议候选 skill | 1、2、4 | 挖掘 + 候选 + 审批 |
 
