@@ -38,6 +38,7 @@ from .agent_runtime import (
     validate_recovery,
 )
 from .agent_sse import (
+    AGENT_RUN_SSE_V4,
     AGENT_RUN_TERMINAL_EVENT_TYPES,
     AgentRunEventConflictError,
     AgentRunEventContractError,
@@ -242,6 +243,7 @@ __all__ = [
     "AgentLoopToolObservation",
     "AgentLoopTransitionError",
     "AGENT_RUN_TERMINAL_EVENT_TYPES",
+    "AGENT_RUN_SSE_V4",
     "AgentRunEventConflictError",
     "AgentRunEventContractError",
     "AgentRunEventLog",

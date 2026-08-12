@@ -5,6 +5,7 @@ from uuid import UUID
 import pytest
 from agent_runtime.loop import _display_text
 from domain.agent_sse import (
+    AGENT_RUN_SSE_V4,
     AgentRunEventConflictError,
     AgentRunEventContractError,
     AgentRunEventLog,
@@ -62,8 +63,40 @@ def test_agent_run_event_contract_rejects_private_fields_and_unknown_versions() 
             event_type=AgentRunEventType.ACCEPTED,
             payload={"status": "accepted"},
             event_key="unknown-version",
-            schema_version="agent-run-sse-v4",
+            schema_version="agent-run-sse-v5",
         )
+
+
+def test_agent_run_event_contract_accepts_v4_harness_and_cache_metadata() -> None:
+    run_id = UUID("00000000-0000-4000-8000-000000000092")
+    accepted = AgentRunStreamEvent(
+        run_id=run_id,
+        sequence=1,
+        event_type=AgentRunEventType.ACCEPTED,
+        payload={"status": "accepted", "harness_version": "native-tool-use-v2"},
+        event_key="v4-accepted",
+        schema_version=AGENT_RUN_SSE_V4,
+    )
+    cache = AgentRunStreamEvent(
+        run_id=run_id,
+        sequence=2,
+        event_type=AgentRunEventType.CACHE_USED,
+        payload={
+            "iteration": 1,
+            "cache_mode": "requested",
+            "cache_read_tokens": 3,
+            "cache_write_tokens": 2,
+            "visible_observation_bytes": 40,
+            "context_digest": "sha256:" + "a" * 64,
+            "tool_count": 2,
+        },
+        event_key="v4-cache",
+        schema_version=AGENT_RUN_SSE_V4,
+    )
+
+    assert accepted.schema_version == AGENT_RUN_SSE_V4
+    assert cache.event_type is AgentRunEventType.CACHE_USED
+    assert cache.payload["cache_read_tokens"] == 3
 
 
 def test_agent_run_event_contract_accepts_bounded_query_preview_and_rejects_controls() -> None:

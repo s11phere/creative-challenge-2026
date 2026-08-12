@@ -38,6 +38,7 @@ class AgentRunEventType(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     TIMED_OUT = "timed_out"
+    CACHE_USED = "cache_used"
 
 
 AGENT_RUN_TERMINAL_EVENT_TYPES = frozenset(
@@ -52,6 +53,8 @@ AGENT_RUN_TERMINAL_EVENT_TYPES = frozenset(
 )
 
 _SCHEMA_VERSION = "agent-run-sse-v3"
+AGENT_RUN_SSE_V4 = "agent-run-sse-v4"
+_SCHEMA_VERSIONS = frozenset({_SCHEMA_VERSION, AGENT_RUN_SSE_V4})
 _PAYLOAD_KEYS = frozenset(
     {
         "checkpoint_sequence",
@@ -78,6 +81,12 @@ _PAYLOAD_KEYS = frozenset(
         "output_truncated",
         "path",
         "cwd",
+        "cache_mode",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "context_digest",
+        "decision_summary",
+        "harness_version",
         "provider",
         "publication_id",
         "query_preview",
@@ -92,6 +101,10 @@ _PAYLOAD_KEYS = frozenset(
         "tool_call_count",
         "tool_name",
         "tool_version",
+        "tool_family",
+        "tool_count",
+        "terminal_kind",
+        "visible_observation_bytes",
     }
 )
 _FORBIDDEN_PAYLOAD_KEYS = frozenset(
@@ -118,6 +131,10 @@ _INTEGER_PAYLOAD_KEYS = frozenset(
         "retry_count",
         "tool_call_count",
         "exit_code",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "visible_observation_bytes",
+        "tool_count",
     }
 )
 _BOOLEAN_PAYLOAD_KEYS = frozenset(
@@ -139,7 +156,7 @@ class AgentRunStreamEvent:
     schema_version: str = _SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        if self.schema_version != _SCHEMA_VERSION:
+        if self.schema_version not in _SCHEMA_VERSIONS:
             raise AgentRunEventVersionError("unsupported Agent Run event schema version")
         if self.sequence < 1:
             raise AgentRunEventContractError("Agent Run event sequence must be positive")
@@ -147,7 +164,7 @@ class AgentRunStreamEvent:
             raise AgentRunEventContractError("Agent Run event key is invalid")
         if self.occurred_at.tzinfo is None:
             raise AgentRunEventContractError("Agent Run event timestamp must be timezone-aware")
-        _validate_payload(self.event_type, self.payload)
+        _validate_payload(self.event_type, self.payload, self.schema_version)
 
     @property
     def terminal(self) -> bool:
@@ -180,6 +197,7 @@ class AgentRunEventStore(Protocol):
         payload: Mapping[str, Any],
         *,
         event_key: str,
+        schema_version: str = _SCHEMA_VERSION,
     ) -> AgentRunStreamEvent: ...
 
     async def page(
@@ -201,6 +219,7 @@ class AgentRunEventLog:
         payload: Mapping[str, Any],
         *,
         event_key: str,
+        schema_version: str = _SCHEMA_VERSION,
     ) -> AgentRunStreamEvent:
         event = AgentRunStreamEvent(
             run_id=run_id,
@@ -208,6 +227,7 @@ class AgentRunEventLog:
             event_type=event_type,
             payload=dict(payload),
             event_key=event_key,
+            schema_version=schema_version,
         )
         key = (run_id, event_key)
         existing = self._keys.get(key)
@@ -224,6 +244,7 @@ class AgentRunEventLog:
             event_type=event_type,
             payload=dict(payload),
             event_key=event_key,
+            schema_version=schema_version,
         )
         events.append(event)
         self._keys[key] = event
@@ -244,7 +265,11 @@ class AgentRunEventLog:
         )
 
 
-def _validate_payload(event_type: AgentRunEventType, payload: Mapping[str, Any]) -> None:
+def _validate_payload(
+    event_type: AgentRunEventType,
+    payload: Mapping[str, Any],
+    schema_version: str,
+) -> None:
     if not payload or len(payload) > 16:
         raise AgentRunEventContractError("Agent Run event payload must contain 1-16 safe fields")
     keys = set(payload)
@@ -287,6 +312,47 @@ def _validate_payload(event_type: AgentRunEventType, payload: Mapping[str, Any])
         )
     if event_type in AGENT_RUN_TERMINAL_EVENT_TYPES and not isinstance(payload.get("status"), str):
         raise AgentRunEventContractError("terminal Agent Run events require a safe status")
+    if schema_version == AGENT_RUN_SSE_V4:
+        if event_type is AgentRunEventType.ACCEPTED and payload.get("harness_version") != (
+            "native-tool-use-v2"
+        ):
+            raise AgentRunEventContractError(
+                "v4 accepted events require the native Tool-use harness version"
+            )
+        if event_type in {
+            AgentRunEventType.TOOL_STARTED,
+            AgentRunEventType.TOOL_OUTPUT,
+        } and payload.get("tool_family") not in {
+            "bootstrap",
+            "knowledge",
+            "workspace",
+            "command",
+            "skill_creator",
+            "read",
+        }:
+            raise AgentRunEventContractError("v4 Tool events require a safe Tool family")
+        if event_type in AGENT_RUN_TERMINAL_EVENT_TYPES and payload.get("terminal_kind") not in {
+            "direct",
+            "grounded",
+        }:
+            raise AgentRunEventContractError(
+                "v4 terminal events require a direct or grounded terminal kind"
+            )
+        if event_type is AgentRunEventType.CACHE_USED and any(
+            payload.get(key) is None
+            for key in (
+                "iteration",
+                "cache_mode",
+                "cache_read_tokens",
+                "cache_write_tokens",
+                "context_digest",
+                "visible_observation_bytes",
+                "tool_count",
+            )
+        ):
+            raise AgentRunEventContractError(
+                "v4 cache events require safe cache and context counters"
+            )
     for key, value in payload.items():
         if key == "exit_code":
             if isinstance(value, bool) or not isinstance(value, int):
@@ -327,6 +393,7 @@ def _validate_page(after_sequence: int, limit: int) -> None:
 
 __all__ = [
     "AGENT_RUN_TERMINAL_EVENT_TYPES",
+    "AGENT_RUN_SSE_V4",
     "AgentRunEventConflictError",
     "AgentRunEventContractError",
     "AgentRunEventLog",

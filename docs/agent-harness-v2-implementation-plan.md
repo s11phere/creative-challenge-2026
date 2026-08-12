@@ -236,6 +236,23 @@ Worker/Compose 或浏览器测试；本步骤仍是 provisional 工程实现。
 
 验收：前后端按版本读取历史与新 Run；所有文档明确仍为 provisional，feature flag 关闭时 v1 不受影响。
 
+> 完成记录（2026-08-13）：新增 `agent-run-sse-v4` 安全事件投影，兼容读取旧 `agent-run-sse-v3`
+> 历史；v4 包含 harness version、selected Skill、Tool family、decision summary、context digest、
+> visible observation bytes、cache usage、terminal kind 和 stop reason，不包含 prompt、原文、
+> 回答或 Tool body。Native v2 executor 现在可接入 `AgentRunEventStore`，在 accepted、Skill
+> activation、Tool started/output、cache round、terminal、cancel 和 fail 状态写入幂等 v4 事件。
+> Web timeline 同时渲染 v3/v4：v2 Tool 分组、直接回复/grounded terminal、cache read/write 和
+> context digest 均可见，旧 Run 保持旧投影。文档与 OpenAPI 已更新，feature flag 关闭时继续沿用
+> v1 路径。
+>
+> 已运行：完整后端 `pytest tests/unit` `1091 passed, 2 skipped`；Web `pnpm lint`、
+> `pnpm typecheck`、`pnpm test` `52 passed`；`ruff check .`；受影响文件 `ruff format --check`；
+> `mypy apps packages`；OpenAPI 导出及 `tests/unit/test_openapi.py`；`scripts/evaluate_agent_harness_v2.py`
+> 和 `git diff --check`。仓库级 `ruff format --check .` 仍被既有未改动的
+> `packages/application/src/application/assistant/__init__.py` 格式问题阻断，本次未触碰该文件。
+> 未运行 formal holdout、外部 Provider、真实 PostgreSQL/Redis 迁移/集成或浏览器 Playwright；
+> 所有结果保持 provisional。
+
 ## 5. 验证与最终完成门槛
 
 每步按影响范围运行实际可用命令；Step 6 最终至少运行：

@@ -1,5 +1,13 @@
 # 阶段 4/5 收尾看板
 
+## 2026-08-13 Agent Harness v2 Step 6 收口
+
+Native Tool-use v2 的 SSE/Web 投影和文档收口已完成。新增 `agent-run-sse-v4`，兼容读取旧
+`agent-run-sse-v3`；v4 事件只保存 harness version、Skill selected、Tool family、decision
+summary、context digest、visible observation bytes、cache usage、terminal kind 和 stop reason。
+Web timeline 可同时展示 v3/v4，旧 Run 仍按旧投影恢复。feature flag 关闭时默认 Assistant 仍走
+v1，不改 ADR-010/ADR-011 正式质量边界，也不授权 formal holdout。
+
 ## 2026-08-11 conversation-scoped local workspace Tools
 
 Assistant conversations can now select an existing directory below a configured workspace root with

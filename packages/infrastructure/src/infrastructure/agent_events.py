@@ -32,6 +32,7 @@ class PostgresAgentRunEventStore:
         payload: Mapping[str, Any],
         *,
         event_key: str,
+        schema_version: str = "agent-run-sse-v3",
     ) -> AgentRunStreamEvent:
         # Validate before the transaction so an unsafe payload never reaches the ORM.
         candidate = AgentRunStreamEvent(
@@ -40,6 +41,7 @@ class PostgresAgentRunEventStore:
             event_type=event_type,
             payload=dict(payload),
             event_key=event_key,
+            schema_version=schema_version,
         )
         async with self._database.transaction() as session:
             run = await session.get(ConversationRunModel, run_id, with_for_update=True)
@@ -74,6 +76,7 @@ class PostgresAgentRunEventStore:
                 event_type=event_type,
                 payload=dict(payload),
                 event_key=event_key,
+                schema_version=schema_version,
             )
             session.add(
                 AgentRunEventModel(

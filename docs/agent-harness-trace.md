@@ -45,3 +45,9 @@ identifier and never writes a report:
 
 The output is development-only and provisional. It is not a retrieval, answer, or Skill quality
 evaluation, and must not be committed or added to normal logs, SSE, or PostgreSQL.
+
+For native Harness v2, the executor records the same `agent_round` event key with a body-free
+shape: `phase=native_tool_use`, `context_digest`, `visible_observation_bytes`, `cache_mode`, and
+safe usage counters. The event contains no Chat messages, Tool arguments, Tool output, prompt,
+answer, or provider text. The same rule applies to the separate `tool_call` events emitted by the
+v2 executor; only stable Tool identity and digest summaries are retained.

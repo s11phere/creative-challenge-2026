@@ -40,8 +40,10 @@ from domain.agent_runtime import (
     AgentRunContext,
     RunBudget,
     RunStatus,
+    ToolCallRecord,
     ToolPermission,
 )
+from domain.agent_sse import AGENT_RUN_SSE_V4, AgentRunEventLog, AgentRunEventType
 from domain.grounded_qa import (
     Citation,
     Claim,
@@ -574,6 +576,7 @@ async def test_native_executor_finalizes_knowledge_answer_without_an_extra_model
             finish_reason="tool_calls",
         ),
     )
+    events = AgentRunEventLog()
     executor = NativeToolUseAgentLoopExecutor(
         tool_registry=adapter.tool_registry,
         allowed_tools=adapter.allowed_tools(),
@@ -582,6 +585,7 @@ async def test_native_executor_finalizes_knowledge_answer_without_an_extra_model
         state_store=InMemoryRuntimeStateStore(),
         skill_catalog=SyntheticSkillCatalog(selection),
         server_tools=adapter,
+        event_store=events,
     )
 
     result = await executor.execute(
@@ -618,6 +622,21 @@ async def test_native_executor_finalizes_knowledge_answer_without_an_extra_model
     assert "knowledge_answer" in gateway.requests[1].messages[0].content
     assert qa.execute_calls == [RUN_ID]
     assert result.run.usage.tool_calls == 3
+    page = await events.page(RUN_ID, limit=100)
+    assert [event.schema_version for event in page.events] == [AGENT_RUN_SSE_V4] * len(page.events)
+    assert {event.event_type for event in page.events} == {
+        AgentRunEventType.ACCEPTED,
+        AgentRunEventType.SKILL_ACTIVATED,
+        AgentRunEventType.TOOL_STARTED,
+        AgentRunEventType.TOOL_OUTPUT,
+        AgentRunEventType.CACHE_USED,
+        AgentRunEventType.COMPLETED,
+    }
+    assert all(
+        key not in event.payload
+        for event in page.events
+        for key in ("prompt", "answer", "content", "raw", "secret")
+    )
 
 
 @pytest.mark.asyncio
@@ -730,6 +749,10 @@ async def test_workspace_tool_does_not_unlock_a_direct_knowledge_terminal() -> N
         return {"status": "ok"}
 
     class AlwaysApprovedPort:
+        async def request(self, context: AgentRunContext, tool: ToolCallRecord) -> str:
+            del context, tool
+            return "approval-1"
+
         async def is_approved(self, approval_id: str, context: AgentRunContext) -> bool:
             del approval_id, context
             return True

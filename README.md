@@ -42,6 +42,11 @@ Assistant 输出支持 GFM Markdown 和 LaTeX 渲染。这些改动不改变阶�
 | 阶段 4 🟡 临时 Step 0-10 | 在 ADR-011 继续门禁下继续；ADR-007、唯一临时 QA Application Port、Grounded QA/Evidence/Citation、PostgreSQL Repository/SSE、问答 API、Web、Worker 重启恢复、按需原文解析和回答评测仅校验流程均已完成；默认配置与正式留出集尚未完成 |
 | 阶段 5 🟡 临时 Skills | Assistant 对话演进 Step 3-8 的当前调用目录、自主可恢复 Skill/Tool Loop、上下文、指标、最终回答生成器、调用记录卡和 Web 展示已完成；新知识请求固定 `knowledge_agent 1.0.0`；正式质量仍为临时状态 |
 
+Agent Harness v2 的 native Tool-use、按需 Skill 加载、知识服务端编排、有界模型上下文和 prompt
+cache 已作为独立的 provisional 工程路径完成。当前默认 Assistant Run 仍走 v1 路径；
+`agent-run-sse-v4` 只由显式启用 native Tool-use 的新 Run 写入，旧 `agent-run-sse-v3` 历史继续可读。
+这不改变 ADR-010/ADR-011 的正式质量边界，也不授权任何正式 holdout。
+
 当前 Web 展示系统健康、数据来源和临时知识问答工作区；HTTP API 可创建持久会话、提交
 问题，由 API 仅向 Redis 投递 Run ID，再由独立 Worker 调用唯一 `GroundedQAApplicationPort`、
 真实 PostgreSQL `SearchService` 和

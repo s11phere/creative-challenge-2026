@@ -254,6 +254,18 @@ docker compose -f deploy/compose.yaml --profile otel up --detach
 Collector 不可达时 exporter 会有界失败，API/Worker 应继续运行。检查 `OTLP_ENDPOINT` 是否为
 容器网络可达地址；Compose 内通常使用 `http://otel-collector:4318`。
 
+## Harness v2 SSE 或 prompt cache 不生效
+
+`agent-run-sse-v4` 只由启用 native Tool-use 的 v2 executor 写入；旧 Run 仍读取
+`agent-run-sse-v3`，不要在 Web timeline 中把两种 schema 混为同一历史。事件 payload 只包含安全
+字符串和计数，禁止 prompt、回答、文档正文、Tool body 和密钥；如果看到 v4 字段缺失，先检查
+Provider 是否显式声明 `FAST_CHAT_NATIVE_TOOL_USE` 能力并启用了对应配置。
+
+Prompt cache 仅在 `FAST_CHAT_PROMPT_CACHING=true`、ModelGateway capability 声明支持且部署策略
+允许时发送 `extra_body.cache_key`。cache key 只由静态 prompt/schema/Skill/provider 摘要组成，
+不包含用户消息、Space、Tool 观察或私有内容；隐私策略或 Provider 不支持时仍会正常执行并显示
+`cache_mode=unsupported`。不要把 cache key 当作安全边界。
+
 ## Windows 下 pnpm 脚本被阻止
 
 不要修改系统执行策略。使用仓库固定命令：

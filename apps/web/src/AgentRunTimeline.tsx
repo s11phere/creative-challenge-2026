@@ -43,6 +43,14 @@ type SkillActivationItem = {
   event: AgentRunEvent
 }
 
+type CacheUsageItem = {
+  iteration: number
+  readTokens: number
+  writeTokens: number
+  mode: string | null
+  contextDigest: string | null
+}
+
 const terminalEventTypes = new Set([
   'completed', 'clarifying', 'refused', 'failed', 'cancelled', 'timed_out',
 ])
@@ -167,6 +175,8 @@ function toolDetails(item: ToolTimelineItem) {
   const command = getText(source.payload, 'command')
   const cwd = getText(source.payload, 'cwd')
   const outputSummary = getText(source.payload, 'output_summary')
+  const toolFamily = getText(source.payload, 'tool_family')
+  const decisionSummary = getText(source.payload, 'decision_summary')
   const duration = getNumber(source.payload, 'duration_ms')
   const retryCount = getNumber(source.payload, 'retry_count')
   const exitCode = getNumber(source.payload, 'exit_code')
@@ -176,8 +186,10 @@ function toolDetails(item: ToolTimelineItem) {
   if (cwd) entries.push(['工作目录', cwd])
   if (resourceReference) entries.push(['目标文档', resourceReference])
   if (queryPreview) entries.push(['检索问题', queryPreview])
+  if (toolFamily) entries.push(['能力分组', toolFamilyLabel(toolFamily) ?? toolFamily])
   if (inputSummary) entries.push(['输入摘要', inputSummary])
   if (outputSummary) entries.push(['结果摘要', outputSummary])
+  if (decisionSummary) entries.push(['决策摘要', decisionSummary])
   if (duration !== null) entries.push(['耗时', formatDuration(duration)])
   if (retryCount !== null) entries.push(['重试', `${retryCount} 次`])
   if (errorCode) entries.push(['错误码', errorCode])
@@ -191,6 +203,42 @@ function toolOutput(item: ToolTimelineItem): { value: string; truncated: boolean
   const value = getText(output.payload, 'output_preview')
   if (!value) return null
   return { value, truncated: output.payload.output_truncated === true }
+}
+
+function cacheUsage(events: AgentRunEvent[]): CacheUsageItem[] {
+  return events
+    .filter((event) => event.event_type === 'cache_used')
+    .map((event) => {
+      const iteration = getNumber(event.payload, 'iteration')
+      if (iteration === null) return null
+      return {
+        iteration,
+        readTokens: getNumber(event.payload, 'cache_read_tokens') ?? 0,
+        writeTokens: getNumber(event.payload, 'cache_write_tokens') ?? 0,
+        mode: getText(event.payload, 'cache_mode'),
+        contextDigest: getText(event.payload, 'context_digest'),
+      }
+    })
+    .filter((item): item is CacheUsageItem => item !== null)
+    .sort((left, right) => left.iteration - right.iteration)
+}
+
+function terminalKindLabel(value: string | null): string | null {
+  if (value === 'direct') return '直接回复'
+  if (value === 'grounded') return '知识问答终态'
+  return null
+}
+
+function toolFamilyLabel(value: string | null): string | null {
+  const labels: Record<string, string> = {
+    bootstrap: 'Skill 路由',
+    knowledge: '知识',
+    workspace: '工作区',
+    command: '命令',
+    skill_creator: 'Skill Creator',
+    read: '读取',
+  }
+  return value && labels[value] ? labels[value] : value
 }
 
 function formatDuration(value: number): string {
@@ -249,18 +297,32 @@ export function AgentRunTimeline({
   const tools = mergeToolEvents(events)
   const activations = skillActivations(events)
   const rootActivations = activations.filter((item) => item.iteration === 0)
+  const stopReason = terminalStopReason(events)
+  const model = getText(accepted?.payload ?? {}, 'model') ?? run.model_identity
+  const requestedEffort = getText(accepted?.payload ?? {}, 'requested_effort')
+  const effectiveEffort = getText(accepted?.payload ?? {}, 'effective_effort')
+  const harnessVersion = getText(accepted?.payload ?? {}, 'harness_version')
+  const cacheItems = cacheUsage(events)
+  const terminalEvent = events.findLast((event) => terminalEventTypes.has(event.event_type))
+  const terminalKind = getText(terminalEvent?.payload ?? {}, 'terminal_kind')
+  const totalCacheRead = cacheItems.reduce((sum, item) => sum + item.readTokens, 0)
+  const totalCacheWrite = cacheItems.reduce((sum, item) => sum + item.writeTokens, 0)
   const iterations = [...new Set([
     ...events
       .filter((event) => event.event_type === 'iteration_started')
       .map((event) => getNumber(event.payload, 'iteration'))
       .filter((iteration): iteration is number => iteration !== null),
+    ...events
+      .filter((event) => event.event_type === 'cache_used')
+      .map((event) => getNumber(event.payload, 'iteration'))
+      .filter((iteration): iteration is number => iteration !== null),
+    ...events
+      .filter((event) => terminalEventTypes.has(event.event_type))
+      .map((event) => getNumber(event.payload, 'iteration'))
+      .filter((iteration): iteration is number => iteration !== null),
     ...tools.map((tool) => tool.iteration),
     ...activations.filter((item) => item.iteration > 0).map((item) => item.iteration),
   ])].sort((left, right) => left - right)
-  const stopReason = terminalStopReason(events)
-  const model = getText(accepted?.payload ?? {}, 'model') ?? run.model_identity
-  const requestedEffort = getText(accepted?.payload ?? {}, 'requested_effort')
-  const effectiveEffort = getText(accepted?.payload ?? {}, 'effective_effort')
 
   return (
     <section className="chat-agent-timeline" data-status={run.status} aria-label="Agent 运行时间线">
@@ -277,12 +339,16 @@ export function AgentRunTimeline({
       <dl className="chat-agent-run-metadata">
         {requestedEffort && <div><dt>请求强度</dt><dd>{requestedEffort}</dd></div>}
         {effectiveEffort && <div><dt>实际强度</dt><dd>{effectiveEffort}</dd></div>}
+        {harnessVersion && <div><dt>Agent Harness</dt><dd>{harnessVersion}</dd></div>}
         <div><dt>模型</dt><dd>{model}</dd></div>
         <div><dt>输入 Token</dt><dd>{run.usage.input_tokens.toLocaleString('zh-CN')}</dd></div>
         <div><dt>输出 Token</dt><dd>{run.usage.output_tokens.toLocaleString('zh-CN')}</dd></div>
         <div><dt>实际 Token</dt><dd>{run.usage.total_tokens.toLocaleString('zh-CN')}</dd></div>
         <div><dt>模型耗时</dt><dd>{formatDuration(run.usage.model_latency_ms)}</dd></div>
+        {totalCacheRead > 0 && <div><dt>Cache Read</dt><dd>{totalCacheRead.toLocaleString('zh-CN')}</dd></div>}
+        {totalCacheWrite > 0 && <div><dt>Cache Write</dt><dd>{totalCacheWrite.toLocaleString('zh-CN')}</dd></div>}
         {stopReason && <div><dt>停止原因</dt><dd>{stopReason}</dd></div>}
+        {terminalKind && <div><dt>终止类型</dt><dd>{terminalKindLabel(terminalKind)}</dd></div>}
       </dl>
 
       {rootActivations.map((activation) => (
@@ -296,9 +362,16 @@ export function AgentRunTimeline({
         {iterations.map((iteration) => {
           const iterationTools = tools.filter((tool) => tool.iteration === iteration)
           const iterationActivations = activations.filter((item) => item.iteration === iteration)
+          const iterationCache = cacheItems.filter((item) => item.iteration === iteration)
           return (
             <li key={iteration} className="chat-agent-iteration">
               <div className="chat-agent-iteration-heading"><Clock3 size={15} aria-hidden="true" /><strong>第 {iteration} 轮</strong></div>
+              {iterationCache.map((item) => (
+                <div key={`cache-${item.iteration}`} className="chat-agent-cache-summary">
+                  <span>缓存：{item.mode ?? 'unsupported'} · read {item.readTokens} · write {item.writeTokens}</span>
+                  {item.contextDigest && <code>{item.contextDigest}</code>}
+                </div>
+              ))}
               {iterationActivations.map((activation) => (
                 <p key={activation.event.event_id} className="chat-agent-skill-activation">
                   <BookOpenText size={15} aria-hidden="true" />

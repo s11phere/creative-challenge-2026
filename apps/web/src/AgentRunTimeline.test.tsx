@@ -206,4 +206,113 @@ describe('AgentRunTimeline', () => {
     expect(screen.getAllByText('QA_STRUCTURED_RESPONSE_INVALID')).toHaveLength(2)
     expect(screen.queryByText('执行中')).not.toBeInTheDocument()
   })
+
+  it('renders v4 native Tool-use projections without raw bodies', () => {
+    const v4Events: AgentRunEvent[] = [
+      {
+        schema_version: 'agent-run-sse-v4',
+        event_id: 'v4-accepted',
+        run_id: 'run-1',
+        sequence: 1,
+        occurred_at: '2026-08-13T05:00:00Z',
+        event_type: 'accepted',
+        payload: { status: 'accepted', harness_version: 'native-tool-use-v2' },
+      },
+      {
+        schema_version: 'agent-run-sse-v4',
+        event_id: 'v4-skill',
+        run_id: 'run-1',
+        sequence: 2,
+        occurred_at: '2026-08-13T05:00:01Z',
+        event_type: 'skill_activated',
+        payload: {
+          status: 'activated',
+          iteration: 1,
+          skill_name: 'knowledge_agent',
+          skill_version: '2.0.0',
+        },
+      },
+      {
+        schema_version: 'agent-run-sse-v4',
+        event_id: 'v4-tool-started',
+        run_id: 'run-1',
+        sequence: 3,
+        occurred_at: '2026-08-13T05:00:02Z',
+        event_type: 'tool_started',
+        payload: {
+          status: 'running',
+          iteration: 1,
+          tool_name: 'knowledge_retrieve',
+          tool_version: '1.0.0',
+          tool_family: 'knowledge',
+        },
+      },
+      {
+        schema_version: 'agent-run-sse-v4',
+        event_id: 'v4-tool-output',
+        run_id: 'run-1',
+        sequence: 4,
+        occurred_at: '2026-08-13T05:00:03Z',
+        event_type: 'tool_output',
+        payload: {
+          status: 'succeeded',
+          iteration: 1,
+          tool_name: 'knowledge_retrieve',
+          tool_version: '1.0.0',
+          tool_family: 'knowledge',
+          decision_summary: 'Coverage: 1 matched across 1 searches.',
+          visible_observation_bytes: 80,
+        },
+      },
+      {
+        schema_version: 'agent-run-sse-v4',
+        event_id: 'v4-cache',
+        run_id: 'run-1',
+        sequence: 5,
+        occurred_at: '2026-08-13T05:00:04Z',
+        event_type: 'cache_used',
+        payload: {
+          iteration: 1,
+          cache_mode: 'requested',
+          cache_read_tokens: 3,
+          cache_write_tokens: 2,
+          context_digest: 'sha256:' + 'a'.repeat(64),
+        },
+      },
+      {
+        schema_version: 'agent-run-sse-v4',
+        event_id: 'v4-completed',
+        run_id: 'run-1',
+        sequence: 6,
+        occurred_at: '2026-08-13T05:00:05Z',
+        event_type: 'completed',
+        payload: {
+          status: 'completed',
+          iteration: 1,
+          stop_reason: 'goal_complete',
+          terminal_kind: 'grounded',
+        },
+      },
+    ]
+
+    render(
+      <AgentRunTimeline
+        run={{ ...run, status: 'completed' }}
+        events={v4Events}
+        hasGroundedEvidence={false}
+        clarificationPending={false}
+        onSelectClarification={vi.fn()}
+        onOpenEvidence={vi.fn()}
+        approvals={[]}
+        approvalBusy={false}
+        onDecideApproval={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('native-tool-use-v2')).toBeInTheDocument()
+    expect(screen.getByText('Coverage: 1 matched across 1 searches.')).toBeInTheDocument()
+    expect(screen.getByText(/缓存：requested/)).toBeInTheDocument()
+    expect(screen.getByText('知识问答终态')).toBeInTheDocument()
+    expect(document.querySelector('.chat-agent-cache-summary')).not.toBeNull()
+  })
 })

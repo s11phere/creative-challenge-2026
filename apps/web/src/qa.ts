@@ -171,9 +171,10 @@ export type AgentRunEventType =
   | 'failed'
   | 'cancelled'
   | 'timed_out'
+  | 'cache_used'
 
 export type AgentRunEvent = {
-  schema_version: 'agent-run-sse-v3'
+  schema_version: 'agent-run-sse-v3' | 'agent-run-sse-v4'
   event_id: string
   run_id: string
   sequence: number
@@ -650,9 +651,9 @@ function parseAgentRunEventStream(stream: string): AgentRunEvent[] {
 function parseAgentRunEvent(value: unknown): AgentRunEvent | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const event = value as Record<string, unknown>
-  const sequence = event.sequence
-  if (
-    event.schema_version !== 'agent-run-sse-v3'
+    const sequence = event.sequence
+    if (
+      (event.schema_version !== 'agent-run-sse-v3' && event.schema_version !== 'agent-run-sse-v4')
     || typeof event.event_id !== 'string'
     || typeof event.run_id !== 'string'
     || typeof sequence !== 'number'
@@ -677,7 +678,8 @@ function isAgentRunEventType(value: unknown): value is AgentRunEventType {
   return typeof value === 'string' && [
     'accepted', 'skill_activated', 'iteration_started', 'tool_requested', 'tool_started', 'tool_output',
     'approval_required', 'checkpoint_saved', 'finalizing', 'completed', 'clarifying',
-    'refused', 'failed', 'cancelled', 'timed_out',
+      'refused', 'failed', 'cancelled', 'timed_out',
+      'cache_used',
   ].includes(value)
 }
 

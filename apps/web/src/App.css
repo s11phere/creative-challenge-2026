@@ -2076,6 +2076,30 @@
   font-weight: 650;
 }
 
+.chat-agent-cache-summary {
+  margin: 7px 0 0 21px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--ink-soft);
+  background: #f4f7f6;
+  border: 1px solid #d4e4dc;
+  border-radius: 5px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.chat-agent-cache-summary code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chat-agent-iteration {
   min-width: 0;
   padding-top: 10px;

@@ -345,7 +345,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/domain/conversation_run.py` | 通用 `ConversationRun` 父身份、运行种类/选择来源、澄清、通用结果、实际用量和持久化 Port；不含模型或数据库依赖 |
 | `src/domain/reasoning.py` | Provider-neutral effort、mapping mode/downgrade reason 与 `reasoning-profile-v1` 可审计值对象 |
 | `src/domain/conversation_context.py` | Versioned rolling-summary identity, content digest, covered message range, and inherited sensitivity contracts |
-| `src/domain/assistant_sse.py` | `agent-run-sse-v2` 的内容安全事件、单调 sequence、唯一终态和 Event Store Port；payload 禁止用户/模型正文键 |
+| `src/domain/agent_sse.py` | `agent-run-sse-v3` 的通用安全事件历史，同时读取 v4 native Tool-use 投影；v4 只保存 harness/Tool family/decision/cache/terminal 元数据，禁止 prompt、回答、正文和 Tool body |
 | `src/domain/repositories.py` | 仓库接口定义（Protocol）：`SpaceRepository`、`SourceRepository`、`DocumentRepository`、`DocumentVersionRepository`、`ChunkRepository`、`IngestionTaskRepository` |
 | `src/domain/parsing.py` | `ParsedDocument` / `StructNode` / `ParseError` 纯类型、`Parser` Protocol、`compute_blob_hash` 辅助函数 |
 | `src/domain/fingerprinting.py` | 内容指纹：`normalize_stable_key`、`compute_content_hash`（含版本分隔符）、`compute_storage_key` |

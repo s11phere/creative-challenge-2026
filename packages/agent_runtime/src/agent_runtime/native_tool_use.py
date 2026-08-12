@@ -32,6 +32,7 @@ from domain.agent_runtime import (
     ToolPermission,
     validate_recovery,
 )
+from domain.agent_sse import AGENT_RUN_SSE_V4, AgentRunEventStore, AgentRunEventType
 from domain.reasoning import ReasoningProfile
 from model_gateway import (
     CapabilityAlias,
@@ -541,6 +542,7 @@ class NativeToolUseAgentLoopExecutor:
         skill_catalog: NativeSkillCatalog | None = None,
         server_tools: NativeServerToolCoordinator | None = None,
         debug_trace: AgentLoopDebugTrace | None = None,
+        event_store: AgentRunEventStore | None = None,
         prompt_caching_allowed: PromptCacheAllowed | None = None,
         max_selected_skill_instruction_bytes: int = (_DEFAULT_MAX_SELECTED_SKILL_INSTRUCTION_BYTES),
     ) -> None:
@@ -574,6 +576,7 @@ class NativeToolUseAgentLoopExecutor:
         self._skill_catalog = skill_catalog
         self._server_tools = server_tools
         self._debug_trace = debug_trace
+        self._event_store = event_store
         self._prompt_caching_allowed = prompt_caching_allowed
         self._max_selected_skill_instruction_bytes = max_selected_skill_instruction_bytes
         if server_tools is not None:
@@ -663,6 +666,16 @@ class NativeToolUseAgentLoopExecutor:
                     message="Configured model capability does not support native Tool use.",
                 )
             run = _move_to_planning(run)
+            if run.checkpoint_sequence == 0:
+                await self._emit(
+                    run,
+                    AgentRunEventType.ACCEPTED,
+                    {
+                        "status": "accepted",
+                        "harness_version": "native-tool-use-v2",
+                    },
+                    event_key="native:accepted",
+                )
 
             if state.terminal_text is not None:
                 return await self._publish_finalization(run, state, input_data)
@@ -712,6 +725,16 @@ class NativeToolUseAgentLoopExecutor:
                     request,
                     response,
                     cache_mode=cache_mode,
+                )
+                await self._emit_cache_usage(
+                    run,
+                    state,
+                    surface,
+                    response,
+                    cache_mode=cache_mode,
+                    visible_observation_bytes=_json_size(
+                        tuple(item.observation for item in request.tool_results)
+                    ),
                 )
                 if len(response.tool_calls) > 1:
                     raise NodeExecutionError(
@@ -882,12 +905,13 @@ class NativeToolUseAgentLoopExecutor:
         for item in state.observations[-8:]:
             projection = self._model_observation_for(item, surface)
             summary = cast(str, projection.get("summary", f"{item.call.tool_name} completed."))
+            status = self._native_model_status(projection.get("status"))
             decisions.append(
                 NativeDecisionHistoryItem(
                     iteration=item.iteration,
                     kind="tool",
                     tool_name=item.call.tool_name,
-                    status=cast(str, projection.get("status", "succeeded")),
+                    status=status,
                     summary=summary,
                     unresolved_item=self._unresolved_item(item),
                 )
@@ -896,7 +920,7 @@ class NativeToolUseAgentLoopExecutor:
                 NativeModelObservation(
                     iteration=item.iteration,
                     tool_name=item.call.tool_name,
-                    status=cast(str, projection.get("status", "succeeded")),
+                    status=status,
                     summary=summary,
                 )
             )
@@ -980,6 +1004,14 @@ class NativeToolUseAgentLoopExecutor:
         return f"{item.call.tool_name} completed."
 
     @staticmethod
+    def _native_model_status(value: JSONValue | None) -> str:
+        if value == "needs_retrieval":
+            return "needs_input"
+        if value == "verification_failed":
+            return "failed"
+        return "succeeded"
+
+    @staticmethod
     def _unresolved_item(item: NativeToolUseObservation) -> str | None:
         if (
             item.call.tool_name == "knowledge_retrieve"
@@ -1006,6 +1038,159 @@ class NativeToolUseAgentLoopExecutor:
         return (
             f"resolved={len(state.observations)};pending={pending};"
             f"approval={state.approval_id or 'none'};terminal={terminal}"
+        )
+
+    async def _emit(
+        self,
+        run: AgentRun,
+        event_type: AgentRunEventType,
+        payload: Mapping[str, JSONValue],
+        *,
+        event_key: str,
+    ) -> None:
+        if self._event_store is None:
+            return
+        await self._event_store.append(
+            run.context.run_id,
+            event_type,
+            payload,
+            event_key=event_key,
+            schema_version=AGENT_RUN_SSE_V4,
+        )
+
+    @staticmethod
+    def _tool_family(tool_name: str, definition: ToolDefinition | None) -> str:
+        if tool_name in {_LIST_SKILLS_TOOL_NAME, _INVOKE_SKILL_TOOL_NAME}:
+            return "bootstrap"
+        if tool_name in {"knowledge_retrieve", "knowledge_answer"}:
+            return "knowledge"
+        if tool_name.startswith("fs_"):
+            return "workspace"
+        if tool_name.startswith("skill_"):
+            return "skill_creator"
+        if definition is not None and ToolPermission.EXECUTE_PROCESS in definition.permissions:
+            return "command"
+        if definition is not None and ToolPermission.WRITE_KNOWLEDGE in definition.permissions:
+            return "workspace"
+        return "read"
+
+    async def _emit_tool_started(
+        self,
+        run: AgentRun,
+        state: NativeToolUseLoopState,
+        *,
+        tool_name: str,
+        tool_version: str,
+        input_summary: str,
+        tool_family: str,
+    ) -> None:
+        await self._emit(
+            run,
+            AgentRunEventType.TOOL_STARTED,
+            {
+                "status": "running",
+                "iteration": state.iteration,
+                "tool_name": tool_name,
+                "tool_version": tool_version,
+                "input_summary": input_summary,
+                "tool_family": tool_family,
+            },
+            event_key=f"native:tool_started:{state.iteration}:{tool_name}:{tool_version}",
+        )
+
+    async def _emit_tool_output(
+        self,
+        run: AgentRun,
+        state: NativeToolUseLoopState,
+        surface: _NativeToolSurface,
+        *,
+        tool_name: str,
+        tool_version: str,
+        input_summary: str,
+        output_summary: str,
+        retry_count: int,
+        duration_ms: int,
+        tool_family: str,
+        decision_summary: str,
+    ) -> None:
+        item = state.observations[-1]
+        projection = self._model_observation_for(item, surface)
+        context = self._model_context(state, surface)
+        await self._emit(
+            run,
+            AgentRunEventType.TOOL_OUTPUT,
+            {
+                "status": "succeeded",
+                "iteration": state.iteration,
+                "tool_name": tool_name,
+                "tool_version": tool_version,
+                "input_summary": input_summary,
+                "output_summary": output_summary,
+                "retry_count": retry_count,
+                "duration_ms": duration_ms,
+                "tool_family": tool_family,
+                "decision_summary": decision_summary,
+                "visible_observation_bytes": _json_size(projection),
+                "context_digest": context.digest(),
+            },
+            event_key=f"native:tool_output:{state.iteration}:{tool_name}:{tool_version}",
+        )
+
+    async def _emit_cache_usage(
+        self,
+        run: AgentRun,
+        state: NativeToolUseLoopState,
+        surface: _NativeToolSurface,
+        response: ChatResponse,
+        *,
+        cache_mode: str,
+        visible_observation_bytes: int,
+    ) -> None:
+        context = self._model_context(state, surface)
+        await self._emit(
+            run,
+            AgentRunEventType.CACHE_USED,
+            {
+                "iteration": state.iteration,
+                "cache_mode": cache_mode,
+                "cache_read_tokens": response.usage.cached_input_tokens,
+                "cache_write_tokens": response.usage.cache_write_input_tokens,
+                "visible_observation_bytes": visible_observation_bytes,
+                "context_digest": context.digest(),
+                "tool_count": len(surface.chat_tools),
+            },
+            event_key=f"native:cache:{state.iteration}",
+        )
+
+    async def _emit_terminal(
+        self,
+        run: AgentRun,
+        state: NativeToolUseLoopState,
+        surface: _NativeToolSurface,
+        *,
+        terminal_kind: str,
+        stop_reason: str,
+    ) -> None:
+        outcome = state.terminal_output.get("outcome") if state.terminal_output else None
+        event_type = (
+            AgentRunEventType.REFUSED
+            if outcome in {"refusal", "conflict"}
+            else AgentRunEventType.COMPLETED
+        )
+        context = self._model_context(state, surface)
+        await self._emit(
+            run,
+            event_type,
+            {
+                "status": event_type.value,
+                "iteration": state.iteration,
+                "publication_id": state.publication_id or _publication_id(run),
+                "stop_reason": stop_reason,
+                "harness_version": "native-tool-use-v2",
+                "terminal_kind": terminal_kind,
+                "context_digest": context.digest(),
+            },
+            event_key=f"native:terminal:{state.iteration}",
         )
 
     def _cache_decision(
@@ -1143,7 +1328,15 @@ class NativeToolUseAgentLoopExecutor:
                     category=RunErrorCategory.PERMISSION,
                     message="Native server Tool permissions were not granted.",
                 )
-            return await self._complete_server_tool(run, state, input_data)
+            await self._emit_tool_started(
+                run,
+                state,
+                tool_name=definition.name,
+                tool_version=definition.version,
+                input_summary=tool_input_summary(call.arguments),
+                tool_family=self._tool_family(definition.name, definition),
+            )
+            return await self._complete_server_tool(run, state, surface, input_data)
         if self._skill_catalog is not None and call.tool_name in {
             _LIST_SKILLS_TOOL_NAME,
             _INVOKE_SKILL_TOOL_NAME,
@@ -1185,6 +1378,14 @@ class NativeToolUseAgentLoopExecutor:
             run = await self._persist(run, state)
             return run, state, True
         run = _move_to_executing(run)
+        await self._emit_tool_started(
+            run,
+            state,
+            tool_name=definition.name,
+            tool_version=definition.version,
+            input_summary=tool_input_summary(call.arguments),
+            tool_family=self._tool_family(definition.name, definition),
+        )
         result = await self._invoke_with_retry(run, invocation, definition)
         try:
             state = state.observe(result)
@@ -1194,6 +1395,19 @@ class NativeToolUseAgentLoopExecutor:
                 category=RunErrorCategory.SCHEMA,
                 message="Native Tool-use result is not a model-visible object.",
             ) from exc
+        await self._emit_tool_output(
+            run,
+            state,
+            surface,
+            tool_name=definition.name,
+            tool_version=definition.version,
+            input_summary=result.record.input_summary,
+            output_summary=result.record.output_summary,
+            retry_count=result.record.retry_count,
+            duration_ms=result.record.duration_ms,
+            tool_family=self._tool_family(definition.name, definition),
+            decision_summary=self._observation_summary(state.observations[-1]),
+        )
         run = await self._persist(result.run, state)
         return run, state, False
 
@@ -1201,6 +1415,7 @@ class NativeToolUseAgentLoopExecutor:
         self,
         run: AgentRun,
         state: NativeToolUseLoopState,
+        surface: _NativeToolSurface,
         input_data: Mapping[str, JSONValue],
     ) -> tuple[AgentRun, NativeToolUseLoopState, bool]:
         call = state.pending_call
@@ -1223,6 +1438,19 @@ class NativeToolUseAgentLoopExecutor:
         )
         try:
             state = state.observe(invocation_result)
+            await self._emit_tool_output(
+                run,
+                state,
+                surface,
+                tool_name=result.record.tool_name,
+                tool_version=result.record.tool_version,
+                input_summary=result.record.input_summary,
+                output_summary=result.record.output_summary,
+                retry_count=result.record.retry_count,
+                duration_ms=result.record.duration_ms,
+                tool_family=self._tool_family(result.record.tool_name, None),
+                decision_summary=self._observation_summary(state.observations[-1]),
+            )
             if result.terminal_output is not None and result.publication_id is not None:
                 state = state.begin_server_finalization(
                     result.terminal_output, result.publication_id
@@ -1276,6 +1504,17 @@ class NativeToolUseAgentLoopExecutor:
                 candidate_state = state.select_skill(selection)
                 self._selected_skill_instructions(candidate_state)
                 state = candidate_state
+                await self._emit(
+                    run,
+                    AgentRunEventType.SKILL_ACTIVATED,
+                    {
+                        "status": "activated",
+                        "iteration": state.iteration,
+                        "skill_name": selection.pin.name,
+                        "skill_version": selection.pin.version,
+                    },
+                    event_key=f"native:skill:{selection.pin.name}:{selection.pin.version}",
+                )
             except ValueError as exc:
                 raise NodeExecutionError(
                     code="RUN_NATIVE_TOOL_USE_SKILL_DENIED",
@@ -1290,6 +1529,14 @@ class NativeToolUseAgentLoopExecutor:
         else:
             raise RecoveryRejectedError("native Tool-use bootstrap Tool is invalid")
         run = run.consume(tool_calls=1)
+        await self._emit_tool_started(
+            run,
+            state,
+            tool_name=call.tool_name,
+            tool_version="1.0.0",
+            input_summary=tool_input_summary(call.arguments),
+            tool_family="bootstrap",
+        )
         result = ToolInvocationResult(
             output=observation,
             run=run,
@@ -1304,6 +1551,19 @@ class NativeToolUseAgentLoopExecutor:
         )
         try:
             state = state.observe(result)
+            await self._emit_tool_output(
+                run,
+                state,
+                self._tool_surface(state),
+                tool_name=call.tool_name,
+                tool_version="1.0.0",
+                input_summary=result.record.input_summary,
+                output_summary=result.record.output_summary,
+                retry_count=result.record.retry_count,
+                duration_ms=result.record.duration_ms,
+                tool_family="bootstrap",
+                decision_summary=self._observation_summary(state.observations[-1]),
+            )
         except ValueError as exc:
             raise NodeExecutionError(
                 code="RUN_NATIVE_TOOL_RESULT_INVALID",
@@ -1452,6 +1712,20 @@ class NativeToolUseAgentLoopExecutor:
                 publication_id=state.publication_id,
                 input_data=input_data,
             )
+            outcome = state.terminal_output.get("outcome")
+            await self._emit_terminal(
+                run,
+                state,
+                self._tool_surface(state),
+                terminal_kind="grounded",
+                stop_reason=(
+                    "evidence_insufficient"
+                    if outcome == "refusal"
+                    else "evidence_conflict"
+                    if outcome == "conflict"
+                    else "goal_complete"
+                ),
+            )
             run = run.transition(RunEvent.COMPLETE)
             if self._state_store is not None:
                 run = await self._state_store.finalize(run)
@@ -1464,6 +1738,13 @@ class NativeToolUseAgentLoopExecutor:
             terminal_text=state.terminal_text,
             publication_id=state.publication_id,
             input_data=input_data,
+        )
+        await self._emit_terminal(
+            run,
+            state,
+            self._tool_surface(state),
+            terminal_kind="direct",
+            stop_reason="goal_complete",
         )
         run = run.transition(RunEvent.COMPLETE)
         if self._state_store is not None:
@@ -1494,6 +1775,17 @@ class NativeToolUseAgentLoopExecutor:
         if run.status is not RunStatus.CANCEL_REQUESTED:
             run = run.transition(RunEvent.REQUEST_CANCEL)
         run = run.transition(RunEvent.CANCEL)
+        await self._emit(
+            run,
+            AgentRunEventType.CANCELLED,
+            {
+                "status": "cancelled",
+                "iteration": state.iteration,
+                "stop_reason": "cancelled",
+                "terminal_kind": "direct",
+            },
+            event_key=f"native:terminal:{state.iteration}",
+        )
         if self._state_store is not None:
             run = await self._state_store.finalize(run)
         return NativeToolUseLoopResult(run=run, state=state, output=None)
@@ -1543,6 +1835,18 @@ class NativeToolUseAgentLoopExecutor:
         }:
             run = run.transition(RunEvent.TIMEOUT if timed_out else RunEvent.FAIL)
         run = replace(run, last_error=error)
+        await self._emit(
+            run,
+            AgentRunEventType.TIMED_OUT if timed_out else AgentRunEventType.FAILED,
+            {
+                "status": "timed_out" if timed_out else "failed",
+                "iteration": state.iteration,
+                "stop_reason": "timed_out" if timed_out else "failed",
+                "error_code": code,
+                "terminal_kind": "direct",
+            },
+            event_key=f"native:terminal:{state.iteration}",
+        )
         if self._state_store is not None:
             run = await self._state_store.finalize(run)
         return NativeToolUseLoopResult(run=run, state=state, output=None, error=error)
@@ -1636,6 +1940,14 @@ def _bootstrap_output_summary(tool_name: str, observation: Mapping[str, JSONValu
         return f"Listed {len(skills) if isinstance(skills, list) else 0} Skill routes."
     name = observation.get("name")
     return f"Selected Skill {name}." if isinstance(name, str) else "Selected a Skill."
+
+
+def _json_size(value: object) -> int:
+    return len(
+        json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    )
 
 
 def _tool_error_category(code: ToolRegistryErrorCode) -> RunErrorCategory:
