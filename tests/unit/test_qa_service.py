@@ -148,6 +148,19 @@ class StructuredChatGateway:
         )
 
 
+class InvalidStructuredChatGateway:
+    async def chat(
+        self, _request: ChatRequest, *, capability: CapabilityAlias = CapabilityAlias.FAST_CHAT
+    ) -> ChatResponse:
+        return ChatResponse(
+            text="truncated",
+            finish_reason="length",
+            usage=ModelUsage(input_tokens=10, output_tokens=20),
+            capability=capability,
+            latency_ms=2.0,
+        )
+
+
 def _hit() -> SearchHit:
     text = "Synthetic evidence supports this answer."
     return SearchHit(
@@ -208,11 +221,14 @@ def _versions(profile: GroundedQAExecutionProfile) -> QARunVersions:
 
 
 def _service(
-    search_service: StaticSearchService, *, planner: QueryPlanner | None = None
+    search_service: StaticSearchService,
+    *,
+    planner: QueryPlanner | None = None,
+    gateway: StructuredChatGateway | InvalidStructuredChatGateway | None = None,
 ) -> GroundedQAService:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     generator = GroundedAnswerGenerator(
-        gateway=StructuredChatGateway(),
+        gateway=gateway or StructuredChatGateway(),
         parser=StructuredAnswerParser(schema),
         verifier=EvidenceVerifier(StaticTargets()),
         profile=QAGenerationProfileV1(),
@@ -361,6 +377,24 @@ async def test_application_port_keeps_retrieval_failure_distinct_from_refusal() 
     assert failed.status.value == "failed"
     assert failed.error_code == "QA_RETRIEVAL_FAILED"
     assert failed.result is None
+
+
+@pytest.mark.asyncio
+async def test_structured_generation_failure_persists_observed_usage() -> None:
+    profile = _profile()
+    service = _service(
+        StaticSearchService(_search_result()), gateway=InvalidStructuredChatGateway()
+    )
+    _conversation, run_id = await _submitted_run(service, profile)
+
+    failed = await service.execute(run_id, profile=profile)
+
+    assert failed.status.value == "failed"
+    assert failed.error_code == "QA_STRUCTURED_RESPONSE_INVALID"
+    assert failed.usage.model_calls == 2
+    assert failed.usage.repair_attempts == 1
+    assert failed.usage.input_tokens == 20
+    assert failed.usage.output_tokens == 40
 
 
 @pytest.mark.asyncio

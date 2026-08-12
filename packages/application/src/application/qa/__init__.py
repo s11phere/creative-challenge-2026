@@ -38,6 +38,7 @@ from .feedback_export import (
     FeedbackReview,
 )
 from .generation import (
+    GenerationError,
     GenerationIdentity,
     GenerationResult,
     GenerationUsage,
@@ -94,6 +95,7 @@ __all__ = [
     "FeedbackExportErrorCode",
     "FeedbackReview",
     "GenerationIdentity",
+    "GenerationError",
     "GenerationResult",
     "GenerationUsage",
     "GroundedAnswerGenerator",

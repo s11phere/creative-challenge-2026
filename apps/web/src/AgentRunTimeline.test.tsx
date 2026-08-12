@@ -171,4 +171,39 @@ describe('AgentRunTimeline', () => {
     expect(screen.getByRole('heading', { name: '需要补充信息' })).toBeInTheDocument()
     expect(screen.queryByRole('group', { name: '资源选择' })).not.toBeInTheDocument()
   })
+
+  it('projects an unfinished Tool as failed when its parent Run has failed', () => {
+    render(
+      <AgentRunTimeline
+        run={{ ...run, status: 'failed', error_code: 'QA_STRUCTURED_RESPONSE_INVALID' }}
+        events={[
+          {
+            schema_version: 'agent-run-sse-v3',
+            event_id: 'event-running',
+            run_id: 'run-1',
+            sequence: 1,
+            occurred_at: '2026-08-12T04:05:00Z',
+            event_type: 'tool_started',
+            payload: {
+              status: 'running',
+              iteration: 1,
+              tool_name: 'grounded_answer',
+              tool_version: '1.1.0',
+            },
+          },
+        ]}
+        hasGroundedEvidence={false}
+        clarificationPending={false}
+        onSelectClarification={vi.fn()}
+        onOpenEvidence={vi.fn()}
+        approvals={[]}
+        approvalBusy={false}
+        onDecideApproval={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('未完成')).toBeInTheDocument()
+    expect(screen.getAllByText('QA_STRUCTURED_RESPONSE_INVALID')).toHaveLength(2)
+    expect(screen.queryByText('执行中')).not.toBeInTheDocument()
+  })
 })

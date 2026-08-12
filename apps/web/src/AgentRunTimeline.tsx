@@ -130,7 +130,7 @@ function skillActivations(events: AgentRunEvent[]): SkillActivationItem[] {
     .sort((left, right) => left.event.sequence - right.event.sequence)
 }
 
-function toolStatus(item: ToolTimelineItem): { label: string; state: string; errorCode: string | null } {
+function toolStatus(item: ToolTimelineItem, run: AssistantRun): { label: string; state: string; errorCode: string | null } {
   const output = item.events.findLast((event) => event.event_type === 'tool_output')
   const started = item.events.findLast((event) => event.event_type === 'tool_started')
   const approval = item.events.findLast((event) => event.event_type === 'approval_required')
@@ -141,6 +141,13 @@ function toolStatus(item: ToolTimelineItem): { label: string; state: string; err
     }
     const status = getText(output.payload, 'status') ?? 'failed'
     return { label: eventStatusLabels[status] ?? status, state: status, errorCode }
+  }
+  if (run.status === 'failed' || run.status === 'timed_out' || run.status === 'cancelled') {
+    return {
+      label: run.status === 'timed_out' ? '运行超时' : run.status === 'cancelled' ? '已取消' : '未完成',
+      state: 'failed',
+      errorCode: run.error_code,
+    }
   }
   if (started) return { label: approval ? '审批已通过，执行中' : '执行中', state: 'running', errorCode: null }
   if (approval) return { label: '等待审批', state: 'waiting_approval', errorCode: null }
@@ -303,8 +310,11 @@ export function AgentRunTimeline({
                   {iterationTools.map((tool) => {
                     const visual = toolVisual(classifyTool(tool.toolName))
                     const ToolIcon = visual.Icon
-                    const status = toolStatus(tool)
+                    const status = toolStatus(tool, run)
                     const details = toolDetails(tool)
+                    if (status.errorCode && !details.some(([label]) => label === '错误码')) {
+                      details.push(['错误码', status.errorCode])
+                    }
                     const output = toolOutput(tool)
                     const approvalEvent = tool.events.findLast((event) => event.event_type === 'approval_required')
                     const approvalId = getText(approvalEvent?.payload ?? {}, 'approval_id')

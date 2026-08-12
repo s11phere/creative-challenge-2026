@@ -41,7 +41,7 @@ from domain.retrieval import RetrievalError, RetrievalProfileV1, SearchFilters, 
 from .answer_mode import GroundedAnswerMode
 from .context_builder import ContextBuilder, ConversationRole, ConversationTurn
 from .evidence import EvidenceBindingService
-from .generation import GenerationResult, GroundedAnswerGenerator
+from .generation import GenerationError, GenerationResult, GroundedAnswerGenerator
 from .profile import QAPlanningProfileV1
 from .query_planning import (
     MergedSearchResult,
@@ -303,6 +303,19 @@ class GroundedQAService:
                 ),
             )
         except QAError as error:
+            if isinstance(error, GenerationError):
+                timings.append(QAPhaseTiming(QAPhase.GENERATION, _elapsed_ms(started)))
+                await self._repository.save_usage(
+                    run_id,
+                    QARunUsage(
+                        input_tokens=error.usage.input_tokens,
+                        output_tokens=error.usage.output_tokens,
+                        model_calls=error.usage.model_calls,
+                        repair_attempts=error.usage.repair_attempts,
+                        model_latency_ms=error.usage.model_latency_ms,
+                        phase_timings=tuple(timings),
+                    ),
+                )
             return await self._fail(run_id, error)
         except QAContractError:
             return await self._fail(

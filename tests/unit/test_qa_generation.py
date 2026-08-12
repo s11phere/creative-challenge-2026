@@ -71,9 +71,11 @@ class ScriptedChatGateway:
         self,
         responses: tuple[str, ...],
         *,
+        finish_reasons: tuple[str | None, ...] | None = None,
         after_chat: Callable[[], None] | None = None,
     ) -> None:
         self._responses = iter(responses)
+        self._finish_reasons = iter(finish_reasons or ("stop",) * len(responses))
         self._after_chat = after_chat
         self.requests: list[ChatRequest] = []
 
@@ -87,7 +89,7 @@ class ScriptedChatGateway:
         assert capability is CapabilityAlias.FAST_CHAT
         response = ChatResponse(
             text=next(self._responses),
-            finish_reason="stop",
+            finish_reason=next(self._finish_reasons),
             usage=ModelUsage(input_tokens=3, output_tokens=4),
             capability=CapabilityAlias.FAST_CHAT,
             latency_ms=1.5,
@@ -298,6 +300,44 @@ def _research_review_payload(first: UUID, second: UUID) -> str:
     )
 
 
+def _compact_research_review_payload(first: UUID, second: UUID) -> str:
+    ids = [str(first), str(second)]
+    combined = {"text": "Cross-paper synthesis.", "evidence_ids": ids}
+    return json.dumps(
+        {
+            "schema_version": "research-grounded-answer-compact-v1",
+            "result_type": "answer",
+            "mode": "research_literature_review",
+            "paper_briefs": [
+                {"paper_label": "Paper A", "text": "Brief A.", "evidence_ids": [str(first)]},
+                {"paper_label": "Paper B", "text": "Brief B.", "evidence_ids": [str(second)]},
+            ],
+            "matrix": [
+                {
+                    "dimension": dimension,
+                    "text": "Cross-paper synthesis.",
+                    "evidence_ids": ids,
+                    "comparability": comparability,
+                }
+                for dimension, comparability in (
+                    ("Question", "comparable"),
+                    ("Method", "conditionally_comparable"),
+                    ("Evaluation", "not_comparable"),
+                )
+            ],
+            "themes": [
+                {"title": "Methods", **combined},
+                {"title": "Evidence", **combined},
+            ],
+            "consensus": [combined],
+            "apparent_differences": [combined],
+            "genuine_conflicts": [],
+            "evidence_gaps": ["Downstream quality is unknown."],
+            "limitations": ["Synthetic fixture only."],
+        }
+    )
+
+
 def _generator(
     *,
     gateway: Any,
@@ -417,7 +457,7 @@ async def test_literature_review_renders_required_sections_and_cross_document_ci
 async def test_incomplete_literature_review_is_repaired_with_evidence_blocks() -> None:
     evidence = (_candidate(1), _candidate(2))
     incomplete = _answer_payload(evidence[0].evidence_id, evidence[1].evidence_id)
-    complete = _research_review_payload(evidence[0].evidence_id, evidence[1].evidence_id)
+    complete = _compact_research_review_payload(evidence[0].evidence_id, evidence[1].evidence_id)
     gateway = ScriptedChatGateway((incomplete, complete))
     generator, _targets = _generator(gateway=gateway, evidence=evidence)
 
@@ -428,8 +468,32 @@ async def test_incomplete_literature_review_is_repaired_with_evidence_blocks() -
     )
 
     assert generated.usage.repair_attempts == 1
-    assert "<invalid_candidate>" in gateway.requests[1].messages[1].content
+    assert "truncated or structurally invalid" in gateway.requests[1].messages[0].content
+    assert "<invalid_candidate>" not in gateway.requests[1].messages[1].content
     assert str(evidence[0].evidence_id) in gateway.requests[1].messages[1].content
+
+
+@pytest.mark.asyncio
+async def test_truncated_research_review_regenerates_compactly_without_candidate_text() -> None:
+    evidence = (_candidate(1), _candidate(2))
+    complete = _compact_research_review_payload(evidence[0].evidence_id, evidence[1].evidence_id)
+    gateway = ScriptedChatGateway(
+        ("truncated-candidate", complete), finish_reasons=("length", "stop")
+    )
+    generator, _targets = _generator(gateway=gateway, evidence=evidence)
+
+    generated = await generator.generate(
+        question=_question(),
+        context=_context(evidence),
+        answer_mode=GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW,
+    )
+
+    assert generated.usage.repair_attempts == 1
+    repair = gateway.requests[1]
+    assert "truncated or structurally invalid" in repair.messages[0].content
+    assert '"research-grounded-answer-compact-v1"' in repair.messages[0].content
+    assert "truncated-candidate" not in repair.messages[1].content
+    assert str(evidence[0].evidence_id) in repair.messages[1].content
 
 
 @pytest.mark.asyncio

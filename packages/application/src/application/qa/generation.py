@@ -47,6 +47,120 @@ from .profile import QAGenerationProfileV1
 
 logger = logging.getLogger(__name__)
 
+_COMPACT_RESEARCH_REVIEW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "schema_version",
+        "result_type",
+        "mode",
+        "paper_briefs",
+        "matrix",
+        "themes",
+        "consensus",
+        "apparent_differences",
+        "genuine_conflicts",
+        "evidence_gaps",
+        "limitations",
+    ],
+    "properties": {
+        "schema_version": {"const": "research-grounded-answer-compact-v1"},
+        "result_type": {"const": "answer"},
+        "mode": {"const": "research_literature_review"},
+        "paper_briefs": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 8,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["paper_label", "text", "evidence_ids"],
+                "properties": {
+                    "paper_label": {"type": "string", "minLength": 1},
+                    "text": {"type": "string", "minLength": 1},
+                    "evidence_ids": {"$ref": "#/$defs/evidence_ids"},
+                },
+            },
+        },
+        "matrix": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["dimension", "text", "evidence_ids", "comparability"],
+                "properties": {
+                    "dimension": {"type": "string", "minLength": 1},
+                    "text": {"type": "string", "minLength": 1},
+                    "evidence_ids": {"$ref": "#/$defs/evidence_ids"},
+                    "comparability": {
+                        "enum": ["comparable", "conditionally_comparable", "not_comparable"]
+                    },
+                },
+            },
+        },
+        "themes": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {"$ref": "#/$defs/named_evidence_item"},
+        },
+        "consensus": {"$ref": "#/$defs/evidence_items"},
+        "apparent_differences": {"$ref": "#/$defs/evidence_items"},
+        "genuine_conflicts": {
+            "type": "array",
+            "maxItems": 2,
+            "items": {"$ref": "#/$defs/evidence_item"},
+        },
+        "evidence_gaps": {"$ref": "#/$defs/strings"},
+        "limitations": {"$ref": "#/$defs/strings"},
+    },
+    "$defs": {
+        "evidence_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "uniqueItems": True,
+            "items": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            },
+        },
+        "evidence_item": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["text", "evidence_ids"],
+            "properties": {
+                "text": {"type": "string", "minLength": 1},
+                "evidence_ids": {"$ref": "#/$defs/evidence_ids"},
+            },
+        },
+        "named_evidence_item": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["title", "text", "evidence_ids"],
+            "properties": {
+                "title": {"type": "string", "minLength": 1},
+                "text": {"type": "string", "minLength": 1},
+                "evidence_ids": {"$ref": "#/$defs/evidence_ids"},
+            },
+        },
+        "evidence_items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "items": {"$ref": "#/$defs/evidence_item"},
+        },
+        "strings": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "items": {"type": "string", "minLength": 1},
+        },
+    },
+}
+
 
 class StructuredOutputError(ValueError):
     """A safe structural error that never contains raw model output."""
@@ -142,6 +256,14 @@ class GenerationUsage:
     model_latency_ms: float
 
 
+class GenerationError(QAError):
+    """Safe generation failure carrying usage observed before publication failed."""
+
+    def __init__(self, code: QAErrorCode, message: str, *, usage: GenerationUsage) -> None:
+        super().__init__(code, message)
+        self.usage = usage
+
+
 @dataclass(frozen=True)
 class GenerationResult:
     result: QAResult
@@ -191,6 +313,9 @@ class StructuredAnswerParser:
                     separators=(",", ":"),
                 )
             )
+        self._compact_research_review_validator = Draft202012Validator(
+            _COMPACT_RESEARCH_REVIEW_SCHEMA
+        )
 
     @property
     def format_instruction(self) -> str:
@@ -232,6 +357,29 @@ class StructuredAnswerParser:
         if answer_mode is not GroundedAnswerMode.DEFAULT:
             return self._decode_research(value, expected_mode=answer_mode)
         return self._decode(value)
+
+    def parse_compact_research_review(self, text: str) -> StructuredResearchAnswerDraft:
+        try:
+            value = json.loads(text)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise StructuredOutputError("Compact Research output is not exact JSON") from exc
+        if not isinstance(value, dict):
+            raise StructuredOutputError("Compact Research output must be a JSON object")
+        try:
+            self._compact_research_review_validator.validate(value)
+        except ValidationError as exc:
+            logger.warning(
+                "qa_compact_research_validation_failed",
+                extra={
+                    "validation_path": ".".join(str(item) for item in exc.absolute_path),
+                    "schema_path": ".".join(str(item) for item in exc.absolute_schema_path),
+                    "validator": str(exc.validator),
+                },
+            )
+            raise StructuredOutputError(
+                "Model output does not match research-grounded-answer-compact-v1"
+            ) from exc
+        return _decode_compact_research_literature_review(value)
 
     def _decode(self, value: dict[str, Any]) -> StructuredQADraft:
         result_type = SuggestedResultType(value["result_type"])
@@ -346,6 +494,7 @@ class GroundedAnswerGenerator:
 
         responses: list[ChatResponse] = []
         request = self._initial_request(context, answer_mode=answer_mode)
+        compact_review_retry = False
         while len(responses) < self._profile.max_model_calls:
             await self._check_cancelled()
             response = await self._chat(request)
@@ -354,18 +503,36 @@ class GroundedAnswerGenerator:
             try:
                 if response.finish_reason not in {None, "stop"}:
                     raise StructuredOutputError("Model output did not finish normally")
-                draft = self._parser.parse(response.text, answer_mode=answer_mode)
-            except StructuredOutputError:
+                draft = (
+                    self._parser.parse_compact_research_review(response.text)
+                    if compact_review_retry
+                    else self._parser.parse(response.text, answer_mode=answer_mode)
+                )
+            except StructuredOutputError as exc:
+                logger.warning(
+                    "qa_structured_response_invalid",
+                    extra={
+                        "answer_mode": answer_mode.value,
+                        "compact_retry": compact_review_retry,
+                        "error_type": type(exc).__name__,
+                    },
+                )
                 if len(responses) == self._profile.max_model_calls:
-                    raise QAError(
+                    raise GenerationError(
                         QAErrorCode.STRUCTURED_RESPONSE_INVALID,
                         "The model returned an invalid structured response.",
+                        usage=_generation_usage(responses),
                     ) from None
-                request = self._repair_request(
-                    response.text,
-                    context=context,
-                    answer_mode=answer_mode,
+                request = (
+                    self._compact_research_request(context, answer_mode=answer_mode)
+                    if answer_mode is not GroundedAnswerMode.DEFAULT
+                    else self._repair_request(
+                        response.text,
+                        context=context,
+                        answer_mode=answer_mode,
+                    )
                 )
+                compact_review_retry = answer_mode is GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW
                 continue
 
             await self._check_cancelled()
@@ -375,13 +542,23 @@ class GroundedAnswerGenerator:
                     space_id=question.space_id,
                     evidence=evidence,
                 )
-            except StructuredOutputError:
+            except StructuredOutputError as exc:
+                logger.warning(
+                    "qa_research_materialization_invalid",
+                    extra={
+                        "answer_mode": answer_mode.value,
+                        "compact_retry": compact_review_retry,
+                        "error_type": type(exc).__name__,
+                    },
+                )
                 if len(responses) == self._profile.max_model_calls:
-                    raise QAError(
+                    raise GenerationError(
                         QAErrorCode.STRUCTURED_RESPONSE_INVALID,
                         "The model returned an invalid Research structure.",
+                        usage=_generation_usage(responses),
                     ) from None
-                request = self._citation_repair_request(context, answer_mode=answer_mode)
+                request = self._compact_research_request(context, answer_mode=answer_mode)
+                compact_review_retry = answer_mode is GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW
                 continue
             except QAError as exc:
                 if (
@@ -396,16 +573,12 @@ class GroundedAnswerGenerator:
                 result=result,
                 identity=self._identity,
                 verification=verification,
-                usage=GenerationUsage(
-                    model_calls=len(responses),
-                    repair_attempts=len(responses) - 1,
-                    input_tokens=sum(response.usage.input_tokens for response in responses),
-                    output_tokens=sum(response.usage.output_tokens for response in responses),
-                    model_latency_ms=sum(response.latency_ms for response in responses),
-                ),
+                usage=_generation_usage(responses),
             )
-        raise QAError(
-            QAErrorCode.STRUCTURED_RESPONSE_INVALID, "QA generation exhausted its budget."
+        raise GenerationError(
+            QAErrorCode.STRUCTURED_RESPONSE_INVALID,
+            "QA generation exhausted its budget.",
+            usage=_generation_usage(responses),
         )
 
     async def _chat(self, request: ChatRequest) -> ChatResponse:
@@ -677,6 +850,54 @@ class GroundedAnswerGenerator:
             max_tokens=self._profile.max_output_tokens,
         )
 
+    def _compact_research_request(
+        self,
+        context: ContextBundle,
+        *,
+        answer_mode: GroundedAnswerMode,
+    ) -> ChatRequest:
+        format_instruction = self._parser.format_instruction_for(answer_mode)
+        compact_instruction = (
+            ""
+            if answer_mode is not GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW
+            else "Return exactly one JSON object matching this compact recovery schema: "
+            + json.dumps(
+                _COMPACT_RESEARCH_REVIEW_SCHEMA,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        system = "\n".join(
+            (
+                *context.system_rules,
+                self._prompt_contract,
+                (
+                    "Use the compact recovery contract exactly as supplied below. Every paper "
+                    "brief must cite one distinct paper, and every matrix, theme, consensus, "
+                    "difference, and conflict item must cite evidence spanning at least two "
+                    "papers. Do not directly rank incompatible experimental conditions."
+                    if answer_mode is GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW
+                    else _answer_mode_instruction(answer_mode)
+                ),
+                compact_instruction or format_instruction,
+                "The previous response was truncated or structurally invalid. Regenerate the "
+                "complete JSON from the evidence below without repeating the invalid candidate. "
+                "Be concise: each text field must be at most 80 words. Preserve every required "
+                "field and valid cross-document Evidence coverage.",
+            )
+        )
+        user_sections = [f"<question>\n{context.question}\n</question>"]
+        user_sections.extend(item.rendered_block for item in context.evidence)
+        return ChatRequest(
+            messages=(
+                ChatMessage(ChatRole.SYSTEM, system),
+                ChatMessage(ChatRole.USER, "\n".join(user_sections)),
+            ),
+            temperature=self._profile.temperature,
+            max_tokens=self._profile.max_output_tokens,
+        )
+
 
 def _decode_claim(value: Any) -> StructuredClaimDraft:
     assert isinstance(value, dict)
@@ -876,6 +1097,140 @@ def _decode_research_literature_review(
     )
 
 
+def _decode_compact_research_literature_review(
+    value: dict[str, Any],
+) -> StructuredResearchAnswerDraft:
+    """Expand the bounded recovery contract into the normal publication draft."""
+    claims: list[StructuredClaimDraft] = []
+    brief_ids: list[str] = []
+    cross_document_ids: list[str] = []
+    labels: set[str] = set()
+    for index, raw in enumerate(_object_list(value["paper_briefs"]), 1):
+        label = str(raw["paper_label"]).strip()
+        if label.casefold() in labels:
+            raise StructuredOutputError("Research paper labels must be unique")
+        labels.add(label.casefold())
+        claim_id = f"paper-brief-{index}"
+        brief_ids.append(claim_id)
+        claims.append(
+            StructuredClaimDraft(
+                claim_id=claim_id,
+                text=("## Per-paper briefs\n\n" if index == 1 else "")
+                + f"### {label}\n\n{raw['text']}",
+                evidence_ids=tuple(_uuid_list(raw["evidence_ids"])),
+            )
+        )
+
+    for index, raw in enumerate(_object_list(value["matrix"]), 1):
+        claim_id = f"matrix-{index}"
+        cross_document_ids.append(claim_id)
+        header = (
+            "## Evidence matrix\n\n| Dimension | Synthesis | Comparability |\n|---|---|---|\n"
+            if index == 1
+            else ""
+        )
+        claims.append(
+            StructuredClaimDraft(
+                claim_id=claim_id,
+                text=(
+                    header + f"| {_escape_table(raw['dimension'])} | {_escape_table(raw['text'])} "
+                    f"| {raw['comparability']} |"
+                ),
+                evidence_ids=tuple(_uuid_list(raw["evidence_ids"])),
+            )
+        )
+
+    for index, raw in enumerate(_object_list(value["themes"]), 1):
+        claim_id = f"theme-{index}"
+        cross_document_ids.append(claim_id)
+        claims.append(
+            StructuredClaimDraft(
+                claim_id=claim_id,
+                text=("## Thematic review\n\n" if index == 1 else "")
+                + f"### {raw['title']}\n\n{raw['text']}",
+                evidence_ids=tuple(_uuid_list(raw["evidence_ids"])),
+            )
+        )
+
+    _append_research_section(
+        claims,
+        cross_document_ids,
+        value["consensus"],
+        prefix="consensus",
+        heading="Consensus",
+    )
+    _append_research_section(
+        claims,
+        cross_document_ids,
+        value["apparent_differences"],
+        prefix="apparent-difference",
+        heading="Condition-dependent apparent differences",
+    )
+    conflicts = _research_items(value["genuine_conflicts"])
+    if conflicts:
+        _append_research_section(
+            claims,
+            cross_document_ids,
+            value["genuine_conflicts"],
+            prefix="genuine-conflict",
+            heading="Genuine conflicts",
+        )
+    else:
+        all_brief_evidence = tuple(
+            dict.fromkeys(
+                evidence_id
+                for claim in claims
+                if claim.claim_id in brief_ids
+                for evidence_id in claim.evidence_ids
+            )
+        )
+        cross_document_ids.append("genuine-conflict-none")
+        claims.append(
+            StructuredClaimDraft(
+                claim_id="genuine-conflict-none",
+                text=(
+                    "## Genuine conflicts\n\n"
+                    "No genuine conflict is established by the selected evidence."
+                ),
+                evidence_ids=all_brief_evidence,
+            )
+        )
+
+    all_brief_evidence = tuple(
+        dict.fromkeys(
+            evidence_id
+            for claim in claims
+            if claim.claim_id in brief_ids
+            for evidence_id in claim.evidence_ids
+        )
+    )
+    gaps = "\n".join(f"- {item}" for item in _string_list(value["evidence_gaps"]))
+    cross_document_ids.append("evidence-gaps")
+    claims.append(
+        StructuredClaimDraft(
+            claim_id="evidence-gaps",
+            text=f"## Evidence gaps\n\n{gaps}",
+            evidence_ids=all_brief_evidence,
+        )
+    )
+    limitations = tuple(_string_list(value["limitations"]))
+    claims.append(
+        StructuredClaimDraft(
+            claim_id="review-limitations",
+            text="## Review limitations\n\n" + "\n".join(f"- {item}" for item in limitations),
+            evidence_ids=all_brief_evidence,
+        )
+    )
+    return StructuredResearchAnswerDraft(
+        text="\n\n".join(claim.text for claim in claims),
+        claims=tuple(claims),
+        limitations=limitations,
+        mode=GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW,
+        paper_brief_claim_ids=tuple(brief_ids),
+        cross_document_claim_ids=tuple(cross_document_ids),
+    )
+
+
 def _append_research_section(
     claims: list[StructuredClaimDraft],
     cross_document_ids: list[str],
@@ -935,7 +1290,9 @@ def _answer_mode_instruction(mode: GroundedAnswerMode) -> str:
             "consensus, apparent difference, and genuine conflict must cite evidence spanning at "
             "least two papers. Matrix observations must contain one entry per paper being "
             "synthesized. Never rank results across incompatible datasets, metrics, budgets, or "
-            "experimental settings; mark those rows conditionally_comparable or not_comparable."
+            "experimental settings; mark those rows conditionally_comparable or not_comparable. "
+            "Keep the JSON compact: use three to five matrix rows, two to four thematic sections, "
+            "at most three items in other lists, and at most 120 words in each text field."
         )
     return "Use the default grounded-answer structure."
 
@@ -984,6 +1341,16 @@ def _string_list(value: Any) -> list[str]:
     return [str(item) for item in value]
 
 
+def _generation_usage(responses: list[ChatResponse]) -> GenerationUsage:
+    return GenerationUsage(
+        model_calls=len(responses),
+        repair_attempts=max(0, len(responses) - 1),
+        input_tokens=sum(response.usage.input_tokens for response in responses),
+        output_tokens=sum(response.usage.output_tokens for response in responses),
+        model_latency_ms=sum(response.latency_ms for response in responses),
+    )
+
+
 def _uuid_list(value: Any) -> list[UUID]:
     assert isinstance(value, list)
     return [UUID(str(item)) for item in value]
@@ -1012,6 +1379,7 @@ def _insufficient_evidence_result(message: str) -> QAResult:
 
 __all__ = [
     "GenerationIdentity",
+    "GenerationError",
     "GenerationResult",
     "GenerationUsage",
     "GroundedAnswerGenerator",

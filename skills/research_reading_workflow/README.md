@@ -10,7 +10,9 @@ must contain distinct per-paper briefs, at least three matrix dimensions, at lea
 sections, consensus, condition-dependent differences, conflicts, evidence gaps, and limitations.
 Cross-paper synthesis must cite at least two pinned documents. Missing sections or invalid
 cross-document grounding use the single bounded repair attempt; an unrepaired structure is not
-published as a review.
+published as a review. A truncated or structurally invalid Research response is regenerated from
+the pinned evidence under compact section limits; the incomplete candidate is not copied into the
+repair prompt. Failed generation still records safe token, model-call, and repair counts.
 
 Topic-only requests first return at most eight safe labels and pause for confirmation. The Skill
 does not execute code, plan reproductions, validate hypotheses, or publish unsupported research
