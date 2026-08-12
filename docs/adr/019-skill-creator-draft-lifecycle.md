@@ -38,8 +38,10 @@ draft 状态与显式晋升路径。
   走既有 durable approval；`skill_validate` / `skill_run_eval` 声明 `READ_KNOWLEDGE`。
 - 工具始终注册进 assistant 循环（与 workspace 工具并存），handler 返回结构化、body-free
   payload，便于 agent 迭代而不暴露 Prompt/正文。
-- `skills/skill_creator/` 是 prompts-only skill（manifest v1，无 invocation，与 `assistant_agent`
-  一致）；激活后其指令进入 assistant 循环 active contexts，驱动六工具流程。
+- `skills/skill_creator/` 是 manifest v2 + `invocation`（`command: create-skill`，别名 `skill`，
+  `execution_mode: agent_loop`）。激活后其指令进入 assistant 循环 active contexts，且
+  `/create-skill` 命令提交的 turn 由 assistant 循环驱动（与 `/research` 同路径），用六个
+  creator 工具完成 scaffold → write → validate → eval → activate。
 
 ### 模式建议（Phase 6 前奏）
 
@@ -51,8 +53,9 @@ draft 状态与显式晋升路径。
 
 - draft 直接复用 `create_personal`：被拒，不完整包无法通过全量校验，且缺独立状态。
 - eval 状态持久化到 DB：被拒，门禁确定性可重放，落库反而引入陈旧状态；激活时重跑即可。
-- skill_creator 带 invocation 路由执行：被拒，其 flow 由 assistant 循环驱动，prompts-only
-  即满足引导，避免 `_execute_skill` 对非 QA 技能的误路由。
+- skill_creator 走 `projected` 执行模式：被拒，`_execute_skill` 对非 QA 技能会误路由到
+  Grounded QA 适配器；`agent_loop` 让 `/create-skill` 提交的 turn 直接由 assistant 循环
+  驱动，不会进入 `_execute_skill`。
 
 ## 后果
 

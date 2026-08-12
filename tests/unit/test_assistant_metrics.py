@@ -100,6 +100,9 @@ def test_operational_metrics_reject_untrusted_labels() -> None:
     with pytest.raises(ValueError, match="not allowlisted"):
         metrics.record_command("a user supplied command", matched=True)
 
+    # Skill Creator command (Phase 4) is allowlisted for metric recording.
+    metrics.record_command("create-skill", matched=True)
+
     with pytest.raises(ValueError, match="not allowlisted"):
         metrics.increment(
             "assistant.routing.decisions",

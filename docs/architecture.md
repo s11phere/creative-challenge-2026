@@ -10,10 +10,12 @@ current pinned identity. Historical Skill packages, prompt versions, version act
 rollback, cleanup APIs, and the `knowledge_qa` adapter have been removed; persisted Runs are not
 recovered through compatibility code.
 
-Phase 4 (Skill Creator) adds the prompts-only `skill_creator 1.0.0` to the assistant catalog's
-active contexts and six creator Tools to the autonomous loop. Personal-Skill drafts live under
-`PERSONAL_SKILLS_DIR/_drafts/<name>/` with an explicit `draft → 校验 → eval 门禁 → 人工确认 →
-active` lifecycle (ADR-019); their execution reuses the Grounded QA adapter path.
+Phase 4 (Skill Creator) adds `skill_creator 1.0.0`（manifest v2 + `invocation`，`command:
+create-skill`，`execution_mode: agent_loop`，alias `skill`）to the assistant catalog and six
+creator Tools to the autonomous loop. `/create-skill` submits a turn driven by the assistant
+loop (same path as `/research`). Personal-Skill drafts live under `PERSONAL_SKILLS_DIR/_drafts/
+<name>/` with an explicit `draft → 校验 → eval 门禁 → 人工确认 → active` lifecycle (ADR-019);
+their execution reuses the Grounded QA adapter path.
 
 The Web exposes only the Assistant conversation path. It has no v1 compatibility selector or Vite
 release controls. The `AutonomousAssistantLoopService` dispatches selected Skills through the same

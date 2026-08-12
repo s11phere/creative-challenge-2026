@@ -165,10 +165,11 @@ uv run python -c "from infrastructure.qa_execution import assistant_skill_regist
 个性化 Phase 4（Skill Creator，Path A）让用户经 Agent 引导创建/迭代个人 Skill，形成
 `draft → 校验 → eval 门禁 → 用户审批 → active` 生命周期：
 
-- `skills/skill_creator/` 是 prompts-only 的 creator skill（manifest v1，与 `assistant_agent`
-  一致），激活后其指令进入 assistant 循环 active contexts；assistant 循环始终注册六个
-  creator 工具（`skill_scaffold` / `skill_write` / `skill_validate` / `skill_run_eval` /
-  `skill_activate` / `skill_draft`），写类工具走既有 durable approval。
+- `skills/skill_creator/` 是 manifest v2 + `invocation`（`command: create-skill`，别名 `skill`，
+  `execution_mode: agent_loop`），激活后其指令进入 assistant 循环 active contexts；
+  `/create-skill` 命令提交的 turn 由 assistant 循环驱动（与 `/research` 同路径）。assistant
+  循环始终注册六个 creator 工具（`skill_scaffold` / `skill_write` / `skill_validate` /
+  `skill_run_eval` / `skill_activate` / `skill_draft`），写类工具走既有 durable approval。
 - 草稿存放于 `PERSONAL_SKILLS_DIR/_drafts/<name>/`（下划线前缀跳过 reload 扫描），
   CRUD + `/validate` + `/eval` + `/activate` 经 `/api/v1/skills/personal/drafts`；
   eval 门禁复用 Phase 1 的 `StructuralSkillEvalJudge` + case/check/报告类型，确定性、

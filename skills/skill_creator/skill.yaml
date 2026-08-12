@@ -1,4 +1,4 @@
-manifest_version: "1"
+manifest_version: "2"
 name: skill_creator
 version: 1.0.0
 description: Agent-guided creation and iteration of personal Skills (Phase 4, Path A).
@@ -23,3 +23,19 @@ prompts:
   - prompts/system.md
 evals:
   - evals/cases.jsonl
+invocation:
+  command: create-skill
+  aliases: [skill]
+  argument_hint: "<要创建的 Skill 名称或需求>"
+  trigger:
+    summary: "引导创建或迭代一个个人 Skill（draft → 校验 → eval 门禁 → 激活）"
+    when:
+      - "用户想新建、修改或固化一个个人 Skill"
+      - "用户提到 skill_creator / create_skill 命令"
+    avoid_when:
+      - "用户只是普通提问或检索知识"
+    examples:
+      - "帮我建一个总结会议纪要的 skill"
+      - "/create_skill 代码审查 skill"
+  input_mode: question
+  execution_mode: agent_loop
