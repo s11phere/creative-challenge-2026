@@ -3,9 +3,15 @@
 ## 2026-08-10 实现状态
 
 当前 Assistant 对话版本已完成临时工程契约。新的知识请求统一使用 `knowledge_agent 1.0.0`；
-五个活跃 Runtime Skill 与三个未激活的学习 Workflow 契约均只保留 `1.0.0`。旧版 Skill、旧 Prompt 和
+五个既有 Runtime Skill 保持 `1.0.0`；`research_reading_workflow 1.1.0` 已作为 provisional
+Agent Loop Skill 激活，另外两个学习 Workflow 契约仍未激活。旧版 Skill、旧 Prompt 和
 `knowledge_qa` 适配器已删除，不再提供回退恢复路径。Grounded Skill 结果只是参考材料，由一次独立的
 `ConversationFinalizer` 生成面向用户的 Assistant 消息，并且只发布一次。
+
+Research 的模型输出使用服务端 `research-grounded-answer-v2` 契约：单篇精读和多篇综述不再只依靠
+格式提示。多篇综述必须包含逐篇摘要、至少三行带引用证据矩阵、至少两个主题综合段，以及共识、条件差异、
+真实冲突、证据空白和局限；跨论文综合必须覆盖至少两个固定文档。不完整结构使用既有一次 repair 机会，
+仍不合格则不会作为综述发布。
 
 Web 会为每次 Skill 调用保留一个默认折叠的调用记录卡，即使调用完成、失败、取消或进入澄清状态也不会
 隐藏。调用记录卡和最终回答框在存在证据时均提供引用操作，并共享一个可关闭、相互排他的证据栏。
@@ -396,8 +402,9 @@ See
 security constraints.
 # 当前实现说明（2026-08-11）
 
-当前运行时只支持 Assistant 主路径和每个 Skill 的唯一固定版本 `1.0.0`。知识请求固定使用
-`knowledge_agent 1.0.0`；旧 Skill 目录、旧 Prompt、`knowledge_qa` 恢复适配器、Skill 激活/回滚/清理
-API 以及 Web 的兼容问答模式均已移除。`GET /api/v1/skills` 仅返回当前安装的只读 Skill 清单。
+当前运行时只支持 Assistant 主路径和每个 Skill 的唯一固定版本。既有 Skill 保持 `1.0.0`，
+`research_reading_workflow` 为 `1.1.0`。知识请求固定使用 `knowledge_agent 1.0.0`；旧 Skill 目录、
+旧 Prompt、`knowledge_qa` 恢复适配器、Skill 激活/回滚/清理 API 以及 Web 的兼容问答模式均已移除。
+`GET /api/v1/skills` 仅返回当前安装的只读 Skill 清单。
 
 下文的阶段记录保留历史背景；其中出现的旧版本、回滚开关和兼容入口不再是当前可用配置。

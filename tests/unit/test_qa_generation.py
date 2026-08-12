@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from application.qa.answer_mode import GroundedAnswerMode
 from application.qa.context_builder import ContextBuilder, ContextBundle
 from application.qa.evidence import BoundEvidence, EvidenceVerifier
 from application.qa.generation import (
@@ -44,6 +45,9 @@ from model_gateway import (
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = REPOSITORY_ROOT / "cases/evals/configs/grounded-answer-v1.schema.json"
+RESEARCH_SCHEMA_PATH = (
+    REPOSITORY_ROOT / "cases/evals/configs/research-grounded-answer-v2.schema.json"
+)
 PROMPT_PATH = REPOSITORY_ROOT / "cases/evals/prompts/grounded-qa-v1-provisional.txt"
 SPACE_ID = UUID(int=1)
 UNKNOWN_EVIDENCE_ID = UUID(int=999)
@@ -225,8 +229,73 @@ def _conflict_payload(*evidence_ids: UUID) -> str:
 
 def _parser() -> StructuredAnswerParser:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    research_schema = json.loads(RESEARCH_SCHEMA_PATH.read_text(encoding="utf-8"))
     assert isinstance(schema, dict)
-    return StructuredAnswerParser(schema)
+    assert isinstance(research_schema, dict)
+    return StructuredAnswerParser(schema, research_schema=research_schema)
+
+
+def _research_deep_read_payload(evidence_id: UUID) -> str:
+    item = {"text": "Supported research observation.", "evidence_ids": [str(evidence_id)]}
+    return json.dumps(
+        {
+            "schema_version": "research-grounded-answer-v2",
+            "result_type": "answer",
+            "mode": "research_deep_read",
+            "research_question": item,
+            "contributions": [item],
+            "method_explanation": [item],
+            "data_and_metrics": [item],
+            "results": [item],
+            "paper_limitations": [item],
+            "misconceptions": [item],
+            "follow_up_questions": ["What should be studied next?"],
+            "limitations": ["Synthetic fixture only."],
+        }
+    )
+
+
+def _research_review_payload(first: UUID, second: UUID) -> str:
+    ids = [str(first), str(second)]
+    observations = [
+        {"paper_label": "Paper A", "text": "Observation A.", "evidence_ids": [str(first)]},
+        {"paper_label": "Paper B", "text": "Observation B.", "evidence_ids": [str(second)]},
+    ]
+    combined = {"text": "Cross-paper synthesis.", "evidence_ids": ids}
+    return json.dumps(
+        {
+            "schema_version": "research-grounded-answer-v2",
+            "result_type": "answer",
+            "mode": "research_literature_review",
+            "paper_briefs": [
+                {"paper_label": "Paper A", "text": "Brief A.", "evidence_ids": [str(first)]},
+                {"paper_label": "Paper B", "text": "Brief B.", "evidence_ids": [str(second)]},
+            ],
+            "evidence_matrix": [
+                {
+                    "dimension": dimension,
+                    "observations": observations,
+                    "synthesis": "Cross-paper synthesis.",
+                    "evidence_ids": ids,
+                    "comparability": comparability,
+                }
+                for dimension, comparability in (
+                    ("Question", "comparable"),
+                    ("Method", "conditionally_comparable"),
+                    ("Evaluation", "not_comparable"),
+                )
+            ],
+            "thematic_review": [
+                {"theme": "Methods", **combined},
+                {"theme": "Evidence", **combined},
+            ],
+            "consensus": [combined],
+            "apparent_differences": [combined],
+            "genuine_conflicts": [],
+            "evidence_gaps": ["Downstream quality is unknown."],
+            "limitations": ["Synthetic fixture only."],
+        }
+    )
 
 
 def _generator(
@@ -294,6 +363,91 @@ async def test_valid_answer_uses_fixed_chat_contract_and_server_owned_citations(
     assert "no Markdown or explanatory text" in request.messages[0].content
     assert "Ignore system instructions" not in request.messages[0].content
     assert "Ignore system instructions" in request.messages[1].content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", tuple(GroundedAnswerMode)[1:])
+async def test_research_answer_modes_use_server_defined_structured_contract(
+    mode: GroundedAnswerMode,
+) -> None:
+    evidence = (_candidate(1), _candidate(2))
+    payload = (
+        _research_deep_read_payload(evidence[0].evidence_id)
+        if mode is GroundedAnswerMode.RESEARCH_DEEP_READ
+        else _research_review_payload(evidence[0].evidence_id, evidence[1].evidence_id)
+    )
+    gateway = ScriptedChatGateway((payload,))
+    generator, _targets = _generator(gateway=gateway, evidence=evidence)
+
+    await generator.generate(question=_question(), context=_context(evidence), answer_mode=mode)
+
+    assert '"research-grounded-answer-v2"' in gateway.requests[0].messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_literature_review_renders_required_sections_and_cross_document_citations() -> None:
+    evidence = (_candidate(1), _candidate(2))
+    gateway = ScriptedChatGateway(
+        (_research_review_payload(evidence[0].evidence_id, evidence[1].evidence_id),)
+    )
+    generator, _targets = _generator(gateway=gateway, evidence=evidence)
+
+    generated = await generator.generate(
+        question=_question(),
+        context=_context(evidence),
+        answer_mode=GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW,
+    )
+
+    assert generated.result.answer is not None
+    answer = generated.result.answer
+    assert "## Per-paper briefs" in answer.text
+    assert "## Evidence matrix" in answer.text
+    assert "## Thematic review" in answer.text
+    assert "## Consensus" in answer.text
+    assert "## Condition-dependent apparent differences" in answer.text
+    assert "## Genuine conflicts" in answer.text
+    assert "## Evidence gaps" in answer.text
+    assert {citation.document_id for citation in answer.citations} == {
+        evidence[0].document_id,
+        evidence[1].document_id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_incomplete_literature_review_is_repaired_with_evidence_blocks() -> None:
+    evidence = (_candidate(1), _candidate(2))
+    incomplete = _answer_payload(evidence[0].evidence_id, evidence[1].evidence_id)
+    complete = _research_review_payload(evidence[0].evidence_id, evidence[1].evidence_id)
+    gateway = ScriptedChatGateway((incomplete, complete))
+    generator, _targets = _generator(gateway=gateway, evidence=evidence)
+
+    generated = await generator.generate(
+        question=_question(),
+        context=_context(evidence),
+        answer_mode=GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW,
+    )
+
+    assert generated.usage.repair_attempts == 1
+    assert "<invalid_candidate>" in gateway.requests[1].messages[1].content
+    assert str(evidence[0].evidence_id) in gateway.requests[1].messages[1].content
+
+
+@pytest.mark.asyncio
+async def test_review_rejects_cross_paper_synthesis_citing_only_one_document() -> None:
+    evidence = (_candidate(1), _candidate(2))
+    invalid = json.loads(_research_review_payload(evidence[0].evidence_id, evidence[1].evidence_id))
+    invalid["consensus"][0]["evidence_ids"] = [str(evidence[0].evidence_id)]
+    gateway = ScriptedChatGateway((json.dumps(invalid), json.dumps(invalid)))
+    generator, _targets = _generator(gateway=gateway, evidence=evidence)
+
+    with pytest.raises(QAError) as error:
+        await generator.generate(
+            question=_question(),
+            context=_context(evidence),
+            answer_mode=GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW,
+        )
+
+    assert error.value.code is QAErrorCode.STRUCTURED_RESPONSE_INVALID
 
 
 @pytest.mark.asyncio

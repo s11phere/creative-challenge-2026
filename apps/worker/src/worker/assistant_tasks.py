@@ -429,6 +429,20 @@ async def _autonomous_loop_service(
             if summary_context is not None
             else knowledge_tool_skill
         )
+    research_context = next(
+        (
+            context
+            for context in active_skill_contexts
+            if context.name == "research_reading_workflow"
+        ),
+        None,
+    )
+    if research_context is not None:
+        research_skill = ToolRef(research_context.name, research_context.version)
+        if tools.research_discover_tool is not None:
+            tool_skill_refs[tools.research_discover_tool.ref] = research_skill
+        if tools.research_prepare_tool is not None:
+            tool_skill_refs[tools.research_prepare_tool.ref] = research_skill
     return AutonomousAssistantLoopService(
         runs=runs,
         messages=qa_repository,

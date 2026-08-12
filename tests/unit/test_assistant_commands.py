@@ -42,7 +42,12 @@ class FakeSkillCatalog:
         return ()
 
 
-def skill(*, name: str = "knowledge_agent", command: str = "ask") -> SkillInvocationView:
+def skill(
+    *,
+    name: str = "knowledge_agent",
+    command: str = "ask",
+    execution_mode: str = "projected",
+) -> SkillInvocationView:
     return SkillInvocationView(
         name=name,
         version="0.3.0",
@@ -52,6 +57,7 @@ def skill(*, name: str = "knowledge_agent", command: str = "ask") -> SkillInvoca
         description="Synthetic Skill.",
         argument_hint="<question>",
         input_mode="question",
+        execution_mode=execution_mode,
     )
 
 
@@ -139,6 +145,47 @@ async def test_explicit_skill_dispatch_reuses_turn_port_and_command_selection() 
     message = await repository.get_message(result.run.user_message_id)
     assert message is not None
     assert message.content == "/ask Synthetic question."
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_skill_command_stays_an_assistant_turn_without_projection() -> None:
+    repository = InMemoryGroundedQARepository()
+    conversation = ConversationRecord(
+        conversation_id=UUID(int=605), space_id=UUID(int=606), owner_id="synthetic-user"
+    )
+    await repository.create_conversation(conversation)
+    research = skill(
+        name="research_reading_workflow",
+        command="research",
+        execution_mode="agent_loop",
+    )
+    catalog = AssistantCommandCatalog(FakeSkillCatalog(research))
+
+    class UnexpectedInvoker:
+        catalog = FakeSkillCatalog(research)
+
+        async def invoke(self, *_args: object, **_kwargs: object) -> ConversationRun:
+            raise AssertionError("agent_loop commands must not use Skill projection")
+
+    service = AssistantCommandService(
+        catalog=catalog,
+        parser=AssistantCommandParser(catalog),
+        turns=ConversationRunService(conversations=repository, runs=repository),
+        runs=repository,
+        conversations=repository,
+        qa=repository,
+        skill_invoker=UnexpectedInvoker(),
+    )
+
+    result = await service.invoke_skill(
+        conversation.conversation_id,
+        service.parser.parse("/research Paper A"),
+        idempotency_key="research-command",
+    )
+
+    assert result.run is not None
+    assert result.run.run_kind.value == "assistant_turn"
+    assert result.run.selection_source is ConversationRunSelectionSource.COMMAND
 
 
 @pytest.mark.asyncio

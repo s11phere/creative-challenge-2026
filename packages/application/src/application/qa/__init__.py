@@ -1,5 +1,6 @@
 """Provisional grounded QA application services."""
 
+from .answer_mode import GroundedAnswerMode
 from .citation_resolution import (
     CitationResolutionPort,
     PublishedCitationApplicationPort,
@@ -96,6 +97,7 @@ __all__ = [
     "GenerationResult",
     "GenerationUsage",
     "GroundedAnswerGenerator",
+    "GroundedAnswerMode",
     "GroundedQAApplicationPort",
     "GroundedQAExecutionProfile",
     "GroundedQAService",

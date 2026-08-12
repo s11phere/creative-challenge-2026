@@ -126,6 +126,7 @@ def _active_skill_versions() -> dict[str, str]:
         "summarize_document": "1.0.0",
         "compare_sources": "1.0.0",
         "create_review_cards": "1.0.0",
+        "research_reading_workflow": "1.1.0",
     }
 
 
@@ -201,6 +202,7 @@ def create_app(
                 "summarize_document",
                 "compare_sources",
                 "create_review_cards",
+                "research_reading_workflow",
             }
         ),
     )

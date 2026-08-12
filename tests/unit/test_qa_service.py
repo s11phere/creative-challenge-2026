@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from application.qa.answer_mode import GroundedAnswerMode
 from application.qa.context_builder import ContextBuilder
 from application.qa.evidence import EvidenceBindingService, EvidenceVerifier
 from application.qa.generation import GroundedAnswerGenerator, StructuredAnswerParser
@@ -386,6 +387,26 @@ async def test_comparison_answer_requires_citations_from_two_sources() -> None:
     assert refused.result is not None
     assert refused.result.refusal is not None
     assert refused.result.refusal.code.value == "REFUSED_INSUFFICIENT_EVIDENCE"
+
+
+@pytest.mark.asyncio
+async def test_literature_review_mode_requires_citations_from_two_sources_before_publication() -> (
+    None
+):
+    profile = _profile()
+    service = _service(StaticSearchService(_search_result()))
+    _conversation, run_id = await _submitted_run(service, profile)
+
+    refused = await service.execute(
+        run_id,
+        profile=profile,
+        agent_plan=AgentRetrievalPlan(answer_mode=GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW),
+    )
+
+    assert refused.status.value == "refused"
+    assert refused.result is not None
+    assert refused.result.refusal is not None
+    assert "at least two selected papers" in refused.result.refusal.message
 
 
 @pytest.mark.asyncio

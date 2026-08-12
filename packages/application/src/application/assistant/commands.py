@@ -64,6 +64,7 @@ class CommandDescriptor:
     argument_hint: str
     input_mode: str
     skill_name: str | None = None
+    execution_mode: str = "projected"
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -223,6 +224,7 @@ class AssistantCommandCatalog:
             argument_hint=item.argument_hint,
             input_mode=item.input_mode,
             skill_name=item.name,
+            execution_mode=item.execution_mode,
         )
 
 
@@ -527,6 +529,12 @@ class AssistantCommandService:
                 selection_source=ConversationRunSelectionSource.COMMAND,
             )
         )
+        if descriptor.execution_mode == "agent_loop":
+            return CommandExecutionResult(
+                command=descriptor.name,
+                status=run.status.value,
+                run=run,
+            )
         if (
             run.run_kind in {ConversationRunKind.GROUNDED_QA, ConversationRunKind.SKILL}
             and run.skill is not None

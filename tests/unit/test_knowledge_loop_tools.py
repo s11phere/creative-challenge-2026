@@ -8,11 +8,17 @@ from uuid import UUID
 import pytest
 from agent_runtime import AgentLoopExecutor, LLMDecision, LLMDecisionAction, ToolExecutionContext
 from agent_runtime.skills import PinnedSkill
+from application.qa import GroundedAnswerMode
 from application.qa.profile import QAPlanningProfileV1
-from application.qa.service import GroundedQAApplicationPort, GroundedQAExecutionProfile
+from application.qa.service import (
+    AgentRetrievalPlan,
+    GroundedQAApplicationPort,
+    GroundedQAExecutionProfile,
+)
 from application.skills import KnowledgeLoopTools, KnowledgeLoopToolsConfig
 from domain.agent_loop import AgentLoopState, AgentLoopTask, AgentLoopToolObservation
 from domain.agent_runtime import AgentRun, AgentRunContext, RunBudget, ToolPermission
+from domain.conversation_run import ResourceCandidate
 from domain.grounded_qa import (
     Citation,
     Claim,
@@ -138,6 +144,9 @@ class FakeGroundedQA:
 @dataclass
 class FakeResolvedResource:
     scope: QARetrievalScope
+    candidate: ResourceCandidate = ResourceCandidate(
+        "candidate:paper", "document", "Synthetic Paper"
+    )
 
 
 class FakeResourceResolver:
@@ -165,6 +174,29 @@ class FakeResourceResolver:
                 document_ids=frozenset({DOCUMENT_ID}),
                 version_ids=frozenset({VERSION_ID}),
             )
+        )
+
+    async def describe_documents(
+        self, *, space_id: UUID, document_ids: tuple[UUID, ...], limit: int = 8
+    ) -> tuple[object, ...]:
+        assert space_id == SPACE_ID
+        assert DOCUMENT_ID in document_ids
+        assert limit == 8
+        return (FakeResolvedResource(QARetrievalScope()),)
+
+
+class MultiPaperResolver(FakeResourceResolver):
+    async def resolve(self, *, space_id: UUID, resource_type: str, reference: str) -> object:
+        assert space_id == SPACE_ID
+        assert resource_type == "document"
+        index = 1 if reference == "Paper A" else 2
+        return FakeResolvedResource(
+            QARetrievalScope(
+                source_ids=frozenset({UUID(int=30 + index)}),
+                document_ids=frozenset({UUID(int=40 + index)}),
+                version_ids=frozenset({UUID(int=50 + index)}),
+            ),
+            ResourceCandidate(f"candidate:paper-{index}", "document", reference),
         )
 
 
@@ -364,6 +396,118 @@ async def test_document_summary_reports_ambiguous_resource_for_actionable_clarif
     assert output["status"] == "ambiguous"
     assert output["candidate_labels"] == ["CLAUDE.md"]
     assert output["recommended_next"] == "clarify"
+
+
+@pytest.mark.asyncio
+async def test_research_discovery_returns_only_bounded_safe_labels() -> None:
+    resolver = FakeResourceResolver()
+    search = FakeSearchService()
+    adapter = KnowledgeLoopTools(
+        qa=cast(GroundedQAApplicationPort, FakeGroundedQA()),
+        search=search,
+        config=KnowledgeLoopToolsConfig(
+            profile=execution_profile(),
+            versions=versions(),
+            tool_version="1.1.0",
+            resource_resolver=resolver,
+        ),
+    )
+
+    output = await adapter.research_discover({"topic": "synthetic topic"}, tool_context())
+
+    assert output["candidate_labels"] == ["Synthetic Paper"]
+    assert output["candidate_count"] == 1
+    assert output["recommended_next"] == "clarify"
+    assert str(DOCUMENT_ID) not in json.dumps(output)
+    assert "private source text" not in json.dumps(output)
+
+
+@pytest.mark.asyncio
+async def test_research_review_pins_two_documents_and_sets_server_answer_mode() -> None:
+    resolver = MultiPaperResolver()
+    search = FakeSearchService()
+    qa = FakeGroundedQA()
+
+    async def ensure_run(_context: ToolExecutionContext, scope: QARetrievalScope) -> QARunRecord:
+        assert len(scope.document_ids) == 2
+        return QARunRecord(
+            run_id=RUN_ID,
+            attempt=QAAttempt(run_id=RUN_ID),
+            conversation_id=UUID(int=21),
+            question_message_id=UUID(int=22),
+            space_id=SPACE_ID,
+            caller_id="synthetic-user",
+            idempotency_key="research",
+            versions=versions(),
+            retrieval_scope=scope,
+            status=QAStatus.QUEUED,
+        )
+
+    adapter = KnowledgeLoopTools(
+        qa=cast(GroundedQAApplicationPort, qa),
+        search=search,
+        config=KnowledgeLoopToolsConfig(
+            profile=execution_profile(),
+            versions=versions(),
+            tool_version="1.1.0",
+            resource_resolver=resolver,
+        ),
+        ensure_qa_run=ensure_run,
+    )
+
+    prepared = await adapter.research_prepare(
+        {"mode": "literature_review", "document_references": ["Paper A", "Paper B"]},
+        tool_context(),
+    )
+    await adapter.knowledge_inspect({}, tool_context())
+    await adapter.grounded_answer({}, tool_context())
+
+    assert prepared["mode"] == "research_literature_review"
+    assert prepared["selected_source_count"] == 2
+    assert len(search.calls) == 3
+    plan = qa.agent_plans[0]
+    assert isinstance(plan, AgentRetrievalPlan)
+    assert plan.answer_mode is GroundedAnswerMode.RESEARCH_LITERATURE_REVIEW
+
+
+@pytest.mark.asyncio
+async def test_research_prepare_does_not_verify_a_queued_qa_run_before_inspection() -> None:
+    resolver = FakeResourceResolver()
+
+    async def ensure_run(_context: ToolExecutionContext, scope: QARetrievalScope) -> QARunRecord:
+        return QARunRecord(
+            run_id=RUN_ID,
+            attempt=QAAttempt(run_id=RUN_ID),
+            conversation_id=UUID(int=21),
+            question_message_id=UUID(int=22),
+            space_id=SPACE_ID,
+            caller_id="synthetic-user",
+            idempotency_key="research-queued",
+            versions=versions(),
+            retrieval_scope=scope,
+            status=QAStatus.QUEUED,
+        )
+
+    adapter = KnowledgeLoopTools(
+        qa=cast(GroundedQAApplicationPort, FakeGroundedQA()),
+        search=FakeSearchService(),
+        config=KnowledgeLoopToolsConfig(
+            profile=execution_profile(),
+            versions=versions(),
+            tool_version="1.1.0",
+            resource_resolver=resolver,
+        ),
+        ensure_qa_run=ensure_run,
+    )
+    await adapter.research_prepare(
+        {"mode": "deep_read", "document_references": ["Synthetic Paper"]}, tool_context()
+    )
+    state = AgentLoopState.accepted(AgentLoopTask("Deep-read Synthetic Paper."))
+    requested = LLMDecision(
+        LLMDecisionAction.CALL_TOOL, tool_name="knowledge_inspect", arguments={}
+    )
+
+    assert adapter.decision_policy(runtime_run(), state, requested) is requested
 
 
 @pytest.mark.asyncio

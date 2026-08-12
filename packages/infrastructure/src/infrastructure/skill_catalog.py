@@ -85,6 +85,7 @@ class FileSystemSkillCatalog(SkillCatalogPort):
                     description=invocation.trigger_summary,
                     argument_hint=invocation.argument_hint,
                     input_mode=invocation.input_mode,
+                    execution_mode=invocation.execution_mode,
                     trigger_when=invocation.trigger_when,
                     trigger_avoid_when=invocation.trigger_avoid_when,
                     trigger_examples=invocation.trigger_examples,

@@ -165,6 +165,7 @@ SKILL_MANIFEST_SCHEMA: dict[str, JSONValue] = {
                     },
                 },
                 "input_mode": {"enum": ["none", "question", "document", "sources"]},
+                "execution_mode": {"enum": ["projected", "agent_loop"]},
             },
         },
     },
@@ -227,6 +228,7 @@ class SkillInvocation:
     trigger_avoid_when: tuple[str, ...]
     trigger_examples: tuple[str, ...]
     input_mode: str
+    execution_mode: str = "projected"
 
     @property
     def commands(self) -> tuple[str, ...]:
@@ -287,6 +289,7 @@ def _parse_invocation(value: dict[str, Any]) -> SkillInvocation:
         trigger_avoid_when=tuple(cast(list[str], trigger["avoid_when"])),
         trigger_examples=examples,
         input_mode=cast(str, value["input_mode"]),
+        execution_mode=cast(str, value.get("execution_mode", "projected")),
     )
 
 

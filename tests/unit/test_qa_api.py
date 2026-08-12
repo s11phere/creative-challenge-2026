@@ -61,6 +61,7 @@ def test_active_skill_versions_exclude_legacy_recovery_package() -> None:
         "summarize_document": "1.0.0",
         "compare_sources": "1.0.0",
         "create_review_cards": "1.0.0",
+        "research_reading_workflow": "1.1.0",
     }
 
 
@@ -79,6 +80,47 @@ def test_fake_assistant_harness_probes_a_chinese_named_subject_before_artifact_w
         "action": "call_tool",
         "tool_name": "knowledge_search",
         "arguments": {"query": "介绍一下 omnistudio 的主要模块"},
+    }
+
+
+def test_fake_assistant_harness_routes_research_topic_to_safe_discovery() -> None:
+    decision = _assistant_loop_decision(
+        json.dumps(
+            {
+                "input": {"question": "/research 图神经网络鲁棒性文献综述"},
+                "state": {"observations": []},
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    assert decision == {
+        "action": "call_tool",
+        "tool_name": "research_discover",
+        "arguments": {"topic": "图神经网络鲁棒性文献综述"},
+    }
+
+
+def test_fake_assistant_harness_routes_an_explicit_filename_to_deep_read() -> None:
+    decision = _assistant_loop_decision(
+        json.dumps(
+            {
+                "input": {
+                    "question": "/research 请精读 research-workflow-paper-a.md，面向本科生。"
+                },
+                "state": {"observations": []},
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    assert decision == {
+        "action": "call_tool",
+        "tool_name": "research_prepare",
+        "arguments": {
+            "mode": "deep_read",
+            "document_references": ["research-workflow-paper-a.md"],
+        },
     }
 
 
@@ -288,6 +330,7 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
         "create_review_cards",
         "knowledge_agent",
         "summarize_document",
+        "research_reading_workflow",
     }
     payload = next(item for item in listed.json() if item["name"] == "knowledge_agent")
     assert payload["version"] == "1.0.0"

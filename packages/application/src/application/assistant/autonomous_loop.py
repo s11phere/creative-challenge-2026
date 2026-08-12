@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from importlib.resources import files
 from typing import Protocol, cast
 from uuid import UUID, uuid4
@@ -47,7 +47,7 @@ from domain.qa_persistence import MessageRecord, MessageRole, QARunRecord
 from model_gateway import ModelGateway
 
 from .context import ConversationContextService
-from .finalization import ConversationFinalizer, FinalizationInput, grounded_material
+from .finalization import ConversationFinalizer
 from .metrics import AssistantMetrics
 
 _CONTRACT_ROOT = files("application.assistant").joinpath("contracts")
@@ -100,7 +100,7 @@ class AssistantConversationLoopFinalizer:
         state: AgentLoopState,
         input_data: Mapping[str, JSONValue],
     ) -> dict[str, JSONValue]:
-        del task
+        del task, input_data
         parent = await self._runs.get_conversation_run(run.context.run_id)
         if parent is None:
             raise NodeExecutionError(
@@ -129,30 +129,14 @@ class AssistantConversationLoopFinalizer:
                     RunErrorCategory.SCHEMA,
                     "Grounded QA finalization is unavailable.",
                 )
-            question = input_data.get("question")
-            fallback = _qa_result_text(qa_run)
-            if not isinstance(question, str) or fallback is None:
-                raise NodeExecutionError(
-                    "RUN_KNOWLEDGE_FINALIZATION_REQUIRED",
-                    RunErrorCategory.SCHEMA,
-                    "Grounded QA finalization material is unavailable.",
-                )
-            if self._conversation_finalizer is None:
-                raise NodeExecutionError(
-                    "RUN_KNOWLEDGE_FINALIZATION_REQUIRED",
-                    RunErrorCategory.INTERNAL,
-                    "Grounded QA final answer writer is unavailable.",
-                )
-            published = await self._conversation_finalizer.execute(
-                replace(parent, usage=usage),
-                input=FinalizationInput(
-                    question=question,
-                    skill_result=grounded_material(qa_run, fallback),
-                    fallback_content=fallback,
-                    refused=qa_run.status is QAStatus.REFUSED,
-                ),
+            published = await self._runs.publish_existing_skill_result(
+                run_id=parent.run_id,
+                message_id=qa_run.answer_message_id,
+                usage=usage,
+                model_identity=self._model_identity,
+                refused=qa_run.status is QAStatus.REFUSED,
             )
-            return {"status": published.status.value, "publication": "grounded_qa_finalized"}
+            return {"status": published.status.value, "publication": "grounded_qa"}
         if decision.action.value == "clarify":
             clarified = await self._runs.publish_clarification(
                 run_id=parent.run_id,
@@ -591,19 +575,9 @@ def _grounded_finalization_ready(state: AgentLoopState) -> bool:
     )
 
 
-def _qa_result_text(qa_run: QARunRecord) -> str | None:
-    result = qa_run.result
-    if result is None:
-        return None
-    if result.answer is not None:
-        return result.answer.text
-    if result.refusal is not None:
-        return result.refusal.message
-    return None
-
-
 _INTERNAL_CLARIFICATION_MARKERS = re.compile(
-    r"(?:\btool\b|knowledge_search|knowledge_inspect|summarize_document|"
+    r"(?:\btool\b|knowledge_search|knowledge_inspect|summarize_document|research_discover|"
+    r"research_prepare|"
     r"grounded_answer|verify_answer|finalize_answer|\bRUN_[A-Z_]+\b|sha256:|<[^>]+>)",
     re.IGNORECASE,
 )
@@ -734,18 +708,49 @@ def _workspace_artifact_path(goal: str, used_paths: set[str]) -> str:
 def _clarification_message(decision: LLMDecision, state: AgentLoopState) -> str:
     """Return a useful server-authored prompt without leaking runtime vocabulary."""
     for observation in reversed(state.observations):
+        if observation.tool_name == "research_discover" and isinstance(
+            observation.model_output, dict
+        ):
+            labels = observation.model_output.get("candidate_labels")
+            if isinstance(labels, list):
+                safe_labels = [
+                    value.strip()[:280]
+                    for value in labels[:8]
+                    if isinstance(value, str) and value.strip()
+                ]
+                if safe_labels:
+                    return "请从以下候选论文中确认 2–8 篇用于综述：" + "、".join(safe_labels) + "。"
+            return "当前 Space 没有找到足够的候选论文，请提供更具体的主题或论文名称。"
+        if observation.tool_name == "research_prepare" and isinstance(
+            observation.model_output, dict
+        ):
+            research_status = observation.model_output.get("status")
+            research_labels = observation.model_output.get("candidate_labels")
+            safe_labels = (
+                [
+                    value.strip()[:280]
+                    for value in research_labels[:8]
+                    if isinstance(value, str) and value.strip()
+                ]
+                if isinstance(research_labels, list)
+                else []
+            )
+            if research_status == "ambiguous" and safe_labels:
+                return "论文名称存在歧义，请明确选择：" + "、".join(safe_labels) + "。"
+            if research_status in {"ambiguous", "not_found"}:
+                return "未能固定全部论文的当前已发布版本，请提供准确的论文名称。"
         if observation.tool_name != "summarize_document" or not isinstance(
             observation.model_output, dict
         ):
             continue
-        output = cast(dict[str, object], observation.model_output)
-        status = output.get("status")
-        if status == "ambiguous":
-            labels = output.get("candidate_labels")
-            if isinstance(labels, list):
+        summary_output = cast(dict[str, object], observation.model_output)
+        summary_status = summary_output.get("status")
+        if summary_status == "ambiguous":
+            summary_labels = summary_output.get("candidate_labels")
+            if isinstance(summary_labels, list):
                 safe_labels = [
                     value.strip()[:280]
-                    for value in labels[:3]
+                    for value in summary_labels[:3]
                     if isinstance(value, str) and value.strip()
                 ]
                 if safe_labels:
@@ -755,12 +760,12 @@ def _clarification_message(decision: LLMDecision, state: AgentLoopState) -> str:
                         + "."
                     )
             return "More than one published document matches. Please provide a more specific name."
-        if status == "not_found":
+        if summary_status == "not_found":
             return (
                 "I could not find that published document in this workspace. "
                 "Please provide its exact name."
             )
-        if status == "unavailable":
+        if summary_status == "unavailable":
             return "Please provide a published document name available in this workspace."
     reason = " ".join((decision.reason or "").split())
     if reason and len(reason) <= 1_000 and not _INTERNAL_CLARIFICATION_MARKERS.search(reason):

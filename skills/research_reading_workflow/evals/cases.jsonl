@@ -1,4 +1,6 @@
-{"case_id":"research-reading-source-screening","scenario":"normal","expected_next_action":"select_sources","fixture":"synthetic_only"}
-{"case_id":"research-reading-incompatible-results","scenario":"comparison_boundary","expected":"limitations_preserved","fixture":"synthetic_only"}
-{"case_id":"research-reading-unsupported-gap","scenario":"insufficient_evidence","expected":"unsupported_speculation_not_promoted","fixture":"synthetic_only"}
-{"case_id":"research-reading-resume-observation","scenario":"resume","expected":"user_observation_separate_from_citation","fixture":"synthetic_only"}
+{"case_id":"research-deep-read-one-paper","scenario":"normal","mode":"deep_read","expected":"structure_and_teaching_with_citations","fixture":"synthetic_only"}
+{"case_id":"research-review-two-papers","scenario":"normal","mode":"literature_review","expected":"matrix_and_thematic_review","fixture":"synthetic_only"}
+{"case_id":"research-topic-confirmation","scenario":"clarification","expected":"safe_labels_only_max_8","fixture":"synthetic_only"}
+{"case_id":"research-review-source-shortage","scenario":"insufficient_resources","expected":"clarify_or_refuse","fixture":"synthetic_only"}
+{"case_id":"research-incompatible-results","scenario":"comparison_boundary","expected":"not_ranked","fixture":"synthetic_only"}
+{"case_id":"research-recovery-single-final","scenario":"resume","expected":"one_final_message","fixture":"synthetic_only"}

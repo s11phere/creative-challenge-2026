@@ -66,6 +66,10 @@ class ResourceResolutionPort(Protocol):
         self, *, space_id: UUID, resource_type: str, candidate_id: str
     ) -> ResolvedResource: ...
 
+    async def describe_documents(
+        self, *, space_id: UUID, document_ids: tuple[UUID, ...], limit: int = 8
+    ) -> tuple[ResolvedResource, ...]: ...
+
 
 _INTERNAL_ID = re.compile(r"(?:[0-9a-f]{32,64}|[0-9a-f]{8}-[0-9a-f-]{27,})", re.IGNORECASE)
 
@@ -142,6 +146,23 @@ class NaturalLanguageResourceResolver(ResourceResolutionPort):
             ResourceResolutionErrorCode.NOT_FOUND,
             "The selected resource is no longer available in the current Space.",
         )
+
+    async def describe_documents(
+        self, *, space_id: UUID, document_ids: tuple[UUID, ...], limit: int = 8
+    ) -> tuple[ResolvedResource, ...]:
+        if not 1 <= limit <= 8:
+            raise ValueError("Document description limit must be between 1 and 8")
+        current = await self._current_resources(space_id=space_id, resource_type="document")
+        by_id = {
+            next(iter(item.scope.document_ids)): item
+            for item in current
+            if len(item.scope.document_ids) == 1
+        }
+        return tuple(
+            by_id[document_id]
+            for document_id in dict.fromkeys(document_ids)
+            if document_id in by_id
+        )[:limit]
 
     async def _current_resources(
         self, *, space_id: UUID, resource_type: str
@@ -222,7 +243,8 @@ def _document_label(document: Document) -> str:
 
 
 def _safe_label(value: str) -> str:
-    return " ".join(value.split())[:280]
+    normalized = " ".join(value.split())[:280]
+    return "Untitled resource" if _INTERNAL_ID.search(normalized) else normalized
 
 
 def _normalize(value: str) -> str:

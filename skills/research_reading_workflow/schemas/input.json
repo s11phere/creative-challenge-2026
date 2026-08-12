@@ -4,14 +4,11 @@
   "additionalProperties": false,
   "required": ["question"],
   "properties": {
-    "question": {"type": "string", "minLength": 1, "maxLength": 4000},
-    "research_goal": {"type": "string", "minLength": 1, "maxLength": 4000},
-    "deliverable_kind": {"enum": ["introductory_survey", "focused_review", "reproduction", "topic_discovery", "combined"]},
-    "resource_reference": {"type": "string", "minLength": 1, "maxLength": 2000},
-    "time_budget": {"type": "object", "additionalProperties": false, "properties": {"hours": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000}, "deadline": {"type": "string", "format": "date-time"}}},
-    "selected_sources": {"type": "array", "maxItems": 100, "items": {"type": "string", "minLength": 1, "maxLength": 500}},
-    "reading_feedback": {"type": "array", "maxItems": 200, "items": {"type": "object", "additionalProperties": false, "required": ["source_label", "action"], "properties": {"source_label": {"type": "string", "minLength": 1, "maxLength": 500}, "action": {"enum": ["continue", "skip", "question"]}, "note": {"type": "string", "maxLength": 4000}}}},
-    "reproduction_constraints": {"type": "object", "additionalProperties": false, "properties": {"compute": {"type": "string", "maxLength": 1000}, "data": {"type": "string", "maxLength": 1000}, "software": {"type": "string", "maxLength": 1000}}},
-    "experiment_observations": {"type": "array", "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["observation"], "properties": {"observation": {"type": "string", "minLength": 1, "maxLength": 4000}, "reported_at": {"type": "string", "format": "date-time"}}}}
+    "question": {"type": "string", "minLength": 1, "maxLength": 12000},
+    "mode": {"enum": ["auto", "deep_read", "literature_review"]},
+    "topic": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "document_references": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 280}},
+    "focus": {"type": "string", "maxLength": 1000},
+    "audience_level": {"const": "undergraduate", "default": "undergraduate"}
   }
 }
