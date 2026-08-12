@@ -85,13 +85,55 @@ describe('assistant conversation workspace', () => {
     const composer = await screen.findByRole('combobox', { name: '消息' })
     fireEvent.change(composer, { target: { value: '/su' } })
 
-    expect(await screen.findByRole('listbox', { name: '可用指令' })).toBeInTheDocument()
+    expect(await screen.findByRole('listbox', { name: '指令与技能' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: /\/summarize/ })).toBeInTheDocument()
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' })
 
     expect(composer).toHaveValue('/summarize ')
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'LLM Agent' })).not.toBeInTheDocument()
+  })
+
+  it('通过入口按钮按“指令”和“技能”分组展示目录，选择后只插入内容', async () => {
+    const fetchMock = baseFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox', { name: '消息' })
+    const trigger = screen.getByRole('button', { name: '指令与技能' })
+    fireEvent.click(trigger)
+
+    expect(screen.getByRole('listbox', { name: '指令与技能' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '指令' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '技能' })).toBeInTheDocument()
+    expect(screen.getByText('查看或调整当前会话的默认思考强度。')).toBeInTheDocument()
+    expect(screen.getByText('别名：/summary', { exact: false })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('option', { name: /\/summarize/ }))
+    expect(composer).toHaveValue('/summarize ')
+    await waitFor(() => expect(composer).toHaveFocus())
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringMatching(/\/turns$/),
+      expect.anything(),
+    )
+  })
+
+  it('支持跨分组键盘导航、关闭面板和中文空结果', async () => {
+    vi.stubGlobal('fetch', baseFetch())
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox', { name: '消息' })
+    fireEvent.click(screen.getByRole('button', { name: '指令与技能' }))
+    fireEvent.keyDown(composer, { key: 'ArrowUp' })
+    expect(screen.getByRole('option', { name: /\/summarize/ })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+
+    fireEvent.change(composer, { target: { value: '/zzzz' } })
+    expect(screen.getByText('未找到匹配的指令或技能')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '指令与技能' }))
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
 
   it('prefers command-name prefixes over description matches', async () => {
