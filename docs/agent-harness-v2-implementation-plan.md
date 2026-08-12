@@ -181,6 +181,24 @@ Worker/Compose 或浏览器测试；本步骤仍是 provisional 工程实现。
 
 验收：知识成功路径不再出现“模型 complete 后被服务端强制 finalize”的额外模型轮次；无引用直接回答仍不能绕过 Grounded QA。
 
+> 完成记录（2026-08-13）：新增 runtime 的 `NativeServerToolCoordinator` / `NativeServerToolResult`
+> 端口，v2 executor 可识别服务端终态并绕过直接文本 finalizer；选择 `knowledge_agent` 后，直接文本会
+> fail closed。新增 application 的 `NativeKnowledgeTools`：`knowledge_retrieve(query)` 每次执行
+> `SearchService.search` 并立即返回聚合 coverage metadata；`knowledge_answer()` 只有覆盖满足时执行
+> Grounded QA，服务端完成 claim/citation 校验、refusal/conflict 处理和唯一 finalizer，成功后不进入
+> 下一轮模型。Tool observation 均为 body-free schema，旧 `knowledge_search`、
+> `knowledge_inspect`、`grounded_answer`、`verify_answer`、`finalize_answer` 仅保留在 v1
+> `KnowledgeLoopTools` 路径。新增 synthetic v2 knowledge instructions 常量；12 个定向测试覆盖多次
+> retrieval、覆盖不足、refusal/conflict、citation 校验失败、QA 失败、permission 拒绝、workspace
+> boundary、checkpoint observation 重放和单次终止。
+>
+> 已运行：完整 `pytest tests/unit` `1084 passed, 2 skipped`；定向 native/knowledge 测试
+> `49 passed`；`ruff check .`；受影响文件 `ruff format --check`；`mypy apps packages`；
+> `scripts/evaluate_agent_harness_v2.py` 和 `git diff --check`。仓库级 `ruff format --check .`
+> 仍被既有未改动的 `packages/application/src/application/assistant/__init__.py` 格式问题阻断，
+> 本次未触碰该文件。未运行 formal holdout、外部 Provider、数据库迁移、Worker/Compose 或浏览器测试；
+> v1 Assistant Loop、API、checkpoint 和运行行为未接入此路径。
+
 ### Step 5：上下文压缩、决策历史与 cache
 
 - 实现 agent-model-context-v2、DecisionHistoryItem、按 Tool 许可的 observation 投影、滚动 progress summary 与 v2 checkpoint 恢复。

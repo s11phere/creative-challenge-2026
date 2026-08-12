@@ -48,6 +48,8 @@ from .native_skill_catalog import (
     NativeSkillSelection,
 )
 from .native_tool_use import (
+    NativeServerToolCoordinator,
+    NativeServerToolResult,
     NativeToolUseAgentLoopExecutor,
     NativeToolUseCall,
     NativeToolUseFinalizer,
@@ -158,6 +160,8 @@ __all__ = [
     "AgentLoopFinalizer",
     "AgentLoopResult",
     "NativeToolUseAgentLoopExecutor",
+    "NativeServerToolCoordinator",
+    "NativeServerToolResult",
     "NativeToolUseCall",
     "NativeToolUseFinalizer",
     "NativeToolUseLoopResult",

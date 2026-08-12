@@ -44,6 +44,11 @@ from .evaluation import (
 from .grounded_qa_skill import DerivedKnowledgeWriter, GroundedQASkillAdapter, GroundedQASkillConfig
 from .knowledge_loop import KnowledgeLoopTools, KnowledgeLoopToolsConfig
 from .lifecycle import SkillLifecycleError, SkillLifecycleErrorCode, SkillLifecycleService
+from .native_knowledge_loop import (
+    NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS,
+    NativeKnowledgeTools,
+    NativeKnowledgeToolsConfig,
+)
 from .organization import (
     KnowledgeOrganizationScopeService,
     OrganizationScopeError,
@@ -68,6 +73,9 @@ __all__ = [
     "DerivedKnowledgeWriter",
     "KnowledgeLoopTools",
     "KnowledgeLoopToolsConfig",
+    "NativeKnowledgeTools",
+    "NativeKnowledgeToolsConfig",
+    "NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS",
     "KnowledgeOrganizationScopeService",
     "OrganizationScopeError",
     "OrganizationScopeErrorCode",

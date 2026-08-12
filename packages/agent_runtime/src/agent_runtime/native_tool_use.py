@@ -243,6 +243,7 @@ class NativeToolUseLoopState:
     selected_skills: tuple[NativeSkillPin, ...] = ()
     approval_id: str | None = None
     terminal_text: str | None = None
+    terminal_output: dict[str, JSONValue] | None = None
     publication_id: str | None = None
 
     def __post_init__(self) -> None:
@@ -264,7 +265,18 @@ class NativeToolUseLoopState:
             not self.terminal_text.strip() or len(self.terminal_text) > _MAX_TERMINAL_TEXT_CHARS
         ):
             raise ValueError("Native Tool-use terminal text is invalid")
-        if (self.terminal_text is None) != (self.publication_id is None):
+        if self.terminal_text is not None and self.terminal_output is not None:
+            raise ValueError("Native Tool-use cannot have two terminal payloads")
+        if self.terminal_output is not None:
+            try:
+                copied_output = _json_copy(self.terminal_output)
+                if not isinstance(copied_output, dict):
+                    raise ValueError("Native Tool-use server terminal output must be an object")
+            except ValueError as exc:
+                raise ValueError("Native Tool-use server terminal output must be JSON") from exc
+        if (self.terminal_text is None and self.terminal_output is None) != (
+            self.publication_id is None
+        ):
             raise ValueError("Native Tool-use finalization identity is incomplete")
 
     @classmethod
@@ -314,12 +326,39 @@ class NativeToolUseLoopState:
         return replace(self, selected_skills=self.selected_skills + (selection.pin,))
 
     def begin_finalization(self, terminal_text: str, publication_id: str) -> NativeToolUseLoopState:
-        if self.pending_call is not None or self.terminal_text is not None:
+        if (
+            self.pending_call is not None
+            or self.terminal_text is not None
+            or self.terminal_output is not None
+        ):
             raise ValueError("Native Tool-use loop cannot finalize now")
         return replace(
             self,
             iteration=self.iteration + 1,
             terminal_text=terminal_text,
+            publication_id=publication_id,
+        )
+
+    def begin_server_finalization(
+        self, terminal_output: dict[str, JSONValue], publication_id: str
+    ) -> NativeToolUseLoopState:
+        if (
+            self.pending_call is not None
+            or self.terminal_text is not None
+            or self.terminal_output is not None
+        ):
+            raise ValueError("Native Tool-use loop cannot finalize now")
+        if not publication_id:
+            raise ValueError("Native Tool-use server publication identity is required")
+        try:
+            output = _json_copy(terminal_output)
+            if not isinstance(output, dict):
+                raise ValueError("Native Tool-use server terminal output must be an object")
+        except ValueError as exc:
+            raise ValueError("Native Tool-use server terminal output must be JSON") from exc
+        return replace(
+            self,
+            terminal_output=cast(dict[str, JSONValue], output),
             publication_id=publication_id,
         )
 
@@ -340,6 +379,10 @@ class NativeToolUseLoopState:
             ],
             "approval_id": self.approval_id,
             "terminal_text": self.terminal_text,
+            "terminal_output": cast(
+                dict[str, JSONValue] | None,
+                _json_copy(self.terminal_output) if self.terminal_output is not None else None,
+            ),
             "publication_id": self.publication_id,
         }
 
@@ -384,6 +427,11 @@ class NativeToolUseLoopState:
                     if isinstance(value.get("terminal_text"), str)
                     else None
                 ),
+                terminal_output=(
+                    cast(dict[str, JSONValue], _json_copy(value["terminal_output"]))
+                    if value.get("terminal_output") is not None
+                    else None
+                ),
                 publication_id=(
                     cast(str, value["publication_id"])
                     if isinstance(value.get("publication_id"), str)
@@ -401,6 +449,52 @@ class NativeToolUseLoopResult:
     output: JSONValue
     waiting_approval: bool = False
     error: RunError | None = None
+
+
+@dataclass(frozen=True)
+class NativeServerToolResult:
+    """A server-owned v2 Tool outcome that may also terminate the Run."""
+
+    run: AgentRun
+    record: ToolCallRecord
+    observation: dict[str, JSONValue]
+    terminal_output: dict[str, JSONValue] | None = None
+    publication_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.terminal_output is None) != (self.publication_id is None):
+            raise ValueError("Native server Tool terminal identity is incomplete")
+        try:
+            _json_copy(self.observation)
+            _json_copy(self.terminal_output) if self.terminal_output is not None else None
+        except ValueError as exc:
+            raise ValueError("Native server Tool output must be JSON") from exc
+
+
+class NativeServerToolCoordinator(Protocol):
+    """Application-owned server gates for native v2 knowledge Tools."""
+
+    def tool_refs(self) -> tuple[ToolRef, ...]: ...
+
+    def blocks_direct_terminal(self, selected_skill_names: frozenset[str]) -> bool: ...
+
+    async def execute(
+        self,
+        run: AgentRun,
+        state: NativeToolUseLoopState,
+        call: NativeToolUseCall,
+        input_data: Mapping[str, JSONValue],
+    ) -> NativeServerToolResult: ...
+
+    async def finalize_server_terminal(
+        self,
+        *,
+        run: AgentRun,
+        goal: str,
+        terminal_output: dict[str, JSONValue],
+        publication_id: str,
+        input_data: Mapping[str, JSONValue],
+    ) -> JSONValue: ...
 
 
 class NativeToolUseAgentLoopExecutor:
@@ -424,6 +518,7 @@ class NativeToolUseAgentLoopExecutor:
         approval_port: ApprovalPort | None = None,
         model_capability_registry: ModelCapabilityRegistry | None = None,
         skill_catalog: NativeSkillCatalog | None = None,
+        server_tools: NativeServerToolCoordinator | None = None,
         max_selected_skill_instruction_bytes: int = (_DEFAULT_MAX_SELECTED_SKILL_INSTRUCTION_BYTES),
     ) -> None:
         names = tuple(ref.name for ref in allowed_tools)
@@ -454,7 +549,12 @@ class NativeToolUseAgentLoopExecutor:
             model_capability_registry or default_model_capability_registry()
         )
         self._skill_catalog = skill_catalog
+        self._server_tools = server_tools
         self._max_selected_skill_instruction_bytes = max_selected_skill_instruction_bytes
+        if server_tools is not None:
+            server_names = tuple(ref.name for ref in server_tools.tool_refs())
+            if len(server_names) != len(set(server_names)):
+                raise ValueError("Native server Tool names must be unique")
 
     async def execute(
         self,
@@ -548,6 +648,7 @@ class NativeToolUseAgentLoopExecutor:
                     state,
                     surface,
                     approval_id,
+                    input_data,
                 )
                 if waiting:
                     return NativeToolUseLoopResult(
@@ -556,6 +657,8 @@ class NativeToolUseAgentLoopExecutor:
                         output={"status": "waiting_approval"},
                         waiting_approval=True,
                     )
+                if state.terminal_output is not None:
+                    return await self._publish_finalization(run, state, input_data)
 
             while True:
                 run = self._account_elapsed(run, started_ms, base_elapsed_ms)
@@ -607,6 +710,7 @@ class NativeToolUseAgentLoopExecutor:
                         state,
                         surface,
                         approval_id,
+                        input_data,
                     )
                     approval_id = None
                     if waiting:
@@ -616,6 +720,8 @@ class NativeToolUseAgentLoopExecutor:
                             output={"status": "waiting_approval"},
                             waiting_approval=True,
                         )
+                    if state.terminal_output is not None:
+                        return await self._publish_finalization(run, state, input_data)
                     continue
 
                 terminal_text = response.text.strip()
@@ -630,6 +736,14 @@ class NativeToolUseAgentLoopExecutor:
                         code="RUN_NATIVE_TOOL_USE_TERMINAL_EMPTY",
                         category=RunErrorCategory.SCHEMA,
                         message="Native Tool-use turn ended without a Tool call or terminal text.",
+                    )
+                if self._server_tools is not None and self._server_tools.blocks_direct_terminal(
+                    frozenset(skill.name for skill in state.selected_skills)
+                ):
+                    raise NodeExecutionError(
+                        code="RUN_NATIVE_TOOL_USE_KNOWLEDGE_TERMINAL_DENIED",
+                        category=RunErrorCategory.PERMISSION,
+                        message="A selected knowledge Skill requires a server-owned answer.",
                     )
                 try:
                     state = state.begin_finalization(terminal_text, _publication_id(run))
@@ -715,10 +829,24 @@ class NativeToolUseAgentLoopExecutor:
         state: NativeToolUseLoopState,
         surface: _NativeToolSurface,
         approval_id: str | None,
+        input_data: Mapping[str, JSONValue],
     ) -> tuple[AgentRun, NativeToolUseLoopState, bool]:
         call = state.pending_call
         if call is None:
             raise RecoveryRejectedError("native Tool-use loop has no pending Tool")
+        if self._server_tools is not None and call.tool_name in {
+            ref.name for ref in self._server_tools.tool_refs()
+        }:
+            definition = surface.by_name.get(call.tool_name)
+            if definition is None or not definition.permissions.issubset(
+                run.context.granted_permissions
+            ):
+                raise NodeExecutionError(
+                    code="RUN_NATIVE_TOOL_USE_TOOL_DENIED",
+                    category=RunErrorCategory.PERMISSION,
+                    message="Native server Tool permissions were not granted.",
+                )
+            return await self._complete_server_tool(run, state, input_data)
         if self._skill_catalog is not None and call.tool_name in {
             _LIST_SKILLS_TOOL_NAME,
             _INVOKE_SKILL_TOOL_NAME,
@@ -770,6 +898,52 @@ class NativeToolUseAgentLoopExecutor:
                 message="Native Tool-use result is not a model-visible object.",
             ) from exc
         run = await self._persist(result.run, state)
+        return run, state, False
+
+    async def _complete_server_tool(
+        self,
+        run: AgentRun,
+        state: NativeToolUseLoopState,
+        input_data: Mapping[str, JSONValue],
+    ) -> tuple[AgentRun, NativeToolUseLoopState, bool]:
+        call = state.pending_call
+        coordinator = self._server_tools
+        if call is None or coordinator is None:
+            raise RecoveryRejectedError("native server Tool continuation is unavailable")
+        if call.tool_name not in {ref.name for ref in coordinator.tool_refs()}:
+            raise RecoveryRejectedError("native server Tool is not owned by the coordinator")
+        result = await coordinator.execute(run, state, call, input_data)
+        if result.run.context.run_id != run.context.run_id:
+            raise NodeExecutionError(
+                code="RUN_NATIVE_TOOL_USE_SERVER_RUN_INVALID",
+                category=RunErrorCategory.SCHEMA,
+                message="Native server Tool returned a Run outside the current loop.",
+            )
+        invocation_result = ToolInvocationResult(
+            output=result.observation,
+            run=result.run,
+            record=result.record,
+        )
+        try:
+            state = state.observe(invocation_result)
+            if result.terminal_output is not None and result.publication_id is not None:
+                state = state.begin_server_finalization(
+                    result.terminal_output, result.publication_id
+                )
+        except ValueError as exc:
+            raise NodeExecutionError(
+                code="RUN_NATIVE_TOOL_RESULT_INVALID",
+                category=RunErrorCategory.SCHEMA,
+                message="Native server Tool result is not a model-visible object.",
+            ) from exc
+        updated_run = _move_to_executing(result.run)
+        if state.terminal_output is not None:
+            updated_run = updated_run.transition(RunEvent.FINALIZE)
+        run = await self._persist(
+            updated_run,
+            state,
+            next_step=RunStep.VERIFYING if state.terminal_output is not None else RunStep.EXECUTING,
+        )
         return run, state, False
 
     async def _complete_bootstrap_tool(
@@ -854,6 +1028,17 @@ class NativeToolUseAgentLoopExecutor:
                 code="RUN_NATIVE_TOOL_USE_SKILL_TOOL_DENIED",
                 category=RunErrorCategory.PERMISSION,
                 message="Selected Skill exposes a Tool outside the server allowlist.",
+            )
+        selected_names = frozenset(selection.pin.name for selection in selections)
+        if (
+            self._server_tools is not None
+            and self._server_tools.blocks_direct_terminal(selected_names)
+            and not set(self._server_tools.tool_refs()).issubset(selected_tools)
+        ):
+            raise NodeExecutionError(
+                code="RUN_NATIVE_TOOL_USE_KNOWLEDGE_TOOL_DENIED",
+                category=RunErrorCategory.PERMISSION,
+                message="Selected knowledge Skill does not expose the server knowledge Tools.",
             )
         definitions = tuple(self._tool_registry.get(ref) for ref in selected_tools)
         self._validate_model_visible_definitions(definitions)
@@ -960,6 +1145,20 @@ class NativeToolUseAgentLoopExecutor:
         state: NativeToolUseLoopState,
         input_data: Mapping[str, JSONValue],
     ) -> NativeToolUseLoopResult:
+        if state.terminal_output is not None and state.publication_id is not None:
+            if self._server_tools is None:
+                raise RecoveryRejectedError("native server finalization coordinator is unavailable")
+            output = await self._server_tools.finalize_server_terminal(
+                run=run,
+                goal=state.goal,
+                terminal_output=state.terminal_output,
+                publication_id=state.publication_id,
+                input_data=input_data,
+            )
+            run = run.transition(RunEvent.COMPLETE)
+            if self._state_store is not None:
+                run = await self._state_store.finalize(run)
+            return NativeToolUseLoopResult(run=run, state=state, output=output)
         if state.terminal_text is None or state.publication_id is None:
             raise RecoveryRejectedError("native Tool-use finalization checkpoint is incomplete")
         output = await self._finalizer.finalize(
@@ -1195,6 +1394,8 @@ async def _not_cancelled(_run: AgentRun) -> bool:
 
 
 __all__ = [
+    "NativeServerToolCoordinator",
+    "NativeServerToolResult",
     "NativeToolUseAgentLoopExecutor",
     "NativeToolUseCall",
     "NativeToolUseFinalizer",
