@@ -38,7 +38,7 @@ from domain.agent_runtime import (
 )
 from domain.agent_sse import AgentRunEventStore, AgentRunEventType
 from domain.reasoning import ReasoningProfile
-from model_gateway import ModelGateway
+from model_gateway import ChatRequest, ChatResponse, ModelGateway
 
 from .checkpoints import build_checkpoint, checkpoint_state_sha256
 from .executor import NodeExecutionContext, NodeExecutionError
@@ -69,6 +69,12 @@ type InvalidDecisionRecovery = Callable[
 ]
 type ClockMilliseconds = Callable[[], int]
 type ApprovalRequest = Callable[[AgentRunContext, ToolCallRecord], Awaitable[str]]
+
+
+class AgentLoopDebugTrace(Protocol):
+    """Development-only sink for complete model turns; never part of SSE or checkpoints."""
+
+    async def record(self, event_type: str, **payload: object) -> None: ...
 
 
 class AgentLoopFinalizer(Protocol):
@@ -132,6 +138,7 @@ class AgentLoopExecutor:
         clock_ms: ClockMilliseconds | None = None,
         approval_request: ApprovalRequest | None = None,
         approval_port: ApprovalPort | None = None,
+        debug_trace: AgentLoopDebugTrace | None = None,
     ) -> None:
         names = tuple(ref.name for ref in allowed_tools)
         if not allowed_tools or len(names) != len(set(names)):
@@ -158,6 +165,7 @@ class AgentLoopExecutor:
         self._clock_ms = clock_ms or _monotonic_ms
         self._approval_request = approval_request
         self._approval_port = approval_port
+        self._debug_trace = debug_trace
 
     async def execute(
         self,
@@ -303,6 +311,7 @@ class AgentLoopExecutor:
                 max_tokens=self._max_tokens_per_decision,
                 tool_definitions=definitions,
                 escalate_long_answer=self._escalate_long_answer,
+                trace_callback=self._trace_model_round,
             )
             if state.phase is AgentLoopPhase.TOOL_REQUESTED and state.pending_tool_name:
                 run, state, pending_result = await self._execute_pending_tool(
@@ -770,6 +779,50 @@ class AgentLoopExecutor:
                 event_key=f"iteration:{iteration}:tool_output:{invocation.retry_count}",
             )
             return result
+
+    async def _trace_model_round(
+        self,
+        context: NodeExecutionContext,
+        request: ChatRequest,
+        response: ChatResponse | BaseException,
+        phase: str,
+    ) -> None:
+        if self._debug_trace is None:
+            return
+        messages = getattr(request, "messages", ())
+        if isinstance(response, BaseException):
+            output: dict[str, object] = {
+                "error": {
+                    "error_type": type(response).__name__,
+                    "message": str(response),
+                }
+            }
+        else:
+            output = {
+                "text": response.text,
+                "finish_reason": response.finish_reason,
+                "usage": {
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens,
+                },
+                "latency_ms": response.latency_ms,
+            }
+        iteration = context.state.get("iteration", 0)
+        if not isinstance(iteration, int):
+            iteration = 0
+        await self._debug_trace.record(
+            "agent_round",
+            round_number=iteration + 1,
+            phase=phase,
+            input={
+                "messages": [
+                    {"role": message.role.value, "content": message.content} for message in messages
+                ],
+                "temperature": getattr(request, "temperature", None),
+                "max_tokens": getattr(request, "max_tokens", None),
+            },
+            output=output,
+        )
 
     async def _execute_pending_tool(
         self,

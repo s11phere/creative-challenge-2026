@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Protocol, cast
@@ -203,6 +203,12 @@ class LLMDecisionNode:
     escalate_long_answer: bool = False
     generation_max_tokens: int = 6_144
     generation_system_prompt: str = _GENERATION_SYSTEM_PROMPT
+    trace_callback: (
+        Callable[
+            [NodeExecutionContext, ChatRequest, ChatResponse | BaseException, str], Awaitable[None]
+        ]
+        | None
+    ) = None
 
     def __post_init__(self) -> None:
         if not self.system_prompt.strip():
@@ -224,24 +230,32 @@ class LLMDecisionNode:
             sort_keys=True,
             separators=(",", ":"),
         )
-        response = await context.model_gateway.chat(
-            ChatRequest(
-                messages=(
-                    ChatMessage(
-                        role=ChatRole.SYSTEM,
-                        content=(
-                            f"{self.system_prompt.strip()}\n\n"
-                            f"{_tool_instruction(self.tool_definitions)}\n\n"
-                            f"{_DECISION_INSTRUCTION}"
-                        ),
+        request = ChatRequest(
+            messages=(
+                ChatMessage(
+                    role=ChatRole.SYSTEM,
+                    content=(
+                        f"{self.system_prompt.strip()}\n\n"
+                        f"{_tool_instruction(self.tool_definitions)}\n\n"
+                        f"{_DECISION_INSTRUCTION}"
                     ),
-                    ChatMessage(role=ChatRole.USER, content=user_input),
                 ),
-                temperature=0.0,
-                max_tokens=self.max_tokens,
+                ChatMessage(role=ChatRole.USER, content=user_input),
             ),
-            capability=CapabilityAlias.FAST_CHAT,
+            temperature=0.0,
+            max_tokens=self.max_tokens,
         )
+        try:
+            response = await context.model_gateway.chat(
+                request,
+                capability=CapabilityAlias.FAST_CHAT,
+            )
+        except BaseException as error:
+            if self.trace_callback is not None:
+                await self.trace_callback(context, request, error, "decision")
+            raise
+        if self.trace_callback is not None:
+            await self.trace_callback(context, request, response, "decision")
         usage = BudgetUsage(
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
@@ -273,20 +287,28 @@ class LLMDecisionNode:
         The truncated draft is dropped: parsing a partial JSON draft is fragile, and a fresh
         generation over the original question yields structurally equivalent content.
         """
-        response = await context.model_gateway.chat(
-            ChatRequest(
-                messages=(
-                    ChatMessage(role=ChatRole.SYSTEM, content=self.generation_system_prompt),
-                    ChatMessage(
-                        role=ChatRole.USER,
-                        content=_generation_question(context, user_input),
-                    ),
+        request = ChatRequest(
+            messages=(
+                ChatMessage(role=ChatRole.SYSTEM, content=self.generation_system_prompt),
+                ChatMessage(
+                    role=ChatRole.USER,
+                    content=_generation_question(context, user_input),
                 ),
-                temperature=0.2,
-                max_tokens=self.generation_max_tokens,
             ),
-            capability=CapabilityAlias.FAST_CHAT,
+            temperature=0.2,
+            max_tokens=self.generation_max_tokens,
         )
+        try:
+            response = await context.model_gateway.chat(
+                request,
+                capability=CapabilityAlias.FAST_CHAT,
+            )
+        except BaseException as error:
+            if self.trace_callback is not None:
+                await self.trace_callback(context, request, error, "long_answer")
+            raise
+        if self.trace_callback is not None:
+            await self.trace_callback(context, request, response, "long_answer")
         if response.finish_reason == "length":
             raise NodeExecutionError(
                 code="RUN_LLM_GENERATION_TRUNCATED",

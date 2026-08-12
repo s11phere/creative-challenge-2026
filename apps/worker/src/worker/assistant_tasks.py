@@ -524,6 +524,7 @@ async def _autonomous_loop_service(
         workspace_context=workspace_context,
         additional_permissions=extra_permissions,
         approval_port=PostgresApprovalPort(database),
+        debug_trace=trace,
     )
 
 

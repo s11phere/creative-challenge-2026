@@ -153,6 +153,11 @@ class QADebugTrace:
             except OSError:
                 logger.warning("qa_debug_trace_write_failed", exc_info=True)
 
+    @property
+    def file_path(self) -> Path:
+        """Return the local-only trace file location for controlled developer tooling."""
+        return self._file
+
     @classmethod
     def from_settings(cls, *, run_id: UUID, trace_id: str, settings: Any) -> QADebugTrace:
         return cls(
@@ -271,6 +276,7 @@ class TracingToolRegistry:
                 "tool_error",
                 tool_name=invocation.ref.name,
                 tool_version=invocation.ref.version,
+                idempotency_key=invocation.idempotency_key,
                 error=_error_payload(error),
             )
             raise
@@ -278,6 +284,7 @@ class TracingToolRegistry:
             "tool_result",
             tool_name=invocation.ref.name,
             tool_version=invocation.ref.version,
+            idempotency_key=invocation.idempotency_key,
             output=result.output,
             input_summary=result.record.input_summary,
             output_summary=result.record.output_summary,

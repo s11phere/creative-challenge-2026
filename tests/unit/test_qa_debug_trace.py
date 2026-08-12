@@ -43,6 +43,7 @@ async def test_debug_trace_is_disabled_by_default(tmp_path: Path) -> None:
     await trace.record("llm_request", messages=[{"content": "private question"}])
 
     assert list(tmp_path.iterdir()) == []
+    assert trace.file_path == tmp_path / f"{trace.run_id}.jsonl"
 
 
 @pytest.mark.asyncio

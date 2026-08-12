@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -101,6 +101,14 @@ class RecordingFinalizer:
         self.calls += 1
         decision = kwargs["decision"]
         return {"message": f"final:{getattr(decision, 'reason', '')}"}
+
+
+class RecordingDebugTrace:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    async def record(self, event_type: str, **payload: object) -> None:
+        self.events.append((event_type, cast(dict[str, Any], payload)))
 
 
 class ApprovedPort:
@@ -249,6 +257,44 @@ async def test_loop_escalates_a_truncated_long_answer_to_generation() -> None:
     assert len(gateway.requests) == 2
     assert gateway.requests[1].max_tokens == 6_144
     assert gateway.requests[1].messages[1].content == "synthetic"
+
+
+@pytest.mark.asyncio
+async def test_loop_records_complete_model_io_for_each_agent_round_only_in_debug_trace() -> None:
+    registry = InMemoryToolRegistry(handlers={"tool": search_handler})
+    definition = registry.register(tool())
+    trace = RecordingDebugTrace()
+    result = await AgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use only the registered synthetic Tool.",
+        model_gateway=cast(
+            ModelGateway,
+            DecisionGateway(
+                (
+                    '{"action":"call_tool","tool_name":"search_knowledge",'
+                    '"arguments":{"query":"private query"}}'
+                ),
+                '{"action":"complete","reason":"done","final_response":"private answer"}',
+            ),
+        ),
+        debug_trace=trace,
+    ).execute(
+        loop_run(permissions=definition.permissions),
+        cast(PinnedSkill, object()),
+        {"question": "private question"},
+        goal="Answer the private request.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert [event[0] for event in trace.events] == ["agent_round", "agent_round"]
+    first = trace.events[0][1]
+    second = trace.events[1][1]
+    assert first["round_number"] == 1
+    assert second["round_number"] == 2
+    assert first["input"]["messages"][1]["content"]
+    assert "private query" in first["output"]["text"]
+    assert "private answer" in second["output"]["text"]
 
 
 @pytest.mark.asyncio

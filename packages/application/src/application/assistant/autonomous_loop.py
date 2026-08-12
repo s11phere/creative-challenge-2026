@@ -10,6 +10,7 @@ from typing import Protocol, cast
 from uuid import UUID, uuid4
 
 from agent_runtime import (
+    AgentLoopDebugTrace,
     AgentLoopExecutor,
     AgentToolRegistry,
     JSONValue,
@@ -205,6 +206,7 @@ class AutonomousAssistantLoopService:
         workspace_context: Mapping[str, JSONValue] | None = None,
         additional_permissions: frozenset[ToolPermission] = frozenset(),
         approval_port: ApprovalPort | None = None,
+        debug_trace: AgentLoopDebugTrace | None = None,
     ) -> None:
         self._runs = runs
         self._messages = messages
@@ -228,6 +230,7 @@ class AutonomousAssistantLoopService:
         self._workspace_context = dict(workspace_context or {})
         self._additional_permissions = additional_permissions
         self._approval_port = approval_port
+        self._debug_trace = debug_trace
 
     async def execute(self, run_id: UUID, *, trace_id: str) -> ConversationRun | None:
         parent = await self._runs.get_conversation_run(run_id)
@@ -302,6 +305,7 @@ class AutonomousAssistantLoopService:
                 self._approval_port.request if self._approval_port is not None else None
             ),
             approval_port=self._approval_port,
+            debug_trace=self._debug_trace,
         )
         persisted = await self._runtime_state.get_run(run_id)
         checkpoint = await self._runtime_state.get_latest(run_id)

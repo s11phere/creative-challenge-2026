@@ -40,7 +40,7 @@ from .llm_decision import (
     LLMDecisionVerifyNode,
     parse_llm_decision,
 )
-from .loop import AgentLoopExecutor, AgentLoopFinalizer, AgentLoopResult
+from .loop import AgentLoopDebugTrace, AgentLoopExecutor, AgentLoopFinalizer, AgentLoopResult
 from .side_effect_tools import (
     FileWritePolicy,
     ShellExecutionPolicy,
@@ -140,6 +140,7 @@ __all__ = [
     "register_side_effect_tools",
     "create_side_effect_registry",
     "AgentLoopExecutor",
+    "AgentLoopDebugTrace",
     "AgentLoopFinalizer",
     "AgentLoopResult",
 ]
