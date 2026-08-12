@@ -1,6 +1,7 @@
 # Phase 1：Skill Eval 门禁（报告先行）
 
 日期：2026-08-12
+状态：✅ 已实施（2026-08-12，commit 04453ea / 52ad918 / f309758 / f661ba4 / 收尾提交）
 依赖：无
 产出：eval case schema + 确定性 runner + 判定器 + CLI 报告
 

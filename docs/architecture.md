@@ -318,6 +318,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `scripts/rebuild_embeddings.py` | 按固定 Embedding identity 创建受控重建任务，不绕过原子发布 |
 | `scripts/evaluate_retrieval.py` | 校验/执行版本化检索评测、formal/holdout 门禁和机器可读报告 |
 | `scripts/evaluate_assistant_routing.py` | 仅校验/汇总 pinned synthetic development 路由元数据；拒绝正式评测、受控语料和 Provider 调用 |
+| `scripts/evaluate_skills.py` | 对任意 Skill 跑 eval cases：复用生产执行器探针、结构化 check 判定、per-case pass/fail + 聚合指标报告（报告不阻塞、隐私安全） |
 
 ---
 
@@ -388,6 +389,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/qa/service.py` | 唯一 provisional `GroundedQAApplicationPort`；编排幂等提交、阶段 3 SearchService、Evidence/上下文、结构化生成、原子发布、取消和稳定失败终态 |
 | `src/application/skills/grounded_qa_skill.py` | 当前 Grounded QA Adapter；为文档摘要、比较和复习卡将 Runtime 上下文映射到唯一 QA Port 并投影其结构化结果 |
 | `src/application/skills/organization.py` | 校验知识整理 Skill 的 Space 归属和当前 published Source/Document/DocumentVersion，并生成固定检索范围 |
+| `src/application/skills/evaluation.py` | Skill eval case/check 类型、`SkillEvalJudge` Protocol + 确定性 `StructuralSkillEvalJudge`、失败分类与聚合指标；body-free 判定（LLM judge 留缝） |
 | `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
 | `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
 

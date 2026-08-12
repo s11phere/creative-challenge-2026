@@ -124,6 +124,18 @@ uv run --frozen python scripts/evaluate_agent_loop.py --validate-only
 
 该命令不调用 Provider、不读取受控语料，也不会启用 formal holdout；其所有报告均为 development / provisional。
 
+Skill eval 门禁（个性化 Phase 1）让 `skills/*/evals/cases.jsonl` 可执行、可判定、可出报告。CLI 默认
+fake 模型、报告不阻塞任何流程：
+
+```powershell
+uv run python scripts/evaluate_skills.py --all --output tmp/skill-eval.json
+```
+
+无 `checks` 的既有 case 走最低判定（schema 合规 + finalized）并如实标注 `case_too_thin`，绝不误报 pass；
+行为标签编码为对 AgentRun trace 的结构化断言（`trace_tool_called` / `finalized`），不靠 LLM 判定。
+`--model settings` 可切换诊断模型，`--database <url>` 启用 Grounded QA Skill 的生产适配器探针；
+报告只序列化 body-free 证据，不落 output/正文。
+
 发布 Assistant 时应先使用 `MODEL_PROVIDER=fake` 或获批准的本地 Chat stub。启用外部 Chat Provider 仍需满足现有的
 `MODEL_ALLOW_EXTERNAL`、来源策略、部署策略和用户可见同意检查；Web 发布配置不会绕过这些边界。应监控路由误判、
 澄清循环、取消率、恢复失败以及实际 token/延迟回归。
