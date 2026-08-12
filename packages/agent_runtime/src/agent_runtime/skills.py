@@ -1110,7 +1110,14 @@ class PersonalSkillRegistry(FileSystemSkillRegistry):
     Python behavior (ADR-018). Write operations validate every file through the
     base loader before publishing, so path traversal, symbolic links, remote
     ``$ref``, and manifest/schema/eval failures are all rejected.
+
+    Phase 4 drafts live in a ``_drafts`` subdirectory of the personal root: the
+    underscore prefix keeps them out of ``reload()`` scanning while the shared
+    path-safety checks still apply. A draft is promoted to a real personal Skill
+    only after it passes the full validation suite.
     """
+
+    _DRAFT_DIR = "_drafts"
 
     def create_personal(self, name: str, files: Mapping[str, str]) -> SkillPackage:
         with self._lock:
@@ -1183,6 +1190,146 @@ class PersonalSkillRegistry(FileSystemSkillRegistry):
             removed = self._remove_personal_records(name)
             shutil.rmtree(root / name, ignore_errors=True)
             return removed[-1] if removed else None
+
+    def create_draft(self, name: str, files: Mapping[str, str]) -> None:
+        """Scaffold a writable draft under ``_drafts/<name>`` (no full validation).
+
+        Drafts are the Phase 4 creator's in-progress packages: they may be
+        incomplete, so only path safety is enforced here. Built-in and personal
+        Skill names stay reserved, matching the ADR-018 priority rule.
+        """
+        with self._lock:
+            root = self._require_personal_root()
+            _validate_personal_name(name)
+            if self.is_builtin(name):
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.NAME_CONFLICT,
+                    "A draft cannot shadow a built-in Skill name.",
+                )
+            if self.is_personal(name):
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.NAME_CONFLICT,
+                    "A draft cannot shadow an installed personal Skill name.",
+                )
+            draft_dir = self._draft_dir(root, name)
+            if draft_dir.exists():
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.NAME_CONFLICT,
+                    "A draft with this name already exists.",
+                )
+            draft_dir.mkdir(parents=True, exist_ok=False)
+            try:
+                self._write_draft_files(draft_dir, files)
+            except Exception:
+                shutil.rmtree(draft_dir, ignore_errors=True)
+                raise
+
+    def update_draft(self, name: str, files: Mapping[str, str]) -> None:
+        """Write or overwrite files inside an existing draft, path-safe only."""
+        with self._lock:
+            root = self._require_personal_root()
+            draft_dir = self._require_draft_dir(root, name)
+            self._write_draft_files(draft_dir, files)
+
+    def draft_names(self) -> tuple[str, ...]:
+        if self._personal_root is None:
+            return ()
+        draft_root = self._personal_root / self._DRAFT_DIR
+        if not draft_root.is_dir():
+            return ()
+        return tuple(
+            sorted(
+                child.name
+                for child in draft_root.iterdir()
+                if child.is_dir() and not child.name.startswith("_")
+            )
+        )
+
+    def is_draft(self, name: str) -> bool:
+        if self._personal_root is None:
+            return False
+        return (self._personal_root / self._DRAFT_DIR / name).is_dir()
+
+    def read_draft_files(self, name: str) -> dict[str, str]:
+        with self._lock:
+            root = self._require_personal_root()
+            draft_dir = self._require_draft_dir(root, name)
+            files: dict[str, str] = {}
+            for path in sorted(draft_dir.rglob("*")):
+                if not path.is_file():
+                    continue
+                relative = path.relative_to(draft_dir).as_posix()
+                files[relative] = path.read_text(encoding="utf-8")
+            return files
+
+    def delete_draft(self, name: str) -> None:
+        with self._lock:
+            root = self._require_personal_root()
+            draft_dir = self._require_draft_dir(root, name)
+            for candidate, version in list(self._packages):
+                if candidate == name:
+                    self._packages.pop((candidate, version), None)
+                    self._origins.pop((candidate, version), None)
+            shutil.rmtree(draft_dir, ignore_errors=True)
+
+    def validate_draft(self, name: str) -> SkillPackage:
+        """Run the full trusted validation suite over one draft package.
+
+        A validated draft is registered in-process (never persisted as a
+        personal Skill) so the runtime executor can pin and run it for the
+        deterministic eval gate.
+        """
+        with self._lock:
+            root = self._require_personal_root()
+            self._require_draft_dir(root, name)
+            package = self._revalidate_package(self.load(f"{self._DRAFT_DIR}/{name}"))
+            return self.register(package)
+
+    def promote_draft(self, name: str) -> SkillPackage:
+        """Publish a validated draft as an installed personal Skill.
+
+        The draft must pass the full trusted validation suite; the resulting
+        package is registered through ``create_personal`` (which re-checks the
+        built-in/personal name rules) and the draft directory is removed.
+        """
+        with self._lock:
+            root = self._require_personal_root()
+            self._require_draft_dir(root, name)
+            # Drop any transient in-process registration from prior draft
+            # validation so the published package owns the (name, version) slot
+            # and points at the personal root, not the soon-deleted draft dir.
+            for candidate, version in list(self._packages):
+                if candidate == name and self._origins.get((candidate, version)) != root:
+                    self._packages.pop((candidate, version), None)
+                    self._origins.pop((candidate, version), None)
+            files = self.read_draft_files(name)
+            package = self.create_personal(name, files)
+            shutil.rmtree(root / self._DRAFT_DIR / name, ignore_errors=True)
+            return package
+
+    def _require_draft_dir(self, root: Path, name: str) -> Path:
+        draft_dir = self._draft_dir(root, name)
+        if not draft_dir.is_dir():
+            raise SkillRegistryError(
+                SkillRegistryErrorCode.NOT_FOUND,
+                "Skill draft is not installed.",
+            )
+        return draft_dir
+
+    @staticmethod
+    def _draft_dir(root: Path, name: str) -> Path:
+        return root / PersonalSkillRegistry._DRAFT_DIR / name
+
+    def _write_draft_files(self, draft_dir: Path, files: Mapping[str, str]) -> None:
+        if not files:
+            raise SkillRegistryError(
+                SkillRegistryErrorCode.INVALID_PACKAGE,
+                "A Skill draft requires at least one file.",
+            )
+        for relative, content in files.items():
+            path = self._safe_personal_relative(draft_dir, relative)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
 
     def activate_all(self, activations: Mapping[str, str]) -> None:
         """Apply a persisted (name, version) mapping for personal Skills."""

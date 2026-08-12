@@ -57,6 +57,33 @@ class PersonalSkillStore:
         self._registry = registry
         self._store = store
 
+    async def persist_activation(self, package: SkillPackage) -> None:
+        """Durably record the durable activation pointer for one package."""
+        activation = SkillActivation(
+            name=package.manifest.name,
+            version=package.manifest.version,
+            content_sha256=package.content_sha256,
+            revision=1,
+        )
+        existing = await self._store.get(activation.name)
+        if existing is None:
+            await self._store.initialize(activation)
+            return
+        updated = await self._store.compare_and_set(
+            SkillActivation(
+                name=activation.name,
+                version=activation.version,
+                content_sha256=activation.content_sha256,
+                revision=existing.revision + 1,
+            ),
+            expected_revision=existing.revision,
+        )
+        if updated is None:
+            raise PersonalSkillError(
+                PersonalSkillErrorCode.INVALID,
+                "Personal Skill activation changed concurrently.",
+            )
+
     def create(self, name: str, files: Mapping[str, str]) -> PersonalSkillView:
         package = self._registry.create_personal(name, dict(files))
         return self._view(package)
@@ -102,34 +129,8 @@ class PersonalSkillStore:
             self._registry.activate(name, version)
         except SkillRegistryError as exc:
             raise PersonalSkillError(PersonalSkillErrorCode.NAME_CONFLICT, str(exc)) from exc
-        await self._persist_activation(package)
+        await self.persist_activation(package)
         return self._view(package)
-
-    async def _persist_activation(self, package: SkillPackage) -> None:
-        activation = SkillActivation(
-            name=package.manifest.name,
-            version=package.manifest.version,
-            content_sha256=package.content_sha256,
-            revision=1,
-        )
-        existing = await self._store.get(activation.name)
-        if existing is None:
-            await self._store.initialize(activation)
-            return
-        updated = await self._store.compare_and_set(
-            SkillActivation(
-                name=activation.name,
-                version=activation.version,
-                content_sha256=activation.content_sha256,
-                revision=existing.revision + 1,
-            ),
-            expected_revision=existing.revision,
-        )
-        if updated is None:
-            raise PersonalSkillError(
-                PersonalSkillErrorCode.INVALID,
-                "Personal Skill activation changed concurrently.",
-            )
 
     def _active_or_only_package(self, name: str) -> SkillPackage:
         try:
