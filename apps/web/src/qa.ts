@@ -352,6 +352,92 @@ export function activatePersonalSkill(name: string): Promise<PersonalSkill> {
   return request(`/api/v1/skills/personal/${encodeURIComponent(name)}/activate`, { method: 'POST' })
 }
 
+export type SkillDraft = {
+  name: string
+  description: string
+  complete: boolean
+  valid: boolean
+  file_count: number
+  files: string[]
+}
+
+export type SkillDraftValidation = {
+  name: string
+  valid: boolean
+  error: string | null
+  description: string | null
+  version: string | null
+  content_sha256: string | null
+}
+
+export type SkillDraftEval = {
+  skill_name: string
+  skill_version: string
+  gate_passed: boolean
+  metrics: {
+    total: number
+    passed: number
+    failed: number
+    inconclusive: number
+    errored: number
+    pass_rate: number | null
+    check_pass_rate: number | null
+  }
+}
+
+export type SkillSuggestion = {
+  name: string
+  category: string
+  frequency: number
+  last_seen_at: string
+  description: string
+  hint: string
+}
+
+const DRAFTS_PATH = '/api/v1/skills/personal/drafts'
+
+export function fetchDrafts(signal?: AbortSignal): Promise<SkillDraft[]> {
+  return request(DRAFTS_PATH, { signal })
+}
+
+export function createDraft(name: string, files: Record<string, string>): Promise<SkillDraft> {
+  return request(DRAFTS_PATH, {
+    method: 'POST',
+    body: JSON.stringify({ name, files }),
+  })
+}
+
+export function updateDraft(name: string, files: Record<string, string>): Promise<SkillDraft> {
+  return request(`${DRAFTS_PATH}/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ files }),
+  })
+}
+
+export function deleteDraft(name: string): Promise<{ status: string }> {
+  return request(`${DRAFTS_PATH}/${encodeURIComponent(name)}`, { method: 'DELETE' })
+}
+
+export function fetchDraftFiles(name: string, signal?: AbortSignal): Promise<{ name: string; files: Record<string, string> }> {
+  return request(`${DRAFTS_PATH}/${encodeURIComponent(name)}/files`, { signal })
+}
+
+export function validateDraft(name: string): Promise<SkillDraftValidation> {
+  return request(`${DRAFTS_PATH}/${encodeURIComponent(name)}/validate`, { method: 'POST' })
+}
+
+export function runDraftEval(name: string): Promise<SkillDraftEval> {
+  return request(`${DRAFTS_PATH}/${encodeURIComponent(name)}/eval`, { method: 'POST' })
+}
+
+export function activateDraft(name: string): Promise<{ name: string; active: boolean; description: string }> {
+  return request(`${DRAFTS_PATH}/${encodeURIComponent(name)}/activate`, { method: 'POST' })
+}
+
+export function fetchSkillSuggestions(signal?: AbortSignal): Promise<SkillSuggestion[]> {
+  return request(`${DRAFTS_PATH}/suggestions`, { signal })
+}
+
 export function fetchCitationExcerpt(
   runId: string,
   evidenceId: string,

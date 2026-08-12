@@ -25,9 +25,57 @@ const personalSkill = {
   invocation: null,
 }
 
-function routedFetch(personal: unknown[], builtin: unknown[] = [builtinSkill]) {
-  return vi.fn((input: RequestInfo | URL) => {
+const draft = {
+  name: 'my_draft', description: 'Draft Skill.', complete: true, valid: true, file_count: 6,
+  files: ['skill.yaml', 'workflow.yaml'],
+}
+
+const draftEval = {
+  skill_name: 'my_draft', skill_version: '1.0.0', gate_passed: true,
+  metrics: { total: 1, passed: 1, failed: 0, inconclusive: 0, errored: 0, pass_rate: 1, check_pass_rate: 1 },
+}
+
+const suggestion = {
+  name: 'summarize_workflow', category: 'summarize', frequency: 5,
+  last_seen_at: '2026-08-12T00:00:00+00:00',
+  description: '你最近常做「summarize」类任务（5 次），可以固化成个人 Skill。',
+  hint: '固化该模式为一个个人 Skill。',
+}
+
+type FetchState = {
+  personal?: unknown[]
+  builtin?: unknown[]
+  drafts?: unknown[]
+  suggestions?: unknown[]
+  draftFiles?: Record<string, string>
+}
+
+function routedFetch(state: FetchState = {}) {
+  const { personal = [], builtin = [builtinSkill], drafts = [], suggestions = [], draftFiles = {} } = state
+  return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
+    const method = init?.method ?? 'GET'
+    if (url.includes('/api/v1/skills/personal/drafts/suggestions')) {
+      return Promise.resolve(response(suggestions))
+    }
+    if (url.includes('/api/v1/skills/personal/drafts')) {
+      if (method === 'POST' && url.endsWith('/eval')) {
+        return Promise.resolve(response(draftEval))
+      }
+      if (method === 'POST' && url.endsWith('/activate')) {
+        return Promise.resolve(response({ name: 'my_draft', active: true, description: 'Draft Skill.' }))
+      }
+      if (method === 'DELETE') {
+        return Promise.resolve(response({ status: 'rejected' }))
+      }
+      if (method === 'GET' && url.endsWith('/files')) {
+        return Promise.resolve(response({ name: 'my_draft', files: draftFiles }))
+      }
+      if (method === 'POST') {
+        return Promise.resolve(response(draft, 201))
+      }
+      return Promise.resolve(response(drafts))
+    }
     if (url.includes('/api/v1/skills/personal')) {
       return Promise.resolve(response(personal))
     }
@@ -47,7 +95,7 @@ function renderPanel() {
 afterEach(() => vi.unstubAllGlobals())
 
 it('loads the fixed installed Skill set without version-management controls', async () => {
-  const fetchMock = routedFetch([])
+  const fetchMock = routedFetch()
   vi.stubGlobal('fetch', fetchMock)
 
   renderPanel()
@@ -63,8 +111,7 @@ it('loads the fixed installed Skill set without version-management controls', as
 })
 
 it('renders personal Skills with activate and delete actions', async () => {
-  const fetchMock = routedFetch([personalSkill])
-  vi.stubGlobal('fetch', fetchMock)
+  vi.stubGlobal('fetch', routedFetch({ personal: [personalSkill] }))
 
   renderPanel()
 
@@ -75,8 +122,7 @@ it('renders personal Skills with activate and delete actions', async () => {
 })
 
 it('shows the personal Skill create form with a package JSON editor', async () => {
-  const fetchMock = routedFetch([])
-  vi.stubGlobal('fetch', fetchMock)
+  vi.stubGlobal('fetch', routedFetch())
 
   renderPanel()
 
@@ -85,4 +131,43 @@ it('shows the personal Skill create form with a package JSON editor', async () =
   expect(screen.getByPlaceholderText('my_skill')).toBeInTheDocument()
   expect(screen.getByPlaceholderText(/"skill\.yaml"/)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '创建个人 Skill' })).toBeInTheDocument()
+})
+
+it('renders drafts with eval, activate, edit and reject actions', async () => {
+  vi.stubGlobal('fetch', routedFetch({ drafts: [draft] }))
+
+  renderPanel()
+
+  expect(await screen.findByText('草稿')).toBeInTheDocument()
+  expect(await screen.findByText('my_draft')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /运行 eval my_draft/ })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /激活 my_draft/ })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /编辑草稿 my_draft/ })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /拒绝草稿 my_draft/ })).toBeInTheDocument()
+})
+
+it('runs the deterministic eval and shows the gate result', async () => {
+  vi.stubGlobal('fetch', routedFetch({ drafts: [draft] }))
+
+  renderPanel()
+
+  const evalButton = await screen.findByRole('button', { name: /运行 eval my_draft/ })
+  fireEvent.click(evalButton)
+  expect(await screen.findByText('门禁通过 1/1')).toBeInTheDocument()
+})
+
+it('shows a suggestion only from usage evidence and scaffolds a draft on click', async () => {
+  vi.stubGlobal('fetch', routedFetch({ suggestions: [suggestion] }))
+
+  renderPanel()
+
+  expect(await screen.findByText('个性化建议')).toBeInTheDocument()
+  expect(await screen.findByText('summarize_workflow')).toBeInTheDocument()
+  expect(screen.getByText(/可以固化成个人 Skill/)).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: /从建议创建草稿 summarize_workflow/ }))
+  expect(await screen.findByDisplayValue('summarize_workflow')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '创建草稿' })).toBeInTheDocument()
+  // The editor is prefilled with a valid scaffold the user can submit.
+  expect(screen.getByPlaceholderText(/"skill\.yaml"/)).toBeInTheDocument()
 })
