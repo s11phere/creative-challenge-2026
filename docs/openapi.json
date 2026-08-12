@@ -712,6 +712,30 @@
         "title": "ClarificationSelectionRequest",
         "type": "object"
       },
+      "ClearSourceResponse": {
+        "properties": {
+          "documents_cleared": {
+            "default": 0,
+            "title": "Documents Cleared",
+            "type": "integer"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "deleted",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "status"
+        ],
+        "title": "ClearSourceResponse",
+        "type": "object"
+      },
       "CommandCatalogResponse": {
         "properties": {
           "commands": {
@@ -1148,6 +1172,11 @@
       },
       "CreateSourceRequest": {
         "properties": {
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
           "source_type": {
             "default": "upload",
             "title": "Source Type",
@@ -1167,6 +1196,11 @@
           "is_new": {
             "title": "Is New",
             "type": "boolean"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
           },
           "source_id": {
             "title": "Source Id",
@@ -1725,6 +1759,22 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "IngestBatchResponse": {
+        "properties": {
+          "task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Task Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "task_ids"
+        ],
+        "title": "IngestBatchResponse",
+        "type": "object"
+      },
       "IngestResponse": {
         "properties": {
           "task_id": {
@@ -1937,6 +1987,43 @@
           "message"
         ],
         "title": "RefusalResultResponse",
+        "type": "object"
+      },
+      "RenameSourceRequest": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "RenameSourceRequest",
+        "type": "object"
+      },
+      "RenameSourceResponse": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "renamed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "name",
+          "status"
+        ],
+        "title": "RenameSourceResponse",
         "type": "object"
       },
       "ResourceCandidateResponse": {
@@ -2949,13 +3036,44 @@
       },
       "SourceItem": {
         "properties": {
+          "available_count": {
+            "default": 0,
+            "title": "Available Count",
+            "type": "integer"
+          },
           "created_at": {
             "title": "Created At",
             "type": "string"
           },
+          "doc_count": {
+            "default": 0,
+            "title": "Doc Count",
+            "type": "integer"
+          },
+          "failed_count": {
+            "default": 0,
+            "title": "Failed Count",
+            "type": "integer"
+          },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "primary_document_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Document Name"
           },
           "source_type": {
             "title": "Source Type",
@@ -5478,7 +5596,7 @@
     },
     "/api/v1/spaces/{space_id}/sources": {
       "get": {
-        "description": "List all sources for a space.",
+        "description": "List all sources for a space with per-source document stats.\n\nDocuments and versions are fetched in two batch queries (not N+1) so the\nUI can render counts and a primary document name without expanding a\nsource first.",
         "operationId": "list_sources_api_v1_spaces__space_id__sources_get",
         "parameters": [
           {
@@ -5517,7 +5635,7 @@
         "summary": "List Sources"
       },
       "post": {
-        "description": "Register a new data source under *space_id*.",
+        "description": "Register a new data source under *space_id*.\n\nFolder sources (``source_type=\"folder\"``) require a non-empty, space-unique\n``name`` — the folder label the user chose.",
         "operationId": "create_source_api_v1_spaces__space_id__sources_post",
         "parameters": [
           {
@@ -5615,6 +5733,116 @@
           }
         },
         "summary": "Delete Source"
+      },
+      "patch": {
+        "description": "Rename a source (a user-facing folder label).",
+        "operationId": "rename_source_api_v1_spaces__space_id__sources__source_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Space Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenameSourceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Source"
+      }
+    },
+    "/api/v1/spaces/{space_id}/sources/{source_id}/contents": {
+      "delete": {
+        "description": "Delete a source together with all its documents.\n\nThe source row removal cascades through documents, versions, chunks and\ningestion tasks (all FKs are ON DELETE CASCADE), so no cleanup tasks are\nenqueued — the worker would refuse to run them without the source. Blob\nfiles on disk are removed inline; their storage keys embed the source id\nso they are never shared with another source.",
+        "operationId": "clear_source_api_v1_spaces__space_id__sources__source_id__contents_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Space Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearSourceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Source"
       }
     },
     "/api/v1/spaces/{space_id}/sources/{source_id}/detail": {
@@ -5731,7 +5959,7 @@
     },
     "/api/v1/spaces/{space_id}/sources/{source_id}/ingest": {
       "post": {
-        "description": "Trigger an ingestion task for the source's document.",
+        "description": "Trigger an ingestion task for every live document in the source.\n\nPreviously this only pinned the first document's latest version, which\nsilently ignored every other file when the button was used on a\nmulti-document source. It now enqueues one task per live document, reusing\nany reusable active task already targeting the same version.",
         "operationId": "trigger_ingestion_api_v1_spaces__space_id__sources__source_id__ingest_post",
         "parameters": [
           {
@@ -5760,7 +5988,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IngestResponse"
+                  "$ref": "#/components/schemas/IngestBatchResponse"
                 }
               }
             },

@@ -16,6 +16,8 @@ Implements the Step 8 API surface:
 from __future__ import annotations
 
 import logging
+import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import Literal
@@ -23,7 +25,16 @@ from uuid import UUID
 
 from application.ingestion import DocumentDeletionService, IngestionConfig
 from application.ingestion.source_registration import SourceRegistrationService
-from domain.models import DocumentStatus, IngestionTask, SourceType, TaskOperation, TaskStatus
+from domain.fingerprinting import compute_storage_key
+from domain.models import (
+    Document,
+    DocumentStatus,
+    DocumentVersion,
+    IngestionTask,
+    SourceType,
+    TaskOperation,
+    TaskStatus,
+)
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from infrastructure.blob_store import LocalFileBlobStore
 from infrastructure.config import settings
@@ -50,6 +61,7 @@ router = APIRouter(prefix="/api/v1")
 class CreateSourceRequest(BaseModel):
     source_type: str = "upload"
     uri: str = ""
+    name: str = ""
 
 
 class CreateSourceResponse(BaseModel):
@@ -57,6 +69,7 @@ class CreateSourceResponse(BaseModel):
     space_id: str
     source_type: str
     uri: str
+    name: str = ""
     is_new: bool
 
 
@@ -65,7 +78,12 @@ class SourceItem(BaseModel):
     space_id: str
     source_type: str
     uri: str
+    name: str = ""
     created_at: str
+    doc_count: int = 0
+    available_count: int = 0
+    failed_count: int = 0
+    primary_document_name: str | None = None
 
 
 class SourceListResponse(BaseModel):
@@ -122,6 +140,26 @@ class TaskStatusResponse(BaseModel):
 
 class IngestResponse(BaseModel):
     task_id: str
+
+
+class IngestBatchResponse(BaseModel):
+    task_ids: list[str]
+
+
+class RenameSourceRequest(BaseModel):
+    name: str
+
+
+class RenameSourceResponse(BaseModel):
+    source_id: str
+    name: str
+    status: Literal["renamed"]
+
+
+class ClearSourceResponse(BaseModel):
+    source_id: str
+    status: Literal["deleted"]
+    documents_cleared: int = 0
 
 
 def _task_response(task: IngestionTask) -> TaskStatusResponse:
@@ -187,6 +225,87 @@ def _document_display_name(stable_key: str, file_path: str | None) -> str:
     return _display_filename(candidate)
 
 
+def _document_status(
+    document: Document,
+    latest_version: DocumentVersion | None,
+    current_version: DocumentVersion | None,
+) -> str:
+    """Stable user-facing status for a document, shared by detail and list."""
+    if document.deleted_at is not None:
+        return "deleted"
+    if current_version is not None and current_version.status is DocumentStatus.PUBLISHED:
+        return "available"
+    if latest_version is not None and latest_version.status is DocumentStatus.FAILED:
+        return "failed"
+    return "unavailable"
+
+
+def _version_indexes(
+    versions: list[DocumentVersion],
+) -> tuple[dict[uuid.UUID, DocumentVersion | None], dict[uuid.UUID, DocumentVersion]]:
+    """Return (latest version per document, all versions by id)."""
+    latest_by_doc: dict[uuid.UUID, DocumentVersion | None] = {}
+    by_id: dict[uuid.UUID, DocumentVersion] = {}
+    for version in versions:
+        by_id[version.id] = version
+        current = latest_by_doc.get(version.document_id)
+        if current is None or version.created_at > current.created_at:
+            latest_by_doc[version.document_id] = version
+    return latest_by_doc, by_id
+
+
+def _source_stats(
+    documents: list[Document],
+    latest_by_doc: dict[uuid.UUID, DocumentVersion | None],
+    versions_by_id: dict[uuid.UUID, DocumentVersion],
+) -> tuple[int, int, int, str | None]:
+    """Aggregate a source's document counts and a primary display name.
+
+    ``available_count`` counts live documents whose current version is
+    PUBLISHED; ``failed_count`` counts live documents whose latest version is
+    FAILED. The primary name prefers a live, published document so a source
+    card shows a meaningful title instead of the shared upload URI.
+    """
+    doc_count = available_count = failed_count = 0
+    live: list[Document] = []
+    for document in documents:
+        if document.deleted_at is not None:
+            continue
+        live.append(document)
+        doc_count += 1
+        current = (
+            versions_by_id.get(document.current_version_id)
+            if document.current_version_id is not None
+            else None
+        )
+        latest = latest_by_doc.get(document.id)
+        if current is not None and current.status is DocumentStatus.PUBLISHED:
+            available_count += 1
+        elif latest is not None and latest.status is DocumentStatus.FAILED:
+            failed_count += 1
+
+    primary_name: str | None = None
+    if live:
+        preferred = next(
+            (
+                document
+                for document in live
+                if document.current_version_id is not None
+                and versions_by_id.get(document.current_version_id) is not None
+                and versions_by_id[document.current_version_id].status is DocumentStatus.PUBLISHED
+            ),
+            None,
+        )
+        chosen = preferred or min(live, key=lambda document: document.created_at)
+        latest = latest_by_doc.get(chosen.id)
+        primary_name = _document_display_name(
+            chosen.stable_key,
+            latest.file_path if latest is not None else None,
+        )
+
+    return doc_count, available_count, failed_count, primary_name
+
+
 # ---------------------------------------------------------------------------
 # Helper: extract database from app state
 # ---------------------------------------------------------------------------
@@ -208,10 +327,26 @@ async def create_source(
     body: CreateSourceRequest,
     request: Request,
 ) -> CreateSourceResponse:
-    """Register a new data source under *space_id*."""
+    """Register a new data source under *space_id*.
+
+    Folder sources (``source_type="folder"``) require a non-empty, space-unique
+    ``name`` — the folder label the user chose.
+    """
     db = _db(request)
 
+    name = body.name.strip()
+    if body.source_type == "folder":
+        if not name:
+            raise HTTPException(status_code=422, detail="文件夹名称不能为空")
+        if len(name) > 255:
+            raise HTTPException(status_code=422, detail="文件夹名称过长（最多 255 字）")
+
     async with db.session() as session:
+        if body.source_type == "folder":
+            siblings = await SourceRepository(session).get_by_space(space_id)
+            if any(sibling.name == name for sibling in siblings):
+                raise HTTPException(status_code=409, detail="同名文件夹已存在")
+
         service = SourceRegistrationService(
             source_repo=SourceRepository(session),
             document_repo=DocumentRepository(session),
@@ -221,6 +356,7 @@ async def create_source(
             space_id=space_id,
             source_type=SourceType(body.source_type),
             uri=body.uri,
+            name=name,
         )
         await session.commit()
 
@@ -229,6 +365,7 @@ async def create_source(
             space_id=str(space_id),
             source_type=result.source.source_type.value,
             uri=result.source.uri,
+            name=result.source.name,
             is_new=result.is_new,
         )
 
@@ -269,26 +406,137 @@ async def delete_source(
     return DeleteSourceResponse(source_id=str(source_id), status="deleted")
 
 
+@router.patch(
+    "/spaces/{space_id}/sources/{source_id}",
+    response_model=RenameSourceResponse,
+)
+async def rename_source(
+    space_id: UUID,
+    source_id: UUID,
+    body: RenameSourceRequest,
+    request: Request,
+) -> RenameSourceResponse:
+    """Rename a source (a user-facing folder label)."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="文件夹名称不能为空")
+    if len(name) > 255:
+        raise HTTPException(status_code=422, detail="文件夹名称过长（最多 255 字）")
+
+    db = _db(request)
+    async with db.session() as session:
+        repo = SourceRepository(session)
+        source = await repo.get(source_id)
+        if source is None or source.space_id != space_id:
+            raise HTTPException(status_code=404, detail="Source not found")
+
+        siblings = await repo.get_by_space(space_id)
+        if any(sibling.name == name and sibling.id != source_id for sibling in siblings):
+            raise HTTPException(status_code=409, detail="同名文件夹已存在")
+
+        updated = await repo.update(replace(source, name=name))
+        await session.commit()
+
+    return RenameSourceResponse(source_id=str(source_id), name=updated.name, status="renamed")
+
+
+@router.delete(
+    "/spaces/{space_id}/sources/{source_id}/contents",
+    response_model=ClearSourceResponse,
+)
+async def clear_source(
+    space_id: UUID,
+    source_id: UUID,
+    request: Request,
+) -> ClearSourceResponse:
+    """Delete a source together with all its documents.
+
+    The source row removal cascades through documents, versions, chunks and
+    ingestion tasks (all FKs are ON DELETE CASCADE), so no cleanup tasks are
+    enqueued — the worker would refuse to run them without the source. Blob
+    files on disk are removed inline; their storage keys embed the source id
+    so they are never shared with another source.
+    """
+    db = _db(request)
+    async with db.session() as session:
+        source_repo = SourceRepository(session)
+        source = await source_repo.get(source_id)
+        if source is None or source.space_id != space_id:
+            raise HTTPException(status_code=404, detail="Source not found")
+
+        doc_repo = DocumentRepository(session)
+        version_repo = DocumentVersionRepository(session)
+        docs = await doc_repo.get_by_source(source_id)
+        live_count = sum(1 for document in docs if document.deleted_at is None)
+
+        versions = await version_repo.get_by_documents([document.id for document in docs])
+        blob_hashes = {version.blob_hash for version in versions if version.blob_hash}
+
+        await source_repo.delete(source_id)
+        await session.commit()
+
+    for blob_hash in blob_hashes:
+        try:
+            await LocalFileBlobStore().delete(compute_storage_key(source_id, blob_hash))
+        except Exception:  # noqa: BLE001
+            logger.debug("folder-delete blob cleanup skipped for %s", blob_hash)
+
+    return ClearSourceResponse(
+        source_id=str(source_id),
+        status="deleted",
+        documents_cleared=live_count,
+    )
+
+
 @router.get("/spaces/{space_id}/sources", response_model=SourceListResponse)
 async def list_sources(space_id: UUID, request: Request) -> SourceListResponse:
-    """List all sources for a space."""
+    """List all sources for a space with per-source document stats.
+
+    Documents and versions are fetched in two batch queries (not N+1) so the
+    UI can render counts and a primary document name without expanding a
+    source first.
+    """
     db = _db(request)
 
     async with db.session() as session:
-        repo = SourceRepository(session)
-        sources = await repo.get_by_space(space_id)
-        return SourceListResponse(
-            sources=[
+        source_repo = SourceRepository(session)
+        doc_repo = DocumentRepository(session)
+        version_repo = DocumentVersionRepository(session)
+
+        sources = await source_repo.get_by_space(space_id)
+        source_ids = [source.id for source in sources]
+        documents = await doc_repo.get_by_sources(source_ids)
+        document_ids = [document.id for document in documents]
+        versions = await version_repo.get_by_documents(document_ids)
+        latest_by_doc, versions_by_id = _version_indexes(versions)
+
+        docs_by_source: dict[uuid.UUID, list[Document]] = {}
+        for document in documents:
+            docs_by_source.setdefault(document.source_id, []).append(document)
+
+        items: list[SourceItem] = []
+        for source in sources:
+            doc_count, available_count, failed_count, primary_name = _source_stats(
+                docs_by_source.get(source.id, []),
+                latest_by_doc,
+                versions_by_id,
+            )
+            items.append(
                 SourceItem(
-                    id=str(s.id),
-                    space_id=str(s.space_id),
-                    source_type=s.source_type.value,
-                    uri=s.uri,
-                    created_at=s.created_at.isoformat(),
+                    id=str(source.id),
+                    space_id=str(source.space_id),
+                    source_type=source.source_type.value,
+                    uri=source.uri,
+                    name=source.name,
+                    created_at=source.created_at.isoformat(),
+                    doc_count=doc_count,
+                    available_count=available_count,
+                    failed_count=failed_count,
+                    primary_document_name=primary_name,
                 )
-                for s in sources
-            ]
-        )
+            )
+
+        return SourceListResponse(sources=items)
 
 
 @router.get(
@@ -317,6 +565,7 @@ async def get_source_detail(
         docs = await doc_repo.get_by_source(source_id)
 
         document_items: list[DocumentItem] = []
+        source_versions: list[DocumentVersion] = []
         for document in docs:
             latest_version = await version_repo.get_latest(document.id)
             current_version = (
@@ -324,14 +573,11 @@ async def get_source_detail(
                 if document.current_version_id is not None
                 else None
             )
-            if document.deleted_at is not None:
-                document_status = "deleted"
-            elif current_version is not None and current_version.status is DocumentStatus.PUBLISHED:
-                document_status = "available"
-            elif latest_version is not None and latest_version.status is DocumentStatus.FAILED:
-                document_status = "failed"
-            else:
-                document_status = "unavailable"
+            if latest_version is not None:
+                source_versions.append(latest_version)
+            if current_version is not None:
+                source_versions.append(current_version)
+            document_status = _document_status(document, latest_version, current_version)
             document_items.append(
                 DocumentItem(
                     id=str(document.id),
@@ -348,13 +594,23 @@ async def get_source_detail(
                 )
             )
 
+        latest_by_doc, versions_by_id = _version_indexes(source_versions)
+        doc_count, available_count, failed_count, primary_name = _source_stats(
+            docs, latest_by_doc, versions_by_id
+        )
+
     return SourceDetailResponse(
         source=SourceItem(
             id=str(source.id),
             space_id=str(source.space_id),
             source_type=source.source_type.value,
             uri=source.uri,
+            name=source.name,
             created_at=source.created_at.isoformat(),
+            doc_count=doc_count,
+            available_count=available_count,
+            failed_count=failed_count,
+            primary_document_name=primary_name,
         ),
         documents=document_items,
     )
@@ -489,14 +745,20 @@ async def upload_file(
 
 @router.post(
     "/spaces/{space_id}/sources/{source_id}/ingest",
-    response_model=IngestResponse,
+    response_model=IngestBatchResponse,
 )
 async def trigger_ingestion(
     space_id: UUID,
     source_id: UUID,
     request: Request,
-) -> IngestResponse:
-    """Trigger an ingestion task for the source's document."""
+) -> IngestBatchResponse:
+    """Trigger an ingestion task for every live document in the source.
+
+    Previously this only pinned the first document's latest version, which
+    silently ignored every other file when the button was used on a
+    multi-document source. It now enqueues one task per live document, reusing
+    any reusable active task already targeting the same version.
+    """
     db = _db(request)
 
     async with db.session() as session:
@@ -512,40 +774,49 @@ async def trigger_ingestion(
             raise HTTPException(status_code=404, detail="Source not found")
 
         docs = await doc_repo.get_by_source(source_id)
-        if not docs:
+        live_docs = [document for document in docs if document.deleted_at is None]
+        if not live_docs:
             raise HTTPException(
                 status_code=400,
                 detail="No document found for this source. Upload a file first.",
             )
 
-        # Pin task to the latest version of the first document
-        latest_version = await version_repo.get_latest(docs[0].id)
-        target_version_id = latest_version.id if latest_version else None
-
         active_tasks = await task_repo.get_by_source(source_id)
-        existing = next(
-            (
-                candidate
-                for candidate in active_tasks
-                if _is_reusable_active_task(candidate)
-                and candidate.target_version_id == target_version_id
-            ),
-            None,
-        )
-        if existing is not None:
-            return IngestResponse(task_id=str(existing.id))
-
-        task = IngestionTask(
-            source_id=source_id,
-            operation=TaskOperation.INGEST,
-            target_version_id=target_version_id,
-        )
-        task = await task_repo.create(task)
+        seen_versions: set[uuid.UUID] = set()
+        task_ids: list[uuid.UUID] = []
+        for document in live_docs:
+            latest_version = await version_repo.get_latest(document.id)
+            if latest_version is None:
+                continue
+            target_version_id = latest_version.id
+            if target_version_id in seen_versions:
+                continue
+            seen_versions.add(target_version_id)
+            existing = next(
+                (
+                    candidate
+                    for candidate in active_tasks
+                    if _is_reusable_active_task(candidate)
+                    and candidate.target_version_id == target_version_id
+                ),
+                None,
+            )
+            if existing is not None:
+                task_ids.append(existing.id)
+                continue
+            task = IngestionTask(
+                source_id=source_id,
+                operation=TaskOperation.INGEST,
+                target_version_id=target_version_id,
+            )
+            task = await task_repo.create(task)
+            task_ids.append(task.id)
         await session.commit()
 
-    await _enqueue_ingestion_task(task.id, db)
+    for task_id in task_ids:
+        await _enqueue_ingestion_task(task_id, db)
 
-    return IngestResponse(task_id=str(task.id))
+    return IngestBatchResponse(task_ids=[str(task_id) for task_id in task_ids])
 
 
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)

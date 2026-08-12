@@ -390,3 +390,139 @@ class TestRedisEnqueueResilience:
         assert second.status_code == 200
         assert second.json()["is_unchanged"] is True
         assert second.json()["task_id"] is None
+
+
+# ============================================================
+# Folder rename / clear (sources as named folders)
+# ============================================================
+
+
+class TestSourceFolders:
+    """Rename (PATCH) and clear (DELETE .../contents) folder sources."""
+
+    @pytest.mark.asyncio
+    async def test_rename_source_updates_name(
+        self,
+        session: AsyncSession,
+        app_client: AsyncClient,
+        api_database: Database,
+    ) -> None:
+        """PATCH renames a source and persists the new label."""
+        space_repo = SpaceRepository(session)
+        source_repo = SourceRepository(session)
+        space = await space_repo.create(Space(name="Rename Test"))
+        source = await source_repo.create(
+            Source(space_id=space.id, source_type=SourceType.FOLDER, name="文档")
+        )
+        await session.commit()
+
+        resp = await app_client.patch(
+            f"/api/v1/spaces/{space.id}/sources/{source.id}",
+            json={"name": "新名字"},
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.json() == {
+            "source_id": str(source.id),
+            "name": "新名字",
+            "status": "renamed",
+        }
+
+        async with api_database.session() as verification_session:
+            updated = await SourceRepository(verification_session).get(source.id)
+        assert updated is not None
+        assert updated.name == "新名字"
+
+    @pytest.mark.asyncio
+    async def test_rename_source_duplicate_name_returns_409(
+        self, session: AsyncSession, app_client: AsyncClient
+    ) -> None:
+        """Renaming to a sibling's name must be refused."""
+        space_repo = SpaceRepository(session)
+        source_repo = SourceRepository(session)
+        space = await space_repo.create(Space(name="Rename Duplicate Test"))
+        await source_repo.create(
+            Source(space_id=space.id, source_type=SourceType.FOLDER, name="已占用")
+        )
+        second = await source_repo.create(
+            Source(space_id=space.id, source_type=SourceType.FOLDER, name="待改")
+        )
+        await session.commit()
+
+        resp = await app_client.patch(
+            f"/api/v1/spaces/{space.id}/sources/{second.id}",
+            json={"name": "已占用"},
+        )
+        assert resp.status_code == 409, (
+            f"Expected 409 for duplicate name, got {resp.status_code}: {resp.text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_rename_source_wrong_space_returns_404(
+        self, session: AsyncSession, app_client: AsyncClient
+    ) -> None:
+        space_repo = SpaceRepository(session)
+        source_repo = SourceRepository(session)
+        space = await space_repo.create(Space(name="Rename Wrong Space"))
+        source = await source_repo.create(
+            Source(space_id=space.id, source_type=SourceType.FOLDER, name="文档")
+        )
+        await session.commit()
+
+        wrong = uuid4()
+        resp = await app_client.patch(
+            f"/api/v1/spaces/{wrong}/sources/{source.id}",
+            json={"name": "新名字"},
+        )
+        assert resp.status_code == 404, (
+            f"Expected 404 for wrong space_id, got {resp.status_code}: {resp.text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_clear_source_deletes_documents_and_folder(
+        self,
+        session: AsyncSession,
+        app_client: AsyncClient,
+        api_database: Database,
+    ) -> None:
+        """DELETE .../contents removes the folder and all its documents."""
+        space_repo = SpaceRepository(session)
+        source_repo = SourceRepository(session)
+        document_repo = DocumentRepository(session)
+        space = await space_repo.create(Space(name="Clear Test"))
+        source = await source_repo.create(
+            Source(space_id=space.id, source_type=SourceType.FOLDER, name="文档")
+        )
+        await document_repo.create(Document(source_id=source.id, stable_key="notes.md"))
+        await session.commit()
+
+        resp = await app_client.delete(f"/api/v1/spaces/{space.id}/sources/{source.id}/contents")
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.json() == {
+            "source_id": str(source.id),
+            "status": "deleted",
+            "documents_cleared": 1,
+        }
+
+        async with api_database.session() as verification_session:
+            gone = await SourceRepository(verification_session).get(source.id)
+            docs = await DocumentRepository(verification_session).get_by_source(source.id)
+        assert gone is None
+        assert docs == []
+
+    @pytest.mark.asyncio
+    async def test_clear_source_wrong_space_returns_404(
+        self, session: AsyncSession, app_client: AsyncClient
+    ) -> None:
+        space_repo = SpaceRepository(session)
+        source_repo = SourceRepository(session)
+        space = await space_repo.create(Space(name="Clear Wrong Space"))
+        source = await source_repo.create(
+            Source(space_id=space.id, source_type=SourceType.FOLDER, name="文档")
+        )
+        await session.commit()
+
+        wrong = uuid4()
+        resp = await app_client.delete(f"/api/v1/spaces/{wrong}/sources/{source.id}/contents")
+        assert resp.status_code == 404, (
+            f"Expected 404 for wrong space_id, got {resp.status_code}: {resp.text}"
+        )
