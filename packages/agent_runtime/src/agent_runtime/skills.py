@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -228,6 +229,7 @@ class SkillRegistryErrorCode(StrEnum):
     INVALID_SCHEMA = "SKILL_INVALID_SCHEMA"
     PATH_OUTSIDE_TRUSTED_ROOT = "SKILL_PATH_OUTSIDE_TRUSTED_ROOT"
     LINK_NOT_ALLOWED = "SKILL_LINK_NOT_ALLOWED"
+    NAME_CONFLICT = "SKILL_NAME_CONFLICT"
     VERSION_CONFLICT = "SKILL_VERSION_CONFLICT"
     NOT_FOUND = "SKILL_NOT_FOUND"
     ACTIVE_VERSION_MISSING = "SKILL_ACTIVE_VERSION_MISSING"
@@ -385,12 +387,18 @@ class PinnedSkill:
 
 
 class FileSystemSkillRegistry:
-    """Registry that loads declaration-only Skill packages from one trusted root."""
+    """Registry that loads declaration-only Skill packages from trusted roots.
+
+    The primary ``trusted_root`` is the immutable, deployment-owned set. An
+    optional ``personal_root`` is a writable, user-owned set: it is loaded at
+    runtime but a personal Skill can never shadow a built-in name (ADR-018).
+    """
 
     def __init__(
         self,
         trusted_root: Path,
         *,
+        personal_root: Path | None = None,
         runtime_version: str = "0.1.0",
         checkpoint_schema_version: int = 1,
     ) -> None:
@@ -407,11 +415,34 @@ class FileSystemSkillRegistry:
             )
         self._reject_link(trusted_root)
         self._trusted_root = trusted_root.resolve(strict=True)
+        self._personal_root: Path | None = None
+        if personal_root is not None:
+            self._reject_link(personal_root)
+            personal_root.mkdir(parents=True, exist_ok=True)
+            self._personal_root = personal_root.resolve()
         self._checkpoint_schema_version = checkpoint_schema_version
         self._packages: dict[tuple[str, str], SkillPackage] = {}
         self._active_versions: dict[str, str] = {}
+        self._builtin_names: set[str] = set()
+        self._origins: dict[tuple[str, str], Path] = {}
         self._events: list[SkillRegistryEvent] = []
         self._lock = RLock()
+
+    def _roots(self) -> tuple[Path, ...]:
+        if self._personal_root is None:
+            return (self._trusted_root,)
+        return (self._trusted_root, self._personal_root)
+
+    def _within_any_root(self, path: Path) -> bool:
+        if path.is_relative_to(self._trusted_root):
+            return True
+        return self._personal_root is not None and path.is_relative_to(self._personal_root)
+
+    def _root_for(self, path: Path) -> Path | None:
+        for root in self._roots():
+            if path.is_relative_to(root):
+                return root
+        return None
 
     def load(self, relative_path: str | Path) -> SkillPackage:
         package_root = self._resolve_package_root(relative_path)
@@ -473,12 +504,31 @@ class FileSystemSkillRegistry:
         """Validate a complete scan before atomically publishing any new versions."""
         with self._lock:
             candidates: list[SkillPackage] = []
-            for child in sorted(self._trusted_root.iterdir(), key=lambda path: path.name):
-                if child.name.startswith("_"):
-                    continue
-                self._reject_link(child)
-                if child.is_dir():
-                    candidates.append(self._revalidate_package(self.load(child.name)))
+            self._builtin_names = set()
+            self._origins = {}
+            for root in self._roots():
+                for child in sorted(root.iterdir(), key=lambda path: path.name):
+                    if child.name.startswith("_"):
+                        continue
+                    self._reject_link(child)
+                    if child.is_dir():
+                        package = self._revalidate_package(self.load(child.name))
+                        candidates.append(package)
+                        self._origins[(package.manifest.name, package.manifest.version)] = root
+                        if root is self._trusted_root:
+                            self._builtin_names.add(package.manifest.name)
+
+            if self._personal_root is not None:
+                for package in candidates:
+                    if (
+                        self._origins.get((package.manifest.name, package.manifest.version))
+                        == self._personal_root
+                        and package.manifest.name in self._builtin_names
+                    ):
+                        raise SkillRegistryError(
+                            SkillRegistryErrorCode.NAME_CONFLICT,
+                            "Personal Skill cannot shadow a built-in Skill name.",
+                        )
 
             staged = dict(self._packages)
             newly_installed: list[SkillPackage] = []
@@ -609,6 +659,36 @@ class FileSystemSkillRegistry:
         with self._lock:
             return tuple(sorted({name for name, _version in self._packages}))
 
+    def builtin_names(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(sorted(self._builtin_names))
+
+    def personal_names(self) -> tuple[str, ...]:
+        with self._lock:
+            if self._personal_root is None:
+                return ()
+            return tuple(
+                sorted(
+                    {
+                        name
+                        for (name, _version), root in self._origins.items()
+                        if root == self._personal_root
+                    }
+                )
+            )
+
+    def is_personal(self, name: str) -> bool:
+        with self._lock:
+            return any(
+                root == self._personal_root
+                for (candidate, _version), root in self._origins.items()
+                if candidate == name
+            )
+
+    def is_builtin(self, name: str) -> bool:
+        with self._lock:
+            return name in self._builtin_names
+
     def remove(self, name: str, version: str, *, content_sha256: str) -> SkillPackage:
         """Remove an unreferenced non-active package from the live registry."""
         with self._lock:
@@ -699,26 +779,27 @@ class FileSystemSkillRegistry:
         if relative.is_absolute() or not relative.parts or ".." in relative.parts:
             raise SkillRegistryError(
                 SkillRegistryErrorCode.PATH_OUTSIDE_TRUSTED_ROOT,
-                "Skill package path must stay inside the trusted root.",
+                "Skill package path must stay inside a trusted root.",
             )
-        candidate = self._trusted_root.joinpath(relative)
-        current = self._trusted_root
-        for part in relative.parts:
-            current = current / part
-            self._reject_link(current)
-        try:
-            resolved = candidate.resolve(strict=True)
-        except OSError as exc:
-            raise SkillRegistryError(
-                SkillRegistryErrorCode.INVALID_PACKAGE,
-                "Skill package path does not exist.",
-            ) from exc
-        if not resolved.is_relative_to(self._trusted_root) or not resolved.is_dir():
-            raise SkillRegistryError(
-                SkillRegistryErrorCode.PATH_OUTSIDE_TRUSTED_ROOT,
-                "Skill package path must stay inside the trusted root.",
-            )
-        return resolved
+        for root in self._roots():
+            current = root
+            for part in relative.parts:
+                current = current / part
+                if current.is_symlink() or current.is_junction():
+                    raise SkillRegistryError(
+                        SkillRegistryErrorCode.LINK_NOT_ALLOWED,
+                        "Symbolic links and junctions are not allowed in Skill packages.",
+                    )
+            try:
+                resolved = current.resolve(strict=True)
+            except OSError:
+                continue
+            if resolved.is_relative_to(root) and resolved.is_dir():
+                return resolved
+        raise SkillRegistryError(
+            SkillRegistryErrorCode.PATH_OUTSIDE_TRUSTED_ROOT,
+            "Skill package path must stay inside a trusted root.",
+        )
 
     def _collect_files(self, package_root: Path) -> tuple[Path, ...]:
         files: list[Path] = []
@@ -880,12 +961,19 @@ class FileSystemSkillRegistry:
 
     def _revalidate_package(self, package: SkillPackage) -> SkillPackage:
         try:
-            relative = package.root.resolve(strict=True).relative_to(self._trusted_root)
-        except (OSError, ValueError) as exc:
+            resolved = package.root.resolve(strict=True)
+        except OSError as exc:
             raise SkillRegistryError(
                 SkillRegistryErrorCode.PATH_OUTSIDE_TRUSTED_ROOT,
-                "Skill package is outside the configured trusted root.",
+                "Skill package is outside the configured trusted roots.",
             ) from exc
+        root = self._root_for(resolved)
+        if root is None:
+            raise SkillRegistryError(
+                SkillRegistryErrorCode.PATH_OUTSIDE_TRUSTED_ROOT,
+                "Skill package is outside the configured trusted roots.",
+            )
+        relative = resolved.relative_to(root)
         fresh = self.load(relative)
         if (
             fresh.manifest.name != package.manifest.name
@@ -1012,3 +1100,173 @@ class FileSystemSkillRegistry:
                 SkillRegistryErrorCode.LINK_NOT_ALLOWED,
                 "Symbolic links and junctions are not allowed in Skill packages.",
             )
+
+
+class PersonalSkillRegistry(FileSystemSkillRegistry):
+    """Writable personal-Skill registry reusing all trusted validation rules.
+
+    Personal Skills are low-trust, user-owned packages: they may only compose
+    declarative workflows and already-registered handlers/tools, never new
+    Python behavior (ADR-018). Write operations validate every file through the
+    base loader before publishing, so path traversal, symbolic links, remote
+    ``$ref``, and manifest/schema/eval failures are all rejected.
+    """
+
+    def create_personal(self, name: str, files: Mapping[str, str]) -> SkillPackage:
+        with self._lock:
+            root = self._require_personal_root()
+            _validate_personal_name(name)
+            if self.is_builtin(name):
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.NAME_CONFLICT,
+                    "Personal Skill cannot override a built-in Skill name.",
+                )
+            if self.is_personal(name):
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.NAME_CONFLICT,
+                    "Personal Skill name already exists.",
+                )
+            package_dir = root / name
+            package_dir.mkdir(parents=True, exist_ok=False)
+            try:
+                self._write_package_files(package_dir, files)
+                package = self._load_personal_package(name)
+                self.register(package)
+                self._origins[(package.manifest.name, package.manifest.version)] = root
+                return package
+            except Exception:
+                shutil.rmtree(package_dir, ignore_errors=True)
+                raise
+
+    def update_personal(self, name: str, files: Mapping[str, str]) -> SkillPackage:
+        with self._lock:
+            root = self._require_personal_root()
+            self._require_personal_exists(name)
+            if self._active_versions.get(name) is not None:
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.CLEANUP_BLOCKED,
+                    "An active personal Skill cannot be updated.",
+                )
+            package_dir = root / name
+            staging = root / f"_{name}_staging"
+            if staging.exists():
+                shutil.rmtree(staging)
+            staging.mkdir(parents=True, exist_ok=False)
+            try:
+                self._write_package_files(staging, files)
+                staged = self.load(staging.name)
+                if staged.manifest.name != name:
+                    raise SkillRegistryError(
+                        SkillRegistryErrorCode.INVALID_MANIFEST,
+                        "Personal Skill manifest name does not match its directory.",
+                    )
+                self._remove_personal_records(name)
+                shutil.rmtree(package_dir, ignore_errors=True)
+                staging.replace(package_dir)
+                package = self.load(name)
+                self.register(package)
+                self._origins[(package.manifest.name, package.manifest.version)] = root
+                return package
+            finally:
+                if staging.exists():
+                    shutil.rmtree(staging, ignore_errors=True)
+
+    def delete_personal(self, name: str) -> SkillPackage | None:
+        with self._lock:
+            root = self._require_personal_root()
+            self._require_personal_exists(name)
+            if self._active_versions.get(name) is not None:
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.CLEANUP_BLOCKED,
+                    "An active personal Skill cannot be deleted.",
+                )
+            removed = self._remove_personal_records(name)
+            shutil.rmtree(root / name, ignore_errors=True)
+            return removed[-1] if removed else None
+
+    def activate_all(self, activations: Mapping[str, str]) -> None:
+        """Apply a persisted (name, version) mapping for personal Skills."""
+        with self._lock:
+            for name, version in activations.items():
+                if not self.is_personal(name):
+                    continue
+                if version not in self.versions(name):
+                    raise SkillRegistryError(
+                        SkillRegistryErrorCode.NOT_FOUND,
+                        "Persisted personal Skill activation is not installed.",
+                    )
+                self.activate(name, version)
+
+    def _require_personal_root(self) -> Path:
+        if self._personal_root is None:
+            raise SkillRegistryError(
+                SkillRegistryErrorCode.INVALID_PACKAGE,
+                "Personal Skill root is not configured.",
+            )
+        return self._personal_root
+
+    def _require_personal_exists(self, name: str) -> None:
+        if not self.is_personal(name):
+            raise SkillRegistryError(
+                SkillRegistryErrorCode.NOT_FOUND,
+                "Personal Skill is not installed.",
+            )
+
+    def _load_personal_package(self, name: str) -> SkillPackage:
+        package = self.load(name)
+        if package.manifest.name != name:
+            raise SkillRegistryError(
+                SkillRegistryErrorCode.INVALID_MANIFEST,
+                "Personal Skill manifest name does not match its directory.",
+            )
+        return package
+
+    def _remove_personal_records(self, name: str) -> list[SkillPackage]:
+        removed: list[SkillPackage] = []
+        for (candidate, version), root in list(self._origins.items()):
+            if candidate == name and root == self._personal_root:
+                self._origins.pop((candidate, version))
+                package = self._packages.pop((candidate, version), None)
+                if package is not None:
+                    removed.append(package)
+        return removed
+
+    def _write_package_files(self, package_dir: Path, files: Mapping[str, str]) -> None:
+        if not files or "skill.yaml" not in files:
+            raise SkillRegistryError(
+                SkillRegistryErrorCode.INVALID_PACKAGE,
+                "Personal Skill package requires skill.yaml.",
+            )
+        for relative, content in files.items():
+            path = self._safe_personal_relative(package_dir, relative)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+
+    @staticmethod
+    def _safe_personal_relative(package_dir: Path, relative: str) -> Path:
+        if "\\" in relative:
+            raise SkillRegistryError(
+                SkillRegistryErrorCode.PATH_OUTSIDE_TRUSTED_ROOT,
+                "Personal Skill file paths must use POSIX separators.",
+            )
+        pure = PurePosixPath(relative)
+        if pure.is_absolute() or not pure.parts or ".." in pure.parts:
+            raise SkillRegistryError(
+                SkillRegistryErrorCode.PATH_OUTSIDE_TRUSTED_ROOT,
+                "Personal Skill file path escapes the package.",
+            )
+        candidate = package_dir.joinpath(*pure.parts)
+        if not candidate.is_relative_to(package_dir):
+            raise SkillRegistryError(
+                SkillRegistryErrorCode.PATH_OUTSIDE_TRUSTED_ROOT,
+                "Personal Skill file path escapes the package.",
+            )
+        return candidate
+
+
+def _validate_personal_name(name: str) -> None:
+    if re.fullmatch(r"[a-z][a-z0-9_]*", name) is None:
+        raise SkillRegistryError(
+            SkillRegistryErrorCode.INVALID_MANIFEST,
+            "Personal Skill name is invalid.",
+        )

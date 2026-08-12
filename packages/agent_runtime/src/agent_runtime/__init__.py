@@ -51,6 +51,7 @@ from .side_effect_tools import (
 )
 from .skills import (
     FileSystemSkillRegistry,
+    PersonalSkillRegistry,
     PinnedSkill,
     SkillCompatibility,
     SkillInvocation,
