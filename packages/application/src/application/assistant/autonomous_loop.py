@@ -312,6 +312,7 @@ class AutonomousAssistantLoopService:
                     runtime, state, error, input_data
                 )
             ),
+            escalate_long_answer=True,
             tool_skill_refs=self._tool_skill_refs,
             approval_request=(
                 self._approval_port.request if self._approval_port is not None else None

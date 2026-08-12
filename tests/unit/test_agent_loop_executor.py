@@ -53,6 +53,46 @@ class DecisionGateway:
         )
 
 
+class EscalatingGateway:
+    """Model fixture that truncates a long complete decision, then writes the answer."""
+
+    def __init__(self, full_answer: str) -> None:
+        self._delegate = FakeModelGateway()
+        self.requests: list[ChatRequest] = []
+        self._full_answer = full_answer
+
+    @property
+    def status(self) -> GatewayStatus:
+        return self._delegate.status
+
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return ChatResponse(
+                text=(
+                    '{"action":"complete","reason":"full lineage answer","final_response":"'
+                    + ("x" * 600)
+                    + "…"
+                ),
+                finish_reason="length",
+                usage=ModelUsage(input_tokens=10, output_tokens=20),
+                capability=capability,
+                latency_ms=1.0,
+            )
+        return ChatResponse(
+            text=self._full_answer,
+            finish_reason="stop",
+            usage=ModelUsage(input_tokens=5, output_tokens=30),
+            capability=capability,
+            latency_ms=1.0,
+        )
+
+
 class RecordingFinalizer:
     def __init__(self) -> None:
         self.calls = 0
@@ -179,6 +219,36 @@ async def test_loop_observes_multiple_tools_then_finalizes_once() -> None:
         ("loop_fixture", 0),
         ("knowledge_agent", 1),
     ]
+
+
+@pytest.mark.asyncio
+async def test_loop_escalates_a_truncated_long_answer_to_generation() -> None:
+    registry = InMemoryToolRegistry(handlers={"tool": search_handler})
+    definition = registry.register(tool())
+    finalizer = RecordingFinalizer()
+    full_answer = "# 生成模型谱系\n完整长文回答。"
+    gateway = EscalatingGateway(full_answer)
+    result = await AgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use only the registered synthetic Tool.",
+        model_gateway=cast(ModelGateway, gateway),
+        finalizer=finalizer,
+        escalate_long_answer=True,
+    ).execute(
+        loop_run(permissions=definition.permissions),
+        cast(PinnedSkill, object()),
+        {"question": "synthetic"},
+        goal="Answer the synthetic request with evidence.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert result.state.finalization_response == full_answer
+    assert result.output == {"message": "final:escalated long answer"}
+    assert finalizer.calls == 1
+    assert len(gateway.requests) == 2
+    assert gateway.requests[1].max_tokens == 6_144
+    assert gateway.requests[1].messages[1].content == "synthetic"
 
 
 @pytest.mark.asyncio

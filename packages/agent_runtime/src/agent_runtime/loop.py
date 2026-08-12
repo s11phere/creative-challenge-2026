@@ -124,6 +124,7 @@ class AgentLoopExecutor:
         finalizer: AgentLoopFinalizer | None = None,
         emergency_ceiling: int = 32,
         max_tokens_per_decision: int = 512,
+        escalate_long_answer: bool = False,
         cancellation_check: CancellationCheck | None = None,
         decision_policy: DecisionPolicy | None = None,
         invalid_decision_recovery: InvalidDecisionRecovery | None = None,
@@ -149,6 +150,7 @@ class AgentLoopExecutor:
         self._finalizer = finalizer or _DefaultFinalizer()
         self._emergency_ceiling = emergency_ceiling
         self._max_tokens_per_decision = max_tokens_per_decision
+        self._escalate_long_answer = escalate_long_answer
         self._cancellation_check = cancellation_check or _not_cancelled
         self._decision_policy = decision_policy
         self._invalid_decision_recovery = invalid_decision_recovery
@@ -300,6 +302,7 @@ class AgentLoopExecutor:
                 system_prompt=self._system_prompt,
                 max_tokens=self._max_tokens_per_decision,
                 tool_definitions=definitions,
+                escalate_long_answer=self._escalate_long_answer,
             )
             if state.phase is AgentLoopPhase.TOOL_REQUESTED and state.pending_tool_name:
                 run, state, pending_result = await self._execute_pending_tool(

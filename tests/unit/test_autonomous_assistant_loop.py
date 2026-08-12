@@ -121,6 +121,46 @@ class UnavailableWorkspaceToolGateway:
         )
 
 
+class EscalatedAnswerGateway:
+    """Model fixture that truncates a long complete decision, then writes the answer."""
+
+    def __init__(self, full_answer: str) -> None:
+        self._delegate = FakeModelGateway()
+        self.requests: list[ChatRequest] = []
+        self._full_answer = full_answer
+
+    @property
+    def status(self) -> GatewayStatus:
+        return self._delegate.status
+
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return ChatResponse(
+                text=(
+                    '{"action":"complete","reason":"full lineage answer","final_response":"'
+                    + ("x" * 600)
+                    + "…"
+                ),
+                finish_reason="length",
+                usage=ModelUsage(input_tokens=10, output_tokens=20),
+                capability=capability,
+                latency_ms=1.0,
+            )
+        return ChatResponse(
+            text=self._full_answer,
+            finish_reason="stop",
+            usage=ModelUsage(input_tokens=5, output_tokens=30),
+            capability=capability,
+            latency_ms=1.0,
+        )
+
+
 async def _research(
     _arguments: dict[str, JSONValue], _context: ToolExecutionContext
 ) -> dict[str, JSONValue]:
@@ -328,6 +368,65 @@ async def test_unavailable_workspace_tool_decision_publishes_configuration_expla
     assert "尚未启用外部模型的工作区写入能力" in message.content
     assert "确认" in message.content
     assert len(gateway.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_loop_escalates_a_long_answer_truncation_and_publishes_the_generation() -> None:
+    repository = InMemoryGroundedQARepository()
+    conversation = ConversationRecord(
+        conversation_id=UUID(int=1301), space_id=UUID(int=1302), owner_id="loop-user"
+    )
+    await repository.create_conversation(conversation)
+    question = "请你从 VAE -> GAN -> DDPM -> SDE 这一条线梳理生成模型"
+    submitted = await ConversationRunService(conversations=repository, runs=repository).submit(
+        AssistantTurnSubmission(
+            conversation_id=conversation.conversation_id,
+            content=question,
+            idempotency_key="autonomous-loop-long-answer-1",
+        )
+    )
+    await repository.claim_conversation_run(
+        submitted.run_id, lease_owner="test-worker", lease_seconds=60
+    )
+    registry = InMemoryToolRegistry(handlers={"research": _research})
+    research = registry.register(_tool("research_skill", "research"))
+    full_answer = "# 生成模型谱系\n从 VAE 到 SDE 的完整梳理。"
+    gateway = EscalatedAnswerGateway(full_answer)
+    service = AutonomousAssistantLoopService(
+        runs=repository,
+        messages=repository,
+        gateway=cast(ModelGateway, gateway),
+        events=AssistantEventLog(),
+        agent_events=AgentRunEventLog(),
+        runtime_state=InMemoryRuntimeStateStore(),
+        pin=_pin(),
+        budget=RunBudget(
+            max_steps=4,
+            max_tool_calls=2,
+            max_input_tokens=100,
+            max_output_tokens=100,
+            timeout_seconds=30,
+        ),
+        tool_registry=registry,
+        allowed_tools=(ToolRef(research.name, research.version),),
+        qa_results=_no_qa_result,
+        skill_contexts=(),
+        workspace_context={},
+    )
+
+    completed = await service.execute(submitted.run_id, trace_id="e" * 32)
+
+    assert completed is not None
+    assert completed.status is ConversationRunStatus.COMPLETED
+    assert completed.result is not None
+    message = await repository.get_message(completed.result.message_id)
+    assert message is not None
+    assert message.content == full_answer
+    assert len(gateway.requests) == 2
+    generation_request = gateway.requests[1]
+    assert generation_request.max_tokens == 6_144
+    assert generation_request.temperature == 0.2
+    assert generation_request.messages[1].content == question
 
 
 def test_completion_recovery_requires_a_workspace_write_after_qa_finalization() -> None:
