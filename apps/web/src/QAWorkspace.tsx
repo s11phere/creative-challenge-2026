@@ -9,7 +9,6 @@ import {
   FileText,
   LoaderCircle,
   MessageSquareText,
-  Sparkles,
   Quote,
   RotateCcw,
   Send,
@@ -20,7 +19,7 @@ import ReactMarkdown from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react'
 import 'katex/dist/katex.min.css'
 import { AgentRunTimeline } from './AgentRunTimeline'
 import {
@@ -426,9 +425,12 @@ export function QAWorkspace({
   const [effortIndex, setEffortIndex] = useState(reasoningEfforts.indexOf(initialReasoningEffort))
   const [commandMenuDismissed, setCommandMenuDismissed] = useState(false)
   const [commandPanelRequested, setCommandPanelRequested] = useState(false)
+  const [selectedCommand, setSelectedCommand] = useState<AssistantCommand | null>(null)
+  const [selectedCommandWidth, setSelectedCommandWidth] = useState(0)
   const [commandNotices, setCommandNotices] = useState<CommandNotice[]>([])
   const [pendingEffortPicker, setPendingEffortPicker] = useState<EffortPicker | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const selectedCommandRef = useRef<HTMLSpanElement>(null)
   const composerRef = useRef<HTMLFormElement>(null)
   const commandHighlightRef = useRef<HTMLDivElement>(null)
   const threadRef = useRef<HTMLDivElement>(null)
@@ -549,8 +551,8 @@ export function QAWorkspace({
   ]
   const activeReasoningEffort = reasoningEfforts[effortIndex]
   const commandPrefix = useMemo(
-    () => validCommandPrefix(draft, commandsQuery.data ?? []),
-    [commandsQuery.data, draft],
+    () => selectedCommand ? null : validCommandPrefix(draft, commandsQuery.data ?? []),
+    [commandsQuery.data, draft, selectedCommand],
   )
 
   useEffect(() => {
@@ -562,6 +564,20 @@ export function QAWorkspace({
   useEffect(() => {
     if (commandIndex >= commandOptions.length) setCommandIndex(0)
   }, [commandIndex, commandOptions.length])
+
+  useEffect(() => {
+    const element = selectedCommandRef.current
+    if (!element || !selectedCommand) {
+      setSelectedCommandWidth(0)
+      return
+    }
+    const updateWidth = () => setSelectedCommandWidth(Math.ceil(element.getBoundingClientRect().width))
+    updateWidth()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [selectedCommand])
 
   useEffect(() => {
     if (!commandMenuOpen) return
@@ -600,6 +616,7 @@ export function QAWorkspace({
       setSelectedEvidenceId(null)
       setCommandNotices([])
       setPendingEffortPicker(null)
+      setSelectedCommand(null)
       localMessageOrdersRef.current.clear()
     }
   }, [conversationId, historyQuery.data, onConversationSelected, selectedConversationId])
@@ -714,6 +731,7 @@ export function QAWorkspace({
       evidenceUserClosedRef.current = false
       setSelectedEvidenceId(null)
       setDraft('')
+      setSelectedCommand(null)
       setCommandMenuDismissed(false)
       void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
       void queryClient.invalidateQueries({ queryKey: ['assistant-runs'] })
@@ -762,7 +780,8 @@ export function QAWorkspace({
   })
 
   const chooseCommand = (command: AssistantCommand) => {
-    setDraft(`/${command.name} `)
+    setSelectedCommand(command)
+    setDraft('')
     setCommandMenuDismissed(true)
     setCommandPanelRequested(false)
     requestAnimationFrame(() => {
@@ -793,7 +812,10 @@ export function QAWorkspace({
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const content = draft.trim()
+    const task = draft.trim()
+    const content = selectedCommand
+      ? `/${selectedCommand.name}${task ? ` ${task}` : ''}`
+      : task
     if (!content || submitMutation.isPending) return
     if (/^\/effort$/i.test(content)) {
       setDraft('')
@@ -825,6 +847,11 @@ export function QAWorkspace({
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (isComposingRef.current) return
+    if (selectedCommand && event.key === 'Backspace' && draft.length === 0) {
+      event.preventDefault()
+      setSelectedCommand(null)
+      return
+    }
     if (event.key === 'Enter' && event.ctrlKey) {
       event.preventDefault()
       const textarea = event.currentTarget
@@ -1085,7 +1112,19 @@ export function QAWorkspace({
 
         <form ref={composerRef} className="qa-composer chat-composer" onSubmit={onSubmit}>
           <label htmlFor="qa-question">消息</label>
-          <div className="chat-composer-editor">
+          <div
+            className={`chat-composer-editor${selectedCommand ? ' chat-composer-editor-with-command' : ''}`}
+            style={selectedCommand ? { '--selected-command-width': `${selectedCommandWidth}px` } as CSSProperties : undefined}
+          >
+            {selectedCommand && (
+              <span ref={selectedCommandRef} className="chat-selected-command" aria-label={`已选择${selectedCommand.kind === 'skill' ? '技能' : '指令'} ${selectedCommand.name}`}>
+                {selectedCommand.kind === 'skill' ? <Bot size={16} aria-hidden="true" /> : <MessageSquareText size={16} aria-hidden="true" />}
+                <strong>{selectedCommand.name}</strong>
+                <button type="button" onClick={() => setSelectedCommand(null)} aria-label={`移除${selectedCommand.kind === 'skill' ? '技能' : '指令'} ${selectedCommand.name}`}>
+                  <X size={13} aria-hidden="true" />
+                </button>
+              </span>
+            )}
             {commandPrefix && (
               <div ref={commandHighlightRef} className="chat-composer-highlight" aria-hidden="true">
                 <span>{commandPrefix.leading}</span>
@@ -1114,7 +1153,9 @@ export function QAWorkspace({
               commandHighlightRef.current.scrollLeft = event.currentTarget.scrollLeft
             }}
             onKeyDown={onComposerKeyDown}
-            placeholder="输入消息"
+            placeholder={selectedCommand
+              ? selectedCommand.argument_hint || (selectedCommand.kind === 'skill' ? '描述希望技能完成的任务' : '补充指令参数（可选）')
+              : '输入消息'}
             rows={3}
             maxLength={12_000}
             disabled={submitMutation.isPending}
@@ -1138,13 +1179,10 @@ export function QAWorkspace({
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => chooseCommand(command)}
                 >
-                  <span className="chat-command-icon">{command.kind === 'skill' ? <Sparkles size={17} /> : <MessageSquareText size={17} />}</span>
+                  <span className="chat-command-icon">{command.kind === 'skill' ? <Bot size={17} /> : <MessageSquareText size={17} />}</span>
                   <span className="chat-command-copy">
                     <strong>/{command.name}</strong>
                     <small>{commandDescription(command)}</small>
-                    {(command.argument_hint || command.aliases.length > 0) && (
-                      <em>{command.argument_hint}{command.aliases.length > 0 ? ` · 别名：${command.aliases.map((alias) => `/${alias}`).join('、')}` : ''}</em>
-                    )}
                   </span>
                 </button>
                     )
@@ -1155,7 +1193,7 @@ export function QAWorkspace({
             </div>
           )}
           <div className="qa-composer-actions">
-            <span>{draft.length.toLocaleString('zh-CN')} / 12,000</span>
+            <span>{(draft.length + (selectedCommand ? selectedCommand.name.length + 2 : 0)).toLocaleString('zh-CN')} / 12,000</span>
             <div>
               <button
                 className="qa-command-button"
@@ -1170,14 +1208,14 @@ export function QAWorkspace({
                   if (!commandMenuOpen) requestAnimationFrame(() => textareaRef.current?.focus())
                 }}
               >
-                <Sparkles size={16} aria-hidden="true" />指令与技能
+                <Bot size={16} aria-hidden="true" />指令与技能
               </button>
               {currentRunIsActive && (
                 <button className="qa-cancel-button icon-button" type="button" onClick={() => cancelMutation.mutate()} disabled={cancelMutation.isPending} aria-label="取消当前运行" title="取消当前运行">
                   <Square size={15} fill="currentColor" aria-hidden="true" />
                 </button>
               )}
-              <button className="qa-send-button" type="submit" disabled={!draft.trim() || submitMutation.isPending}>
+              <button className="qa-send-button" type="submit" disabled={(!draft.trim() && !selectedCommand) || submitMutation.isPending}>
                 {submitMutation.isPending ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}发送
               </button>
             </div>
