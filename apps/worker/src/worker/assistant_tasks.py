@@ -37,7 +37,15 @@ from application.assistant import (
     ConversationContextService,
     ConversationFinalizer,
 )
-from application.skills import KnowledgeLoopTools, KnowledgeLoopToolsConfig
+from application.skills import (
+    DraftSkillEvalRunner,
+    KnowledgeLoopTools,
+    KnowledgeLoopToolsConfig,
+    PersonalSkillStore,
+    SkillCreatorTools,
+    SkillDraftStore,
+    register_skill_creator_tools,
+)
 from domain.agent_runtime import ToolPermission
 from domain.assistant_sse import AssistantEventType
 from domain.conversation_run import ConversationRunKind, ConversationRunStatus
@@ -251,10 +259,10 @@ async def _autonomous_loop_service(
     trace_id: str,
 ) -> AutonomousAssistantLoopService:
     """Build the top-level Loop from existing QA ports and trusted Skill packages."""
-    from agent_runtime import FileSystemSkillRegistry, SkillRegistryError
+    from agent_runtime import SkillRegistryError
 
     skill_registry = registry
-    assert isinstance(skill_registry, FileSystemSkillRegistry)
+    assert isinstance(skill_registry, PersonalSkillRegistry)
     resources = PostgresAssistantResourceResolver(database)
     assistant_pin = skill_registry.pin("assistant_agent", "1.0.0")
     assistant_package = skill_registry.validate_pin(assistant_pin)
@@ -309,9 +317,28 @@ async def _autonomous_loop_service(
     conversation = await qa_repository.get_conversation(parent.conversation_id)
     if conversation is None:
         raise ValueError("CONVERSATION_NOT_FOUND")
-    extra_handlers: dict[str, ToolHandler] | None = None
-    extra_tool_registrar: Callable[[InMemoryToolRegistry], tuple[ToolDefinition, ...]] | None = None
-    extra_permissions: frozenset[ToolPermission] = frozenset()
+    creator_drafts = SkillDraftStore(
+        registry=skill_registry,
+        personal_store=PersonalSkillStore(
+            registry=skill_registry,
+            store=PostgresSkillActivationStore(database),
+        ),
+        eval_runner=DraftSkillEvalRunner(registry=skill_registry),
+    )
+    creator_tools = SkillCreatorTools(draft_store=creator_drafts)
+    extra_handlers: dict[str, ToolHandler] = dict(creator_tools.handlers())
+    extra_permissions: frozenset[ToolPermission] = frozenset(
+        {ToolPermission.READ_KNOWLEDGE, ToolPermission.WRITE_KNOWLEDGE}
+    )
+
+    def register_creator_tools(
+        registry: InMemoryToolRegistry,
+    ) -> tuple[ToolDefinition, ...]:
+        return register_skill_creator_tools(registry)
+
+    extra_tool_registrar: Callable[[InMemoryToolRegistry], tuple[ToolDefinition, ...]] = (
+        register_creator_tools
+    )
     workspace_context: dict[str, JSONValue] = {"selected": False, "tools_enabled": False}
     if conversation.workspace_path is not None:
         workspace = None
@@ -352,17 +379,22 @@ async def _autonomous_loop_service(
                 ),
                 cancellation_probe=cancellation_probe,
             )
-            extra_handlers = {**file_tools.handlers(), **side_effect_tools.handlers()}
+            extra_handlers = {
+                **file_tools.handlers(),
+                **side_effect_tools.handlers(),
+                **creator_tools.handlers(),
+            }
 
-            def register_workspace_tools(
+            def register_all_tools(
                 registry: InMemoryToolRegistry,
             ) -> tuple[ToolDefinition, ...]:
                 return (
                     *register_read_only_file_tools(registry),
                     *register_side_effect_tools(registry),
+                    *register_skill_creator_tools(registry),
                 )
 
-            extra_tool_registrar = register_workspace_tools
+            extra_tool_registrar = register_all_tools
             extra_permissions = frozenset(
                 {
                     ToolPermission.READ_KNOWLEDGE,

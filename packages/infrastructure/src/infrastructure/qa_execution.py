@@ -16,7 +16,6 @@ from agent_runtime import (
     PersonalSkillRegistry,
     RuntimeExecutionResult,
     SkillRegistryError,
-    SkillRegistryErrorCode,
 )
 from application.qa import (
     ContextBuilder,
@@ -1032,13 +1031,9 @@ def _skill_output_schema(skill_name: str) -> str:
         "create_review_cards": "review-cards-skill-output-v1",
         "knowledge_agent": "knowledge-agent-skill-output-v1",
     }
-    try:
-        return schemas[skill_name]
-    except KeyError as exc:
-        raise SkillRegistryError(
-            SkillRegistryErrorCode.NOT_FOUND,
-            "No Grounded QA adapter is registered for this Skill.",
-        ) from exc
+    # Personal Skills (ADR-018) compose the same Grounded QA handlers, so an
+    # unlisted Skill name falls back to the generic projected output shape.
+    return schemas.get(skill_name, "personal-skill-output-v1")
 
 
 def _safe_error(error: BaseException) -> dict[str, str]:
