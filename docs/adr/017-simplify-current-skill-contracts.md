@@ -2,6 +2,9 @@
 
 ## 背景
 
+> 补充（2026-08-12）：ADR-020 的 v2 Harness 不恢复旧 Skill 版本或 lifecycle API。它只为新 Run
+> 提供按需加载当前已 pin Skill 指令的机制；本 ADR 的单一当前 Skill 契约和历史 Run 不兼容恢复边界保持不变。
+
 仓库同时保留多个历史 Skill、Prompt、Assistant API 模式和 Skill 生命周期接口，导致运行时选择、
 恢复和 Web 交互存在不必要的分支。当前产品已经确定 Assistant 主路径和最新 Skill 实现，继续维护
 旧兼容层会增加决策错误和测试负担。

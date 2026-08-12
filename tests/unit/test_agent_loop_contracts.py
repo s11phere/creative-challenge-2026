@@ -14,6 +14,7 @@ CONTRACT_ROOT = (
     REPOSITORY_ROOT / "packages" / "agent_runtime" / "src" / "agent_runtime" / "contracts"
 )
 DATASET_ROOT = REPOSITORY_ROOT / "cases" / "evals" / "datasets" / "agent-loop-v1"
+V2_DATASET_ROOT = REPOSITORY_ROOT / "cases" / "evals" / "datasets" / "agent-harness-v2"
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -45,6 +46,95 @@ def test_frozen_contract_manifest_matches_all_schema_hashes() -> None:
     for name, expected in artifacts.items():
         assert _sha256(CONTRACT_ROOT / name) == expected
         Draft202012Validator.check_schema(_json(CONTRACT_ROOT / name))
+
+
+def test_v2_contract_manifest_hashes_and_native_tool_messages_are_frozen() -> None:
+    manifest = _json(CONTRACT_ROOT / "manifest-v2.json")
+    assert manifest["schema_version"] == "agent-runtime-contract-manifest-v1"
+    assert manifest["contract_version"] == "v2"
+    assert manifest["status"] == "provisional"
+    assert set(manifest["artifacts"]) == {
+        "agent-loop-v2.schema.json",
+        "agent-model-context-v2.schema.json",
+        "native-tool-use-v2.schema.json",
+    }
+    for name, expected in manifest["artifacts"].items():
+        assert _sha256(CONTRACT_ROOT / name) == expected
+        Draft202012Validator.check_schema(_json(CONTRACT_ROOT / name))
+
+    native_validator = _validator("native-tool-use-v2.schema.json")
+    native_validator.validate(
+        {
+            "schema_version": "native-tool-use-v2",
+            "message_kind": "tool_call",
+            "call_id": "call_1",
+            "tool_name": "invoke_skill",
+            "arguments": {"name": "knowledge_agent"},
+        }
+    )
+    native_validator.validate(
+        {
+            "schema_version": "native-tool-use-v2",
+            "message_kind": "terminal_text",
+            "text": "Synthetic terminal response.",
+        }
+    )
+    with pytest.raises(ValidationError):
+        native_validator.validate(
+            {
+                "schema_version": "native-tool-use-v2",
+                "message_kind": "tool_call",
+                "call_id": "call_1",
+                "tool_name": "invoke_skill",
+                "arguments": {"space_id": "model-chosen"},
+            }
+        )
+
+
+def test_v2_model_context_remains_bounded_and_body_free() -> None:
+    validator = _validator("agent-model-context-v2.schema.json")
+    validator.validate(
+        {
+            "schema_version": "agent-model-context-v2",
+            "goal": "Synthetic goal.",
+            "selected_skills": [
+                {
+                    "name": "knowledge_agent",
+                    "version": "1.0.0",
+                    "content_sha256": "a" * 64,
+                }
+            ],
+            "decision_history": [
+                {
+                    "iteration": 1,
+                    "kind": "tool",
+                    "tool_name": "invoke_skill",
+                    "status": "succeeded",
+                    "summary": "Selected a trusted Skill.",
+                }
+            ],
+            "observations": [
+                {
+                    "iteration": 1,
+                    "tool_name": "invoke_skill",
+                    "status": "succeeded",
+                    "summary": "Skill is available.",
+                }
+            ],
+            "progress_summary": "One selected Skill; no unresolved items.",
+        }
+    )
+    with pytest.raises(ValidationError):
+        validator.validate(
+            {
+                "schema_version": "agent-model-context-v2",
+                "goal": "Synthetic goal.",
+                "selected_skills": [],
+                "decision_history": [],
+                "observations": [],
+                "progress_summary": "x" * 4_001,
+            }
+        )
 
 
 def test_loop_intent_requires_tool_for_tool_action_and_completion_for_finalize() -> None:
@@ -188,3 +278,42 @@ def test_agent_loop_development_dataset_is_synthetic_and_hash_pinned() -> None:
         "write_approval",
         "command_overreach",
     }
+
+
+def test_agent_harness_v2_development_dataset_is_body_free_and_hash_pinned() -> None:
+    manifest = yaml.safe_load((V2_DATASET_ROOT / "manifest.yaml").read_text(encoding="utf-8"))
+    assert manifest["status"] == "provisional"
+    assert manifest["distribution_scope"] == "repository_fixture"
+    assert manifest["content_policy"] == "synthetic_metadata_only"
+    assert manifest["formal_runs_enabled"] is False
+    assert _sha256(REPOSITORY_ROOT / manifest["schema_path"]) == manifest["schema_sha256"]
+    assert _sha256(REPOSITORY_ROOT / manifest["cases_path"]) == manifest["cases_sha256"]
+
+    validator = Draft202012Validator(_json(V2_DATASET_ROOT / "schema.json"))
+    cases = [
+        json.loads(line)
+        for line in (V2_DATASET_ROOT / "development.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    assert len(cases) == 10
+    assert len(cases) == len({case["id"] for case in cases})
+    serialized = json.dumps(cases, sort_keys=True)
+    assert all(
+        f'"{field}"' not in serialized
+        for field in (
+            "request",
+            "prompt",
+            "answer",
+            "citation",
+            "document",
+            "tool_payload",
+            "provider_response",
+            "credential",
+            "secret",
+            "internal_id",
+        )
+    )
+    for case in cases:
+        validator.validate(case)
+        assert case["content_policy"] == "synthetic_metadata_only"
+        assert case["split"] == "development"

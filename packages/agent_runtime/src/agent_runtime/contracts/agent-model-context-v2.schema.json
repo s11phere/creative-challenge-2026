@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-model-context-v2.schema.json",
+  "title": "Bounded Agent model context v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "goal",
+    "selected_skills",
+    "decision_history",
+    "observations",
+    "progress_summary"
+  ],
+  "properties": {
+    "schema_version": {"const": "agent-model-context-v2"},
+    "goal": {"type": "string", "minLength": 1, "maxLength": 12000},
+    "selected_skills": {
+      "type": "array",
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "version", "content_sha256"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "version": {"type": "string", "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"},
+          "content_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        }
+      }
+    },
+    "decision_history": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["iteration", "kind", "summary"],
+        "properties": {
+          "iteration": {"type": "integer", "minimum": 1},
+          "kind": {"enum": ["tool", "terminal"]},
+          "tool_name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "status": {"enum": ["requested", "succeeded", "failed", "skipped", "terminal"]},
+          "error_code": {"type": "string", "maxLength": 120},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 320},
+          "unresolved_item": {"type": "string", "maxLength": 320}
+        }
+      }
+    },
+    "observations": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["iteration", "tool_name", "status", "summary"],
+        "properties": {
+          "iteration": {"type": "integer", "minimum": 1},
+          "tool_name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "status": {"enum": ["succeeded", "failed", "skipped", "needs_input"]},
+          "error_code": {"type": "string", "maxLength": 120},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 1200}
+        }
+      }
+    },
+    "progress_summary": {"type": "string", "maxLength": 4000},
+    "approval_pending": {"type": "boolean"},
+    "cancellation_requested": {"type": "boolean"}
+  }
+}

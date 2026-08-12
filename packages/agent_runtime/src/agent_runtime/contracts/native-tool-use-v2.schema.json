@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "native-tool-use-v2.schema.json",
+  "title": "Provider-neutral native Tool-use message v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "message_kind"],
+  "properties": {
+    "schema_version": {"const": "native-tool-use-v2"},
+    "message_kind": {"enum": ["tool_call", "tool_result", "terminal_text"]},
+    "call_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"},
+    "tool_name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+    "arguments": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": {
+        "not": {"pattern": "(?i)(^|_)(space|space_id|version_id|credential|secret)$"}
+      }
+    },
+    "observation": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": {
+        "not": {"pattern": "(?i)(prompt|answer|secret|credential|raw|stdout|stderr|document_body)"}
+      }
+    },
+    "text": {"type": "string", "minLength": 1, "maxLength": 20000}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"message_kind": {"const": "tool_call"}}},
+      "then": {
+        "required": ["call_id", "tool_name", "arguments"],
+        "not": {"anyOf": [{"required": ["observation"]}, {"required": ["text"]}]}
+      }
+    },
+    {
+      "if": {"properties": {"message_kind": {"const": "tool_result"}}},
+      "then": {
+        "required": ["call_id", "tool_name", "observation"],
+        "not": {"anyOf": [{"required": ["arguments"]}, {"required": ["text"]}]}
+      }
+    },
+    {
+      "if": {"properties": {"message_kind": {"const": "terminal_text"}}},
+      "then": {
+        "required": ["text"],
+        "not": {
+          "anyOf": [
+            {"required": ["call_id"]},
+            {"required": ["tool_name"]},
+            {"required": ["arguments"]},
+            {"required": ["observation"]}
+          ]
+        }
+      }
+    }
+  ]
+}

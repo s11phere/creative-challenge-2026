@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-loop-v2.schema.json",
+  "title": "Agent Loop native Tool-use checkpoint decision v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "iteration", "context", "decision"],
+  "properties": {
+    "schema_version": {"const": "agent-loop-v2"},
+    "iteration": {"type": "integer", "minimum": 1},
+    "context": {"$ref": "agent-model-context-v2.schema.json"},
+    "decision": {"$ref": "native-tool-use-v2.schema.json"}
+  }
+}

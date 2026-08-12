@@ -34,3 +34,14 @@ output, or error. Chat messages are shown by role and wrapped for normal-width s
 Tool payloads remain indented JSON. The command prints only the final output path to standard output.
 Each report is sensitive local diagnostic data: do not commit, upload, or paste it into tickets.
 Delete traces and exports when the investigation is complete.
+
+For a body-free Harness migration baseline, use the local trace only to calculate aggregate counts
+and UTF-8 byte estimates. The command prints no prompt, answer, Tool argument, Tool result, or
+identifier and never writes a report:
+
+```powershell
+.venv\Scripts\python.exe scripts/summarize_agent_harness_baseline.py --run-id <run-uuid>
+```
+
+The output is development-only and provisional. It is not a retrieval, answer, or Skill quality
+evaluation, and must not be committed or added to normal logs, SSE, or PostgreSQL.

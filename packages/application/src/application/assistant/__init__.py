@@ -25,6 +25,11 @@ from .context import (
     ConversationContextSnapshot,
 )
 from .finalization import ConversationFinalizer, FinalizationInput, grounded_material
+from .harness_baseline import (
+    AgentHarnessBaseline,
+    AgentHarnessRoundBaseline,
+    summarize_agent_harness_trace,
+)
 from .metrics import (
     AssistantAction,
     AssistantMetrics,
@@ -68,6 +73,8 @@ __all__ = [
     "ConversationContextService",
     "ConversationContextSnapshot",
     "AssistantAction",
+    "AgentHarnessBaseline",
+    "AgentHarnessRoundBaseline",
     "AssistantMetrics",
     "AssistantRoutingObservation",
     "aggregate_assistant_metrics",
@@ -84,6 +91,7 @@ __all__ = [
     "ConversationFinalizer",
     "FinalizationInput",
     "grounded_material",
+    "summarize_agent_harness_trace",
     "NaturalLanguageResourceResolver",
     "ResourceResolutionError",
     "ResourceResolutionErrorCode",

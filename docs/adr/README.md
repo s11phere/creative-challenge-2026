@@ -31,3 +31,7 @@ ADR-017 simplifies the current Skill contracts to the single read-only `/api/v1/
 ADR-018 records the personal Skill storage root, trust boundary, CRUD API, and activation reuse.
 ADR-019 records the Skill Creator draft lifecycle: `_drafts` storage, deterministic eval-as-gate,
 creator Tools with durable approval, and frequency-thresholded usage suggestions.
+ADR-020 records the feature-gated Agent Harness v2: progressive Skill instruction loading,
+provider-neutral native Tool-use, service-owned knowledge gates, bounded decision history, and
+body-free synthetic development baselines. It preserves v1 Run recovery and the ADR-010/011
+provisional-quality boundary.

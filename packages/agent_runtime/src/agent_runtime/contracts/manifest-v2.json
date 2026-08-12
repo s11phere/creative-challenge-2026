@@ -1,0 +1,10 @@
+{
+  "schema_version": "agent-runtime-contract-manifest-v1",
+  "contract_version": "v2",
+  "status": "provisional",
+  "artifacts": {
+    "agent-loop-v2.schema.json": "b25e6a802fe963589ce9a897bd2fc1c065b398432b05982276ad40751e1ff9b3",
+    "agent-model-context-v2.schema.json": "33f1e4b5f38569ebd80de9fded46f1306f7c7c9dd687c89ccb6961d3e3570b3e",
+    "native-tool-use-v2.schema.json": "f750a4e3eb007462d4cbbfdafec01997117c812989f12cae8a395aea681ab1be"
+  }
+}

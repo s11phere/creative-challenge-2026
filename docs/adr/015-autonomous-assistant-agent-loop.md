@@ -5,6 +5,11 @@
 - Scope: Provisional engineering contracts; formal retrieval, answer, Skill, and browser quality
   gates remain governed by ADR-010 and ADR-011.
 
+> Supersession note (2026-08-12): ADR-020 introduces a feature-gated v2 successor for new Runs.
+> Its native Tool-use, progressive Skill loading, bounded model context, and service-owned knowledge
+> gates supersede the corresponding v1 model-decision surface when enabled. This ADR remains the
+> recovery and behavioral contract for persisted v1 Runs.
+
 ## Context
 
 The previous Assistant path separated Skill selection from Skill execution. A router produced one
