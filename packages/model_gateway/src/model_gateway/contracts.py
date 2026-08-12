@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import math
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
 from domain.reasoning import ReasoningProfile
+
+type JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
+
+_TOOL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+_TOOL_CALL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 class CapabilityAlias(StrEnum):
@@ -20,6 +28,65 @@ class ChatRole(StrEnum):
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
+
+
+@dataclass(frozen=True)
+class ChatToolDefinition:
+    """A self-contained native function Tool exposed for one chat turn."""
+
+    name: str
+    description: str
+    input_schema: Mapping[str, JSONValue]
+
+    def __post_init__(self) -> None:
+        if _TOOL_NAME_PATTERN.fullmatch(self.name) is None:
+            raise ValueError("Chat Tool name is invalid")
+        if not self.description.strip() or len(self.description) > 2_000:
+            raise ValueError("Chat Tool description must be non-empty and bounded")
+        if not isinstance(self.input_schema, Mapping):
+            raise ValueError("Chat Tool input schema must be an object")
+        try:
+            json.dumps(self.input_schema, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Chat Tool input schema must be JSON") from exc
+        if _contains_ref(self.input_schema):
+            raise ValueError("Chat Tool input schema must be self-contained")
+
+
+@dataclass(frozen=True)
+class ChatToolCall:
+    """One provider-native Tool request returned by a model."""
+
+    call_id: str
+    tool_name: str
+    arguments: Mapping[str, JSONValue]
+
+    def __post_init__(self) -> None:
+        if _TOOL_CALL_ID_PATTERN.fullmatch(self.call_id) is None:
+            raise ValueError("Chat Tool call ID is invalid")
+        if _TOOL_NAME_PATTERN.fullmatch(self.tool_name) is None:
+            raise ValueError("Chat Tool call name is invalid")
+        if not isinstance(self.arguments, Mapping):
+            raise ValueError("Chat Tool call arguments must be an object")
+        _validate_json_object(self.arguments, "Chat Tool call arguments")
+
+
+@dataclass(frozen=True)
+class ChatToolResult:
+    """A server-validated Tool result replayed to the provider on the next turn."""
+
+    call_id: str
+    tool_name: str
+    observation: Mapping[str, JSONValue]
+
+    def __post_init__(self) -> None:
+        if _TOOL_CALL_ID_PATTERN.fullmatch(self.call_id) is None:
+            raise ValueError("Chat Tool result call ID is invalid")
+        if _TOOL_NAME_PATTERN.fullmatch(self.tool_name) is None:
+            raise ValueError("Chat Tool result name is invalid")
+        if not isinstance(self.observation, Mapping):
+            raise ValueError("Chat Tool result observation must be an object")
+        _validate_json_object(self.observation, "Chat Tool result observation")
 
 
 class ModelProvider(StrEnum):
@@ -86,6 +153,9 @@ class ChatRequest:
     max_tokens: int | None = None
     continuation: ChatContinuation | None = None
     reasoning_profile: ReasoningProfile | None = None
+    tools: tuple[ChatToolDefinition, ...] = ()
+    tool_call_history: tuple[ChatToolCall, ...] = ()
+    tool_results: tuple[ChatToolResult, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.messages:
@@ -94,6 +164,23 @@ class ChatRequest:
             raise ValueError("Chat temperature must be between 0 and 2")
         if self.max_tokens is not None and self.max_tokens < 1:
             raise ValueError("Chat max_tokens must be positive")
+        names = tuple(tool.name for tool in self.tools)
+        if len(names) != len(set(names)):
+            raise ValueError("Chat Tool names must be unique")
+        history_call_ids = tuple(call.call_id for call in self.tool_call_history)
+        if len(history_call_ids) != len(set(history_call_ids)):
+            raise ValueError("Chat Tool call history IDs must be unique")
+        result_call_ids = tuple(result.call_id for result in self.tool_results)
+        if len(result_call_ids) != len(set(result_call_ids)):
+            raise ValueError("Chat Tool result call IDs must be unique")
+        calls_by_id = {call.call_id: call for call in self.tool_call_history}
+        if not set(result_call_ids).issubset(calls_by_id):
+            raise ValueError("Chat Tool results must reference prior Tool calls")
+        if any(
+            calls_by_id[result.call_id].tool_name != result.tool_name
+            for result in self.tool_results
+        ):
+            raise ValueError("Chat Tool result name does not match the prior Tool call")
 
 
 ContinuationMetadata = ChatContinuation
@@ -157,6 +244,20 @@ class RerankResponse:
 class ModelUsage:
     input_tokens: int = 0
     output_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_write_input_tokens: int = 0
+
+    def __post_init__(self) -> None:
+        if (
+            min(
+                self.input_tokens,
+                self.output_tokens,
+                self.cached_input_tokens,
+                self.cache_write_input_tokens,
+            )
+            < 0
+        ):
+            raise ValueError("Model usage counts cannot be negative")
 
     @property
     def total_tokens(self) -> int:
@@ -170,6 +271,14 @@ class ChatResponse:
     usage: ModelUsage
     capability: CapabilityAlias
     latency_ms: float
+    tool_calls: tuple[ChatToolCall, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.latency_ms < 0 or not math.isfinite(self.latency_ms):
+            raise ValueError("Chat response latency must be finite and non-negative")
+        call_ids = tuple(call.call_id for call in self.tool_calls)
+        if len(call_ids) != len(set(call_ids)):
+            raise ValueError("Chat response Tool call IDs must be unique")
 
 
 @dataclass(frozen=True)
@@ -185,6 +294,8 @@ class CapabilityStatus:
     capability: CapabilityAlias
     available: bool
     code: str
+    supports_native_tool_use: bool = False
+    supports_prompt_caching: bool = False
 
 
 @dataclass(frozen=True)
@@ -196,6 +307,12 @@ class GatewayStatus:
     capability_statuses: tuple[CapabilityStatus, ...] = ()
     model_identity: str = "unconfigured"
     reasoning_enabled_by_default: bool | None = None
+
+    def supports_native_tool_use(self, capability: CapabilityAlias) -> bool:
+        return self.for_capability(capability).supports_native_tool_use
+
+    def supports_prompt_caching(self, capability: CapabilityAlias) -> bool:
+        return self.for_capability(capability).supports_prompt_caching
 
     def for_capability(self, capability: CapabilityAlias) -> CapabilityStatus:
         for status in self.capability_statuses:
@@ -254,3 +371,18 @@ class ModelGateway(Protocol):
     ) -> RerankResponse: ...
 
     async def aclose(self) -> None: ...
+
+
+def _contains_ref(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return "$ref" in value or any(_contains_ref(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_ref(item) for item in value)
+    return False
+
+
+def _validate_json_object(value: Mapping[str, JSONValue], label: str) -> None:
+    try:
+        json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be JSON") from exc

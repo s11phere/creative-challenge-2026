@@ -40,6 +40,8 @@ class ModelCapabilities:
     default_effort: ReasoningEffort
     reasoning_mode: ReasoningMode
     supports_continuation: bool
+    supports_native_tool_use: bool = False
+    supports_prompt_caching: bool = False
     effort_mappings: tuple[tuple[ReasoningEffort, ReasoningEffort], ...] = ()
     mapping_version: str = _MAPPING_VERSION
 
@@ -184,6 +186,7 @@ def default_model_capability_registry() -> ModelCapabilityRegistry:
                 default_effort=ReasoningEffort.LOW,
                 reasoning_mode=ReasoningMode.NATIVE,
                 supports_continuation=True,
+                supports_native_tool_use=True,
             ),
             ModelCapabilities(
                 provider=ModelProvider.OPENAI_COMPATIBLE,
@@ -192,6 +195,7 @@ def default_model_capability_registry() -> ModelCapabilityRegistry:
                 default_effort=ReasoningEffort.MEDIUM,
                 reasoning_mode=ReasoningMode.NATIVE,
                 supports_continuation=False,
+                supports_native_tool_use=True,
                 effort_mappings=(
                     (ReasoningEffort.MINIMAL, ReasoningEffort.LOW),
                     (ReasoningEffort.XHIGH, ReasoningEffort.HIGH),
@@ -205,6 +209,7 @@ def default_model_capability_registry() -> ModelCapabilityRegistry:
                 default_effort=ReasoningEffort.MEDIUM,
                 reasoning_mode=ReasoningMode.COARSE,
                 supports_continuation=False,
+                supports_native_tool_use=True,
             ),
             ModelCapabilities(
                 provider=ModelProvider.TEXT_EMBEDDINGS_INFERENCE,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -12,6 +13,9 @@ from model_gateway import (
     ChatMessage,
     ChatRequest,
     ChatRole,
+    ChatToolCall,
+    ChatToolDefinition,
+    ChatToolResult,
     EmbeddingRequest,
     FakeModelGateway,
     FakeScenario,
@@ -103,6 +107,102 @@ async def test_provider_sends_explicit_chat_reasoning_mode(enabled: bool, expect
     await gateway.chat(chat_request())
 
     assert payload["thinking"] == {"type": expected}
+    await client.aclose()
+
+
+async def test_provider_uses_native_tools_replays_results_and_parses_cache_usage() -> None:
+    payloads: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        if len(payloads) == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "synthetic_lookup",
+                                            "arguments": '{"query":"synthetic"}',
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 3,
+                        "completion_tokens": 2,
+                        "prompt_tokens_details": {"cached_tokens": 1},
+                        "cache_creation_input_tokens": 2,
+                    },
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": "synthetic terminal"}, "finish_reason": "stop"}
+                ],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 3},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = OpenAICompatibleGateway(
+        endpoint="http://localhost:11434/v1",
+        fast_chat_model="chat-model",
+        embedding_model="embedding-model",
+        fast_chat_native_tool_use=True,
+        client=client,
+    )
+    tool = ChatToolDefinition(
+        name="synthetic_lookup",
+        description="Read synthetic metadata.",
+        input_schema={"type": "object", "additionalProperties": False},
+    )
+    first = await gateway.chat(replace(chat_request(), tools=(tool,)))
+
+    assert gateway.status.supports_native_tool_use(CapabilityAlias.FAST_CHAT)
+    assert first.text == ""
+    assert first.tool_calls == (ChatToolCall("call_1", "synthetic_lookup", {"query": "synthetic"}),)
+    assert first.usage.cached_input_tokens == 1
+    assert first.usage.cache_write_input_tokens == 2
+    assert payloads[0]["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "synthetic_lookup",
+                "description": "Read synthetic metadata.",
+                "parameters": {"type": "object", "additionalProperties": False},
+            },
+        }
+    ]
+
+    second = await gateway.chat(
+        replace(
+            chat_request(),
+            tools=(tool,),
+            tool_call_history=first.tool_calls,
+            tool_results=(ChatToolResult("call_1", "synthetic_lookup", {"status": "ok"}),),
+        )
+    )
+    assert second.text == "synthetic terminal"
+    messages = payloads[1]["messages"]
+    assert isinstance(messages, list)
+    assert messages[-1] == {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "name": "synthetic_lookup",
+        "content": '{"status":"ok"}',
+    }
     await client.aclose()
 
 

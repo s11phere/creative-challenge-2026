@@ -122,6 +122,11 @@ def test_current_agent_loop_version_is_fixed() -> None:
     assert default.knowledge_agent_skill_version == "1.0.0"
 
 
+def test_native_tool_use_requires_an_explicit_provider_opt_in() -> None:
+    assert Settings(_env_file=None).fast_chat_native_tool_use is False
+    assert Settings(fast_chat_native_tool_use=True).fast_chat_native_tool_use is True
+
+
 async def test_application_lifespan_rejects_missing_production_secrets(
     monkeypatch: MonkeyPatch,
 ) -> None:

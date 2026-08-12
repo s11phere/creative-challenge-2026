@@ -113,6 +113,8 @@ class Settings(BaseSettings):
     model_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     fast_chat_timeout_seconds: float = Field(default=120.0, gt=0, le=300)
     fast_chat_reasoning_enabled: bool = False
+    # Harness v2 must opt in to a provider's native Tool protocol explicitly.
+    fast_chat_native_tool_use: bool = False
     model_max_retries: int = Field(default=2, ge=0, le=5)
     model_retry_backoff_seconds: float = Field(default=0.1, ge=0, le=10)
 

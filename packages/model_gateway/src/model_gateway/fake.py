@@ -15,6 +15,7 @@ from .contracts import (
     CapabilityStatus,
     ChatRequest,
     ChatResponse,
+    ChatToolCall,
     EmbeddingRequest,
     EmbeddingResponse,
     GatewayStatus,
@@ -69,7 +70,14 @@ class FakeModelGateway:
                 else ()
             ),
             capability_statuses=tuple(
-                CapabilityStatus(capability=capability, available=available, code=code)
+                CapabilityStatus(
+                    capability=capability,
+                    available=available,
+                    code=code,
+                    supports_native_tool_use=(
+                        available and capability is CapabilityAlias.FAST_CHAT
+                    ),
+                )
                 for capability in (
                     CapabilityAlias.FAST_CHAT,
                     CapabilityAlias.EMBEDDING_ZH,
@@ -131,7 +139,19 @@ class FakeModelGateway:
                 ).encode()
             ).hexdigest()
             input_tokens = sum(max(1, len(message.content.split())) for message in request.messages)
-            if any(
+            tool_calls: tuple[ChatToolCall, ...]
+            if request.tools and not request.tool_results:
+                first_tool = request.tools[0]
+                text = ""
+                tool_calls = (
+                    ChatToolCall(
+                        call_id=f"fake_{digest[:16]}",
+                        tool_name=first_tool.name,
+                        arguments={},
+                    ),
+                )
+                finish_reason = "tool_calls"
+            elif any(
                 "assistant router decision v1" in message.content.lower()
                 for message in request.messages
                 if message.role.value == "system"
@@ -144,18 +164,23 @@ class FakeModelGateway:
                     },
                     separators=(",", ":"),
                 )
+                tool_calls = ()
+                finish_reason = "stop"
             else:
                 text = f"fake-response-{digest[:16]}"
+                tool_calls = ()
+                finish_reason = "stop"
             usage = ModelUsage(input_tokens=input_tokens, output_tokens=max(1, len(text.split())))
             span.set_attribute("gen_ai.usage.input_tokens", usage.input_tokens)
             span.set_attribute("gen_ai.usage.output_tokens", usage.output_tokens)
             self._log_success(capability, usage)
             return ChatResponse(
                 text=text,
-                finish_reason="stop",
+                finish_reason=finish_reason,
                 usage=usage,
                 capability=capability,
                 latency_ms=0.0,
+                tool_calls=tool_calls,
             )
 
     async def embed(

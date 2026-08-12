@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from .contracts import (
     CapabilityStatus,
     ChatRequest,
     ChatResponse,
+    ChatToolCall,
     EmbeddingRequest,
     EmbeddingResponse,
     GatewayStatus,
@@ -74,6 +76,7 @@ class OpenAICompatibleGateway:
         timeout_seconds: float = 15.0,
         fast_chat_timeout_seconds: float = 120.0,
         fast_chat_reasoning_enabled: bool = False,
+        fast_chat_native_tool_use: bool = False,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.1,
         reranker_batch_size: int = 32,
@@ -125,6 +128,7 @@ class OpenAICompatibleGateway:
         self.reranker_batch_size = reranker_batch_size
         self.fast_chat_timeout_seconds = fast_chat_timeout_seconds
         self.fast_chat_reasoning_enabled = fast_chat_reasoning_enabled
+        self.fast_chat_native_tool_use = fast_chat_native_tool_use
         self._owns_client = client is None
         self.client = client
 
@@ -135,6 +139,11 @@ class OpenAICompatibleGateway:
                 capability=capability,
                 available=config.available,
                 code="MODEL_CAPABILITY_CONFIGURED" if config.available else config.status_code,
+                supports_native_tool_use=(
+                    config.available
+                    and capability is CapabilityAlias.FAST_CHAT
+                    and self.fast_chat_native_tool_use
+                ),
             )
             for capability, config in self._capability_configs.items()
         )
@@ -198,11 +207,32 @@ class OpenAICompatibleGateway:
                 "messages": [
                     {"role": message.role.value, "content": message.content}
                     for message in request.messages
-                ],
+                ]
+                + self._tool_result_messages(request),
                 "temperature": request.temperature,
                 **({"max_tokens": request.max_tokens} if request.max_tokens is not None else {}),
                 "thinking": self._thinking_value(request),
             }
+            if request.tools:
+                if not self.fast_chat_native_tool_use:
+                    raise ModelGatewayError(
+                        ModelErrorCode.UNSUPPORTED_CAPABILITY,
+                        "The configured chat provider does not support native Tool use.",
+                        retryable=False,
+                        capability=capability,
+                    )
+                payload["tools"] = [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": dict(tool.input_schema),
+                        },
+                    }
+                    for tool in request.tools
+                ]
+                payload["tool_choice"] = "auto"
             reasoning_effort = self._native_reasoning_effort(request)
             if reasoning_effort is not None:
                 payload["reasoning_effort"] = reasoning_effort
@@ -213,7 +243,7 @@ class OpenAICompatibleGateway:
                 timeout_seconds=self.fast_chat_timeout_seconds,
                 retry_read_timeouts=False,
             )
-            text, finish_reason = self._parse_chat(
+            text, finish_reason, tool_calls = self._parse_chat(
                 data if isinstance(data, dict) else {},
                 capability,
             )
@@ -231,7 +261,60 @@ class OpenAICompatibleGateway:
                 usage=usage,
                 capability=capability,
                 latency_ms=latency_ms,
+                tool_calls=tool_calls,
             )
+
+    @staticmethod
+    def _tool_result_messages(request: ChatRequest) -> list[dict[str, Any]]:
+        """Replay server-owned Tool results without retaining provider SDK objects."""
+        messages: list[dict[str, Any]] = []
+        call_by_id = {call.call_id: call for call in request.tool_call_history}
+        for result in request.tool_results:
+            call = call_by_id.get(result.call_id)
+            if call is None or call.tool_name != result.tool_name:
+                raise ModelGatewayError(
+                    ModelErrorCode.INVALID_RESPONSE,
+                    "Tool result replay does not match a prior Tool call.",
+                    retryable=False,
+                    capability=CapabilityAlias.FAST_CHAT,
+                )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": result.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": result.tool_name,
+                                "arguments": json.dumps(
+                                    call.arguments,
+                                    ensure_ascii=False,
+                                    allow_nan=False,
+                                    separators=(",", ":"),
+                                    sort_keys=True,
+                                ),
+                            },
+                        }
+                    ],
+                }
+            )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": result.call_id,
+                    "name": result.tool_name,
+                    "content": json.dumps(
+                        result.observation,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                }
+            )
+        return messages
 
     def _thinking_value(self, request: ChatRequest) -> dict[str, str]:
         profile = request.reasoning_profile
@@ -251,8 +334,8 @@ class OpenAICompatibleGateway:
             ReasoningEffort.XHIGH,
             ReasoningEffort.MAX,
         }:
-            return profile.requested_effort.value
-        return profile.effective_effort.value
+            return str(profile.requested_effort.value)
+        return str(profile.effective_effort.value)
 
     async def embed(
         self,
@@ -564,20 +647,55 @@ class OpenAICompatibleGateway:
     @classmethod
     def _parse_chat(
         cls, data: dict[str, Any], capability: CapabilityAlias
-    ) -> tuple[str, str | None]:
+    ) -> tuple[str, str | None, tuple[ChatToolCall, ...]]:
         choices = data.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             raise cls._invalid_response(capability, debug_details=data)
         message = choices[0].get("message")
-        if not isinstance(message, dict) or not isinstance(message.get("content"), str):
+        if not isinstance(message, dict):
             raise cls._invalid_response(capability, debug_details=data)
-        content = message["content"]
-        if not content:
+        content = message.get("content", "")
+        if content is None:
+            content = ""
+        if not isinstance(content, str):
+            raise cls._invalid_response(capability, debug_details=data)
+        raw_calls = message.get("tool_calls", [])
+        if not isinstance(raw_calls, list):
+            raise cls._invalid_response(capability, debug_details=data)
+        calls: list[ChatToolCall] = []
+        for item in raw_calls:
+            if not isinstance(item, dict) or item.get("type") != "function":
+                raise cls._invalid_response(capability, debug_details=data)
+            function = item.get("function")
+            if not isinstance(function, dict):
+                raise cls._invalid_response(capability, debug_details=data)
+            call_id = item.get("id")
+            name = function.get("name")
+            arguments = function.get("arguments")
+            if (
+                not isinstance(call_id, str)
+                or not isinstance(name, str)
+                or not isinstance(arguments, str)
+            ):
+                raise cls._invalid_response(capability, debug_details=data)
+            try:
+                parsed_arguments = json.loads(arguments)
+            except json.JSONDecodeError as exc:
+                raise cls._invalid_response(capability, debug_details=data) from exc
+            if not isinstance(parsed_arguments, dict):
+                raise cls._invalid_response(capability, debug_details=data)
+            try:
+                calls.append(
+                    ChatToolCall(call_id=call_id, tool_name=name, arguments=parsed_arguments)
+                )
+            except ValueError as exc:
+                raise cls._invalid_response(capability, debug_details=data) from exc
+        if not content and not calls:
             raise cls._invalid_response(capability, debug_details=data)
         finish_reason = choices[0].get("finish_reason")
         if finish_reason is not None and not isinstance(finish_reason, str):
             raise cls._invalid_response(capability, debug_details=data)
-        return content, finish_reason
+        return content, finish_reason, tuple(calls)
 
     @classmethod
     def _parse_embeddings(
@@ -685,7 +803,21 @@ class OpenAICompatibleGateway:
         output_tokens = (
             0 if embedding else cls._token_count(usage.get("completion_tokens", 0), capability)
         )
-        return ModelUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+        raw_details = usage.get("prompt_tokens_details", {})
+        if raw_details is None:
+            raw_details = {}
+        if not isinstance(raw_details, dict):
+            raise cls._invalid_response(capability)
+        cached_input_tokens = cls._token_count(raw_details.get("cached_tokens", 0), capability)
+        cache_write_input_tokens = cls._token_count(
+            usage.get("cache_creation_input_tokens", 0), capability
+        )
+        return ModelUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cached_input_tokens=cached_input_tokens,
+            cache_write_input_tokens=cache_write_input_tokens,
+        )
 
     @classmethod
     def _token_count(cls, value: Any, capability: CapabilityAlias) -> int:

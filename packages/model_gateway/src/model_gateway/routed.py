@@ -50,7 +50,14 @@ class CapabilityRoutedModelGateway:
             provider=self._primary.status.provider,
             capabilities=available,
             capability_statuses=tuple(
-                CapabilityStatus(item.capability, item.available, item.code) for item in statuses
+                CapabilityStatus(
+                    item.capability,
+                    item.available,
+                    item.code,
+                    supports_native_tool_use=item.supports_native_tool_use,
+                    supports_prompt_caching=item.supports_prompt_caching,
+                )
+                for item in statuses
             ),
             model_identity=self._primary.status.model_identity,
             reasoning_enabled_by_default=self._primary.status.reasoning_enabled_by_default,

@@ -41,6 +41,14 @@ from .llm_decision import (
     parse_llm_decision,
 )
 from .loop import AgentLoopDebugTrace, AgentLoopExecutor, AgentLoopFinalizer, AgentLoopResult
+from .native_tool_use import (
+    NativeToolUseAgentLoopExecutor,
+    NativeToolUseCall,
+    NativeToolUseFinalizer,
+    NativeToolUseLoopResult,
+    NativeToolUseLoopState,
+    NativeToolUseObservation,
+)
 from .side_effect_tools import (
     FileWritePolicy,
     ShellExecutionPolicy,
@@ -143,4 +151,10 @@ __all__ = [
     "AgentLoopDebugTrace",
     "AgentLoopFinalizer",
     "AgentLoopResult",
+    "NativeToolUseAgentLoopExecutor",
+    "NativeToolUseCall",
+    "NativeToolUseFinalizer",
+    "NativeToolUseLoopResult",
+    "NativeToolUseLoopState",
+    "NativeToolUseObservation",
 ]

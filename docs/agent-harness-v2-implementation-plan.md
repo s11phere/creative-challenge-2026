@@ -134,6 +134,21 @@ Tool、终止/long-answer 与 cache 计数，且不输出或持久化任何内�
 
 验收：fake Provider 完成 Tool -> observation -> terminal text，且一次终止回复仅有一次模型生成；v1 回归不变。
 
+完成记录（2026-08-12）：已增加 provider-neutral native Tool-use Chat contract（严格的 Tool
+schema、稳定 call ID、server-owned Tool result replay、finish reason 和 cache usage），并在
+Fake 与 opt-in 的 OpenAI-compatible Gateway 中实现。新增独立的
+`NativeToolUseAgentLoopExecutor`：一轮最多接受一个 native Tool call；调用后由 Registry
+校验、执行、checkpoint 并回放观察；无 Tool call 的非空文本经一次 server finalizer 直接完成。
+v2 不使用 v1 的文本 JSON decision parser 或 long-answer escalation。恢复路径覆盖了审批等待后的
+pending Tool，并验证同一调用只执行一次。`FAST_CHAT_NATIVE_TOOL_USE` 对应的 Settings/Gateway
+开关默认关闭；当前 v2 executor 尚未接入既有 Autonomous Assistant Loop，所以已 pin 的 v1 Run、
+checkpoint、trace 和 API 行为不变。
+
+已运行：`pytest`（native Tool-use、ModelGateway、config、v1 loop/autonomous loop 与 Gateway
+contract）`86 passed`；定向 `ruff format --check`、`ruff check`、`mypy` 和 `git diff --check`。
+pytest 仅报告既有 `.pytest_cache` 无写权限警告。未运行 formal holdout、外部 Provider、数据库迁移、
+Worker/Compose 或浏览器测试；本步骤仍是 provisional 工程实现。
+
 ### Step 3：按需 Skill 选择与动态 Tool surface
 
 - 实现 thin catalog、list_skills、invoke_skill、selected Skill checkpoint pins 与受信 prompt layer；删除 v2 中重复的 active_skill_catalog/全量 active_skill 拼接。
