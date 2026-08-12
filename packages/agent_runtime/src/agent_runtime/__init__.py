@@ -94,6 +94,7 @@ __all__ = [
     "NodeOutcome",
     "NodeResult",
     "ManifestAllowedFile",
+    "PersonalSkillRegistry",
     "PinnedSkill",
     "RuntimeAuditEvent",
     "RuntimeAuditEventType",

@@ -44,6 +44,11 @@ class PostgresSkillActivationStore:
             )
             return _record(model) if model is not None else None
 
+    async def list(self) -> tuple[SkillActivation, ...]:
+        async with self._database.session() as session:
+            models = (await session.scalars(select(SkillActivationModel))).all()
+            return tuple(_record(model) for model in models)
+
     async def compare_and_set(
         self, activation: SkillActivation, *, expected_revision: int
     ) -> SkillActivation | None:
@@ -76,6 +81,10 @@ class InMemorySkillActivationStore:
     async def get(self, name: str) -> SkillActivation | None:
         async with self._lock:
             return self._records.get(name)
+
+    async def list(self) -> tuple[SkillActivation, ...]:
+        async with self._lock:
+            return tuple(self._records.values())
 
     async def compare_and_set(
         self, activation: SkillActivation, *, expected_revision: int

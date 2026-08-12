@@ -1804,6 +1804,178 @@
         "title": "ModelDependencyCheck",
         "type": "object"
       },
+      "PersonalSkillBudgetResponse": {
+        "properties": {
+          "max_input_tokens": {
+            "title": "Max Input Tokens",
+            "type": "integer"
+          },
+          "max_output_tokens": {
+            "title": "Max Output Tokens",
+            "type": "integer"
+          },
+          "max_steps": {
+            "title": "Max Steps",
+            "type": "integer"
+          },
+          "max_tool_calls": {
+            "title": "Max Tool Calls",
+            "type": "integer"
+          },
+          "timeout_seconds": {
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_steps",
+          "max_tool_calls",
+          "max_input_tokens",
+          "max_output_tokens",
+          "timeout_seconds"
+        ],
+        "title": "PersonalSkillBudgetResponse",
+        "type": "object"
+      },
+      "PersonalSkillCreateRequest": {
+        "properties": {
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "minProperties": 1,
+            "title": "Files",
+            "type": "object"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "files"
+        ],
+        "title": "PersonalSkillCreateRequest",
+        "type": "object"
+      },
+      "PersonalSkillInvocationResponse": {
+        "properties": {
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
+          "argument_hint": {
+            "title": "Argument Hint",
+            "type": "string"
+          },
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "execution_mode": {
+            "title": "Execution Mode",
+            "type": "string"
+          },
+          "input_mode": {
+            "title": "Input Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "aliases",
+          "argument_hint",
+          "input_mode",
+          "execution_mode"
+        ],
+        "title": "PersonalSkillInvocationResponse",
+        "type": "object"
+      },
+      "PersonalSkillResponse": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/PersonalSkillBudgetResponse"
+          },
+          "content_sha256": {
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "invocation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonalSkillInvocationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "array"
+          },
+          "required_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Capabilities",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "content_sha256",
+          "description",
+          "active",
+          "permissions",
+          "required_capabilities",
+          "budget"
+        ],
+        "title": "PersonalSkillResponse",
+        "type": "object"
+      },
+      "PersonalSkillUpdateRequest": {
+        "properties": {
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "minProperties": 1,
+            "title": "Files",
+            "type": "object"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "PersonalSkillUpdateRequest",
+        "type": "object"
+      },
       "QuestionRequest": {
         "properties": {
           "idempotency_key": {
@@ -5015,6 +5187,239 @@
         "summary": "List Skills",
         "tags": [
           "skills"
+        ]
+      }
+    },
+    "/api/v1/skills/personal": {
+      "get": {
+        "description": "List installed personal Skills (body-free metadata).",
+        "operationId": "list_personal_skills_api_v1_skills_personal_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PersonalSkillResponse"
+                  },
+                  "title": "Response List Personal Skills Api V1 Skills Personal Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Personal Skills",
+        "tags": [
+          "personal-skills"
+        ]
+      },
+      "post": {
+        "description": "Create one writable personal Skill; every file is validated before publishing.",
+        "operationId": "create_personal_skill_api_v1_skills_personal_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonalSkillCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalSkillResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Personal Skill",
+        "tags": [
+          "personal-skills"
+        ]
+      }
+    },
+    "/api/v1/skills/personal/{name}": {
+      "delete": {
+        "operationId": "delete_personal_skill_api_v1_skills_personal__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Personal Skill",
+        "tags": [
+          "personal-skills"
+        ]
+      },
+      "get": {
+        "operationId": "get_personal_skill_api_v1_skills_personal__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalSkillResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Personal Skill",
+        "tags": [
+          "personal-skills"
+        ]
+      },
+      "put": {
+        "operationId": "update_personal_skill_api_v1_skills_personal__name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonalSkillUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalSkillResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Personal Skill",
+        "tags": [
+          "personal-skills"
+        ]
+      }
+    },
+    "/api/v1/skills/personal/{name}/activate": {
+      "post": {
+        "operationId": "activate_personal_skill_api_v1_skills_personal__name__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalSkillResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activate Personal Skill",
+        "tags": [
+          "personal-skills"
         ]
       }
     },

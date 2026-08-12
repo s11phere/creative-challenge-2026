@@ -127,6 +127,7 @@ class Settings(BaseSettings):
 
     # --- Skill Registry ---
     skill_root_path: str = "./skills"
+    personal_skills_dir: str = "./data/personal_skills"
     knowledge_agent_skill_version: str = "1.0.0"
 
     # Workspace Tools are rooted here. The API and Worker must see the same mounted path.

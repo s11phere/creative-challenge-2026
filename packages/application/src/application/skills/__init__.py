@@ -36,6 +36,12 @@ from .organization import (
     OrganizationScopeError,
     OrganizationScopeErrorCode,
 )
+from .personal import (
+    PersonalSkillError,
+    PersonalSkillErrorCode,
+    PersonalSkillStore,
+    PersonalSkillView,
+)
 
 __all__ = [
     "AggregateSkillEvalReport",
@@ -47,6 +53,10 @@ __all__ = [
     "KnowledgeOrganizationScopeService",
     "OrganizationScopeError",
     "OrganizationScopeErrorCode",
+    "PersonalSkillError",
+    "PersonalSkillErrorCode",
+    "PersonalSkillStore",
+    "PersonalSkillView",
     "SkillActivation",
     "SkillActivationStore",
     "SkillBudgetView",

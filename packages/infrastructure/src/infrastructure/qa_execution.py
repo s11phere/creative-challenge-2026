@@ -13,6 +13,7 @@ from agent_runtime import (
     AgentLoopResult,
     DeterministicWorkflowExecutor,
     FileSystemSkillRegistry,
+    PersonalSkillRegistry,
     RuntimeExecutionResult,
     SkillRegistryError,
     SkillRegistryErrorCode,
@@ -675,15 +676,18 @@ def qa_execution_versions(
     )
 
 
-def qa_skill_registry() -> FileSystemSkillRegistry:
-    """Load all trusted Skills and activate the sole new knowledge entry point."""
-    registry = FileSystemSkillRegistry(Path(settings.skill_root_path))
+def qa_skill_registry() -> PersonalSkillRegistry:
+    """Load all trusted and personal Skills and activate the knowledge entry point."""
+    registry = PersonalSkillRegistry(
+        Path(settings.skill_root_path),
+        personal_root=Path(settings.personal_skills_dir),
+    )
     registry.reload()
     registry.activate("knowledge_agent", settings.knowledge_agent_skill_version)
     return registry
 
 
-def assistant_skill_registry() -> FileSystemSkillRegistry:
+def assistant_skill_registry() -> PersonalSkillRegistry:
     """Build the v2 invocation catalog with knowledge_agent as the sole QA entry."""
     registry = qa_skill_registry()
     for name, version in (

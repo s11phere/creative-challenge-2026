@@ -18,6 +18,7 @@ from agent_runtime import (
     FileWritePolicy,
     InMemoryToolRegistry,
     JSONValue,
+    PersonalSkillRegistry,
     ReadOnlyFileTools,
     ShellExecutionPolicy,
     SideEffectTools,
@@ -60,6 +61,7 @@ from infrastructure.qa_execution import (
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
 from infrastructure.runtime_approval import PostgresApprovalPort
 from infrastructure.runtime_state import PostgresRuntimeStateStore
+from infrastructure.skill_lifecycle import PostgresSkillActivationStore
 from infrastructure.telemetry_context import (
     bind_observability_context,
     new_trace_id,
@@ -147,6 +149,21 @@ def _run_assistant_sync(run_id: UUID, trace_id: str) -> bool:
             loop.close()
 
 
+async def _apply_personal_skill_activations(registry: PersonalSkillRegistry) -> None:
+    """Re-apply durable personal-Skill activations; failures never break the Run."""
+    try:
+        store = PostgresSkillActivationStore(database)
+        persisted = await store.list()
+        activations = {
+            item.name: item.version
+            for item in persisted
+            if registry.is_personal(item.name) and item.version in registry.versions(item.name)
+        }
+        registry.activate_all(activations)
+    except Exception:
+        logger.exception("personal_skill_activation_apply_failed")
+
+
 async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id: str) -> bool:
     runs = PostgresConversationRunRepository(database)
     lease_owner = str(uuid4())
@@ -158,6 +175,7 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
     if claimed is None:
         return False
     registry = assistant_skill_registry()
+    await _apply_personal_skill_activations(registry)
     qa_repository = PostgresGroundedQARepository(database)
     context = ConversationContextService(data=qa_repository, runs=runs)
     metrics = AssistantMetrics()

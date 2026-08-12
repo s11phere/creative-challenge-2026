@@ -418,7 +418,6 @@ class FileSystemSkillRegistry:
         self._personal_root: Path | None = None
         if personal_root is not None:
             self._reject_link(personal_root)
-            personal_root.mkdir(parents=True, exist_ok=True)
             self._personal_root = personal_root.resolve()
         self._checkpoint_schema_version = checkpoint_schema_version
         self._packages: dict[tuple[str, str], SkillPackage] = {}
@@ -429,9 +428,10 @@ class FileSystemSkillRegistry:
         self._lock = RLock()
 
     def _roots(self) -> tuple[Path, ...]:
-        if self._personal_root is None:
-            return (self._trusted_root,)
-        return (self._trusted_root, self._personal_root)
+        roots = [self._trusted_root]
+        if self._personal_root is not None and self._personal_root.is_dir():
+            roots.append(self._personal_root)
+        return tuple(roots)
 
     def _within_any_root(self, path: Path) -> bool:
         if path.is_relative_to(self._trusted_root):
@@ -1203,6 +1203,7 @@ class PersonalSkillRegistry(FileSystemSkillRegistry):
                 SkillRegistryErrorCode.INVALID_PACKAGE,
                 "Personal Skill root is not configured.",
             )
+        self._personal_root.mkdir(parents=True, exist_ok=True)
         return self._personal_root
 
     def _require_personal_exists(self, name: str) -> None:
