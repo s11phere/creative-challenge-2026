@@ -7,7 +7,12 @@ export type SourceInfo = {
   space_id: string
   source_type: string
   uri: string
+  name: string
   created_at: string
+  doc_count: number
+  available_count: number
+  failed_count: number
+  primary_document_name: string | null
 }
 
 export type DocumentInfo = {
@@ -56,11 +61,16 @@ export type CreateSourceResult = {
   space_id: string
   source_type: string
   uri: string
+  name: string
   is_new: boolean
 }
 
 export type IngestResult = {
   task_id: string
+}
+
+export type IngestBatchResult = {
+  task_ids: string[]
 }
 
 export type UploadLimits = {
@@ -164,6 +174,41 @@ export function deleteSource(sourceId: string): Promise<DeleteSourceResult> {
   return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources/${sourceId}`, { method: 'DELETE' })
 }
 
+/** Create a named folder (a folder-typed source). */
+export function createFolder(name: string): Promise<CreateSourceResult> {
+  return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources`, {
+    method: 'POST',
+    body: { source_type: 'folder', name },
+  })
+}
+
+export type RenameSourceResult = {
+  source_id: string
+  name: string
+  status: 'renamed'
+}
+
+/** Rename a folder (a user-facing source label). */
+export function renameSource(sourceId: string, name: string): Promise<RenameSourceResult> {
+  return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources/${sourceId}`, {
+    method: 'PATCH',
+    body: { name },
+  })
+}
+
+export type DeleteFolderResult = {
+  source_id: string
+  status: 'deleted'
+  documents_cleared: number
+}
+
+/** Delete a folder together with all its documents. */
+export function deleteFolder(sourceId: string): Promise<DeleteFolderResult> {
+  return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources/${sourceId}/contents`, {
+    method: 'DELETE',
+  })
+}
+
 /** Upload a file to a source and trigger ingestion. */
 export function uploadFile(sourceId: string, file: File): Promise<UploadResult> {
   const formData = new FormData()
@@ -174,8 +219,8 @@ export function uploadFile(sourceId: string, file: File): Promise<UploadResult> 
   })
 }
 
-/** Trigger ingestion for a source. */
-export function triggerIngestion(sourceId: string): Promise<IngestResult> {
+/** Trigger ingestion for every document in a source. */
+export function triggerIngestion(sourceId: string): Promise<IngestBatchResult> {
   return apiFetch(`/api/v1/spaces/${SPACE_ID}/sources/${sourceId}/ingest`, {
     method: 'POST',
     body: {},

@@ -32,8 +32,8 @@ describe('SourcesPanel task controls', () => {
       const url = String(input)
       if (url.endsWith('/sources') && init?.method === 'POST') {
         return Promise.resolve(jsonResponse({
-          source_id: 'browser-source', space_id: 'space-1', source_type: 'upload',
-          uri: 'web-upload://browser', is_new: true,
+          source_id: 'browser-source', space_id: 'space-1', source_type: 'folder',
+          uri: '', name: '默认文件夹', is_new: true,
         }))
       }
       if (url.endsWith('/sources/browser-source/upload') && init?.method === 'POST') {
@@ -72,7 +72,7 @@ describe('SourcesPanel task controls', () => {
       expect.stringContaining('/sources'),
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ source_type: 'upload', uri: 'web-upload://browser' }),
+        body: JSON.stringify({ source_type: 'folder', name: '默认文件夹' }),
       }),
     )
     expect(fetchMock).toHaveBeenCalledWith(
@@ -87,8 +87,8 @@ describe('SourcesPanel task controls', () => {
       const url = String(input)
       if (url.endsWith('/sources') && init?.method === 'POST') {
         return Promise.resolve(jsonResponse({
-          source_id: 'browser-source', space_id: 'space-1', source_type: 'upload',
-          uri: 'web-upload://browser', is_new: true,
+          source_id: 'browser-source', space_id: 'space-1', source_type: 'folder',
+          uri: '', name: '默认文件夹', is_new: true,
         }))
       }
       if (url.endsWith('/sources/browser-source/upload') && init?.method === 'POST') {
@@ -119,8 +119,8 @@ describe('SourcesPanel task controls', () => {
       expect.stringContaining('/sources/browser-source'),
       expect.objectContaining({ method: 'DELETE' }),
     )
-    // The rolled-back source must not appear as a new card below.
-    expect(screen.queryByText(/web-upload:\/\/browser/)).not.toBeInTheDocument()
+    // The rolled-back folder must not appear as a new card below.
+    expect(screen.queryByText(/默认文件夹/)).not.toBeInTheDocument()
   })
 
   it('shows the configured upload size limit in the direct upload hint', async () => {
@@ -158,7 +158,7 @@ describe('SourcesPanel task controls', () => {
         }))
       }
       if (url.endsWith('/ingest') && init?.method === 'POST') {
-        return Promise.resolve(jsonResponse({ task_id: 'old-task' }))
+        return Promise.resolve(jsonResponse({ task_ids: ['old-task'] }))
       }
       if (url.endsWith('/tasks/old-task/retry') && init?.method === 'POST') {
         return Promise.resolve(jsonResponse({ task_id: 'new-task' }))
@@ -195,7 +195,8 @@ describe('SourcesPanel task controls', () => {
     renderPanel()
 
     expect(await screen.findByRole('button', { name: '触发摄入' })).toBeInTheDocument()
-    expect(screen.getByText('upload · source-1')).toBeInTheDocument()
+    expect(screen.getByText('fixture://test')).toBeInTheDocument()
+    expect(screen.getByText(/浏览器上传 · 0 个文档 · 0 可用/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '刷新来源列表' })).toHaveTextContent('刷新')
     fireEvent.click(screen.getByRole('button', { name: '触发摄入' }))
 
@@ -225,7 +226,7 @@ describe('SourcesPanel task controls', () => {
         }))
       }
       if (url.endsWith('/ingest') && init?.method === 'POST') {
-        return Promise.resolve(jsonResponse({ task_id: 'task-1' }))
+        return Promise.resolve(jsonResponse({ task_ids: ['task-1'] }))
       }
       if (url.endsWith('/tasks/task-1/cancel') && init?.method === 'POST') {
         return Promise.resolve(jsonResponse({
@@ -277,7 +278,7 @@ describe('SourcesPanel task controls', () => {
         }))
       }
       if (url.endsWith('/ingest') && init?.method === 'POST') {
-        return Promise.resolve(jsonResponse({ task_id: 'task-race' }))
+        return Promise.resolve(jsonResponse({ task_ids: ['task-race'] }))
       }
       if (url.endsWith('/tasks/task-race/cancel') && init?.method === 'POST') {
         return Promise.resolve(jsonResponse({ detail: 'conflict' }, 409))
@@ -348,7 +349,7 @@ describe('SourcesPanel task controls', () => {
     expect(container.querySelector('.doc-key')).toHaveAttribute('title', '稳定键：.txt')
   })
 
-  it('keeps the complete upload hash visible', async () => {
+  it('reports a registered upload without leaking the blob hash', async () => {
     const hash = '86386fb5317e4f8080cc3b8f3d26c12da4d4e92aa8c5a6c86df4e3e8d2f4a1b2'
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -387,8 +388,8 @@ describe('SourcesPanel task controls', () => {
     fireEvent.change(input, { target: { files: [file] } })
     fireEvent.submit(uploadForm)
 
-    expect(await screen.findByText(`文件已登记，哈希 ${hash}`)).toBeInTheDocument()
-    expect(screen.queryByText(/86386fb5317e…/)).not.toBeInTheDocument()
+    expect(await screen.findByText('文件已登记')).toBeInTheDocument()
+    expect(screen.queryByText(new RegExp(hash))).not.toBeInTheDocument()
   })
 
   it('refreshes document status after the ingestion task succeeds', async () => {
@@ -503,5 +504,147 @@ describe('SourcesPanel task controls', () => {
     await waitFor(() => expect(deleted).toBe(true))
     await waitFor(() => expect(screen.queryByText('notes.md')).not.toBeInTheDocument())
     expect(document.querySelector('.doc-list h4')).toHaveTextContent('0')
+  })
+
+  it('renames a folder through the inline input and reflects the new name', async () => {
+    let sourcesPayload: { sources: unknown[] } = {
+      sources: [{
+        id: 'folder-1', space_id: 'space-1', source_type: 'folder', uri: '',
+        name: '文档', created_at: '2026-01-01T00:00:00Z',
+      }],
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/sources/folder-1') && init?.method === 'PATCH') {
+        expect(JSON.parse(String(init.body))).toEqual({ name: '新名字' })
+        sourcesPayload = {
+          sources: [{
+            id: 'folder-1', space_id: 'space-1', source_type: 'folder', uri: '',
+            name: '新名字', created_at: '2026-01-01T00:00:00Z',
+          }],
+        }
+        return Promise.resolve(jsonResponse({ source_id: 'folder-1', name: '新名字', status: 'renamed' }))
+      }
+      if (url.endsWith('/sources')) {
+        return Promise.resolve(jsonResponse(sourcesPayload))
+      }
+      return Promise.resolve(jsonResponse({ sources: [] }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: '重命名文件夹' }))
+    const input = await screen.findByRole('textbox', { name: '重命名文件夹' })
+    fireEvent.change(input, { target: { value: '新名字' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByText('新名字', { selector: '.source-title' })).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/sources/folder-1'),
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ name: '新名字' }) }),
+    )
+  })
+
+  it('cancels folder rename on Escape without calling the API', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/sources')) {
+        return Promise.resolve(jsonResponse({
+          sources: [{
+            id: 'folder-1', space_id: 'space-1', source_type: 'folder', uri: '',
+            name: '文档', created_at: '2026-01-01T00:00:00Z',
+          }],
+        }))
+      }
+      return Promise.resolve(jsonResponse({ sources: [] }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: '重命名文件夹' }))
+    const input = await screen.findByRole('textbox', { name: '重命名文件夹' })
+    fireEvent.change(input, { target: { value: '改动' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: '重命名文件夹' })).not.toBeInTheDocument())
+    const patchCalls = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH')
+    expect(patchCalls).toHaveLength(0)
+    expect(screen.getByText('文档', { selector: '.source-title' })).toBeInTheDocument()
+  })
+
+  it('creates a new folder and uploads into it from the direct upload', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/sources') && init?.method === 'POST') {
+        expect(JSON.parse(String(init.body))).toEqual({ source_type: 'folder', name: '自定义' })
+        return Promise.resolve(jsonResponse({
+          source_id: 'folder-new', space_id: 'space-1', source_type: 'folder',
+          uri: '', name: '自定义', is_new: true,
+        }))
+      }
+      if (url.endsWith('/sources/folder-new/upload') && init?.method === 'POST') {
+        return Promise.resolve(jsonResponse({
+          source_id: 'folder-new', document_id: 'doc-1', blob_hash: 'a'.repeat(64),
+          is_new_document: true, is_unchanged: false, task_id: 'upload-task',
+        }))
+      }
+      if (url.endsWith('/tasks/upload-task')) {
+        return Promise.resolve(jsonResponse({
+          task_id: 'upload-task', source_id: 'folder-new', operation: 'ingest',
+          status: 'succeeded', stage: 'publish', progress: 1,
+          retry_count: 0, max_retries: 3, error_code: null, error: null,
+          created_at: '2026-01-01T00:00:00Z',
+        }))
+      }
+      return Promise.resolve(jsonResponse({ sources: [] }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderPanel()
+
+    const nameInput = await screen.findByRole('textbox', { name: '新文件夹名称' })
+    fireEvent.change(nameInput, { target: { value: '自定义' } })
+    const fileInput = await screen.findByLabelText('选择要上传的文件')
+    fireEvent.change(fileInput, {
+      target: { files: [new File(['content'], 'notes.md', { type: 'text/markdown' })] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '上传并摄入' }))
+
+    expect(await screen.findByText('成功')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/sources/folder-new/upload'),
+      expect.objectContaining({ method: 'POST', body: expect.any(FormData) }),
+    )
+  })
+
+  it('deletes a folder and its documents after confirmation', async () => {
+    let cleared = false
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/sources/folder-1/contents') && init?.method === 'DELETE') {
+        cleared = true
+        return Promise.resolve(jsonResponse({ source_id: 'folder-1', status: 'deleted', documents_cleared: 2 }))
+      }
+      if (url.endsWith('/sources')) {
+        return Promise.resolve(jsonResponse({
+          sources: [{
+            id: 'folder-1', space_id: 'space-1', source_type: 'folder', uri: '',
+            name: '文档', created_at: '2026-01-01T00:00:00Z', doc_count: 2,
+          }],
+        }))
+      }
+      return Promise.resolve(jsonResponse({ sources: [] }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: '删除文件夹' }))
+
+    await waitFor(() => expect(cleared).toBe(true))
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/sources/folder-1/contents'),
+      expect.objectContaining({ method: 'DELETE' }),
+    )
   })
 })

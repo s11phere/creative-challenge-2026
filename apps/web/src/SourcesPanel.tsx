@@ -6,6 +6,7 @@ import {
   FileUp,
   FileText,
   LoaderCircle,
+  Pencil,
   RotateCcw,
   RefreshCw,
   Trash2,
@@ -17,13 +18,15 @@ import {
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import {
   cancelTask,
-  createUploadSource,
+  createFolder,
   deleteDocument,
+  deleteFolder,
   deleteSource,
   fetchSourceDetail,
   fetchSources,
   fetchTaskStatus,
   fetchUploadLimits,
+  renameSource,
   retryTask,
   SourcesApiError,
   triggerIngestion,
@@ -67,6 +70,25 @@ function stageLabel(stage: string): string {
 
 function progressPercent(progress: number): string {
   return `${Math.round(progress * 100)}%`
+}
+
+const sourceTypeLabels: Record<string, string> = {
+  upload: '浏览器上传',
+  folder: '文件夹',
+}
+
+function sourceTypeLabel(sourceType: string): string {
+  return sourceTypeLabels[sourceType] ?? sourceType
+}
+
+function formatSourceTime(timestamp: string): string {
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return '时间未知'
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  }).format(date)
 }
 
 const terminalTaskStatuses = new Set(['succeeded', 'failed', 'cancelled', 'dead_letter'])
@@ -160,6 +182,14 @@ function TaskRow({
             <span>自动重试 {retriesUsed}/{task.max_retries}</span>
           )}
         </div>
+        {!isTerminal && (
+          <div className="task-progress-bar" aria-hidden="true">
+            <div
+              className="task-progress-fill"
+              style={{ width: `${Math.min(100, Math.max(0, Math.round(task.progress * 100)))}%` }}
+            />
+          </div>
+        )}
         {task.error && <div className="task-error">{task.error}</div>}
         {operationError && (
           <div className="task-error" role="alert">
@@ -233,22 +263,33 @@ function DirectUpload({ sources }: { sources: SourceInfo[] }) {
   })
   const maxUploadSizeMb = limitsQuery.data?.max_upload_size_mb
 
-  // Tracks a source created by the in-flight upload so a failed upload can
-  // roll it back instead of leaving an empty source card behind.
-  const createdSourceRef = useRef<string | null>(null)
+  const folders = sources
+  const [selectedFolderId, setSelectedFolderId] = useState<string>('')
+  const [newFolderName, setNewFolderName] = useState<string>('')
+  const effectiveFolderId =
+    selectedFolderId === '__new__'
+      ? '__new__'
+      : folders.some((folder) => folder.id === selectedFolderId)
+        ? selectedFolderId
+        : folders[0]?.id ?? '__new__'
+  const isNewFolder = effectiveFolderId === '__new__'
+
+  // Tracks a folder created by the in-flight upload so a failed upload can
+  // roll it back instead of leaving an empty folder card behind.
+  const createdFolderRef = useRef<string | null>(null)
 
   const uploadMut = useMutation({
     mutationFn: async (selected: File) => {
-      const existing = sources.find((source) => source.uri === WEB_UPLOAD_URI)
-      if (existing) {
-        return { sourceId: existing.id, result: await uploadFile(existing.id, selected) }
+      let folderId = effectiveFolderId
+      if (folderId === '__new__') {
+        const created = await createFolder(newFolderName.trim() || '默认文件夹')
+        createdFolderRef.current = created.source_id
+        folderId = created.source_id
       }
-      const created = await createUploadSource(WEB_UPLOAD_URI)
-      createdSourceRef.current = created.source_id
-      return { sourceId: created.source_id, result: await uploadFile(created.source_id, selected) }
+      return { sourceId: folderId, result: await uploadFile(folderId, selected) }
     },
     onSuccess: ({ sourceId, result }) => {
-      createdSourceRef.current = null
+      createdFolderRef.current = null
       setActiveSourceId(sourceId)
       void queryClient.invalidateQueries({ queryKey: ['sources'] })
       void queryClient.invalidateQueries({ queryKey: ['source', sourceId] })
@@ -257,14 +298,14 @@ function DirectUpload({ sources }: { sources: SourceInfo[] }) {
       if (inputRef.current) inputRef.current.value = ''
     },
     onError: async () => {
-      const createdId = createdSourceRef.current
-      createdSourceRef.current = null
+      const createdId = createdFolderRef.current
+      createdFolderRef.current = null
       if (!createdId) return
       try {
         await deleteSource(createdId)
       } catch {
         // Best-effort rollback. If the API refuses (e.g. the source already
-        // holds content) the empty source stays visible for manual management.
+        // holds content) the empty folder stays visible for manual management.
       }
       void queryClient.invalidateQueries({ queryKey: ['sources'] })
     },
@@ -283,6 +324,34 @@ function DirectUpload({ sources }: { sources: SourceInfo[] }) {
 
   return (
     <div className="direct-upload">
+      <div className="folder-picker-row">
+        <label className="folder-picker-label" htmlFor="direct-upload-folder">
+          上传到
+        </label>
+        <select
+          id="direct-upload-folder"
+          className="folder-select"
+          aria-label="选择文件夹"
+          value={effectiveFolderId}
+          onChange={(event) => setSelectedFolderId(event.target.value)}
+        >
+          {folders.map((folder) => (
+            <option key={folder.id} value={folder.id}>
+              {folder.name || sourceTypeLabel(folder.source_type)}
+            </option>
+          ))}
+          <option value="__new__">＋ 新建文件夹</option>
+        </select>
+        {isNewFolder && (
+          <input
+            className="folder-name-input"
+            aria-label="新文件夹名称"
+            placeholder="输入新文件夹名称"
+            value={newFolderName}
+            onChange={(event) => setNewFolderName(event.target.value)}
+          />
+        )}
+      </div>
       <div
         className={`direct-upload-target ${isDragging ? 'is-dragging' : ''}`}
         onDragEnter={(event) => {
@@ -367,20 +436,32 @@ function SourceCard({ source }: { source: SourceInfo }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
+  const [activeTaskIds, setActiveTaskIds] = useState<string[]>([])
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState(source.name)
+  const suppressBlurRef = useRef(false)
+
+  const docCount = source.doc_count ?? 0
+  const availableCount = source.available_count ?? 0
+  const failedCount = source.failed_count ?? 0
+  const sourceTitle =
+    source.name
+    || source.primary_document_name
+    || (source.uri && source.uri !== WEB_UPLOAD_URI ? source.uri : null)
+    || sourceTypeLabel(source.source_type)
 
   const detailQuery = useQuery({
     queryKey: ['source', source.id],
     queryFn: ({ signal }) => fetchSourceDetail(source.id, signal),
     enabled: isExpanded,
-    refetchInterval: isExpanded && activeTaskId ? 3_000 : false,
+    refetchInterval: isExpanded && activeTaskIds.length > 0 ? 3_000 : false,
   })
 
   const uploadMut = useMutation({
     mutationFn: (file: File) => uploadFile(source.id, file),
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['source', source.id] })
-      if (data.task_id) setActiveTaskId(data.task_id)
+      if (data.task_id) setActiveTaskIds([data.task_id])
       setSelectedFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
     },
@@ -390,7 +471,7 @@ function SourceCard({ source }: { source: SourceInfo }) {
     mutationFn: () => triggerIngestion(source.id),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['source', source.id] })
-      setActiveTaskId(data.task_id)
+      setActiveTaskIds(data.task_ids)
     },
   })
 
@@ -409,35 +490,126 @@ function SourceCard({ source }: { source: SourceInfo }) {
     },
   })
 
+  const renameMut = useMutation({
+    mutationFn: (name: string) => renameSource(source.id, name),
+    onSuccess: () => {
+      setIsRenaming(false)
+      void queryClient.invalidateQueries({ queryKey: ['sources'] })
+    },
+  })
+
+  const deleteFolderMut = useMutation({
+    mutationFn: () => deleteFolder(source.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['sources'] })
+    },
+  })
+
+  const commitRename = () => {
+    const name = renameValue.trim()
+    if (name && name !== source.name) renameMut.mutate(name)
+    else setIsRenaming(false)
+  }
+
   const handleUpload = (e: FormEvent) => {
     e.preventDefault()
     if (selectedFile) uploadMut.mutate(selectedFile)
   }
 
-  const visibleDocuments = detailQuery.data?.documents.filter((doc) => doc.status !== 'deleted') ?? []
+  const visibleDocuments = detailQuery.data?.documents?.filter((doc) => doc.status !== 'deleted') ?? []
 
   return (
     <div className={`source-card ${isExpanded ? 'expanded' : ''}`}>
       <div className="source-header" onClick={() => setIsExpanded(!isExpanded)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setIsExpanded(!isExpanded) }}>
         <FileText size={18} />
         <div className="source-info">
-          <strong>{source.uri || '未命名来源'}</strong>
-          <span>{source.source_type} · {source.id}</span>
+          <strong className="source-title">
+            {isRenaming ? (
+              <input
+                className="folder-rename-input"
+                value={renameValue}
+                autoFocus
+                aria-label="重命名文件夹"
+                onChange={(event) => setRenameValue(event.target.value)}
+                onFocus={() => {
+                  suppressBlurRef.current = false
+                }}
+                onBlur={() => {
+                  if (!suppressBlurRef.current) commitRename()
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    commitRename()
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    suppressBlurRef.current = true
+                    setRenameValue(source.name)
+                    setIsRenaming(false)
+                  }
+                }}
+              />
+            ) : (
+              sourceTitle
+            )}
+            {failedCount > 0 && (
+              <span className="source-failed-badge" title={`${failedCount} 个文档不可用`}>
+                {failedCount} 个异常
+              </span>
+            )}
+          </strong>
+          <span>{sourceTypeLabel(source.source_type)} · {docCount} 个文档 · {availableCount} 可用 · {formatSourceTime(source.created_at)}</span>
         </div>
-        <button
-          type="button"
-          className="source-action-button"
-          onClick={(e) => {
-            e.stopPropagation()
-            setIsExpanded(true)
-            ingestMut.mutate()
-          }}
-          disabled={ingestMut.isPending}
-          aria-label="触发摄入"
-        >
-          <CloudUpload size={16} />
-          <span>{ingestMut.isPending ? '提交中…' : '触发摄入'}</span>
-        </button>
+        <div className="source-actions">
+          {!isRenaming && (
+            <button
+              type="button"
+              className="source-action-button"
+              aria-label="重命名文件夹"
+              title="重命名文件夹"
+              onClick={(event) => {
+                event.stopPropagation()
+                setRenameValue(source.name)
+                setIsRenaming(true)
+              }}
+            >
+              <Pencil size={16} />
+            </button>
+          )}
+          <button
+            type="button"
+            className="source-delete-button"
+            aria-label="删除文件夹"
+            title="删除文件夹"
+            disabled={deleteFolderMut.isPending}
+            onClick={(event) => {
+              event.stopPropagation()
+              if (window.confirm(`删除文件夹“${sourceTitle}”及其全部 ${docCount} 个文档？`)) {
+                deleteFolderMut.mutate()
+              }
+            }}
+          >
+            {deleteFolderMut.isPending
+              ? <LoaderCircle className="spin" size={16} aria-hidden="true" />
+              : <Trash2 size={16} aria-hidden="true" />}
+          </button>
+          <button
+            type="button"
+            className="source-action-button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setIsExpanded(true)
+              ingestMut.mutate()
+            }}
+            disabled={ingestMut.isPending}
+            aria-label="触发摄入"
+          >
+            <CloudUpload size={16} />
+            <span>{ingestMut.isPending ? '提交中…' : '触发摄入'}</span>
+          </button>
+        </div>
       </div>
 
       {isExpanded && (
@@ -474,8 +646,7 @@ function SourceCard({ source }: { source: SourceInfo }) {
 
           {uploadMut.data && (
             <div className="upload-result">
-              文件已登记，哈希 {uploadMut.data.blob_hash}
-              {uploadMut.data.is_unchanged && '（内容未变化）'}
+              文件已登记{uploadMut.data.is_unchanged ? '（内容未变化）' : ''}
             </div>
           )}
           {uploadMut.isError && (
@@ -494,15 +665,17 @@ function SourceCard({ source }: { source: SourceInfo }) {
           )}
 
           {/* Task status */}
-          {activeTaskId && (
+          {activeTaskIds.map((taskId) => (
             <TaskRow
-              taskId={activeTaskId}
-              onTaskChange={setActiveTaskId}
+              key={taskId}
+              taskId={taskId}
+              onTaskChange={(nextId) =>
+                setActiveTaskIds((ids) => ids.map((id) => (id === taskId ? nextId : id)))}
               onTaskSettled={() => {
                 void queryClient.invalidateQueries({ queryKey: ['source', source.id] })
               }}
             />
-          )}
+          ))}
 
           {/* Documents */}
           {detailQuery.data && (
@@ -593,8 +766,8 @@ export function SourcesPanel() {
       ) : sources.length === 0 ? (
         <div className="empty-state">
           <FileText size={24} />
-          <p>暂无数据来源</p>
-          <span>选择上方文件即可创建来源并开始摄入</span>
+          <p>暂无文件夹</p>
+          <span>选择上方文件即可创建文件夹并开始摄入</span>
         </div>
       ) : (
         <div className="sources-list">
