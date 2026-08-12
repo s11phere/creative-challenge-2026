@@ -74,6 +74,7 @@ from sqlalchemy.pool import NullPool
 
 from worker.broker import broker
 from worker.qa_tasks import _create_gateway
+from worker.usage_traces import record_usage_trace
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("worker.assistant")
@@ -180,18 +181,21 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
     )
     events = PostgresAssistantEventStore(database)
     if claimed.run_kind is ConversationRunKind.CONTEXT_COMPACTION:
-        return await _run_compaction_with_lease(
+        completed = await _run_compaction_with_lease(
             compaction=compaction,
             events=events,
             runs=runs,
             run_id=run_id,
             lease_owner=lease_owner,
         )
+        await record_usage_trace(run_id)
+        return completed
     if claimed.status in _TERMINAL:
         if isinstance(service, AutonomousAssistantLoopService):
             await service.execute(run_id, trace_id=trace_id)
         else:
             await service.execute(run_id)
+        await record_usage_trace(run_id)
         return True
 
     stop = asyncio.Event()
@@ -214,6 +218,7 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
         stop.set()
         await heartbeat
         await runs.release_conversation_run_lease(run_id, lease_owner=lease_owner)
+        await record_usage_trace(run_id)
 
 
 async def _autonomous_loop_service(
