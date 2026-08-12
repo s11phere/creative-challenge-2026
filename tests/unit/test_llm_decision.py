@@ -20,6 +20,7 @@ from agent_runtime import (
     ToolRef,
     parse_llm_decision,
 )
+from agent_runtime.llm_decision import _GENERATION_SYSTEM_PROMPT
 from domain.agent_runtime import AgentRun, AgentRunContext, RunBudget, ToolPermission
 from model_gateway import (
     CapabilityAlias,
@@ -377,6 +378,188 @@ async def test_verify_node_projects_only_terminal_decisions() -> None:
     with pytest.raises(NodeExecutionError) as missing:
         await LLMDecisionVerifyNode()(replace_context(context, state={}))
     assert missing.value.code == "RUN_LLM_DECISION_MISSING"
+
+
+class ScriptedChatGateway:
+    """Model gateway driven by an explicit (text, finish_reason) script.
+
+    Usage increments per call so escalation accounting is deterministic:
+    call i returns input_tokens=i and output_tokens=i*10.
+    """
+
+    def __init__(self, *responses: tuple[str, str]) -> None:
+        self._delegate = FakeModelGateway()
+        self.responses = list(responses)
+        self.requests: list[ChatRequest] = []
+
+    @property
+    def status(self) -> GatewayStatus:
+        return self._delegate.status
+
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        self.requests.append(request)
+        text, finish_reason = self.responses.pop(0)
+        index = len(self.requests)
+        return ChatResponse(
+            text=text,
+            finish_reason=finish_reason,
+            usage=ModelUsage(input_tokens=index, output_tokens=index * 10),
+            capability=capability,
+            latency_ms=1.0,
+        )
+
+
+def decision_context(gateway: ScriptedChatGateway) -> NodeExecutionContext:
+    run = AgentRun(
+        context=AgentRunContext(
+            run_id=uuid4(),
+            space_id=UUID(int=1),
+            skill_name="agent",
+            skill_version="0.1.0",
+            skill_content_sha256="a" * 64,
+            trace_id="trace",
+            caller_id="caller",
+        ),
+        budget=RunBudget(),
+    )
+    return NodeExecutionContext(
+        run=run,
+        pin=cast(PinnedSkill, object()),
+        input={"question": "explain the full generative model lineage"},
+        state={},
+        model_gateway=cast(ModelGateway, gateway),
+    )
+
+
+def _truncated_complete_text() -> str:
+    return (
+        '{"action":"complete","reason":"full lineage answer","final_response":"' + ("x" * 600) + "…"
+    )
+
+
+@pytest.mark.asyncio
+async def test_decision_node_inlines_short_answer_without_escalation() -> None:
+    gateway = ScriptedChatGateway(
+        ('{"action":"complete","reason":"done","final_response":"short answer"}', "stop")
+    )
+    context = decision_context(gateway)
+    decision, usage = await LLMDecisionNode(
+        allowed_tools=frozenset(),
+        system_prompt="Return only the decision schema.",
+        escalate_long_answer=True,
+    ).decide(context)
+    assert decision.action is LLMDecisionAction.COMPLETE
+    assert decision.final_response == "short answer"
+    assert len(gateway.requests) == 1
+    assert usage.input_tokens == 1
+    assert usage.output_tokens == 10
+
+
+@pytest.mark.asyncio
+async def test_decision_node_escalates_truncated_long_answer_to_generation() -> None:
+    full_answer = "# 生成模型谱系\nVAE → GAN → DDPM → SDE"
+    gateway = ScriptedChatGateway((_truncated_complete_text(), "length"), (full_answer, "stop"))
+    context = decision_context(gateway)
+    decision, usage = await LLMDecisionNode(
+        allowed_tools=frozenset(),
+        system_prompt="Return only the decision schema.",
+        escalate_long_answer=True,
+    ).decide(context)
+    assert decision.action is LLMDecisionAction.COMPLETE
+    assert decision.reason == "escalated long answer"
+    assert decision.final_response == full_answer
+    assert len(gateway.requests) == 2
+    generation_request = gateway.requests[1]
+    assert generation_request.messages[0].content == _GENERATION_SYSTEM_PROMPT
+    assert generation_request.messages[1].content == "explain the full generative model lineage"
+    assert generation_request.temperature == 0.2
+    assert generation_request.max_tokens == 6_144
+    assert usage.input_tokens == 3
+    assert usage.output_tokens == 30
+
+
+@pytest.mark.asyncio
+async def test_decision_node_does_not_escalate_non_complete_truncation() -> None:
+    gateway = ScriptedChatGateway(
+        (
+            '{"action":"call_tool","tool_name":"search_knowledge","arguments":{"query":"'
+            + ("q" * 500)
+            + "…",
+            "length",
+        )
+    )
+    context = decision_context(gateway)
+    with pytest.raises(LLMDecisionError):
+        await LLMDecisionNode(
+            allowed_tools=frozenset({"search_knowledge"}),
+            system_prompt="Return only the decision schema.",
+            escalate_long_answer=True,
+        ).decide(context)
+    assert len(gateway.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_decision_node_does_not_escalate_when_disabled() -> None:
+    gateway = ScriptedChatGateway((_truncated_complete_text(), "length"))
+    context = decision_context(gateway)
+    with pytest.raises(LLMDecisionError):
+        await LLMDecisionNode(
+            allowed_tools=frozenset(),
+            system_prompt="Return only the decision schema.",
+        ).decide(context)
+    assert len(gateway.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_decision_node_does_not_publish_when_generation_truncates() -> None:
+    gateway = ScriptedChatGateway(
+        (_truncated_complete_text(), "length"), ("# partial answer", "length")
+    )
+    context = decision_context(gateway)
+    with pytest.raises(NodeExecutionError) as failure:
+        await LLMDecisionNode(
+            allowed_tools=frozenset(),
+            system_prompt="Return only the decision schema.",
+            escalate_long_answer=True,
+        ).decide(context)
+    assert failure.value.code == "RUN_LLM_GENERATION_TRUNCATED"
+    assert len(gateway.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_generation_uses_loop_goal_when_input_has_no_question() -> None:
+    gateway = ScriptedChatGateway((_truncated_complete_text(), "length"), ("full answer", "stop"))
+    run = AgentRun(
+        context=AgentRunContext(
+            run_id=uuid4(),
+            space_id=UUID(int=1),
+            skill_name="agent",
+            skill_version="0.1.0",
+            skill_content_sha256="a" * 64,
+            trace_id="trace",
+            caller_id="caller",
+        ),
+        budget=RunBudget(),
+    )
+    context = NodeExecutionContext(
+        run=run,
+        pin=cast(PinnedSkill, object()),
+        input={},
+        state={"goal": "the loop goal text"},
+        model_gateway=cast(ModelGateway, gateway),
+    )
+    decision, _usage = await LLMDecisionNode(
+        allowed_tools=frozenset(),
+        system_prompt="Return only the decision schema.",
+        escalate_long_answer=True,
+    ).decide(context)
+    assert decision.final_response == "full answer"
+    assert gateway.requests[1].messages[1].content == "the loop goal text"
 
 
 def replace_context(
