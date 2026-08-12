@@ -9,6 +9,25 @@ from .catalog import (
     SkillVersionView,
     SkillView,
 )
+from .evaluation import (
+    AggregateSkillEvalReport,
+    SkillEvalCase,
+    SkillEvalCaseResult,
+    SkillEvalCheck,
+    SkillEvalEvidence,
+    SkillEvalFailureCategory,
+    SkillEvalJudge,
+    SkillEvalMetrics,
+    SkillEvalObservation,
+    SkillEvalSkillReport,
+    SkillEvalStatus,
+    StructuralSkillEvalJudge,
+    aggregate_skill_eval_metrics,
+    aggregate_skill_reports,
+    build_skill_report,
+    invalid_case_result,
+    run_skill_evaluation,
+)
 from .grounded_qa_skill import DerivedKnowledgeWriter, GroundedQASkillAdapter, GroundedQASkillConfig
 from .knowledge_loop import KnowledgeLoopTools, KnowledgeLoopToolsConfig
 from .lifecycle import SkillLifecycleError, SkillLifecycleErrorCode, SkillLifecycleService
@@ -19,6 +38,7 @@ from .organization import (
 )
 
 __all__ = [
+    "AggregateSkillEvalReport",
     "GroundedQASkillAdapter",
     "GroundedQASkillConfig",
     "DerivedKnowledgeWriter",
@@ -31,10 +51,26 @@ __all__ = [
     "SkillActivationStore",
     "SkillBudgetView",
     "SkillCatalogPort",
+    "SkillEvalCase",
+    "SkillEvalCaseResult",
+    "SkillEvalCheck",
+    "SkillEvalEvidence",
+    "SkillEvalFailureCategory",
+    "SkillEvalJudge",
+    "SkillEvalMetrics",
+    "SkillEvalObservation",
+    "SkillEvalSkillReport",
+    "SkillEvalStatus",
     "SkillInvocationView",
     "SkillLifecycleError",
     "SkillLifecycleErrorCode",
     "SkillLifecycleService",
     "SkillVersionView",
     "SkillView",
+    "StructuralSkillEvalJudge",
+    "aggregate_skill_eval_metrics",
+    "aggregate_skill_reports",
+    "build_skill_report",
+    "invalid_case_result",
+    "run_skill_evaluation",
 ]
