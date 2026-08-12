@@ -29,10 +29,13 @@ from application.qa import (
 )
 from application.skills import (
     DerivedKnowledgeWriter,
+    DraftSkillEvalRunner,
     PersonalSkillStore,
     SkillActivationStore,
     SkillCatalogPort,
+    SkillDraftStore,
     SkillLifecycleService,
+    SkillSuggestionService,
 )
 from domain.agent_runtime import ApprovalPort
 from domain.agent_sse import AgentRunEventLog, AgentRunEventStore
@@ -66,6 +69,7 @@ from infrastructure.skill_lifecycle import (
 )
 from infrastructure.skill_references import PostgresSkillReferenceChecker
 from infrastructure.telemetry import configure_observability
+from infrastructure.usage_traces import PostgresUsagePatternRepository
 from infrastructure.workspaces import WorkspaceRoot
 from model_gateway import (
     GatewayConfig,
@@ -81,7 +85,16 @@ from .assistant_runtime import AssistantWorkerDispatcher
 from .errors import ErrorResponse, register_error_handlers
 from .observability import TraceMiddleware
 from .qa_runtime import QAWorkerDispatcher
-from .routers import agent_events, assistant, personal_skills, qa, search, skills, sources
+from .routers import (
+    agent_events,
+    assistant,
+    personal_skills,
+    qa,
+    search,
+    skill_drafts,
+    skills,
+    sources,
+)
 
 
 class LiveResponse(BaseModel):
@@ -262,6 +275,14 @@ def create_app(
         registry=assistant_registry,
         store=activation_store,
     )
+    skill_draft_store = SkillDraftStore(
+        registry=assistant_registry,
+        personal_store=personal_skill_store,
+        eval_runner=DraftSkillEvalRunner(registry=assistant_registry),
+    )
+    skill_suggestion_service = SkillSuggestionService(
+        patterns=PostgresUsagePatternRepository(database)
+    )
     assistant_command_catalog = AssistantCommandCatalog(assistant_catalog)
     assistant_command_service = AssistantCommandService(
         catalog=assistant_command_catalog,
@@ -333,9 +354,12 @@ def create_app(
     app.state.qa_execution_enabled = enable_qa_execution
     app.state.skill_catalog = skill_catalog
     app.state.skill_registry = skill_registry
+    app.state.assistant_registry = assistant_registry
     app.state.skill_reference_checker = PostgresSkillReferenceChecker(database)
     app.state.skill_lifecycle = skill_lifecycle
     app.state.personal_skill_store = personal_skill_store
+    app.state.skill_draft_store = skill_draft_store
+    app.state.skill_suggestion_service = skill_suggestion_service
     app.state.organization_scope = PostgresKnowledgeOrganizationScope(database)
     app.state.approval_port = approval_port or PostgresApprovalPort(database)
     app.state.derived_knowledge_store = derived_knowledge_store or PostgresDerivedKnowledgeStore(
@@ -355,6 +379,9 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(assistant.router)
     app.include_router(agent_events.router)
     app.include_router(skills.router)
+    # Draft routes must precede the personal `/{name}` routes so a draft named
+    # "drafts" or the "/suggestions" path is never captured as a skill name.
+    app.include_router(skill_drafts.router)
     app.include_router(personal_skills.router)
 
     @app.get(

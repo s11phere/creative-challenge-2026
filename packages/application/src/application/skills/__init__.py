@@ -55,6 +55,7 @@ from .personal import (
     PersonalSkillStore,
     PersonalSkillView,
 )
+from .suggestions import SkillSuggestionService, SkillSuggestionView
 
 __all__ = [
     "AggregateSkillEvalReport",
@@ -78,6 +79,8 @@ __all__ = [
     "SkillActivationStore",
     "SkillBudgetView",
     "SkillDraftError",
+    "SkillSuggestionService",
+    "SkillSuggestionView",
     "SkillDraftErrorCode",
     "SkillDraftStore",
     "SkillDraftValidationResult",

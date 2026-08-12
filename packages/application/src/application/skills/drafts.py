@@ -96,6 +96,13 @@ class SkillDraftStore:
             raise _draft_error(exc) from exc
         return self._view(name, files)
 
+    def read_files(self, name: str) -> dict[str, str]:
+        """Return the draft package files (path → content) for editing."""
+        try:
+            return self._registry.read_draft_files(name)
+        except SkillRegistryError as exc:
+            raise _draft_error(exc) from exc
+
     def delete(self, name: str) -> None:
         try:
             self._registry.delete_draft(name)

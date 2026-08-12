@@ -1,0 +1,13 @@
+workflow_version: "1"
+start: creator_flow
+nodes:
+  - id: creator_flow
+    step: executing
+    handler: skill_creator_flow
+    next: null
+    max_retries: 0
+    required_permissions: []
+    reserve:
+      tool_calls: 0
+      input_tokens: 0
+      output_tokens: 0

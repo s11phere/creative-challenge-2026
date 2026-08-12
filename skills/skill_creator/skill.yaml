@@ -1,0 +1,25 @@
+manifest_version: "1"
+name: skill_creator
+version: 1.0.0
+description: Agent-guided creation and iteration of personal Skills (Phase 4, Path A).
+input_schema: schemas/input.json
+output_schema: schemas/output.json
+required_tools: []
+required_capabilities: []
+permissions:
+  - read_knowledge
+  - model
+budgets:
+  max_steps: 32
+  max_tool_calls: 24
+  max_input_tokens: 65536
+  max_output_tokens: 16384
+  timeout_seconds: 300
+entrypoint: workflow.yaml
+compatibility:
+  runtime: ">=0.1.0,<1.0.0"
+  checkpoint_schema_versions: [1]
+prompts:
+  - prompts/system.md
+evals:
+  - evals/cases.jsonl
