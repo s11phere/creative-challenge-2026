@@ -41,6 +41,13 @@ from .llm_decision import (
     parse_llm_decision,
 )
 from .loop import AgentLoopDebugTrace, AgentLoopExecutor, AgentLoopFinalizer, AgentLoopResult
+from .native_model_context import (
+    MODEL_CONTEXT_SCHEMA_VERSION,
+    NativeDecisionHistoryItem,
+    NativeModelContextV2,
+    NativeModelObservation,
+    project_model_observation,
+)
 from .native_skill_catalog import (
     NativeSkillCatalog,
     NativeSkillPin,
@@ -167,6 +174,11 @@ __all__ = [
     "NativeToolUseLoopResult",
     "NativeToolUseLoopState",
     "NativeToolUseObservation",
+    "MODEL_CONTEXT_SCHEMA_VERSION",
+    "NativeDecisionHistoryItem",
+    "NativeModelContextV2",
+    "NativeModelObservation",
+    "project_model_observation",
     "NativeSkillCatalog",
     "NativeSkillPin",
     "NativeSkillRoute",

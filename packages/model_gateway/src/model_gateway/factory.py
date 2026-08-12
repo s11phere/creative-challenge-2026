@@ -34,6 +34,7 @@ class GatewayConfig:
     fast_chat_timeout_seconds: float = 120.0
     fast_chat_reasoning_enabled: bool = False
     fast_chat_native_tool_use: bool = False
+    fast_chat_prompt_caching: bool = False
     max_retries: int = 2
     retry_backoff_seconds: float = 0.1
     reranker_batch_size: int = 32
@@ -122,6 +123,7 @@ def create_model_gateway(
         fast_chat_timeout_seconds=config.fast_chat_timeout_seconds,
         fast_chat_reasoning_enabled=config.fast_chat_reasoning_enabled,
         fast_chat_native_tool_use=config.fast_chat_native_tool_use,
+        fast_chat_prompt_caching=config.fast_chat_prompt_caching,
         max_retries=config.max_retries,
         retry_backoff_seconds=config.retry_backoff_seconds,
         reranker_batch_size=config.reranker_batch_size,

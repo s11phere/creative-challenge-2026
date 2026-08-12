@@ -46,11 +46,13 @@ class FakeModelGateway:
         *,
         scenario: FakeScenario = FakeScenario.NORMAL,
         embedding_dimensions: int = 768,
+        supports_prompt_caching: bool = False,
     ) -> None:
         if embedding_dimensions < 1:
             raise ValueError("Embedding dimensions must be positive")
         self.scenario = scenario
         self.embedding_dimensions = embedding_dimensions
+        self.supports_prompt_caching = supports_prompt_caching
 
     @property
     def status(self) -> GatewayStatus:
@@ -76,6 +78,11 @@ class FakeModelGateway:
                     code=code,
                     supports_native_tool_use=(
                         available and capability is CapabilityAlias.FAST_CHAT
+                    ),
+                    supports_prompt_caching=(
+                        available
+                        and capability is CapabilityAlias.FAST_CHAT
+                        and self.supports_prompt_caching
                     ),
                 )
                 for capability in (

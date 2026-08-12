@@ -93,6 +93,7 @@ class ToolDefinition:
     required_capabilities: frozenset[str] = field(default_factory=frozenset)
     audit_event: str = "tool_invoked"
     model_visible: bool = False
+    model_observation_schema: Mapping[str, JSONValue] | None = None
 
     def __post_init__(self) -> None:
         if not _NAME_PATTERN.fullmatch(self.name):
@@ -185,6 +186,13 @@ class InMemoryToolRegistry:
     def register(self, definition: ToolDefinition) -> ToolDefinition:
         self._validate_schema(definition.input_schema)
         self._validate_schema(definition.output_schema)
+        if definition.model_observation_schema is not None:
+            self._validate_schema(definition.model_observation_schema)
+            if definition.model_observation_schema.get("type") != "object":
+                raise ToolRegistryError(
+                    ToolRegistryErrorCode.INVALID_DEFINITION,
+                    "Model observation projection must be an object schema.",
+                )
         if definition.handler_name not in self._handlers:
             raise ToolRegistryError(
                 ToolRegistryErrorCode.HANDLER_UNREGISTERED,

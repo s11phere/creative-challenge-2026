@@ -10,6 +10,7 @@ from importlib.resources import files
 from typing import Protocol
 from uuid import UUID, uuid4
 
+from agent_runtime import NativeModelContextV2
 from domain.agent_loop import AgentLoopPhase, AgentLoopState
 from domain.conversation_context import (
     ConversationEvidenceCoverage,
@@ -96,6 +97,7 @@ class ConversationContextSnapshot:
     approval_pending: bool = False
     approval_id: str | None = None
     previous_clarification: str | None = None
+    native_model_context: NativeModelContextV2 | None = None
 
     def __post_init__(self) -> None:
         if not self.current_goal.strip():
@@ -338,6 +340,11 @@ class ConversationContextSnapshot:
         messages.append(ChatMessage(role=ChatRole.USER, content=self.standalone_request()))
         return tuple(messages)
 
+    def native_model_context_request(self) -> str:
+        if self.native_model_context is None:
+            raise ValueError("Native model context is unavailable")
+        return self.native_model_context.render_model_context()
+
 
 class ConversationContextService:
     """Build bounded snapshots and create idempotent compaction Run identities."""
@@ -366,6 +373,7 @@ class ConversationContextService:
         loop_state: AgentLoopState | None = None,
         evidence_coverage: ConversationEvidenceCoverage | None = None,
         unresolved_items: tuple[str, ...] = (),
+        native_model_context: NativeModelContextV2 | None = None,
     ) -> ConversationContextSnapshot:
         conversation = await self._data.get_conversation(run.conversation_id)
         if (
@@ -458,6 +466,7 @@ class ConversationContextService:
             or run.status is ConversationRunStatus.WAITING_APPROVAL,
             approval_id=approval_id,
             previous_clarification=previous_clarification,
+            native_model_context=native_model_context,
         )
 
     async def request_manual_compaction(
@@ -688,7 +697,7 @@ def _latest_clarification(runs: Mapping[UUID, ConversationRun], *, excluding: UU
     result = latest.result
     if result is None or result.clarification is None:
         return None
-    return result.clarification.message[:1_000]
+    return str(result.clarification.message[:1_000])
 
 
 def _loop_context(

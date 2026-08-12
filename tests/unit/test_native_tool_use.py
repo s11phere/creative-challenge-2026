@@ -304,8 +304,8 @@ async def test_native_tool_use_replays_one_result_then_finalizes_once() -> None:
     assert gateway.requests[0].tool_results == ()
     assert gateway.requests[1].tool_call_history == (call,)
     assert gateway.requests[1].tool_results[0].observation == {
-        "status": "ok",
-        "query": "synthetic",
+        "status": "succeeded",
+        "summary": "synthetic_lookup completed.",
     }
     assert result.run.usage.steps == 2
     assert result.run.usage.tool_calls == 1
@@ -570,9 +570,8 @@ async def test_native_tool_use_selects_one_skill_before_exposing_its_instruction
     assert "SELECTED_SKILL_INSTRUCTIONS" in gateway.requests[1].messages[0].content
     assert "UNSELECTED_SKILL_INSTRUCTIONS" not in gateway.requests[1].messages[0].content
     assert gateway.requests[1].tool_results[0].observation == {
-        "name": "knowledge_agent",
-        "version": "1.0.0",
-        "selected": True,
+        "status": "succeeded",
+        "summary": "Selected Skill knowledge_agent.",
     }
 
 
@@ -604,22 +603,7 @@ async def test_native_tool_use_lists_routes_without_skill_instructions() -> None
 
     assert result.run.status is RunStatus.COMPLETED
     observation = gateway.requests[1].tool_results[0].observation
-    assert observation["skills"] == [
-        {
-            "name": "knowledge_agent",
-            "version": "1.0.0",
-            "description": "Synthetic route for knowledge_agent.",
-            "command": "knowledge-agent",
-            "adapter_available": True,
-        },
-        {
-            "name": "skill_creator",
-            "version": "1.0.0",
-            "description": "Synthetic route for skill_creator.",
-            "command": "skill-creator",
-            "adapter_available": False,
-        },
-    ]
+    assert observation == {"status": "succeeded", "summary": "Listed 2 Skill routes."}
     assert "KNOWLEDGE_SKILL_INSTRUCTIONS" not in str(observation)
     assert "CREATOR_SKILL_INSTRUCTIONS" not in str(observation)
 

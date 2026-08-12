@@ -690,6 +690,24 @@ def _knowledge_retrieve_definition(version: str) -> ToolDefinition:
         permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
         handler_name=_RETRIEVE_TOOL_NAME,
         model_visible=True,
+        model_observation_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "status",
+                "summary",
+                "search_count",
+                "matched_count",
+                "recommended_next",
+            ],
+            "properties": {
+                "status": {"type": "string"},
+                "summary": {"type": "string", "maxLength": 320},
+                "search_count": {"type": "integer", "minimum": 0},
+                "matched_count": {"type": "integer", "minimum": 0},
+                "recommended_next": {"enum": ["knowledge_retrieve", "knowledge_answer"]},
+            },
+        },
         max_retries=1,
     )
 
@@ -739,6 +757,24 @@ def _knowledge_answer_definition(version: str) -> ToolDefinition:
         permissions=frozenset({ToolPermission.READ_KNOWLEDGE, ToolPermission.MODEL}),
         handler_name=_ANSWER_TOOL_NAME,
         model_visible=True,
+        model_observation_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "status",
+                "summary",
+                "outcome",
+                "terminal_reason",
+                "recommended_next",
+            ],
+            "properties": {
+                "status": {"type": "string"},
+                "summary": {"type": "string", "maxLength": 320},
+                "outcome": {"enum": ["pending", "answer", "refusal", "conflict"]},
+                "terminal_reason": {"type": "string"},
+                "recommended_next": {"enum": ["knowledge_retrieve", "terminal"]},
+            },
+        },
         timeout_seconds=180.0,
     )
 

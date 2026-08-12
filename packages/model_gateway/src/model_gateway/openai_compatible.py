@@ -77,6 +77,7 @@ class OpenAICompatibleGateway:
         fast_chat_timeout_seconds: float = 120.0,
         fast_chat_reasoning_enabled: bool = False,
         fast_chat_native_tool_use: bool = False,
+        fast_chat_prompt_caching: bool = False,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.1,
         reranker_batch_size: int = 32,
@@ -129,6 +130,7 @@ class OpenAICompatibleGateway:
         self.fast_chat_timeout_seconds = fast_chat_timeout_seconds
         self.fast_chat_reasoning_enabled = fast_chat_reasoning_enabled
         self.fast_chat_native_tool_use = fast_chat_native_tool_use
+        self.fast_chat_prompt_caching = fast_chat_prompt_caching
         self._owns_client = client is None
         self.client = client
 
@@ -143,6 +145,11 @@ class OpenAICompatibleGateway:
                     config.available
                     and capability is CapabilityAlias.FAST_CHAT
                     and self.fast_chat_native_tool_use
+                ),
+                supports_prompt_caching=(
+                    config.available
+                    and capability is CapabilityAlias.FAST_CHAT
+                    and self.fast_chat_prompt_caching
                 ),
             )
             for capability, config in self._capability_configs.items()
@@ -213,6 +220,8 @@ class OpenAICompatibleGateway:
                 **({"max_tokens": request.max_tokens} if request.max_tokens is not None else {}),
                 "thinking": self._thinking_value(request),
             }
+            if self.fast_chat_prompt_caching and request.cache_key is not None:
+                payload["extra_body"] = {"cache_key": request.cache_key}
             if request.tools:
                 if not self.fast_chat_native_tool_use:
                     raise ModelGatewayError(

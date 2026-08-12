@@ -207,6 +207,27 @@ Worker/Compose 或浏览器测试；本步骤仍是 provisional 工程实现。
 
 验收：长 Run 的模型可见上下文有固定上界且含决策历史；无未选 Skill 正文、全量 Tool result 或重复 static catalog；cache 不可用时行为和安全语义不变。
 
+> 完成记录（2026-08-13）：新增 hash-pinned `agent-model-context-v2` runtime 数据类、
+> `NativeDecisionHistoryItem` 和按 Tool `model_observation_schema` 的 bounded projection；v2 请求只重放
+> 投影后的观察与决策摘要，不再重放完整 Tool output。`NativeKnowledgeTools` 的两个 v2 Tool 已声明独立
+> projection schema，`ConversationContextSnapshot` 可携带 v2 model context 且不混入 audit
+> summary/digest。新增 safe debug trace：只记录 context digest、visible observation bytes、cache mode
+> 和 usage，不记录 prompt、回答、arguments 或 Tool 正文。
+>
+> Prompt cache 新增 provider-neutral `ChatRequest.cache_key`、Gateway capability/config/settings 开关、
+> OpenAI-compatible `extra_body.cache_key` 发送路径和稳定静态 cache key；key 只覆盖 base prompt、selected
+> Skill pin、Tool schema、provider/model 与 schema 版本，不含 goal、用户输入、Space 或动态 observation。
+> policy/provider 不支持时正常执行并记录 `cache_mode=unsupported`。新增 5 个 context/cache 定向测试和
+> 1 个 Gateway cache payload 测试，覆盖多轮上界、redaction、跨 Space 静态 key、policy disabled 与
+> cache-disabled Provider。
+>
+> 已运行：完整 `pytest tests/unit` `1090 passed, 2 skipped`；定向 context/cache 测试
+> `5 passed`；`ruff check .`；受影响文件 `ruff format --check`；`mypy apps packages`；
+> `scripts/evaluate_agent_harness_v2.py` 和 `git diff --check`。仓库级 `ruff format --check .`
+> 仍被既有未改动的 `packages/application/src/application/assistant/__init__.py` 格式问题阻断，
+> 本次未触碰该文件。未运行 formal holdout、外部 Provider、数据库迁移、Worker/Compose 或浏览器测试；
+> v1 路径与既有 checkpoint/API 行为保持不变。
+
 ### Step 6：SSE/Web、文档与受控发布
 
 - 新增以 Step 1 契约命名为准的安全事件投影，显示 Skill selected、Tool family、决策摘要、context/cache usage 和 stop reason，不显示 prompt、原文、答案或 Tool body。

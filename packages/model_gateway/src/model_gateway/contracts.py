@@ -156,6 +156,7 @@ class ChatRequest:
     tools: tuple[ChatToolDefinition, ...] = ()
     tool_call_history: tuple[ChatToolCall, ...] = ()
     tool_results: tuple[ChatToolResult, ...] = ()
+    cache_key: str | None = None
 
     def __post_init__(self) -> None:
         if not self.messages:
@@ -181,6 +182,12 @@ class ChatRequest:
             for result in self.tool_results
         ):
             raise ValueError("Chat Tool result name does not match the prior Tool call")
+        if self.cache_key is not None and (
+            not self.cache_key.startswith("sha256:")
+            or len(self.cache_key) != 71
+            or any(character not in "abcdef0123456789" for character in self.cache_key[7:])
+        ):
+            raise ValueError("Chat cache key must be a SHA-256 digest")
 
 
 ContinuationMetadata = ChatContinuation

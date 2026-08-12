@@ -7,6 +7,7 @@ terminal text which is published once by the server-owned finalizer.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
@@ -36,6 +37,7 @@ from model_gateway import (
     CapabilityAlias,
     ChatMessage,
     ChatRequest,
+    ChatResponse,
     ChatRole,
     ChatToolCall,
     ChatToolDefinition,
@@ -50,6 +52,14 @@ from model_gateway import (
 from .checkpoints import build_checkpoint, checkpoint_state_sha256
 from .executor import NodeExecutionError
 from .llm_decision import AgentToolRegistry
+from .loop import AgentLoopDebugTrace
+from .native_model_context import (
+    MODEL_CONTEXT_SCHEMA_VERSION,
+    NativeDecisionHistoryItem,
+    NativeModelContextV2,
+    NativeModelObservation,
+    project_model_observation,
+)
 from .native_skill_catalog import (
     NativeSkillCatalog,
     NativeSkillPin,
@@ -71,8 +81,10 @@ from .tools import (
 type CancellationCheck = Callable[[AgentRun], Awaitable[bool]]
 type ClockMilliseconds = Callable[[], int]
 type ApprovalRequest = Callable[[AgentRunContext, ToolCallRecord], Awaitable[str]]
+type PromptCacheAllowed = Callable[[AgentRunContext], bool]
 
 _STATE_SCHEMA_VERSION = "native-tool-use-loop-state-v2"
+_PROMPT_CACHE_SCHEMA_VERSION = "assistant-base-prompt-v8"
 _MAX_TERMINAL_TEXT_CHARS = 20_000
 _MAX_SELECTED_SKILLS = 2
 _DEFAULT_MAX_SELECTED_SKILL_INSTRUCTION_BYTES = 24 * 1024
@@ -245,10 +257,13 @@ class NativeToolUseLoopState:
     terminal_text: str | None = None
     terminal_output: dict[str, JSONValue] | None = None
     publication_id: str | None = None
+    context_schema_version: str = MODEL_CONTEXT_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         if not self.goal.strip() or len(self.goal) > 4_000:
             raise ValueError("Native Tool-use goal must be non-empty and bounded")
+        if self.context_schema_version != MODEL_CONTEXT_SCHEMA_VERSION:
+            raise ValueError("Native Tool-use context schema version is unsupported")
         if self.iteration < 0 or len(self.observations) > self.iteration:
             raise ValueError("Native Tool-use loop iteration is invalid")
         call_ids = tuple(item.call.call_id for item in self.observations)
@@ -384,6 +399,7 @@ class NativeToolUseLoopState:
                 _json_copy(self.terminal_output) if self.terminal_output is not None else None,
             ),
             "publication_id": self.publication_id,
+            "context_schema_version": self.context_schema_version,
         }
 
     @classmethod
@@ -436,6 +452,11 @@ class NativeToolUseLoopState:
                     cast(str, value["publication_id"])
                     if isinstance(value.get("publication_id"), str)
                     else None
+                ),
+                context_schema_version=(
+                    cast(str, value["context_schema_version"])
+                    if isinstance(value.get("context_schema_version"), str)
+                    else MODEL_CONTEXT_SCHEMA_VERSION
                 ),
             )
         except (TypeError, ValueError) as exc:
@@ -519,6 +540,8 @@ class NativeToolUseAgentLoopExecutor:
         model_capability_registry: ModelCapabilityRegistry | None = None,
         skill_catalog: NativeSkillCatalog | None = None,
         server_tools: NativeServerToolCoordinator | None = None,
+        debug_trace: AgentLoopDebugTrace | None = None,
+        prompt_caching_allowed: PromptCacheAllowed | None = None,
         max_selected_skill_instruction_bytes: int = (_DEFAULT_MAX_SELECTED_SKILL_INSTRUCTION_BYTES),
     ) -> None:
         names = tuple(ref.name for ref in allowed_tools)
@@ -550,6 +573,8 @@ class NativeToolUseAgentLoopExecutor:
         )
         self._skill_catalog = skill_catalog
         self._server_tools = server_tools
+        self._debug_trace = debug_trace
+        self._prompt_caching_allowed = prompt_caching_allowed
         self._max_selected_skill_instruction_bytes = max_selected_skill_instruction_bytes
         if server_tools is not None:
             server_names = tuple(ref.name for ref in server_tools.tool_refs())
@@ -671,14 +696,22 @@ class NativeToolUseAgentLoopExecutor:
                         message="Native Tool-use loop emergency ceiling was reached.",
                     )
                 surface = self._tool_surface(state)
+                cache_key, cache_mode = self._cache_decision(run, state, surface)
+                request = self._request(input_data, state, surface, cache_key=cache_key)
                 response = await self._model_gateway.chat(
-                    self._request(input_data, state, surface),
+                    request,
                     capability=CapabilityAlias.FAST_CHAT,
                 )
                 run = run.consume(
                     steps=1,
                     input_tokens=response.usage.input_tokens,
                     output_tokens=response.usage.output_tokens,
+                )
+                await self._trace_model_round(
+                    state,
+                    request,
+                    response,
+                    cache_mode=cache_mode,
                 )
                 if len(response.tool_calls) > 1:
                     raise NodeExecutionError(
@@ -796,8 +829,19 @@ class NativeToolUseAgentLoopExecutor:
         input_data: Mapping[str, JSONValue],
         state: NativeToolUseLoopState,
         surface: _NativeToolSurface,
+        *,
+        cache_key: str | None = None,
     ) -> ChatRequest:
         selected_instructions = self._selected_skill_instructions(state)
+        context = self._model_context(state, surface)
+        projected_results = tuple(
+            ChatToolResult(
+                call_id=item.call.call_id,
+                tool_name=item.call.tool_name,
+                observation=self._model_observation_for(item, surface),
+            )
+            for item in state.observations
+        )
         return ChatRequest(
             messages=(
                 ChatMessage(
@@ -807,7 +851,11 @@ class NativeToolUseAgentLoopExecutor:
                 ChatMessage(
                     role=ChatRole.USER,
                     content=json.dumps(
-                        {"goal": state.goal, "input": input_data},
+                        {
+                            "model_context": context.as_dict(),
+                            "goal": state.goal,
+                            "input": input_data,
+                        },
                         ensure_ascii=False,
                         allow_nan=False,
                         separators=(",", ":"),
@@ -820,7 +868,256 @@ class NativeToolUseAgentLoopExecutor:
             reasoning_profile=self._reasoning_profile,
             tools=surface.chat_tools,
             tool_call_history=tuple(item.call.as_chat_call() for item in state.observations),
-            tool_results=tuple(item.as_chat_result() for item in state.observations),
+            tool_results=projected_results,
+            cache_key=cache_key,
+        )
+
+    def _model_context(
+        self,
+        state: NativeToolUseLoopState,
+        surface: _NativeToolSurface,
+    ) -> NativeModelContextV2:
+        decisions: list[NativeDecisionHistoryItem] = []
+        observations: list[NativeModelObservation] = []
+        for item in state.observations[-8:]:
+            projection = self._model_observation_for(item, surface)
+            summary = cast(str, projection.get("summary", f"{item.call.tool_name} completed."))
+            decisions.append(
+                NativeDecisionHistoryItem(
+                    iteration=item.iteration,
+                    kind="tool",
+                    tool_name=item.call.tool_name,
+                    status=cast(str, projection.get("status", "succeeded")),
+                    summary=summary,
+                    unresolved_item=self._unresolved_item(item),
+                )
+            )
+            observations.append(
+                NativeModelObservation(
+                    iteration=item.iteration,
+                    tool_name=item.call.tool_name,
+                    status=cast(str, projection.get("status", "succeeded")),
+                    summary=summary,
+                )
+            )
+        if state.terminal_text is not None or state.terminal_output is not None:
+            summary = (
+                "Server-owned knowledge terminal."
+                if state.terminal_output is not None
+                else "Direct terminal response."
+            )
+            decisions.append(
+                NativeDecisionHistoryItem(
+                    iteration=state.iteration,
+                    kind="terminal",
+                    status="terminal",
+                    summary=summary,
+                )
+            )
+        selected_skills = tuple(
+            cast(
+                dict[str, JSONValue],
+                {
+                    "name": skill.name,
+                    "version": skill.version,
+                    "content_sha256": skill.content_sha256,
+                },
+            )
+            for skill in state.selected_skills
+        )
+        return NativeModelContextV2(
+            goal=state.goal,
+            selected_skills=selected_skills,
+            decision_history=tuple(decisions[-12:]),
+            observations=tuple(observations[-8:]),
+            progress_summary=self._progress_summary(state),
+            approval_pending=state.approval_id is not None,
+            cancellation_requested=False,
+        )
+
+    def _model_observation_for(
+        self,
+        item: NativeToolUseObservation,
+        surface: _NativeToolSurface,
+    ) -> dict[str, JSONValue]:
+        if item.call.tool_name == _LIST_SKILLS_TOOL_NAME:
+            skills = item.observation.get("skills")
+            return {
+                "status": "succeeded",
+                "summary": f"Listed {len(skills) if isinstance(skills, list) else 0} Skill routes.",
+            }
+        if item.call.tool_name == _INVOKE_SKILL_TOOL_NAME:
+            return {
+                "status": "succeeded",
+                "summary": f"Selected Skill {item.observation.get('name', 'unknown')}.",
+            }
+        definition = surface.by_name.get(item.call.tool_name)
+        if definition is None:
+            raise NodeExecutionError(
+                code="RUN_NATIVE_TOOL_USE_CONTEXT_PROJECTION_DENIED",
+                category=RunErrorCategory.SCHEMA,
+                message="Native Tool observation has no model projection definition.",
+            )
+        return project_model_observation(
+            item.observation,
+            definition.model_observation_schema,
+            summary=self._observation_summary(item),
+        )
+
+    @staticmethod
+    def _observation_summary(item: NativeToolUseObservation) -> str:
+        observation = item.observation
+        if item.call.tool_name == "knowledge_retrieve":
+            matched = observation.get("matched_count")
+            searches = observation.get("search_count")
+            return (
+                f"Coverage: {matched if isinstance(matched, int) else 0} matched "
+                f"across {searches if isinstance(searches, int) else 0} searches."
+            )
+        if item.call.tool_name == "knowledge_answer":
+            outcome = observation.get("outcome")
+            return f"Grounded QA outcome {outcome}."
+        return f"{item.call.tool_name} completed."
+
+    @staticmethod
+    def _unresolved_item(item: NativeToolUseObservation) -> str | None:
+        if (
+            item.call.tool_name == "knowledge_retrieve"
+            and item.observation.get("recommended_next") == "knowledge_retrieve"
+        ):
+            return "Retrieval coverage remains insufficient."
+        if item.call.tool_name == "knowledge_answer":
+            if item.observation.get("status") == "needs_retrieval":
+                return "Grounded QA still requires retrieval coverage."
+            if item.observation.get("status") == "verification_failed":
+                return "Grounded QA verification failed."
+        return None
+
+    @staticmethod
+    def _progress_summary(state: NativeToolUseLoopState) -> str:
+        pending = "server terminal pending" if state.pending_call is not None else "none"
+        terminal = (
+            "direct"
+            if state.terminal_text is not None
+            else "server-owned"
+            if state.terminal_output is not None
+            else "none"
+        )
+        return (
+            f"resolved={len(state.observations)};pending={pending};"
+            f"approval={state.approval_id or 'none'};terminal={terminal}"
+        )
+
+    def _cache_decision(
+        self,
+        run: AgentRun,
+        state: NativeToolUseLoopState,
+        surface: _NativeToolSurface,
+    ) -> tuple[str | None, str]:
+        if self._prompt_caching_allowed is None or not self._prompt_caching_allowed(run.context):
+            return None, "unsupported"
+        gateway_status = self._model_gateway.status
+        model_capability = self._model_capability_registry.resolve(
+            gateway_status.provider,
+            gateway_status.model_identity,
+        )
+        if not model_capability.supports_prompt_caching or (
+            not gateway_status.supports_prompt_caching(CapabilityAlias.FAST_CHAT)
+        ):
+            return None, "unsupported"
+        return f"sha256:{self._static_cache_digest(state, surface)}", "requested"
+
+    def _static_cache_digest(
+        self,
+        state: NativeToolUseLoopState,
+        surface: _NativeToolSurface,
+    ) -> str:
+        status = self._model_gateway.status
+        definitions = sorted(
+            (
+                {
+                    "name": definition.name,
+                    "version": definition.version,
+                    "input_schema": dict(definition.input_schema),
+                }
+                for definition in surface.definitions
+            ),
+            key=lambda item: (item["name"], item["version"]),
+        )
+        selected_skills = sorted(
+            (
+                {
+                    "name": skill.name,
+                    "version": skill.version,
+                    "content_sha256": skill.content_sha256,
+                }
+                for skill in state.selected_skills
+            ),
+            key=lambda item: (item["name"], item["version"]),
+        )
+        payload = {
+            "schema_version": _PROMPT_CACHE_SCHEMA_VERSION,
+            "system_prompt_sha256": hashlib.sha256(self._system_prompt.encode("utf-8")).hexdigest(),
+            "selected_skills": selected_skills,
+            "tools": definitions,
+            "provider": status.provider.value,
+            "model": status.model_identity,
+        }
+        return hashlib.sha256(
+            json.dumps(
+                payload,
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+
+    async def _trace_model_round(
+        self,
+        state: NativeToolUseLoopState,
+        request: ChatRequest,
+        response: ChatResponse,
+        *,
+        cache_mode: str,
+    ) -> None:
+        if self._debug_trace is None:
+            return
+        surface = self._tool_surface(state)
+        context = self._model_context(state, surface)
+        visible_observation_bytes = sum(
+            len(
+                json.dumps(
+                    item.observation,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+            for item in request.tool_results
+        )
+        await self._debug_trace.record(
+            "agent_round",
+            round_number=state.iteration,
+            phase="native_tool_use",
+            context_digest=context.digest(),
+            cache_mode=cache_mode,
+            visible_observation_bytes=visible_observation_bytes,
+            input={
+                "tool_count": len(request.tools),
+                "message_count": len(request.messages),
+                "cache_key": request.cache_key,
+            },
+            output={
+                "usage": {
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens,
+                    "cached_input_tokens": response.usage.cached_input_tokens,
+                    "cache_write_input_tokens": response.usage.cache_write_input_tokens,
+                },
+                "tool_calls": len(response.tool_calls),
+                "finish_reason": response.finish_reason,
+            },
         )
 
     async def _complete_pending_tool(

@@ -187,6 +187,7 @@ def default_model_capability_registry() -> ModelCapabilityRegistry:
                 reasoning_mode=ReasoningMode.NATIVE,
                 supports_continuation=True,
                 supports_native_tool_use=True,
+                supports_prompt_caching=True,
             ),
             ModelCapabilities(
                 provider=ModelProvider.OPENAI_COMPATIBLE,
@@ -196,6 +197,7 @@ def default_model_capability_registry() -> ModelCapabilityRegistry:
                 reasoning_mode=ReasoningMode.NATIVE,
                 supports_continuation=False,
                 supports_native_tool_use=True,
+                supports_prompt_caching=True,
                 effort_mappings=(
                     (ReasoningEffort.MINIMAL, ReasoningEffort.LOW),
                     (ReasoningEffort.XHIGH, ReasoningEffort.HIGH),
@@ -210,6 +212,7 @@ def default_model_capability_registry() -> ModelCapabilityRegistry:
                 reasoning_mode=ReasoningMode.COARSE,
                 supports_continuation=False,
                 supports_native_tool_use=True,
+                supports_prompt_caching=True,
             ),
             ModelCapabilities(
                 provider=ModelProvider.TEXT_EMBEDDINGS_INFERENCE,

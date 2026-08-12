@@ -206,6 +206,38 @@ async def test_provider_uses_native_tools_replays_results_and_parses_cache_usage
     await client.aclose()
 
 
+async def test_provider_sends_prompt_cache_key_only_when_explicitly_enabled() -> None:
+    cache_key = "sha256:" + "a" * 64
+    payloads: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = OpenAICompatibleGateway(
+        endpoint="http://localhost:11434/v1",
+        fast_chat_model="chat-model",
+        embedding_model="embedding-model",
+        fast_chat_prompt_caching=True,
+        client=client,
+    )
+
+    await gateway.chat(replace(chat_request(), cache_key=cache_key))
+    assert gateway.status.supports_prompt_caching(CapabilityAlias.FAST_CHAT)
+    assert payloads[0]["extra_body"] == {"cache_key": cache_key}
+
+    await gateway.chat(chat_request())
+    assert "extra_body" not in payloads[1]
+    await client.aclose()
+
+
 async def test_provider_profile_preserves_coarse_reasoning_mapping() -> None:
     payload: dict[str, object] = {}
 
