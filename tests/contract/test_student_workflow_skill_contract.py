@@ -56,13 +56,13 @@ def test_student_workflow_commands_and_aliases_are_unique() -> None:
             command_owners[command] = name
 
 
-def test_research_contract_is_rag_only_and_uses_the_agent_loop() -> None:
+def test_research_contract_is_rag_only_and_uses_the_qa_projection() -> None:
     registry = FileSystemSkillRegistry(SKILL_ROOT)
     registry.reload()
     package = registry.get("research_reading_workflow", "1.1.0")
     invocation = package.manifest.invocation
     assert invocation is not None
-    assert invocation.execution_mode == "agent_loop"
+    assert invocation.execution_mode == "projected"
 
     input_schema = _schema("research_reading_workflow", "input.json")
     input_properties = input_schema["properties"]

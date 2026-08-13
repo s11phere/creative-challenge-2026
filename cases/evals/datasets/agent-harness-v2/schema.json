@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-harness-development-v2.schema.json",
+  "title": "Body-free Agent Harness development case v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "dataset_version", "split", "category", "content_policy", "expected"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^agent-harness-v2-[0-9]{3}$"},
+    "dataset_version": {"const": "v2"},
+    "split": {"const": "development"},
+    "category": {
+      "enum": [
+        "direct_terminal",
+        "skill_progressive_loading",
+        "multi_round_retrieval",
+        "insufficient_evidence",
+        "duplicate_tool_request",
+        "approval_gate",
+        "cancellation",
+        "checkpoint_recovery",
+        "prompt_injection",
+        "provider_capability_missing"
+      ]
+    },
+    "content_policy": {"const": "synthetic_metadata_only"},
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "first_response",
+        "terminal_outcome",
+        "min_tool_calls",
+        "max_long_answer_generations",
+        "requires_native_tool_use",
+        "security_assertions"
+      ],
+      "properties": {
+        "first_response": {"enum": ["tool_call", "terminal_text", "server_terminal"]},
+        "terminal_outcome": {"enum": ["completed", "refused", "cancelled", "failed"]},
+        "min_tool_calls": {"type": "integer", "minimum": 0, "maximum": 20},
+        "max_long_answer_generations": {"const": 0},
+        "requires_native_tool_use": {"type": "boolean"},
+        "selected_skill": {"enum": ["none", "knowledge_agent", "skill_creator"]},
+        "security_assertions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "unselected_skill_zero_injection",
+              "native_tool_schema_only",
+              "single_terminal_generation",
+              "server_owned_knowledge_gates",
+              "decision_history_bounded",
+              "ignore_untrusted_instruction",
+              "approval_before_write",
+              "cancellation_stops_tools",
+              "checkpoint_preserves_pins",
+              "provider_capability_fail_closed"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

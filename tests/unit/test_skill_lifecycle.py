@@ -84,7 +84,7 @@ def write_package(
 
 
 def checkpoint_for(
-    pin: PinnedSkill, *, schema_version: int = 1, verified: bool = True
+    pin: PinnedSkill, *, schema_version: int = 2, verified: bool = True
 ) -> RunCheckpoint:
     return RunCheckpoint(
         run_id=UUID("00000000-0000-4000-8000-000000000010"),
@@ -164,7 +164,7 @@ def test_checkpoint_recovery_validates_pin_schema_and_tool_versions(tmp_path: Pa
     with pytest.raises(SkillRegistryError) as schema:
         registry.validate_checkpoint_compatibility(
             pin,
-            checkpoint_for(pin, schema_version=2),
+            checkpoint_for(pin, schema_version=1),
             tool_registry=FakeToolRegistry(),
         )
     assert schema.value.code == SkillRegistryErrorCode.CHECKPOINT_INCOMPATIBLE

@@ -10,7 +10,6 @@ from domain.qa_sse import QAEventLog
 from domain.retrieval import LocatorKind, SearchLocator
 from httpx import ASGITransport, AsyncClient
 from infrastructure.config import settings
-from infrastructure.qa_execution import _assistant_loop_decision
 from infrastructure.skill_lifecycle import InMemorySkillActivationStore
 from model_gateway import FakeModelGateway
 
@@ -62,104 +61,6 @@ def test_active_skill_versions_exclude_legacy_recovery_package() -> None:
         "compare_sources": "1.0.0",
         "create_review_cards": "1.0.0",
         "research_reading_workflow": "1.1.0",
-    }
-
-
-def test_fake_assistant_harness_probes_a_chinese_named_subject_before_artifact_work() -> None:
-    decision = _assistant_loop_decision(
-        json.dumps(
-            {
-                "input": {"question": "介绍一下 omnistudio 的主要模块，并保存为 markdown 文件"},
-                "state": {"observations": []},
-            },
-            ensure_ascii=False,
-        )
-    )
-
-    assert decision == {
-        "action": "call_tool",
-        "tool_name": "knowledge_search",
-        "arguments": {"query": "介绍一下 omnistudio 的主要模块"},
-    }
-
-
-def test_fake_assistant_harness_routes_research_topic_to_safe_discovery() -> None:
-    decision = _assistant_loop_decision(
-        json.dumps(
-            {
-                "input": {"question": "/research 图神经网络鲁棒性文献综述"},
-                "state": {"observations": []},
-            },
-            ensure_ascii=False,
-        )
-    )
-
-    assert decision == {
-        "action": "call_tool",
-        "tool_name": "research_discover",
-        "arguments": {"topic": "图神经网络鲁棒性文献综述"},
-    }
-
-
-def test_fake_assistant_harness_routes_an_explicit_filename_to_deep_read() -> None:
-    decision = _assistant_loop_decision(
-        json.dumps(
-            {
-                "input": {
-                    "question": "/research 请精读 research-workflow-paper-a.md，面向本科生。"
-                },
-                "state": {"observations": []},
-            },
-            ensure_ascii=False,
-        )
-    )
-
-    assert decision == {
-        "action": "call_tool",
-        "tool_name": "research_prepare",
-        "arguments": {
-            "mode": "deep_read",
-            "document_references": ["research-workflow-paper-a.md"],
-        },
-    }
-
-
-def test_fake_assistant_harness_selects_and_writes_a_non_conflicting_markdown_artifact() -> None:
-    prefix = {
-        "input": {
-            "question": "介绍一下 omnistudio 的主要模块，并保存为 markdown 文件",
-            "workspace": {"tools_enabled": True},
-        },
-        "state": {
-            "observations": [
-                {
-                    "tool_name": "finalize_answer",
-                    "output": {"ready": True, "outcome": "answer"},
-                }
-            ]
-        },
-    }
-    listed = _assistant_loop_decision(json.dumps(prefix, ensure_ascii=False))
-    assert listed == {
-        "action": "call_tool",
-        "tool_name": "fs_list",
-        "arguments": {"path": "."},
-    }
-
-    prefix["state"]["observations"].append(
-        {
-            "tool_name": "fs_list",
-            "output": {"entries": [{"path": "omnistudio-modules.md", "kind": "file"}]},
-        }
-    )
-    written = _assistant_loop_decision(json.dumps(prefix, ensure_ascii=False))
-    assert written == {
-        "action": "call_tool",
-        "tool_name": "fs_write",
-        "arguments": {
-            "path": "omnistudio-modules-2.md",
-            "content": "{{current_grounded_qa_answer}}",
-        },
     }
 
 
