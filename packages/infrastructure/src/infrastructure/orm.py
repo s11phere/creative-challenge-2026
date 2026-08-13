@@ -895,6 +895,64 @@ class UsagePatternModel(Base):
     __table_args__ = (CheckConstraint("frequency >= 1", name="ck_usage_patterns_frequency"),)
 
 
+class MemoryEntryModel(Base):
+    """One distilled cross-session memory entry (personalization Phase 5)."""
+
+    __tablename__ = "memory_entries"
+
+    memory_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    entry_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_summary_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("conversation_summaries.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="summary")
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(EMBEDDING_DIMENSIONS), nullable=True
+    )
+    sensitivity: Mapped[str] = mapped_column(String(32), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    frequency: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "entry_type IN ('fact', 'preference', 'pattern')",
+            name="ck_memory_entries_type",
+        ),
+        CheckConstraint(
+            "sensitivity IN ('public_demo', 'private_local', 'restricted')",
+            name="ck_memory_entries_sensitivity",
+        ),
+        CheckConstraint(
+            "source_kind IN ('summary', 'pattern')", name="ck_memory_entries_source_kind"
+        ),
+        CheckConstraint("frequency >= 1", name="ck_memory_entries_frequency"),
+        UniqueConstraint("content_sha256", name="uq_memory_entries_content"),
+        Index(
+            "idx_memory_entries_embedding",
+            embedding,
+            postgresql_using="ivfflat",
+            postgresql_with={"lists": 100},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index("idx_memory_entries_source_updated", "source_conversation_id", "updated_at"),
+    )
+
+
 class DerivedKnowledgeItemModel(Base):
     """Idempotent, citation-backed derived knowledge produced by a Skill."""
 
