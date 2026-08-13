@@ -402,6 +402,7 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/skills/drafts.py` | Phase 4 draft 生命周期：`SkillDraftStore` CRUD + validate + eval 门禁 + activate（eval 通过才 promote + 持久化激活），`SkillDraftView`/`SkillDraftError` 稳定错误码 |
 | `src/application/skills/creator_tools.py` | Phase 4 六个模型可见工具（scaffold/write/validate/run_eval/activate/draft）+ `scaffold_skill_files` 脚手架生成；写类工具走 durable approval，handler 返回 body-free payload |
 | `src/application/skills/suggestions.py` | Phase 6 前奏：`SkillSuggestionService` 基于 `usage_patterns` 频率阈值产出人工确认的候选，过滤 general/已绑定/已覆盖模式 |
+| `src/application/skills/extraction.py` | Phase 6 自动提取（Path B）：`PatternMiningService` 聚类 usage_traces 挖强模式（频次/跨会话/窗口阈值 + 排除 general/已绑定/无工具，防过拟合）；`PatternCandidateGenerator` 用 scaffold 草拟候选包（定制 prompt + 从 exemplar 蒸馏 eval cases + evidence.json）；`PatternExtractionService` 编排双闸（Phase 1 门禁 + 历史锚定）建 draft，未过闸删除、绝不自动激活 |
 | `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
 | `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
 | `src/application/usage_traces/record.py` | 个性化 Phase 2 使用痕迹：从已完成 ConversationRun 组装脱敏 `UsageTrace`（outcome 分类、input_summary 截断+密钥打码）、幂等持久化 |
@@ -654,6 +655,7 @@ misfires, clarification loops, cancellation, recovery, token usage, and latency.
 | `src/worker/tasks.py` | 无正文诊断任务、有限重试和永久失败回调 |
 | `src/worker/ingestion_tasks.py` | 持久摄入任务 actor、Orchestrator 组装、租约/心跳、取消、错误分类、有限重试和死信记录 |
 | `src/worker/qa_tasks.py` | 无正文 QA actor、attempt lease/心跳、重复投递保护和启动恢复 |
+| `src/worker/skill_extraction.py` | Phase 6 自动提取 actor（`skill_pattern_extract`）：从 usage_traces 挖强模式 → creator 草拟候选 → 双闸验证 → 建 draft；绝不自动激活 |
 | `packages/infrastructure/src/infrastructure/qa_execution.py` | API/Worker 共享的 QA/Skill 版本固定、受信 Registry、Gateway 包装、声明式 Runtime 和唯一 Grounded QA Application Port 装配 |
 
 **当前状态**：Redis/Dramatiq 同时承载无正文诊断、阶段 2 摄入和 provisional QA 任务。摄入 actor 执行解析、

@@ -162,6 +162,21 @@ uv run python scripts/distill_memories.py --enqueue
 
 记忆表 pgvector 检索复用 `embedding_zh` 能力别名；注入 best-effort，检索失败只记日志、不打断回合。
 
+个性化 Phase 6（自动提取工作模式，Path B）从使用痕迹自动提议个人 skill，走 creator 定稿 + eval 门禁 +
+用户审批，**绝不自动激活**。`scripts/extract_skill_candidates.py`（或 `--enqueue` 调度 Worker
+`skill_pattern_extract`）挖掘强模式：按 Phase 2 维度聚类 usage_traces，过拟合防护（仅 COMPLETED +
+未绑定 skill + 使用工具，频次 ≥3、跨 ≥2 会话、30 天窗口、排除 general）→ 用 Phase 4 creator 机制草拟
+候选包（category 定制 prompt + 从 exemplar 蒸馏的 eval cases，case_id 锚定来源 run）→ **双闸验证**
+（Phase 1 结构化门禁全过 + 历史锚定：每个 eval case 都溯源到真实来源 run）→ 通过的进入 SkillsPanel 草稿区
+并附 `evidence.json`；未过闸的候选删除、不 surfacing。
+
+```powershell
+uv run python scripts/extract_skill_candidates.py --json
+```
+
+候选草稿的 `GET /api/v1/skills/personal/drafts/{name}/evidence` 暴露证据（频率/跨会话数/工具序列/来源
+run），SkillsPanel 草稿卡片显示「候选模式」徽章；激活仍需用户走原 drafts 的 activate 审批。
+
 个性化 Phase 3（个人 Skill 存储与信任模型）让用户可写自己的 Skill，但严格复用内置校验与信任边界：
 个人 Skill 存放于 `PERSONAL_SKILLS_DIR`（默认 `./data/personal_skills`），只组合既有 handler/tool、
 不引入新 Python 行为，且不得覆盖内置 Skill 名（ADR-018）。CRUD + 激活经 `/api/v1/skills/personal`，
