@@ -1,5 +1,28 @@
 # 阶段 4/5 收尾看板
 
+## 2026-08-13 Playwright web E2E core journey
+
+Web 核心旅程的浏览器级 E2E 已落地并本地实跑通过（`compose-smoke` job 扩展为 "Compose smoke + web E2E"）。
+`apps/web/e2e/` 新增 4 个 spec + helper，跑在**真实 Compose 栈**（`MODEL_PROVIDER=fake`，确定性
+断言）的 `http://127.0.0.1:5173` 上：健康面板四服务就绪、问候终态回答 `fake-response-autonomous`
++ Agent 运行卡片、空会话占位/发送禁用、提交失败 alert、`/` 命令面板与键盘 Enter 提交、
+390×844 移动视口冒烟。本地实跑 9/9 通过。
+
+- 配置：`playwright.config.ts`（desktop-chromium + mobile-chromium 双 project，无 webServer、
+  截图/录屏关闭、仅失败 trace）。
+- 类型：`e2e/` + `playwright.config.ts` 由独立 `tsconfig.e2e.json` 经 `pnpm typecheck:e2e` 检查，
+  不进入 `tsc -b` 应用构建图；vitest 已限定 `src/**` 避免收集 e2e spec。
+- 隐私：prompt 与断言全为合成内容；CI 失败产物经 `ci-test-only` 隐私 grep 后才上传。
+- **发现的既有缺陷（待独立修复）**：空 Space 知识问题的 fake 路径不终止——运行时 model
+  observation 只含 `iteration/tool_name/status/summary`，fake 决策读不到覆盖 gap，导致无限重发
+  `knowledge_retrieve`。已修复为有界检索（上限对齐 `max_search_observations`）后路由
+  `knowledge_answer`（`packages/infrastructure/src/infrastructure/qa_execution.py` + 单测），但
+  `knowledge_answer` 终态 observation 又触发 harness schema 校验失败
+  （`RUN_NATIVE_TOOL_RESULT_INVALID`）。两个缺陷都需专项修复并在修复后再补空 Space 知识拒答的
+  浏览器断言；核心旅程暂不含该断言。
+- 这关闭了阶段 4 Web 的核心旅程浏览器门禁；完整「摄入→提问→引用→反馈」旅程（需 fixture 摄入
+  时序）与正式 retrieval/answer/Skill holdout 仍保持开放，不改 ADR-010/ADR-011 正式质量边界。
+
 ## 2026-08-13 Native Tool-use v2 only
 
 The former v1 text-JSON executor, its feature flag, compatibility recovery, contracts, synthetic
