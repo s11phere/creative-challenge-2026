@@ -1290,7 +1290,7 @@ class NativeToolUseAgentLoopExecutor:
         outcome = state.terminal_output.get("outcome") if state.terminal_output else None
         event_type = (
             AgentRunEventType.REFUSED
-            if outcome in {"refusal", "conflict"}
+            if outcome in {"refuse", "conflict"}
             else AgentRunEventType.COMPLETED
         )
         context = self._model_context(state, surface)
@@ -2135,7 +2135,7 @@ class NativeToolUseAgentLoopExecutor:
                 terminal_kind="grounded",
                 stop_reason=(
                     "evidence_insufficient"
-                    if outcome == "refusal"
+                    if outcome == "refuse"
                     else "evidence_conflict"
                     if outcome == "conflict"
                     else "goal_complete"

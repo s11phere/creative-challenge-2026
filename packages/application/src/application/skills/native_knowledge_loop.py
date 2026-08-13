@@ -922,7 +922,7 @@ def _knowledge_answer_definition(version: str) -> ToolDefinition:
                 "status": {
                     "enum": ["needs_retrieval", "verification_failed", "completed", "refused"]
                 },
-                "outcome": {"enum": ["pending", "answer", "refusal", "conflict"]},
+                "outcome": {"enum": ["pending", "answer", "refuse", "conflict"]},
                 "claim_count": {"type": "integer", "minimum": 0},
                 "citation_count": {"type": "integer", "minimum": 0},
                 "current_run_only": {"const": True},
@@ -956,7 +956,7 @@ def _knowledge_answer_definition(version: str) -> ToolDefinition:
             "properties": {
                 "status": {"type": "string"},
                 "summary": {"type": "string", "maxLength": 320},
-                "outcome": {"enum": ["pending", "answer", "refusal", "conflict"]},
+                "outcome": {"enum": ["pending", "answer", "refuse", "conflict"]},
                 "terminal_reason": {"type": "string"},
                 "recommended_next": {"enum": ["knowledge_retrieve", "workspace", "terminal"]},
                 "workspace_required": {"type": "boolean"},

@@ -727,6 +727,59 @@ async def test_native_executor_finalizes_knowledge_answer_without_an_extra_model
 
 
 @pytest.mark.asyncio
+async def test_native_executor_publishes_zero_hit_knowledge_refusal() -> None:
+    search = FakeSearchService(no_hits=True)
+    qa = FakeGroundedQA(QAOutcome.REFUSE)
+    adapter = _adapter(search, qa)
+    gateway = SequenceNativeGateway(
+        _response(
+            calls=(_call("invoke_skill", {"name": "knowledge_agent"}, "call-1"),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(_call("knowledge_retrieve", {"query": "unavailable topic"}, "call-2"),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(_call("knowledge_answer", {}, "call-3"),),
+            finish_reason="tool_calls",
+        ),
+    )
+    events = AgentRunEventLog()
+
+    result = await NativeToolUseAgentLoopExecutor(
+        tool_registry=adapter.tool_registry,
+        allowed_tools=adapter.allowed_tools(),
+        system_prompt="Native base prompt.",
+        model_gateway=cast(ModelGateway, gateway),
+        skill_catalog=SyntheticSkillCatalog(_skill(adapter.allowed_tools())),
+        server_tools=adapter,
+        event_store=events,
+    ).execute(
+        _run(),
+        _pin(),
+        {"question": "Ask about a topic without uploaded documents."},
+        goal="Answer the synthetic knowledge question.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED, result.error
+    assert result.error is None
+    assert result.output == {
+        "status": "refused",
+        "outcome": "refuse",
+        "qa_run_id": str(RUN_ID),
+        "publication": "grounded_qa",
+    }
+    assert result.state.observations[-1].observation["outcome"] == "refuse"
+    assert result.state.observations[-1].observation["terminal_reason"] == "evidence_insufficient"
+    assert qa.execute_calls == [RUN_ID]
+    assert gateway.remaining == 0
+    page = await events.page(RUN_ID, limit=100)
+    assert page.events[-1].event_type is AgentRunEventType.REFUSED
+    assert page.events[-1].payload["stop_reason"] == "evidence_insufficient"
+
+
+@pytest.mark.asyncio
 async def test_direct_terminal_after_knowledge_skill_selection_is_denied() -> None:
     search = FakeSearchService()
     qa = FakeGroundedQA()
