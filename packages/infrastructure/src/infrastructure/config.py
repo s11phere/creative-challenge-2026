@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     usage_pattern_distill_max_retries: int = Field(default=3, ge=0)
     memory_distill_timeout_ms: int = Field(default=120_000, ge=10_000)
     memory_distill_max_retries: int = Field(default=3, ge=0)
+    skill_extraction_timeout_ms: int = Field(default=120_000, ge=10_000)
+    skill_extraction_max_retries: int = Field(default=3, ge=0)
 
     # --- Ingestion ---
     max_upload_size_mb: int = Field(default=50, ge=1, le=500)
