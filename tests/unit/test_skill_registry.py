@@ -33,7 +33,7 @@ def manifest(*, name: str = "test_skill", version: str = "1.0.0") -> dict[str, o
         "entrypoint": "workflow.yaml",
         "compatibility": {
             "runtime": ">=0.1.0,<1.0.0",
-            "checkpoint_schema_versions": [1],
+            "checkpoint_schema_versions": [2],
         },
         "prompts": ["prompts/system.md"],
         "evals": ["evals/cases.jsonl"],
@@ -182,7 +182,7 @@ def test_compatibility_and_missing_active_version_are_explicit(tmp_path: Path) -
     incompatible = manifest()
     incompatible["compatibility"] = {
         "runtime": ">=2.0.0",
-        "checkpoint_schema_versions": [1],
+        "checkpoint_schema_versions": [2],
     }
     write_package(tmp_path, "incompatible", data=incompatible)
     registry = FileSystemSkillRegistry(tmp_path)

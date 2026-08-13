@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -109,3 +110,31 @@ class TestDraftGate:
             assert response.json()["valid"] is False
             activated = await client.post(f"{DRAFTS}/bad/activate")
             assert activated.status_code == 400
+
+
+class TestDraftEvidence:
+    async def test_evidence_endpoint_returns_attached_evidence(self, app) -> None:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            files = _scaffold_files()
+            files["evidence.json"] = json.dumps(
+                {"frequency": 3, "exemplars": [{"run_id": "a" * 32}]}
+            )
+            response = await client.post(DRAFTS, json={"name": "my_skill", "files": files})
+            assert response.status_code == 201
+            evidence = await client.get(f"{DRAFTS}/my_skill/evidence")
+            assert evidence.status_code == 200
+            body = evidence.json()
+            assert body["name"] == "my_skill"
+            assert body["evidence"]["frequency"] == 3
+
+    async def test_evidence_endpoint_returns_null_without_evidence(self, app) -> None:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await _create_draft(client)
+            response = await client.get(f"{DRAFTS}/my_skill/evidence")
+            assert response.status_code == 200
+            assert response.json()["evidence"] is None
+
+    async def test_evidence_endpoint_404_for_missing_draft(self, app) -> None:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(f"{DRAFTS}/missing/evidence")
+            assert response.status_code == 404

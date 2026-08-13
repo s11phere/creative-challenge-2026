@@ -48,10 +48,11 @@ type FetchState = {
   drafts?: unknown[]
   suggestions?: unknown[]
   draftFiles?: Record<string, string>
+  evidence?: unknown
 }
 
 function routedFetch(state: FetchState = {}) {
-  const { personal = [], builtin = [builtinSkill], drafts = [], suggestions = [], draftFiles = {} } = state
+  const { personal = [], builtin = [builtinSkill], drafts = [], suggestions = [], draftFiles = {}, evidence = null } = state
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const method = init?.method ?? 'GET'
@@ -59,6 +60,9 @@ function routedFetch(state: FetchState = {}) {
       return Promise.resolve(response(suggestions))
     }
     if (url.includes('/api/v1/skills/personal/drafts')) {
+      if (method === 'GET' && url.endsWith('/evidence')) {
+        return Promise.resolve(response({ name: 'my_draft', evidence }))
+      }
       if (method === 'POST' && url.endsWith('/eval')) {
         return Promise.resolve(response(draftEval))
       }
@@ -170,4 +174,37 @@ it('shows a suggestion only from usage evidence and scaffolds a draft on click',
   expect(screen.getByRole('button', { name: '创建草稿' })).toBeInTheDocument()
   // The editor is prefilled with a valid scaffold the user can submit.
   expect(screen.getByPlaceholderText(/"skill\.yaml"/)).toBeInTheDocument()
+})
+
+it('shows pattern-extraction evidence on candidate drafts', async () => {
+  const evidence = {
+    pattern: 'skill=none|category=summarize|tools=knowledge_search,grounded_answer|input=zh',
+    task_category: 'summarize',
+    tool_sequence: 'knowledge_search,grounded_answer',
+    frequency: 3,
+    distinct_conversations: 3,
+    first_seen_at: '2026-08-01T00:00:00+00:00',
+    last_seen_at: '2026-08-12T00:00:00+00:00',
+    exemplars: [{
+      run_id: 'a'.repeat(32),
+      conversation_id: 'b'.repeat(32),
+      input_summary: '请总结这篇文档',
+      created_at: '2026-08-01T00:00:00+00:00',
+    }],
+  }
+  vi.stubGlobal('fetch', routedFetch({ drafts: [draft], evidence }))
+
+  renderPanel()
+
+  expect(await screen.findByText('候选模式 · 3 次 / 3 会话 · 1 个来源 run')).toBeInTheDocument()
+})
+
+it('allows editing and deleting an active personal Skill', async () => {
+  vi.stubGlobal('fetch', routedFetch({ personal: [{ ...personalSkill, active: true }] }))
+
+  renderPanel()
+
+  expect(await screen.findByText('my_skill')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /编辑 my_skill/ })).toBeEnabled()
+  expect(screen.getByRole('button', { name: /删除 my_skill/ })).toBeEnabled()
 })

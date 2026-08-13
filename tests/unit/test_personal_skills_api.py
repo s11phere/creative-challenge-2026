@@ -38,7 +38,7 @@ def package_files(*, name: str = "my_skill", **overrides: object) -> dict[str, s
             "timeout_seconds": 30,
         },
         "entrypoint": "workflow.yaml",
-        "compatibility": {"runtime": ">=0.1.0,<1.0.0", "checkpoint_schema_versions": [1]},
+        "compatibility": {"runtime": ">=0.1.0,<1.0.0", "checkpoint_schema_versions": [2]},
         "prompts": ["prompts/system.md"],
         "evals": ["evals/cases.jsonl"],
     }
@@ -96,9 +96,22 @@ async def test_personal_skill_crud_and_activation(app) -> None:
         assert activated.status_code == 200
         assert activated.json()["active"] is True
 
-        # An active personal Skill cannot be deleted.
-        blocked = await client.delete("/api/v1/skills/personal/my_skill")
-        assert blocked.status_code == 409
+        # An active personal Skill can be edited directly; the durable
+        # activation pointer is refreshed to the new content.
+        reedited = await client.put(
+            "/api/v1/skills/personal/my_skill",
+            json={"files": package_files(description="Re-edited while active.")},
+        )
+        assert reedited.status_code == 200
+        assert reedited.json()["active"] is True
+        assert reedited.json()["description"] == "Re-edited while active."
+
+        # An active personal Skill can be deleted (activation removed too).
+        deleted = await client.delete("/api/v1/skills/personal/my_skill")
+        assert deleted.status_code == 200
+        assert deleted.json()["status"] == "deleted"
+        listed_after = await client.get("/api/v1/skills/personal")
+        assert [skill["name"] for skill in listed_after.json()] == []
 
 
 @pytest.mark.asyncio

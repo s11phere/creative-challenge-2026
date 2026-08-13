@@ -54,6 +54,10 @@ _SAFE_RUN_STATUSES = frozenset(
 )
 _SAFE_TERMINATION_REASONS = frozenset({"cancel_requested", "clarify", "invoke_skill", "respond"})
 _SAFE_ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+# Bounded command slug (built-ins are a fixed set; personal-Skill commands are
+# dynamic slugs like ``summarize-workflow``). Keeping the label safe requires
+# either the fixed allowlist or this bounded pattern — never arbitrary text.
+_SAFE_COMMAND_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _COUNTER_LABELS = {
     "assistant.routing.decisions": frozenset({"action"}),
     "assistant.commands": frozenset({"command", "matched"}),
@@ -219,7 +223,10 @@ def _validate_safe_labels(
 
     if "action" in labels and labels["action"] not in _SAFE_ACTIONS:
         raise ValueError("Assistant metric action is not allowlisted")
-    if "command" in labels and labels["command"] not in _SAFE_COMMANDS:
+    if "command" in labels and (
+        labels["command"] not in _SAFE_COMMANDS
+        and _SAFE_COMMAND_PATTERN.fullmatch(labels["command"]) is None
+    ):
         raise ValueError("Assistant metric command is not allowlisted")
     if "matched" in labels and labels["matched"] not in {"true", "false"}:
         raise ValueError("Assistant metric command match label is invalid")

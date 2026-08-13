@@ -3304,6 +3304,31 @@
         "title": "SkillDraftEvalResponse",
         "type": "object"
       },
+      "SkillDraftEvidenceResponse": {
+        "properties": {
+          "evidence": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SkillDraftEvidenceResponse",
+        "type": "object"
+      },
       "SkillDraftFilesResponse": {
         "properties": {
           "files": {
@@ -6049,6 +6074,49 @@
           }
         },
         "summary": "Run Draft Eval",
+        "tags": [
+          "skill-drafts"
+        ]
+      }
+    },
+    "/api/v1/skills/personal/drafts/{name}/evidence": {
+      "get": {
+        "description": "Pattern-extraction evidence attached to a candidate draft (Phase 6).\n\nReturns the parsed ``evidence.json`` (frequency, exemplar source runs, pattern\ncluster) or ``null`` when the draft carries no extraction evidence.",
+        "operationId": "get_draft_evidence_api_v1_skills_personal_drafts__name__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDraftEvidenceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Draft Evidence",
         "tags": [
           "skill-drafts"
         ]

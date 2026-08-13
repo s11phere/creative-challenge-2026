@@ -145,7 +145,7 @@ def _scaffold_manifest(*, name: str, description: str, command: str) -> dict[str
             "timeout_seconds": 60,
         },
         "entrypoint": "workflow.yaml",
-        "compatibility": {"runtime": ">=0.1.0,<1.0.0", "checkpoint_schema_versions": [1]},
+        "compatibility": {"runtime": ">=0.1.0,<1.0.0", "checkpoint_schema_versions": [2]},
         "prompts": ["prompts/system.md"],
         "evals": ["evals/cases.jsonl"],
         "invocation": {

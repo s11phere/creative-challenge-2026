@@ -9,6 +9,7 @@ never auto-creating anything.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from application.skills import (
@@ -84,6 +85,11 @@ class SkillDraftUpdateRequest(BaseModel):
 class SkillDraftFilesResponse(BaseModel):
     name: str
     files: dict[str, str]
+
+
+class SkillDraftEvidenceResponse(BaseModel):
+    name: str
+    evidence: dict[str, Any] | None = None
 
 
 class SkillSuggestionResponse(BaseModel):
@@ -207,6 +213,27 @@ def get_draft_files(request: Request, name: str) -> SkillDraftFilesResponse:
     except SkillDraftError as exc:
         raise _app_error(exc) from exc
     return SkillDraftFilesResponse(name=name, files=files)
+
+
+@router.get("/{name}/evidence", response_model=SkillDraftEvidenceResponse)
+def get_draft_evidence(request: Request, name: str) -> SkillDraftEvidenceResponse:
+    """Pattern-extraction evidence attached to a candidate draft (Phase 6).
+
+    Returns the parsed ``evidence.json`` (frequency, exemplar source runs, pattern
+    cluster) or ``null`` when the draft carries no extraction evidence.
+    """
+    try:
+        files = request.app.state.skill_draft_store.read_files(name)
+    except SkillDraftError as exc:
+        raise _app_error(exc) from exc
+    raw = files.get("evidence.json")
+    if raw is None:
+        return SkillDraftEvidenceResponse(name=name, evidence=None)
+    try:
+        evidence = json.loads(raw)
+    except json.JSONDecodeError:
+        evidence = None
+    return SkillDraftEvidenceResponse(name=name, evidence=evidence)
 
 
 @router.put("/{name}", response_model=SkillDraftResponse)

@@ -31,7 +31,7 @@ def manifest(*, name: str = "my_skill", version: str = "1.0.0") -> dict[str, obj
             "timeout_seconds": 30,
         },
         "entrypoint": "workflow.yaml",
-        "compatibility": {"runtime": ">=0.1.0,<1.0.0", "checkpoint_schema_versions": [1]},
+        "compatibility": {"runtime": ">=0.1.0,<1.0.0", "checkpoint_schema_versions": [2]},
         "prompts": ["prompts/system.md"],
         "evals": ["evals/cases.jsonl"],
     }
@@ -167,12 +167,14 @@ class TestUpdatePersonal:
         assert updated.content_sha256 != original.content_sha256
         assert registry.get("my_skill", "1.0.0").manifest.description == "Updated personal Skill."
 
-    def test_update_rejects_active_skill(self, registry: PersonalSkillRegistry) -> None:
+    def test_update_allows_active_skill(self, registry: PersonalSkillRegistry) -> None:
         registry.create_personal("my_skill", package_files())
         registry.activate("my_skill", "1.0.0")
-        with pytest.raises(SkillRegistryError) as excinfo:
-            registry.update_personal("my_skill", package_files())
-        assert excinfo.value.code is SkillRegistryErrorCode.CLEANUP_BLOCKED
+        updated = registry.update_personal("my_skill", package_files(description="Edited live."))
+
+        assert updated.manifest.description == "Edited live."
+        # The Skill stays active (same version), now pinned to the edited content.
+        assert registry.active_version("my_skill") == "1.0.0"
 
     def test_update_rejects_missing_skill(self, registry: PersonalSkillRegistry) -> None:
         with pytest.raises(SkillRegistryError) as excinfo:
@@ -189,12 +191,18 @@ class TestDeletePersonal:
         assert "my_skill" not in registry.personal_names()
         assert not (registry._personal_root / "my_skill").exists()
 
-    def test_delete_rejects_active_skill(self, registry: PersonalSkillRegistry) -> None:
+    def test_delete_allows_active_skill(self, registry: PersonalSkillRegistry) -> None:
         registry.create_personal("my_skill", package_files())
         registry.activate("my_skill", "1.0.0")
+        registry.delete_personal("my_skill")
+
+        assert "my_skill" not in registry.personal_names()
+        assert not (registry._personal_root / "my_skill").exists()
+        # The in-memory active pointer is cleared so a deleted Skill is never
+        # reported active.
         with pytest.raises(SkillRegistryError) as excinfo:
-            registry.delete_personal("my_skill")
-        assert excinfo.value.code is SkillRegistryErrorCode.CLEANUP_BLOCKED
+            registry.active_version("my_skill")
+        assert excinfo.value.code is SkillRegistryErrorCode.ACTIVE_VERSION_MISSING
 
 
 class TestReloadAndActivation:

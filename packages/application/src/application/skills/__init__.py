@@ -41,6 +41,17 @@ from .evaluation import (
     invalid_case_result,
     run_skill_evaluation,
 )
+from .extraction import (
+    ExemplarEvidence,
+    PatternCandidate,
+    PatternCandidateGenerator,
+    PatternExtractionResult,
+    PatternExtractionService,
+    PatternMiningService,
+    PatternRejection,
+    candidate_name,
+    dual_gate_passed,
+)
 from .grounded_qa_skill import DerivedKnowledgeWriter, GroundedQASkillAdapter, GroundedQASkillConfig
 from .lifecycle import SkillLifecycleError, SkillLifecycleErrorCode, SkillLifecycleService
 from .native_knowledge_loop import (
@@ -113,4 +124,13 @@ __all__ = [
     "build_skill_report",
     "invalid_case_result",
     "run_skill_evaluation",
+    "ExemplarEvidence",
+    "PatternCandidate",
+    "PatternCandidateGenerator",
+    "PatternExtractionResult",
+    "PatternExtractionService",
+    "PatternMiningService",
+    "PatternRejection",
+    "candidate_name",
+    "dual_gate_passed",
 ]

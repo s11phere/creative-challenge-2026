@@ -14,7 +14,7 @@ import {
   Wand2,
   XCircle,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   activateDraft,
   activatePersonalSkill,
@@ -30,8 +30,10 @@ import {
   runDraftEval,
   updateDraft,
   updatePersonalSkill,
+  fetchDraftEvidence,
   type PersonalSkill,
   type SkillDraft,
+  type SkillDraftEvidence,
   type SkillDraftEval,
   type SkillSuggestion,
   type SkillVersion,
@@ -244,9 +246,9 @@ function PersonalSkillRow({
           type="button"
           className="panel-action-button"
           onClick={() => onEdit(skill)}
-          disabled={pending || skill.active}
+          disabled={pending}
           aria-label={`编辑 ${skill.name}`}
-          title={skill.active ? '激活中的个人 Skill 不可编辑' : '编辑个人 Skill'}
+          title="编辑个人 Skill（激活状态下直接编辑会同步激活指针）"
         >
           <Pencil size={14} />编辑
         </button>
@@ -254,9 +256,9 @@ function PersonalSkillRow({
           type="button"
           className="panel-action-button"
           onClick={() => deleteMutation.mutate()}
-          disabled={pending || skill.active}
+          disabled={pending}
           aria-label={`删除 ${skill.name}`}
-          title={skill.active ? '激活中的个人 Skill 不可删除' : '删除个人 Skill'}
+          title="删除个人 Skill（激活状态下会同时移除激活记录）"
         >
           <Trash2 size={14} />删除
         </button>
@@ -280,6 +282,20 @@ function DraftRow({
   const [evalResult, setEvalResult] = useState<SkillDraftEval | null>(null)
   const [runningEval, setRunningEval] = useState(false)
   const [evalError, setEvalError] = useState<string | null>(null)
+  const [evidence, setEvidence] = useState<SkillDraftEvidence['evidence'] | undefined>(undefined)
+  useEffect(() => {
+    let active = true
+    fetchDraftEvidence(draft.name)
+      .then(({ evidence: attached }) => {
+        if (active) setEvidence(attached)
+      })
+      .catch(() => {
+        if (active) setEvidence(null)
+      })
+    return () => {
+      active = false
+    }
+  }, [draft.name])
   const activateMutation = useMutation({
     mutationFn: () => activateDraft(draft.name),
     onSuccess: () => { invalidate(); setEvalResult(null) },
@@ -315,6 +331,11 @@ function DraftRow({
         <span className="skill-name">
           <strong>{draft.name}</strong>
           <span>{statusText} · {draft.file_count} 文件</span>
+          {evidence !== null && evidence !== undefined && (
+            <span className="skill-eval-badge">
+              {`候选模式 · ${evidence.frequency} 次 / ${evidence.distinct_conversations} 会话 · ${evidence.exemplars.length} 个来源 run`}
+            </span>
+          )}
         </span>
       </div>
       {evalResult !== null && (

@@ -30,7 +30,7 @@ def _manifest() -> dict[str, object]:
         "entrypoint": "workflow.yaml",
         "compatibility": {
             "runtime": ">=0.1.0,<1.0.0",
-            "checkpoint_schema_versions": [1],
+            "checkpoint_schema_versions": [2],
         },
         "prompts": ["prompts/system.md"],
         "evals": ["evals/cases.jsonl"],

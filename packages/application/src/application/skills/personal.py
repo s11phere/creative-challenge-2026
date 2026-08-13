@@ -88,12 +88,18 @@ class PersonalSkillStore:
         package = self._registry.create_personal(name, dict(files))
         return self._view(package)
 
-    def update(self, name: str, files: Mapping[str, str]) -> PersonalSkillView:
+    async def update(self, name: str, files: Mapping[str, str]) -> PersonalSkillView:
+        """Update an installed personal Skill; refresh the durable activation
+        pointer when the Skill is active so the pinned content stays consistent."""
         package = self._registry.update_personal(name, dict(files))
+        if self._is_active(name):
+            await self.persist_activation(package)
         return self._view(package)
 
-    def delete(self, name: str) -> None:
+    async def delete(self, name: str) -> None:
+        """Remove an installed personal Skill and its durable activation pointer."""
         self._registry.delete_personal(name)
+        await self._store.remove(name)
 
     def list(self) -> tuple[PersonalSkillView, ...]:
         return tuple(

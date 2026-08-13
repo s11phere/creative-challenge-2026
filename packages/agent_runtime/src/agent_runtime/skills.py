@@ -1166,11 +1166,6 @@ class PersonalSkillRegistry(FileSystemSkillRegistry):
         with self._lock:
             root = self._require_personal_root()
             self._require_personal_exists(name)
-            if self._active_versions.get(name) is not None:
-                raise SkillRegistryError(
-                    SkillRegistryErrorCode.CLEANUP_BLOCKED,
-                    "An active personal Skill cannot be updated.",
-                )
             package_dir = root / name
             staging = root / f"_{name}_staging"
             if staging.exists():
@@ -1199,12 +1194,8 @@ class PersonalSkillRegistry(FileSystemSkillRegistry):
         with self._lock:
             root = self._require_personal_root()
             self._require_personal_exists(name)
-            if self._active_versions.get(name) is not None:
-                raise SkillRegistryError(
-                    SkillRegistryErrorCode.CLEANUP_BLOCKED,
-                    "An active personal Skill cannot be deleted.",
-                )
             removed = self._remove_personal_records(name)
+            self._active_versions.pop(name, None)
             shutil.rmtree(root / name, ignore_errors=True)
             return removed[-1] if removed else None
 

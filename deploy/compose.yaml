@@ -144,7 +144,7 @@ services:
     volumes:
       - blobdata:/app/data/blobs
       - ${AGENT_WORKSPACE_HOST_PATH:-../data/workspaces}:/data/agent-workspaces
-      - personalskills:/data/personal-skills
+      - ${PERSONAL_SKILLS_HOST_PATH:-../data/personal_skills}:/data/personal-skills
 
   worker:
     image: agent-knowledge-worker:local
@@ -232,7 +232,7 @@ services:
       - blobdata:/app/data/blobs
       - ${QA_DEBUG_TRACE_HOST_PATH:-../tmp/qa-debug}:/data/qa-debug
       - ${AGENT_WORKSPACE_HOST_PATH:-../data/workspaces}:/data/agent-workspaces
-      - personalskills:/data/personal-skills
+      - ${PERSONAL_SKILLS_HOST_PATH:-../data/personal_skills}:/data/personal-skills
 
   web:
     image: agent-knowledge-web:local

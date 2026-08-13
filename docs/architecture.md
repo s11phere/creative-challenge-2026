@@ -408,10 +408,13 @@ AI 开发代理的全局行为指南。定义了项目目标、优先级、架�
 | `src/application/skills/drafts.py` | Phase 4 draft 生命周期：`SkillDraftStore` CRUD + validate + eval 门禁 + activate（eval 通过才 promote + 持久化激活），`SkillDraftView`/`SkillDraftError` 稳定错误码 |
 | `src/application/skills/creator_tools.py` | Phase 4 六个模型可见工具（scaffold/write/validate/run_eval/activate/draft）+ `scaffold_skill_files` 脚手架生成；写类工具走 durable approval，handler 返回 body-free payload |
 | `src/application/skills/suggestions.py` | Phase 6 前奏：`SkillSuggestionService` 基于 `usage_patterns` 频率阈值产出人工确认的候选，过滤 general/已绑定/已覆盖模式 |
+| `src/application/skills/extraction.py` | Phase 6 自动提取（Path B）：`PatternMiningService` 聚类 usage_traces 挖强模式（频次/跨会话/窗口阈值 + 排除 general/已绑定/无工具，防过拟合）；`PatternCandidateGenerator` 用 scaffold 草拟候选包（定制 prompt + 从 exemplar 蒸馏 eval cases + evidence.json）；`PatternExtractionService` 编排双闸（Phase 1 门禁 + 历史锚定）建 draft，未过闸删除、绝不自动激活 |
 | `src/application/qa/feedback_export.py` | 人工审核、授权/脱敏、Evidence 状态与许可门禁，以及不含正文的确定性评测候选导出 |
 | `src/application/qa/evaluation.py` | supported claim、citation、拒答、冲突、安全、延迟、Token 和失败归因的显式分母指标 |
 | `src/application/usage_traces/record.py` | 个性化 Phase 2 使用痕迹：从已完成 ConversationRun 组装脱敏 `UsageTrace`（outcome 分类、input_summary 截断+密钥打码）、幂等持久化 |
 | `src/application/usage_traces/distill.py` | 蒸馏：确定性 input_type/task_category 分类 + 按 (skill, 类别, 工具序列, 输入类型) 聚合出 `UsagePatternSnapshot` 并整体替换持久化快照 |
+| `src/application/memory/distill.py` | 个性化 Phase 5 跨会话记忆蒸馏：`MemoryDistiller` 读取 `conversation_summaries` + Phase 2 `usage_patterns` → LLM 提炼持久 fact/preference/pattern → 按 content 哈希去重 + 余弦近邻合并写入 `memory_entries`（同实体更新而非重复插入）；sensitivity 由源摘要最严格值继承 |
+| `src/application/memory/retrieval.py` | 注入检索：`MemoryRetrievalPort` + 确定性 scoring（向量余弦 + 近因半衰期加权）与 top-K/sensitivity 过滤的 `select_memories`/`injectable` |
 
 **依赖**：`agent-runtime`、`domain`、`model-gateway`、`jsonschema`。其中 `agent-runtime` 仅供
 Application 层的 Skill Adapter 编排使用；通用 Runtime 不反向依赖业务 Application。
@@ -445,6 +448,7 @@ Application 层的 Skill Adapter 编排使用；通用 Runtime 不反向依赖�
 | `src/infrastructure/conversation_runs.py` | PostgreSQL `ConversationRun` 父记录适配器；原子写入消息/Run、Assistant lease、恢复、直接回复/澄清/失败/取消终态 |
 | `src/infrastructure/qa_persistence.py` | Also persists append-only conversation summaries and the bounded Skill standalone request |
 | `src/infrastructure/assistant_events.py` | PostgreSQL `agent-run-sse-v2` Event Store；锁定父 Run 后写入内容安全、单调的 v2 事件 |
+| `src/infrastructure/memory_entries.py` | Phase 5 PostgreSQL 适配器：`PostgresMemoryEntryRepository`（content-addressed 持久化 + pgvector cosine 检索）、`PostgresMemoryDistillationSource`（跨会话 summaries/patterns 读源）、`GatewayMemoryRetriever`/`GatewayTextEmbedder`（查询嵌入 + 有界注入，best-effort 不打断回合） |
 
 **`config.py` 详解**：
 
@@ -657,6 +661,7 @@ misfires, clarification loops, cancellation, recovery, token usage, and latency.
 | `src/worker/tasks.py` | 无正文诊断任务、有限重试和永久失败回调 |
 | `src/worker/ingestion_tasks.py` | 持久摄入任务 actor、Orchestrator 组装、租约/心跳、取消、错误分类、有限重试和死信记录 |
 | `src/worker/qa_tasks.py` | 无正文 QA actor、attempt lease/心跳、重复投递保护和启动恢复 |
+| `src/worker/skill_extraction.py` | Phase 6 自动提取 actor（`skill_pattern_extract`）：从 usage_traces 挖强模式 → creator 草拟候选 → 双闸验证 → 建 draft；绝不自动激活 |
 | `packages/infrastructure/src/infrastructure/qa_execution.py` | API/Worker 共享的 QA/Skill 版本固定、受信 Registry、Gateway 包装、声明式 Runtime 和唯一 Grounded QA Application Port 装配 |
 
 **当前状态**：Redis/Dramatiq 同时承载无正文诊断、阶段 2 摄入和 provisional QA 任务。摄入 actor 执行解析、
@@ -784,6 +789,7 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | `versions/9a0b1c2d3e4f_add_assistant_run_execution.py` | 为 Assistant 父 Run 增加 lease/heartbeat 和 `assistant_events`；降级拒绝静默删除已创建的 direct-conversation turn |
 | `versions/0a1b2c3d4e5f_add_conversation_reasoning_profiles.py` | Persists Conversation effort defaults and per-Run `reasoning-profile-v1`; downgrade rejects changed preference or mapping data |
 | `versions/b1c2d3e4f5a6_add_conversation_context_summaries.py` | Adds rolling summaries plus standalone Skill request/sensitivity fields; downgrade removes only Step 5 schema |
+| `versions/a3b4c5d6e7f8_add_memory_entries.py` | 阶段 5 迁移：`memory_entries`（content-addressed 唯一哈希、pgvector `Vector(768)`、sensitivity/entry_type/source_kind check、`expires_at` 可选、frequency 计数），IVFFlat cosine 向量索引 + 来源/更新排序索引 |
 
 迁移链还包含 Grounded QA、attempt lease、Runtime checkpoint、审批、派生知识和生命周期 revision。
 `ConversationRun` 是新旧 Run 的共享父身份：`qa_runs` 仅保留 Grounded QA 投影及其 Evidence/Citation/

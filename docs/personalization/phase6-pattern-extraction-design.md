@@ -1,6 +1,7 @@
 # Phase 6：自动提取工作模式（Path B）
 
 日期：2026-08-12
+状态：已实施 ✅（2026-08-13，roadmap Phase 6）
 依赖：Phase 1（eval 门禁）、Phase 2（usage_patterns）、Phase 4（creator 机制）
 产出：模式挖掘任务 + 候选生成 + 历史验证 + 用户审批
 

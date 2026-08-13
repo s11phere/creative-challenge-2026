@@ -56,6 +56,11 @@ from infrastructure.assistant_events import PostgresAssistantEventStore
 from infrastructure.config import settings
 from infrastructure.conversation_runs import PostgresConversationRunRepository
 from infrastructure.database import Database
+from infrastructure.memory_entries import (
+    GatewayMemoryRetriever,
+    GatewayTextEmbedder,
+    PostgresMemoryEntryRepository,
+)
 from infrastructure.qa import DatabaseSearchService
 from infrastructure.qa_debug_trace import QADebugTrace, TracingModelGateway
 from infrastructure.qa_execution import (
@@ -84,6 +89,7 @@ from sqlalchemy.pool import NullPool
 
 from worker.broker import broker
 from worker.qa_tasks import _create_gateway
+from worker.skill_extraction import maybe_enqueue_skill_pattern_extract
 from worker.usage_traces import record_usage_trace
 
 logger = logging.getLogger(__name__)
@@ -185,7 +191,11 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
     registry = assistant_skill_registry()
     await _apply_personal_skill_activations(registry)
     qa_repository = PostgresGroundedQARepository(database)
-    context = ConversationContextService(data=qa_repository, runs=runs)
+    memory = GatewayMemoryRetriever(
+        repository=PostgresMemoryEntryRepository(database),
+        embedder=GatewayTextEmbedder(gateway),
+    )
+    context = ConversationContextService(data=qa_repository, runs=runs, memory=memory)
     metrics = AssistantMetrics()
 
     service = await _autonomous_loop_service(
@@ -215,6 +225,7 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
             lease_owner=lease_owner,
         )
         await record_usage_trace(run_id)
+        maybe_enqueue_skill_pattern_extract()
         return completed
     if claimed.status in _TERMINAL:
         if isinstance(service, AutonomousAssistantLoopService):
@@ -222,6 +233,7 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
         else:
             await service.execute(run_id)
         await record_usage_trace(run_id)
+        maybe_enqueue_skill_pattern_extract()
         return True
 
     stop = asyncio.Event()
@@ -245,6 +257,7 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
         await heartbeat
         await runs.release_conversation_run_lease(run_id, lease_owner=lease_owner)
         await record_usage_trace(run_id)
+        maybe_enqueue_skill_pattern_extract()
 
 
 async def _autonomous_loop_service(
