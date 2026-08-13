@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -13,6 +14,7 @@ from agent_runtime import (
     AgentLoopResult,
     DeterministicWorkflowExecutor,
     FileSystemSkillRegistry,
+    JSONValue,
     PersonalSkillRegistry,
     RuntimeExecutionResult,
     SkillRegistryError,
@@ -54,6 +56,7 @@ from model_gateway import (
     CapabilityAlias,
     ChatRequest,
     ChatResponse,
+    ChatToolCall,
     EmbeddingRequest,
     EmbeddingResponse,
     FakeModelGateway,
@@ -404,6 +407,48 @@ class StructuredAssistantLoopGateway(StructuredAgentGateway):
         )
 
 
+class StructuredNativeAssistantLoopGateway(StructuredAgentGateway):
+    """Provide a deterministic native Tool-use policy for local fake Assistant runs."""
+
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        if not isinstance(self._delegate, FakeModelGateway):
+            return await self._delegate.chat(request, capability=capability)
+        tool_name, arguments, text = _native_assistant_decision(request)
+        tool_calls = (
+            (
+                ChatToolCall(
+                    call_id=(
+                        "fake-native-"
+                        + hashlib.sha256(
+                            f"{len(request.tool_call_history)}:{tool_name}".encode()
+                        ).hexdigest()[:16]
+                    ),
+                    tool_name=tool_name,
+                    arguments=arguments,
+                ),
+            )
+            if tool_name is not None
+            else ()
+        )
+        output_tokens = max(1, len(text.split())) if text else max(1, len(arguments))
+        return ChatResponse(
+            text=text,
+            tool_calls=tool_calls,
+            finish_reason="tool_calls" if tool_calls else "stop",
+            usage=ModelUsage(
+                input_tokens=sum(max(1, len(item.content.split())) for item in request.messages),
+                output_tokens=output_tokens,
+            ),
+            capability=capability,
+            latency_ms=0.0,
+        )
+
+
 def _knowledge_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
     """Return deterministic decisions for local FakeModelGateway development runs."""
     try:
@@ -441,6 +486,71 @@ def _knowledge_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
     if outcome in {"refuse", "conflict"}:
         return {"action": "refuse", "reason": "Grounded QA verified a safe terminal refusal."}
     return {"action": "complete", "reason": "Grounded QA verified the current Run."}
+
+
+def _native_assistant_decision(
+    request: ChatRequest,
+) -> tuple[str | None, dict[str, JSONValue], str]:
+    """Return only deterministic Tool choices; the executor owns permissions and publication."""
+    try:
+        payload = json.loads(request.messages[-1].content)
+    except (TypeError, ValueError):
+        payload = {}
+    model_context = payload.get("model_context") if isinstance(payload, dict) else None
+    input_data = payload.get("input") if isinstance(payload, dict) else None
+    goal = str(payload.get("goal") or "") if isinstance(payload, dict) else ""
+    if not goal and isinstance(input_data, dict):
+        question = input_data.get("question")
+        goal = str(question) if isinstance(question, str) else ""
+    observations = model_context.get("observations") if isinstance(model_context, dict) else None
+    selected_skills = (
+        model_context.get("selected_skills") if isinstance(model_context, dict) else None
+    )
+    tool_names = {tool.name for tool in request.tools}
+    selected_names = (
+        {
+            str(item.get("name"))
+            for item in selected_skills
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        if isinstance(selected_skills, list)
+        else set()
+    )
+    last_observation: dict[str, object] = {}
+    if isinstance(observations, list):
+        for item in reversed(observations):
+            if isinstance(item, dict):
+                last_observation = item
+                break
+    last_tool = last_observation.get("tool_name")
+    if "invoke_skill" in tool_names and not selected_names:
+        if _requires_fake_knowledge_tool(goal):
+            return "invoke_skill", {"name": "knowledge_agent"}, ""
+        return None, {}, "fake-response-autonomous"
+    if "knowledge_agent" in selected_names:
+        if last_tool in {None, "invoke_skill"}:
+            if "knowledge_retrieve" not in tool_names:
+                return None, {}, "fake-response-autonomous"
+            return "knowledge_retrieve", {"query": _fake_knowledge_query(goal)}, ""
+        recommended = last_observation.get("recommended_next")
+        if last_tool == "knowledge_retrieve":
+            if recommended == "knowledge_answer" and "knowledge_answer" in tool_names:
+                return "knowledge_answer", {}, ""
+            if "knowledge_retrieve" in tool_names:
+                return (
+                    "knowledge_retrieve",
+                    {"query": f"{_fake_knowledge_query(goal)} follow-up"},
+                    "",
+                )
+        elif last_tool == "knowledge_answer":
+            if "knowledge_retrieve" in tool_names:
+                return (
+                    "knowledge_retrieve",
+                    {"query": f"{_fake_knowledge_query(goal)} verification follow-up"},
+                    "",
+                )
+        return None, {}, "fake-response-autonomous"
+    return None, {}, "fake-response-autonomous"
 
 
 def _assistant_loop_decision(content: str) -> dict[str, object]:
@@ -1052,6 +1162,7 @@ __all__ = [
     "GroundedQAExecutor",
     "StructuredAssistantLoopGateway",
     "StructuredFakeGateway",
+    "StructuredNativeAssistantLoopGateway",
     "assistant_skill_registry",
     "qa_skill_registry",
     "qa_execution_versions",

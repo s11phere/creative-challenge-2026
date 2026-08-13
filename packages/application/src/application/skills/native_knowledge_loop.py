@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import cast
 from uuid import UUID
 
 from agent_runtime import (
+    QA_ANSWER_MARKER,
     InMemoryToolRegistry,
     JSONValue,
     NativeServerToolCoordinator,
@@ -70,6 +72,10 @@ NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS = (
     "verifies claims and citations, handles refusal or conflict, and publishes the single "
     "terminal result. Do not emit direct terminal text for a knowledge answer and do not "
     "request another model turn after this Tool succeeds.\n\n"
+    "If a knowledge_answer observation requires a workspace artifact, inspect the workspace with "
+    "`fs_list` and then call `fs_write` with the path you choose and "
+    "`content={{current_grounded_qa_answer}}`. Do not compose or fabricate the answer text; the "
+    "server resolves that marker and finalizes after the write.\n\n"
     "Local workspace Tools remain separate deliverables. A workspace write cannot replace "
     "the server-owned knowledge terminal, and the authoritative QA answer text remains "
     "server-owned.\n\n"
@@ -122,6 +128,9 @@ class _RunFacts:
     answer_run: QARunRecord | None = None
     verified: bool = False
     finalization_ready: bool = False
+    workspace_requested: bool = False
+    workspace_written: bool = False
+    answer_text: str | None = None
 
 
 class NativeKnowledgeTools(NativeServerToolCoordinator):
@@ -169,11 +178,10 @@ class NativeKnowledgeTools(NativeServerToolCoordinator):
         call: NativeToolUseCall,
         input_data: Mapping[str, JSONValue],
     ) -> NativeServerToolResult:
-        del input_data
         if call.tool_name == _RETRIEVE_TOOL_NAME:
             return await self._retrieve(run, state, call)
         if call.tool_name == _ANSWER_TOOL_NAME:
-            return await self._answer(run, state, call)
+            return await self._answer(run, state, call, input_data)
         raise NodeExecutionError(
             "RUN_NATIVE_TOOL_USE_KNOWLEDGE_TOOL_UNKNOWN",
             RunErrorCategory.SCHEMA,
@@ -301,7 +309,11 @@ class NativeKnowledgeTools(NativeServerToolCoordinator):
         return self._result(run, call, output, self.retrieve_tool)
 
     async def _answer(
-        self, run: AgentRun, state: NativeToolUseLoopState, call: NativeToolUseCall
+        self,
+        run: AgentRun,
+        state: NativeToolUseLoopState,
+        call: NativeToolUseCall,
+        input_data: Mapping[str, JSONValue],
     ) -> NativeServerToolResult:
         _require_empty(call.arguments)
         facts = self._restore_facts_from_state(run.context.run_id, state)
@@ -342,6 +354,14 @@ class NativeKnowledgeTools(NativeServerToolCoordinator):
             return self._result(run, call, output, self.answer_tool)
 
         facts.finalization_ready = True
+        facts.answer_text = _qa_result_text(completed)
+        if _workspace_artifact_requested(input_data) and _workspace_tools_enabled(input_data):
+            facts.workspace_requested = True
+            observation = _terminal_answer_observation(completed, verification)
+            observation["recommended_next"] = "workspace"
+            observation["workspace_required"] = True
+            return self._result(run, call, observation, self.answer_tool)
+
         terminal_output: dict[str, JSONValue] = {
             "status": completed.status.value,
             "outcome": completed.result.outcome.value,
@@ -458,6 +478,47 @@ class NativeKnowledgeTools(NativeServerToolCoordinator):
     def _facts_for(self, run_id: UUID) -> _RunFacts:
         return self._facts.setdefault(run_id, _RunFacts())
 
+    def resolve_workspace_write(
+        self, run_id: UUID, arguments: Mapping[str, JSONValue]
+    ) -> dict[str, JSONValue]:
+        facts = self._facts_for(run_id)
+        if not facts.finalization_ready or facts.answer_run is None:
+            raise NodeExecutionError(
+                "RUN_KNOWLEDGE_WORKSPACE_QA_REQUIRED",
+                RunErrorCategory.SCHEMA,
+                "Grounded QA must complete before writing the verified answer.",
+            )
+        if arguments.get("content") != QA_ANSWER_MARKER:
+            raise NodeExecutionError(
+                "RUN_KNOWLEDGE_WORKSPACE_MARKER_REQUIRED",
+                RunErrorCategory.SCHEMA,
+                "Workspace answer writes must use the server-owned answer marker.",
+            )
+        if facts.answer_text is None:
+            raise NodeExecutionError(
+                "RUN_KNOWLEDGE_WORKSPACE_CONTENT_MISSING",
+                RunErrorCategory.SCHEMA,
+                "Grounded QA result has no workspace-writable text.",
+            )
+        return {**arguments, "content": facts.answer_text}
+
+    def note_workspace_written(self, run_id: UUID) -> None:
+        facts = self._facts_for(run_id)
+        facts.workspace_written = True
+
+    def server_terminal_projection(self, run_id: UUID) -> tuple[dict[str, JSONValue], str] | None:
+        facts = self._facts_for(run_id)
+        completed = facts.answer_run
+        if not facts.finalization_ready or completed is None or completed.result is None:
+            return None
+        terminal_output: dict[str, JSONValue] = {
+            "status": completed.status.value,
+            "outcome": completed.result.outcome.value,
+            "qa_run_id": str(completed.run_id),
+            "publication": "grounded_qa",
+        }
+        return terminal_output, _publication_id(run_id)
+
     @staticmethod
     def _idempotency_key(run_id: UUID, call_id: str) -> str:
         return f"{run_id}:native-knowledge:{call_id}"
@@ -483,6 +544,43 @@ def _require_empty(arguments: Mapping[str, JSONValue]) -> None:
             RunErrorCategory.INPUT,
             "knowledge_answer does not accept input.",
         )
+
+
+_WORKSPACE_WRITE_RE = re.compile(r"(?:save|write|store|保存|写入|存为)", re.IGNORECASE)
+_WORKSPACE_ARTIFACT_RE = re.compile(
+    r"(?:file|document|markdown|\.md\b|文件|文档|md 文件|md文件)", re.IGNORECASE
+)
+
+
+def _qa_result_text(completed: QARunRecord) -> str | None:
+    result = completed.result
+    if result is None:
+        return None
+    if result.answer is not None:
+        return result.answer.text
+    if result.refusal is not None:
+        return result.refusal.message
+    if result.conflict is not None:
+        return result.conflict.message
+    return None
+
+
+def _workspace_tools_enabled(input_data: Mapping[str, JSONValue]) -> bool:
+    workspace = input_data.get("workspace")
+    return (
+        isinstance(workspace, dict)
+        and workspace.get("selected") is True
+        and workspace.get("tools_enabled") is True
+    )
+
+
+def _workspace_artifact_requested(input_data: Mapping[str, JSONValue]) -> bool:
+    text = " ".join(
+        str(value)
+        for value in (input_data.get("question"), input_data.get("conversation"))
+        if isinstance(value, str)
+    )
+    return bool(_WORKSPACE_WRITE_RE.search(text) and _WORKSPACE_ARTIFACT_RE.search(text))
 
 
 def _search_observation(query: str, hits: tuple[SearchHit, ...]) -> _SearchObservation:
@@ -751,7 +849,8 @@ def _knowledge_answer_definition(version: str) -> ToolDefinition:
                         "conflict",
                     ]
                 },
-                "recommended_next": {"enum": ["knowledge_retrieve", "terminal"]},
+                "recommended_next": {"enum": ["knowledge_retrieve", "workspace", "terminal"]},
+                "workspace_required": {"type": "boolean"},
             },
         },
         permissions=frozenset({ToolPermission.READ_KNOWLEDGE, ToolPermission.MODEL}),
@@ -772,7 +871,8 @@ def _knowledge_answer_definition(version: str) -> ToolDefinition:
                 "summary": {"type": "string", "maxLength": 320},
                 "outcome": {"enum": ["pending", "answer", "refusal", "conflict"]},
                 "terminal_reason": {"type": "string"},
-                "recommended_next": {"enum": ["knowledge_retrieve", "terminal"]},
+                "recommended_next": {"enum": ["knowledge_retrieve", "workspace", "terminal"]},
+                "workspace_required": {"type": "boolean"},
             },
         },
         timeout_seconds=180.0,

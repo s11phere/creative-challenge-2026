@@ -139,6 +139,8 @@ def summarize_agent_harness_trace(events: Sequence[Mapping[str, object]]) -> Age
             long_answer_generations += 1
         elif phase == "decision":
             terminal_generations += _terminal_generation_count(event.get("output"))
+        elif phase == "native_tool_use":
+            terminal_generations += _native_terminal_generation_count(event.get("output"))
         unselected_skill_instruction_bytes += _non_negative_int(
             event.get("unselected_skill_instruction_bytes")
         )
@@ -182,6 +184,19 @@ def summarize_agent_harness_trace(events: Sequence[Mapping[str, object]]) -> Age
 def _input_bytes(value: object) -> tuple[int, int, int]:
     if not isinstance(value, Mapping):
         return 0, 0, 0
+    if all(
+        isinstance(value.get(key), int) and not isinstance(value.get(key), bool)
+        for key in (
+            "static_prompt_bytes",
+            "dynamic_context_bytes",
+            "eager_skill_instruction_bytes",
+        )
+    ):
+        return (
+            _non_negative_int(value.get("static_prompt_bytes")),
+            _non_negative_int(value.get("dynamic_context_bytes")),
+            _non_negative_int(value.get("eager_skill_instruction_bytes")),
+        )
     messages = value.get("messages")
     if not isinstance(messages, Sequence) or isinstance(messages, (str, bytes, bytearray)):
         return 0, 0, 0
@@ -208,6 +223,12 @@ def _terminal_generation_count(value: object) -> int:
         return 0
     text = value.get("text")
     return int(isinstance(text, str) and '"action":"complete"' in text.replace(" ", ""))
+
+
+def _native_terminal_generation_count(value: object) -> int:
+    if not isinstance(value, Mapping):
+        return 0
+    return int(value.get("tool_calls") == 0 and value.get("finish_reason") == "stop")
 
 
 def _non_negative_int(value: object) -> int:
@@ -237,10 +258,9 @@ def _cache_tokens(value: object) -> tuple[int, int]:
     usage = value.get("usage")
     if not isinstance(usage, Mapping):
         return 0, 0
-    return (
-        _non_negative_int(usage.get("cache_read_tokens")),
-        _non_negative_int(usage.get("cache_write_tokens")),
-    )
+    cache_read = usage.get("cache_read_tokens", usage.get("cached_input_tokens"))
+    cache_write = usage.get("cache_write_tokens", usage.get("cache_write_input_tokens"))
+    return _non_negative_int(cache_read), _non_negative_int(cache_write)
 
 
 __all__ = [

@@ -38,9 +38,12 @@ from application.assistant import (
     ConversationFinalizer,
 )
 from application.skills import (
+    NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS,
     DraftSkillEvalRunner,
     KnowledgeLoopTools,
     KnowledgeLoopToolsConfig,
+    NativeKnowledgeTools,
+    NativeKnowledgeToolsConfig,
     PersonalSkillStore,
     SkillCreatorTools,
     SkillDraftStore,
@@ -63,12 +66,14 @@ from infrastructure.qa_execution import (
     GroundedQAExecutor,
     StructuredAssistantLoopGateway,
     StructuredFakeGateway,
+    StructuredNativeAssistantLoopGateway,
     assistant_skill_registry,
     qa_execution_versions,
 )
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
 from infrastructure.runtime_approval import PostgresApprovalPort
 from infrastructure.runtime_state import PostgresRuntimeStateStore
+from infrastructure.skill_catalog import FileSystemNativeSkillCatalog, FileSystemSkillCatalog
 from infrastructure.skill_lifecycle import PostgresSkillActivationStore
 from infrastructure.telemetry_context import (
     bind_observability_context,
@@ -413,7 +418,7 @@ async def _autonomous_loop_service(
                 ),
                 "workspace_root_reference": ".",
                 "command_cwd_example": ".",
-                "command_aliases": cast(list[JSONValue], sorted(aliases)),
+                "command_aliases": [cast(JSONValue, alias) for alias in sorted(aliases)],
             }
         elif workspace is not None:
             workspace_context = {
@@ -498,11 +503,65 @@ async def _autonomous_loop_service(
             tool_skill_refs[tools.research_discover_tool.ref] = research_skill
         if tools.research_prepare_tool is not None:
             tool_skill_refs[tools.research_prepare_tool.ref] = research_skill
+    native_knowledge: NativeKnowledgeTools | None = None
+    native_catalog: FileSystemNativeSkillCatalog | None = None
+    native_registry: InMemoryToolRegistry | None = None
+    native_allowed_tools: tuple[ToolRef, ...] = tools.allowed_tools
+    native_base_tools: tuple[ToolRef, ...] = ()
+    if settings.fast_chat_native_tool_use:
+        native_knowledge = NativeKnowledgeTools(
+            qa=qa_service,
+            search=DatabaseSearchService(database, gateway),
+            config=NativeKnowledgeToolsConfig(
+                profile=qa_executor.profile,
+                versions=versions,
+                retrieval_scope=QARetrievalScope(),
+                result_reader=qa_repository.get_run,
+                ensure_qa_run=ensure_qa_run,
+                instructions=NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS,
+            ),
+        )
+        native_registry = InMemoryToolRegistry(
+            handlers={
+                "knowledge_retrieve": native_knowledge._retrieve_handler,
+                "knowledge_answer": native_knowledge._answer_handler,
+                **extra_handlers,
+            },
+            approval_port=PostgresApprovalPort(database),
+        )
+        native_registry.register(native_knowledge.retrieve_tool)
+        native_registry.register(native_knowledge.answer_tool)
+        extra_native_tools = extra_tool_registrar(native_registry)
+        native_base_tools = tuple(
+            definition.ref
+            for definition in extra_native_tools
+            if definition.name in {"fs_list", "fs_read", "fs_write", "shell_exec"}
+        )
+        native_allowed_tools = (
+            *native_knowledge.allowed_tools(),
+            *(definition.ref for definition in extra_native_tools),
+        )
+        native_catalog = FileSystemNativeSkillCatalog(
+            skill_registry,
+            FileSystemSkillCatalog(skill_registry, include_manifest_v2=True),
+            tool_adapters={
+                ToolRef(knowledge_pin.name, knowledge_pin.version): native_allowed_tools,
+            },
+            prompt_overrides={
+                knowledge_pin.name: NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS,
+            },
+        )
     return AutonomousAssistantLoopService(
         runs=runs,
         messages=qa_repository,
         gateway=TracingModelGateway(
-            StructuredAssistantLoopGateway(gateway), trace, phase="assistant_agent_decision"
+            (
+                StructuredNativeAssistantLoopGateway(gateway)
+                if settings.fast_chat_native_tool_use
+                else StructuredAssistantLoopGateway(gateway)
+            ),
+            trace,
+            phase="assistant_agent_decision",
         ),
         events=PostgresAssistantEventStore(database),
         agent_events=PostgresAgentRunEventStore(database),
@@ -511,11 +570,16 @@ async def _autonomous_loop_service(
         budget=assistant_package.manifest.budgets,
         tool_registry=tools.tool_registry,
         allowed_tools=tools.allowed_tools,
+        native_tool_registry=native_registry,
+        native_allowed_tools=native_allowed_tools,
+        native_base_tools=native_base_tools,
         qa_results=qa_repository.get_run,
         conversation_finalizer=ConversationFinalizer(
             runs=runs,
             gateway=TracingModelGateway(gateway, trace, phase="assistant_finalization"),
         ),
+        native_skill_catalog=native_catalog,
+        native_server_tools=native_knowledge,
         decision_policy=tools.decision_policy,
         tool_skill_refs=tool_skill_refs,
         skill_contexts=tuple(active_skill_contexts),

@@ -152,10 +152,12 @@ class FileSystemNativeSkillCatalog(NativeSkillCatalog):
         catalog: SkillCatalogPort,
         *,
         tool_adapters: Mapping[ToolRef, tuple[ToolRef, ...]],
+        prompt_overrides: Mapping[str, str] | None = None,
     ) -> None:
         self._registry = registry
         self._catalog = catalog
         self._tool_adapters = dict(tool_adapters)
+        self._prompt_overrides = dict(prompt_overrides or {})
 
     def list_routes(self) -> tuple[NativeSkillRoute, ...]:
         return tuple(self._route(item) for item in self._catalog.list_active_invocations())
@@ -204,9 +206,14 @@ class FileSystemNativeSkillCatalog(NativeSkillCatalog):
             pinned = self._registry.pin(route.pin.name, route.pin.version)
             if pinned.content_sha256 != route.pin.content_sha256:
                 raise ValueError("Selected Skill pin no longer matches its active route")
+            instructions = self._prompt_overrides.get(route.pin.name)
+            if instructions is None:
+                instructions = self._registry.prompt_instructions(pinned)
+            if not instructions.strip():
+                raise ValueError("Selected Skill instructions cannot be blank")
             return NativeSkillSelection(
                 route=route,
-                instructions=self._registry.prompt_instructions(pinned),
+                instructions=instructions,
                 allowed_tools=self._tool_adapters[ToolRef(route.pin.name, route.pin.version)],
             )
         except (KeyError, SkillRegistryError) as exc:

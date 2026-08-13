@@ -1,6 +1,6 @@
 # Agent Harness v2 上下文与工具编排实施计划
 
-> 状态：进行中（Step 1 已完成；等待确认后进入 Step 2）
+> 状态：进行中（Step 6 已完成；v2 默认路径与上下文 trace 适配已完成）
 >
 > 日期：2026-08-12
 >
@@ -252,6 +252,66 @@ Worker/Compose 或浏览器测试；本步骤仍是 provisional 工程实现。
 > `packages/application/src/application/assistant/__init__.py` 格式问题阻断，本次未触碰该文件。
 > 未运行 formal holdout、外部 Provider、真实 PostgreSQL/Redis 迁移/集成或浏览器 Playwright；
 > 所有结果保持 provisional。
+
+### Step 6 补充：默认 v2 与上下文 trace 适配
+
+- 将 `FAST_CHAT_NATIVE_TOOL_USE` 的 Settings/Compose/env example 默认值改为 `true`；Worker 为
+  Assistant 装配 `FileSystemNativeSkillCatalog` 与 `NativeKnowledgeTools`，新 Run 默认走 v2。
+- 保留 v1 回退：Provider capability 不支持 native Tool-use，或已存在旧 v1 checkpoint 时，继续
+  使用原 v1 executor；新 v2 恢复时从 checkpoint 找回已批准的 approval ID。
+- 为 fake/local Assistant 增加确定性的 native Tool-use 策略，使本地开发路径也能执行
+  `invoke_skill -> knowledge_retrieve -> knowledge_answer` 或直接终止。
+- v2 debug trace 增加 body-free 的 `tool_call`、`tool_result`、`tool_error` 事件；上下文获取
+  工具 `scripts/export_agent_harness_trace.py` 同时识别 v1 完整 trace 与 v2 安全投影，baseline
+  汇总兼容 v2 的 static/dynamic byte 与 cache-read/cache-write 字段。
+
+> 完成记录（2026-08-13）：v2 已成为默认 Assistant Harness 路径，Provider 不支持或旧 v1
+> checkpoint 可继续走保留的 v1 executor。本地 fake 网关具备 v2 确定性 Tool 链。上下文获取
+> 工具可正常导出 v2 Run，且只呈现 Tool 身份、输入/输出摘要、context digest、cache 与 usage
+> 计数，不呈现 prompt、回答、原文或 Tool body。相关定向测试 60 passed；完整后端单测
+> `1099 passed, 2 skipped`。未运行 formal holdout、外部 Provider 真实请求、数据库迁移或
+> 浏览器 Playwright；所有结果保持 provisional。
+
+### Step 6 修复：list_skills 路由投影与连续 Provider 输入输出
+
+- `list_skills` 的模型可见投影原先只保留 Skill 数量，导致模型调用后看不到
+  `knowledge_agent` 的名称和描述，从而误报找不到知识类 Skill。现在投影保留安全路由列表，
+  并在 summary 中列出可用 Skill 名称；Skill instructions 仍不进入列表结果。
+- 开发 trace 增加 provider-native `tools`、`tool_call_history`、`tool_results` 和响应
+  `tool_calls` 记录；`--include-v2-bodies` 导出为顶部连续的 `Provider Transcript`，保留
+  每轮辅助安全指标和 Tool 区块。
+
+> 完成记录（2026-08-13）：`list_skills` 结果可让模型继续选择 `knowledge_agent`；trace
+> 导出支持完整的 v2 模型输入输出转录。新增/更新 list_skills、native trace、provider trace
+> 和 exporter 定向测试；完整后端测试见本轮最终验证。未运行 formal holdout 或外部 Provider
+> 真实请求；所有结果保持 provisional。
+
+### Step 6 修复：v2 原生支持知识答案后的 workspace 交付
+
+- `knowledge_answer` 在检测到用户要求保存文件且 workspace Tools 可用时不再直接 terminal，
+  而是返回 `recommended_next=workspace` 的非终态观察。
+- agent 继续自行决定 `fs_list` 与 `fs_write` 顺序；写入内容使用
+  `{{current_grounded_qa_answer}}` 标记，服务端在 Grounded QA 已验证后解析并自动 finalize。
+- Provider trace 在 `llm_error` 中显式展示模型文本、reasoning text、tool calls 和 finish
+  reason，便于定位 reasoning token 截断。
+
+> 完成记录（2026-08-13）：v2 自身已支持复合知识问答与 workspace 文件交付，不再需要回退 v1。
+> 完整验证见本轮最终质量检查。未运行 formal holdout 或真实外部 Provider 回归；所有结果保持
+> provisional。
+
+### Step 6 后续：删除 list_skills、常驻通用 Tool 与放宽长任务预算
+
+- 删除 `list_skills` bootstrap Tool。thin Skill catalog 直接写入首轮 system context，模型
+  需要时直接调用 `invoke_skill`，不再多一次仅用于读取目录的模型轮次。
+- `fs_list`、`fs_read`、`fs_write`、`shell_exec` 作为通用基础 Tool 从首轮即可见，不要求先
+  激活某个 Skill；Skill 专属 Tool 仍在 `invoke_skill` 后按允许列表加入。
+- 放宽 Assistant Run 预算：`assistant_agent` 的 budget 调至 256 steps/256 Tool calls、2 小
+  时，并把 native Tool 单轮输出默认提升到 32768 tokens、上下文历史上限提升到 32 observations
+  和 48 decisions。仍保留取消、审批、checkpoint、幂等和路径/权限门禁，不把数量上限作为
+  正确性前提。
+
+> 完成记录（2026-08-13）：上述 v2 上下文和预算调整已完成。完整验证见本轮最终质量检查。
+> 未运行 formal holdout 或真实外部 Provider 回归；所有结果保持 provisional。
 
 ## 5. 验证与最终完成门槛
 

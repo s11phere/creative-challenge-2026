@@ -16,18 +16,42 @@ from agent_runtime import (
 from domain.agent_runtime import AgentRun, AgentRunContext, RunBudget, ToolPermission
 from infrastructure.qa_debug_trace import QADebugTrace, TracingModelGateway, TracingToolRegistry
 from model_gateway import (
+    CapabilityAlias,
     ChatMessage,
     ChatRequest,
+    ChatResponse,
     ChatRole,
+    ChatToolCall,
+    ChatToolDefinition,
+    ChatToolResult,
     FakeModelGateway,
     FakeScenario,
     ModelGatewayError,
+    ModelUsage,
 )
 
 
 def _events(path: Path) -> list[dict[str, Any]]:
     text = path.read_text(encoding="utf-8")
     return [json.loads(block) for block in text.split("\n\n") if block.strip()]
+
+
+class NativeToolGateway(FakeModelGateway):
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        del request
+        return ChatResponse(
+            text="",
+            tool_calls=(ChatToolCall("call_1", "invoke_skill", {"name": "knowledge_agent"}),),
+            finish_reason="tool_calls",
+            usage=ModelUsage(input_tokens=1, output_tokens=1),
+            capability=capability,
+            latency_ms=0.0,
+        )
 
 
 @pytest.mark.asyncio
@@ -96,6 +120,47 @@ async def test_tracing_gateway_records_full_chat_and_model_error(tmp_path: Path)
     assert events[0]["messages"][1]["content"] == "private question"
     assert events[3]["error"]["error_code"] == "MODEL_UNAVAILABLE"
     assert "api_key" not in json.dumps(events)
+
+
+@pytest.mark.asyncio
+async def test_tracing_gateway_records_native_tool_surface_and_output(tmp_path: Path) -> None:
+    run_id = uuid4()
+    trace = QADebugTrace(
+        run_id=run_id,
+        trace_id="e" * 32,
+        enabled=True,
+        environment="development",
+        path=str(tmp_path),
+    )
+    call = ChatToolCall(
+        call_id="call_1",
+        tool_name="invoke_skill",
+        arguments={"name": "knowledge_agent"},
+    )
+    request = ChatRequest(
+        messages=(ChatMessage(ChatRole.USER, "private question"),),
+        tools=(ChatToolDefinition("invoke_skill", "Select a Skill.", {"type": "object"}),),
+        tool_call_history=(call,),
+        tool_results=(
+            ChatToolResult(
+                call_id="call_1",
+                tool_name="invoke_skill",
+                observation={"status": "succeeded", "summary": "Selected Skill."},
+            ),
+        ),
+    )
+    response = await TracingModelGateway(
+        NativeToolGateway(),
+        trace,
+        phase="assistant_agent_decision",
+    ).chat(request)
+
+    assert response.tool_calls[0].tool_name == "invoke_skill"
+    events = _events(tmp_path / f"{run_id}.jsonl")
+    assert events[0]["tools"][0]["name"] == "invoke_skill"
+    assert events[0]["tool_call_history"][0]["arguments"] == {"name": "knowledge_agent"}
+    assert events[0]["tool_results"][0]["observation"]["summary"] == "Selected Skill."
+    assert events[1]["tool_calls"][0]["arguments"] == {"name": "knowledge_agent"}
 
 
 @pytest.mark.asyncio

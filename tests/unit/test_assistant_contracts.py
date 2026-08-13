@@ -37,6 +37,7 @@ def test_frozen_assistant_contract_artifacts_match_manifest() -> None:
     assert isinstance(artifacts, dict)
     assert set(artifacts) == {
         "base-system-prompt-v7.txt",
+        "base-system-prompt-v8.txt",
         "router-decision-v1.schema.json",
         "command-catalog-v1.schema.json",
         "clarification-v1.schema.json",

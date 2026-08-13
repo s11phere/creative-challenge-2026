@@ -15,10 +15,17 @@ from infrastructure.database import Database
 from infrastructure.qa_execution import (
     GroundedQAExecutor,
     StructuredFakeGateway,
+    StructuredNativeAssistantLoopGateway,
     qa_execution_versions,
     qa_skill_registry,
 )
-from model_gateway import ChatMessage, ChatRequest, ChatRole, FakeModelGateway
+from model_gateway import (
+    ChatMessage,
+    ChatRequest,
+    ChatRole,
+    ChatToolDefinition,
+    FakeModelGateway,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
@@ -103,6 +110,112 @@ async def test_structured_fake_gateway_returns_readable_research_review() -> Non
         str(UUID(int=1)),
         str(UUID(int=2)),
     }
+
+
+@pytest.mark.asyncio
+async def test_native_fake_gateway_selects_knowledge_skill_for_space_question() -> None:
+    gateway = StructuredNativeAssistantLoopGateway(FakeModelGateway())
+    response = await gateway.chat(
+        _native_request(
+            goal="What does the current Space document say?",
+            selected_skills=[],
+            observations=[],
+            tools=(ChatToolDefinition("invoke_skill", "Select a Skill.", {"type": "object"}),),
+        )
+    )
+
+    assert response.text == ""
+    assert response.finish_reason == "tool_calls"
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].tool_name == "invoke_skill"
+    assert response.tool_calls[0].arguments == {"name": "knowledge_agent"}
+
+
+@pytest.mark.asyncio
+async def test_native_fake_gateway_follows_retrieval_recommendation() -> None:
+    gateway = StructuredNativeAssistantLoopGateway(FakeModelGateway())
+    response = await gateway.chat(
+        _native_request(
+            goal="Answer from the current Space document.",
+            selected_skills=[
+                {
+                    "name": "knowledge_agent",
+                    "version": "2.0.0",
+                    "content_sha256": "a" * 64,
+                }
+            ],
+            observations=[
+                {
+                    "iteration": 1,
+                    "tool_name": "knowledge_retrieve",
+                    "status": "succeeded",
+                    "summary": "Coverage: 1 matched across 1 searches.",
+                    "recommended_next": "knowledge_answer",
+                }
+            ],
+            tools=(
+                ChatToolDefinition(
+                    "knowledge_retrieve",
+                    "Retrieve knowledge.",
+                    {"type": "object"},
+                ),
+                ChatToolDefinition(
+                    "knowledge_answer",
+                    "Answer with Grounded QA.",
+                    {"type": "object"},
+                ),
+            ),
+        )
+    )
+
+    assert response.finish_reason == "tool_calls"
+    assert response.tool_calls[0].tool_name == "knowledge_answer"
+    assert response.tool_calls[0].arguments == {}
+
+
+@pytest.mark.asyncio
+async def test_native_fake_gateway_returns_direct_text_for_ordinary_request() -> None:
+    gateway = StructuredNativeAssistantLoopGateway(FakeModelGateway())
+    response = await gateway.chat(
+        _native_request(
+            goal="Hello",
+            selected_skills=[],
+            observations=[],
+            tools=(ChatToolDefinition("invoke_skill", "Select a Skill.", {"type": "object"}),),
+        )
+    )
+
+    assert response.text == "fake-response-autonomous"
+    assert response.finish_reason == "stop"
+    assert response.tool_calls == ()
+
+
+def _native_request(
+    *,
+    goal: str,
+    selected_skills: list[dict[str, str]],
+    observations: list[dict[str, object]],
+    tools: tuple[ChatToolDefinition, ...],
+) -> ChatRequest:
+    return ChatRequest(
+        messages=(
+            ChatMessage(ChatRole.SYSTEM, "Native base prompt."),
+            ChatMessage(
+                ChatRole.USER,
+                json.dumps(
+                    {
+                        "model_context": {
+                            "selected_skills": selected_skills,
+                            "observations": observations,
+                        },
+                        "goal": goal,
+                        "input": {"question": goal},
+                    }
+                ),
+            ),
+        ),
+        tools=tools,
+    )
 
 
 @pytest.mark.asyncio

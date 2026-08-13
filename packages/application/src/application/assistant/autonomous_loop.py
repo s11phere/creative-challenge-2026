@@ -17,6 +17,9 @@ from agent_runtime import (
     LLMDecision,
     LLMDecisionAction,
     LLMDecisionError,
+    NativeServerToolCoordinator,
+    NativeSkillCatalog,
+    NativeToolUseAgentLoopExecutor,
     NodeExecutionError,
     ToolRef,
 )
@@ -45,7 +48,7 @@ from domain.conversation_run import (
 )
 from domain.grounded_qa import QAStatus
 from domain.qa_persistence import MessageRecord, MessageRole, QARunRecord
-from model_gateway import ModelGateway
+from model_gateway import CapabilityAlias, ModelGateway
 
 from .context import ConversationContextService
 from .finalization import ConversationFinalizer
@@ -53,6 +56,7 @@ from .metrics import AssistantMetrics
 
 _CONTRACT_ROOT = files("application.assistant").joinpath("contracts")
 _BASE_PROMPT_V7 = _CONTRACT_ROOT.joinpath("base-system-prompt-v7.txt").read_text(encoding="utf-8")
+_BASE_PROMPT_V8 = _CONTRACT_ROOT.joinpath("base-system-prompt-v8.txt").read_text(encoding="utf-8")
 
 type QARunReader = Callable[[UUID], Awaitable[QARunRecord | None]]
 type DecisionPolicy = Callable[[AgentRun, AgentLoopState, LLMDecision], LLMDecision]
@@ -180,6 +184,59 @@ class AssistantConversationLoopFinalizer:
         }
 
 
+class NativeAssistantFinalizer:
+    """Publish the single direct model response from a native Tool-use Run."""
+
+    def __init__(
+        self,
+        *,
+        runs: ConversationRunRepository,
+        model_identity: str,
+    ) -> None:
+        self._runs = runs
+        self._model_identity = model_identity
+
+    async def finalize(
+        self,
+        *,
+        run: AgentRun,
+        goal: str,
+        terminal_text: str,
+        publication_id: str,
+        input_data: Mapping[str, JSONValue],
+    ) -> dict[str, JSONValue]:
+        del goal, publication_id, input_data
+        parent = await self._runs.get_conversation_run(run.context.run_id)
+        if parent is None:
+            raise NodeExecutionError(
+                "RUN_ASSISTANT_PARENT_MISSING",
+                RunErrorCategory.INTERNAL,
+                "Assistant parent Run is unavailable.",
+            )
+        if parent.status in {
+            ConversationRunStatus.COMPLETED,
+            ConversationRunStatus.REFUSED,
+            ConversationRunStatus.FAILED,
+            ConversationRunStatus.CANCELLED,
+            ConversationRunStatus.TIMED_OUT,
+        }:
+            return {"status": parent.status.value, "publication": "existing"}
+        published = await self._runs.publish_direct_message(
+            run_id=parent.run_id,
+            message=MessageRecord(
+                message_id=uuid4(),
+                conversation_id=parent.conversation_id,
+                space_id=parent.space_id,
+                role=MessageRole.ASSISTANT,
+                content=terminal_text,
+                run_id=parent.run_id,
+            ),
+            usage=_combined_usage(parent, run),
+            model_identity=self._model_identity,
+        )
+        return {"status": published.status.value, "publication": "direct"}
+
+
 class AutonomousAssistantLoopService:
     """Run a direct conversation as one model-directed Skill/Tool loop."""
 
@@ -201,6 +258,13 @@ class AutonomousAssistantLoopService:
         context: ConversationContextService | None = None,
         metrics: AssistantMetrics | None = None,
         conversation_finalizer: ConversationFinalizer | None = None,
+        native_skill_catalog: NativeSkillCatalog | None = None,
+        native_server_tools: NativeServerToolCoordinator | None = None,
+        native_tool_registry: AgentToolRegistry | None = None,
+        native_allowed_tools: tuple[ToolRef, ...] | None = None,
+        native_base_tools: tuple[ToolRef, ...] = (),
+        native_system_prompt: str | None = None,
+        prompt_caching_allowed: Callable[[AgentRunContext], bool] | None = None,
         decision_policy: DecisionPolicy | None = None,
         tool_skill_refs: Mapping[ToolRef, ToolRef] | None = None,
         workspace_context: Mapping[str, JSONValue] | None = None,
@@ -222,6 +286,13 @@ class AutonomousAssistantLoopService:
         self._conversation_finalizer = conversation_finalizer or ConversationFinalizer(
             runs=runs, gateway=gateway
         )
+        self._native_skill_catalog = native_skill_catalog
+        self._native_server_tools = native_server_tools
+        self._native_tool_registry = native_tool_registry
+        self._native_allowed_tools = native_allowed_tools
+        self._native_base_tools = native_base_tools
+        self._native_system_prompt = native_system_prompt or _BASE_PROMPT_V8
+        self._prompt_caching_allowed = prompt_caching_allowed
         self._skill_contexts = skill_contexts
         self._context = context
         self._metrics = metrics
@@ -273,6 +344,19 @@ class AutonomousAssistantLoopService:
             AssistantEventType.ROUTING,
             {"status": ConversationRunStatus.RUNNING.value, "action": "agent_loop"},
         )
+        if (
+            self._native_skill_catalog is not None
+            and self._native_server_tools is not None
+            and self._gateway.status.supports_native_tool_use(CapabilityAlias.FAST_CHAT)
+        ):
+            checkpoint = await self._runtime_state.get_latest(run_id)
+            if checkpoint is None or checkpoint.next_node == "native_tool_use_loop":
+                return await self._execute_native(
+                    parent=parent,
+                    user_message=user_message,
+                    input_data=input_data,
+                    trace_id=trace_id,
+                )
         finalizer = AssistantConversationLoopFinalizer(
             runs=self._runs,
             qa_results=self._qa_results,
@@ -373,6 +457,122 @@ class AutonomousAssistantLoopService:
         completed = await self._runs.get_conversation_run(run_id)
         if completed is None:
             return await self._fail(run_id, "RUN_ASSISTANT_PARENT_MISSING")
+        if self._metrics is not None:
+            self._metrics.record_usage(
+                run_kind=completed.run_kind.value,
+                input_tokens=result.run.usage.input_tokens,
+                output_tokens=result.run.usage.output_tokens,
+                latency_ms=0.0,
+            )
+        await self._emit_terminal(completed)
+        return completed
+
+    async def _execute_native(
+        self,
+        *,
+        parent: ConversationRun,
+        user_message: MessageRecord,
+        input_data: Mapping[str, JSONValue],
+        trace_id: str,
+    ) -> ConversationRun:
+        assert self._native_skill_catalog is not None
+        assert self._native_server_tools is not None
+        executor = NativeToolUseAgentLoopExecutor(
+            tool_registry=self._native_tool_registry or self._tool_registry,
+            allowed_tools=(
+                self._native_allowed_tools
+                if self._native_allowed_tools is not None
+                else self._allowed_tools
+            ),
+            base_tools=self._native_base_tools,
+            system_prompt=self._native_system_prompt,
+            model_gateway=self._gateway,
+            state_store=self._runtime_state,
+            event_store=self._agent_events,
+            reasoning_profile=parent.reasoning_profile,
+            finalizer=NativeAssistantFinalizer(
+                runs=self._runs,
+                model_identity=self._gateway.status.provider.value,
+            ),
+            cancellation_check=self._cancel_requested,
+            skill_catalog=self._native_skill_catalog,
+            server_tools=self._native_server_tools,
+            debug_trace=self._debug_trace,
+            approval_port=self._approval_port,
+            prompt_caching_allowed=self._prompt_caching_allowed,
+        )
+        persisted = await self._runtime_state.get_run(parent.run_id)
+        checkpoint = await self._runtime_state.get_latest(parent.run_id)
+        if (
+            persisted is not None
+            and checkpoint is not None
+            and persisted.status
+            not in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.TIMED_OUT}
+        ):
+            approval_id = None
+            if isinstance(checkpoint.state, Mapping):
+                candidate_approval_id = checkpoint.state.get("approval_id")
+                if (
+                    isinstance(candidate_approval_id, str)
+                    and self._approval_port is not None
+                    and await self._approval_port.is_approved(
+                        candidate_approval_id, persisted.context
+                    )
+                ):
+                    approval_id = candidate_approval_id
+            result = await executor.resume(
+                persisted,
+                self._pin,
+                checkpoint,
+                input_data,
+                caller_id=parent.caller_id,
+                space_id=parent.space_id,
+                approval_id=approval_id,
+            )
+        else:
+            runtime = AgentRun(
+                context=AgentRunContext(
+                    run_id=parent.run_id,
+                    space_id=parent.space_id,
+                    skill_name=self._pin.name,
+                    skill_version=self._pin.version,
+                    skill_content_sha256=self._pin.content_sha256,
+                    trace_id=trace_id,
+                    caller_id=parent.caller_id,
+                    granted_permissions=frozenset(
+                        {ToolPermission.READ_KNOWLEDGE, ToolPermission.MODEL}
+                    ).union(self._additional_permissions),
+                ),
+                budget=self._budget,
+            )
+            result = await executor.execute(
+                runtime,
+                self._pin,
+                input_data,
+                goal=user_message.content,
+            )
+        if result.error is not None:
+            return await self._fail(parent.run_id, result.error.code)
+        if result.waiting_approval:
+            return await self._runs.wait_for_approval(parent.run_id)
+        if result.state.terminal_output is not None:
+            qa_run = await self._qa_results(parent.run_id)
+            if (
+                qa_run is None
+                or qa_run.status not in {QAStatus.COMPLETED, QAStatus.REFUSED}
+                or qa_run.answer_message_id is None
+            ):
+                return await self._fail(parent.run_id, "RUN_KNOWLEDGE_FINALIZATION_REQUIRED")
+            await self._runs.publish_existing_skill_result(
+                run_id=parent.run_id,
+                message_id=qa_run.answer_message_id,
+                usage=_combined_usage(parent, result.run),
+                model_identity=self._gateway.status.provider.value,
+                refused=qa_run.status is QAStatus.REFUSED,
+            )
+        completed = await self._runs.get_conversation_run(parent.run_id)
+        if completed is None:
+            return await self._fail(parent.run_id, "RUN_ASSISTANT_PARENT_MISSING")
         if self._metrics is not None:
             self._metrics.record_usage(
                 run_kind=completed.run_kind.value,

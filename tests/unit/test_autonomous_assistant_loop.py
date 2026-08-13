@@ -35,6 +35,7 @@ from model_gateway import (
     FakeModelGateway,
     GatewayStatus,
     ModelGateway,
+    ModelProvider,
     ModelUsage,
 )
 
@@ -159,6 +160,91 @@ class EscalatedAnswerGateway:
             capability=capability,
             latency_ms=1.0,
         )
+
+
+class DirectNativeGateway:
+    def __init__(self, text: str = "Native direct response.") -> None:
+        self._delegate = FakeModelGateway()
+        self._text = text
+        self.requests: list[ChatRequest] = []
+
+    @property
+    def status(self) -> GatewayStatus:
+        return self._delegate.status
+
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        self.requests.append(request)
+        return ChatResponse(
+            text=self._text,
+            finish_reason="stop",
+            usage=ModelUsage(input_tokens=5, output_tokens=3),
+            capability=capability,
+            latency_ms=1.0,
+        )
+
+
+class V1FallbackGateway(DirectNativeGateway):
+    @property
+    def status(self) -> GatewayStatus:
+        return GatewayStatus(
+            available=True,
+            code="MODEL_READY",
+            provider=ModelProvider.FAKE,
+            capabilities=(CapabilityAlias.FAST_CHAT,),
+            model_identity="fake-fast-chat-v1",
+        )
+
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        self.requests.append(request)
+        return ChatResponse(
+            text=json.dumps(
+                {
+                    "action": "complete",
+                    "reason": "Preserved v1 path.",
+                    "final_response": "v1 fallback response",
+                },
+                separators=(",", ":"),
+            ),
+            finish_reason="stop",
+            usage=ModelUsage(input_tokens=5, output_tokens=3),
+            capability=capability,
+            latency_ms=1.0,
+        )
+
+
+class EmptyNativeCatalog:
+    def list_routes(self) -> tuple[()]:
+        return ()
+
+    def select(self, _name: str) -> object:
+        raise ValueError("No native Skills are available.")
+
+    def resolve(self, _pin: object) -> object:
+        raise ValueError("No native Skills are available.")
+
+
+class NoOpNativeServerTools:
+    def tool_refs(self) -> tuple[()]:
+        return ()
+
+    def blocks_direct_terminal(self, _selected_skill_names: frozenset[str]) -> bool:
+        return False
+
+    async def execute(self, *_args: object, **_kwargs: object) -> object:
+        raise AssertionError("Server Tool should not execute.")
+
+    async def finalize_server_terminal(self, **_kwargs: object) -> object:
+        raise AssertionError("Server finalizer should not execute.")
 
 
 async def _research(
@@ -310,6 +396,125 @@ async def test_top_level_loop_observes_one_skill_adapter_before_selecting_anothe
         ("research_skill", "1.0.0"),
         ("summary_skill", "2.0.0"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_native_capability_and_catalog_route_new_runs_through_v2() -> None:
+    repository = InMemoryGroundedQARepository()
+    conversation = ConversationRecord(
+        conversation_id=UUID(int=1101), space_id=UUID(int=1102), owner_id="loop-user"
+    )
+    await repository.create_conversation(conversation)
+    submitted = await ConversationRunService(conversations=repository, runs=repository).submit(
+        AssistantTurnSubmission(
+            conversation_id=conversation.conversation_id,
+            content="Native v2 routing request.",
+            idempotency_key="autonomous-native-1",
+        )
+    )
+    await repository.claim_conversation_run(
+        submitted.run_id, lease_owner="test-worker", lease_seconds=60
+    )
+    gateway = DirectNativeGateway()
+    service = AutonomousAssistantLoopService(
+        runs=repository,
+        messages=repository,
+        gateway=cast(ModelGateway, gateway),
+        events=AssistantEventLog(),
+        agent_events=AgentRunEventLog(),
+        runtime_state=InMemoryRuntimeStateStore(),
+        pin=_pin(),
+        budget=RunBudget(
+            max_steps=4,
+            max_tool_calls=2,
+            max_input_tokens=100,
+            max_output_tokens=100,
+            timeout_seconds=30,
+        ),
+        tool_registry=InMemoryToolRegistry(handlers={}),
+        allowed_tools=(),
+        qa_results=_no_qa_result,
+        skill_contexts=(),
+        native_skill_catalog=cast(object, EmptyNativeCatalog()),
+        native_server_tools=cast(object, NoOpNativeServerTools()),
+        native_tool_registry=InMemoryToolRegistry(handlers={}),
+        native_allowed_tools=(),
+    )
+
+    completed = await service.execute(submitted.run_id, trace_id="f" * 32)
+
+    assert completed is not None
+    assert completed.status is ConversationRunStatus.COMPLETED
+    assert completed.result is not None
+    message = await repository.get_message(completed.result.message_id)
+    assert message is not None
+    assert message.content == "Native direct response."
+    assert len(gateway.requests) == 1
+    request = gateway.requests[0]
+    assert request.messages[0].content.startswith("You are the Assistant controller")
+    assert {tool.name for tool in request.tools} == {"invoke_skill"}
+
+
+@pytest.mark.asyncio
+async def test_provider_without_native_tool_use_falls_back_to_preserved_v1() -> None:
+    repository = InMemoryGroundedQARepository()
+    conversation = ConversationRecord(
+        conversation_id=UUID(int=1151), space_id=UUID(int=1152), owner_id="loop-user"
+    )
+    await repository.create_conversation(conversation)
+    submitted = await ConversationRunService(conversations=repository, runs=repository).submit(
+        AssistantTurnSubmission(
+            conversation_id=conversation.conversation_id,
+            content="Fallback v1 routing request.",
+            idempotency_key="autonomous-fallback-1",
+        )
+    )
+    await repository.claim_conversation_run(
+        submitted.run_id, lease_owner="test-worker", lease_seconds=60
+    )
+    registry = InMemoryToolRegistry(handlers={"dummy": _research})
+    dummy = registry.register(_tool("dummy_tool", "dummy"))
+    gateway = V1FallbackGateway()
+    service = AutonomousAssistantLoopService(
+        runs=repository,
+        messages=repository,
+        gateway=cast(ModelGateway, gateway),
+        events=AssistantEventLog(),
+        agent_events=AgentRunEventLog(),
+        runtime_state=InMemoryRuntimeStateStore(),
+        pin=_pin(),
+        budget=RunBudget(
+            max_steps=4,
+            max_tool_calls=2,
+            max_input_tokens=100,
+            max_output_tokens=100,
+            timeout_seconds=30,
+        ),
+        tool_registry=registry,
+        allowed_tools=(dummy.ref,),
+        qa_results=_no_qa_result,
+        skill_contexts=(),
+        native_skill_catalog=cast(object, EmptyNativeCatalog()),
+        native_server_tools=cast(object, NoOpNativeServerTools()),
+        native_tool_registry=InMemoryToolRegistry(handlers={}),
+        native_allowed_tools=(),
+    )
+
+    completed = await service.execute(submitted.run_id, trace_id="g" * 32)
+
+    assert completed is not None
+    assert completed.status is ConversationRunStatus.COMPLETED
+    assert completed.result is not None
+    message = await repository.get_message(completed.result.message_id)
+    assert message is not None
+    assert message.content == "v1 fallback response"
+    assert len(gateway.requests) == 1
+    assert gateway.requests[0].tools == ()
+    assert (
+        gateway.requests[0]
+        .messages[0]
+        .content.startswith("You are the product-level Assistant Agent")
+    )
 
 
 @pytest.mark.asyncio

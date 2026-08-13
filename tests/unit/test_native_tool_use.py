@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, replace
 from typing import cast
 from uuid import UUID
@@ -105,6 +106,14 @@ class RecordingFinalizer:
         self.calls += 1
         self.text = cast(str, kwargs["terminal_text"])
         return {"message": self.text}
+
+
+class RecordingDebugTrace:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    async def record(self, event_type: str, **payload: object) -> None:
+        self.events.append((event_type, dict(payload)))
 
 
 class SyntheticSkillCatalog:
@@ -309,6 +318,60 @@ async def test_native_tool_use_replays_one_result_then_finalizes_once() -> None:
     }
     assert result.run.usage.steps == 2
     assert result.run.usage.tool_calls == 1
+
+
+async def test_debug_trace_records_body_free_native_tool_events() -> None:
+    registry = InMemoryToolRegistry(handlers={"tool": _handler})
+    definition = registry.register(_tool())
+    call = ChatToolCall(
+        call_id="call_trace",
+        tool_name=definition.name,
+        arguments={"query": "private-tool-query"},
+    )
+    gateway = SequenceNativeGateway(
+        _response(calls=(call,), finish_reason="tool_calls"),
+        _response(text="Private terminal response."),
+    )
+    debug_trace = RecordingDebugTrace()
+
+    result = await NativeToolUseAgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Private native system prompt.",
+        model_gateway=cast(ModelGateway, gateway),
+        finalizer=RecordingFinalizer(),
+        debug_trace=debug_trace,
+    ).execute(
+        _run(permissions=definition.permissions),
+        cast(PinnedSkill, object()),
+        {"question": "private question"},
+        goal="Private goal.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    event_types = [event_type for event_type, _payload in debug_trace.events]
+    assert event_types == [
+        "agent_round",
+        "tool_call",
+        "tool_result",
+        "agent_round",
+    ]
+    round_event = debug_trace.events[0][1]
+    assert round_event["round_number"] == 1
+    assert round_event["schema_version"] == "agent-harness-trace-v2"
+    assert round_event["input"]["tools"][0]["name"] == "synthetic_lookup"
+    assert round_event["input"]["skill_routes"] == []
+    assert round_event["output"]["usage"]["cache_read_tokens"] == 0
+    tool_call = debug_trace.events[1][1]
+    tool_result = debug_trace.events[2][1]
+    assert tool_call["input"]["summary"].startswith("sha256:")
+    assert tool_result["output"]["summary"].startswith("sha256:")
+    serialized = json.dumps(debug_trace.events, ensure_ascii=False, default=str)
+    assert "private-tool-query" not in serialized
+    assert "Private terminal response." not in serialized
+    assert "Private native system prompt." not in serialized
+    assert "private question" not in serialized
+    assert "Private goal." not in serialized
 
 
 async def test_fake_gateway_executes_a_tool_then_returns_one_terminal_response() -> None:
@@ -520,7 +583,7 @@ async def test_native_tool_use_keeps_unselected_skill_instructions_and_tools_out
 
     assert result.run.status is RunStatus.COMPLETED
     request = gateway.requests[0]
-    assert [tool.name for tool in request.tools] == ["list_skills", "invoke_skill"]
+    assert [tool.name for tool in request.tools] == ["invoke_skill"]
     assert "UNSELECTED_SKILL_INSTRUCTIONS" not in request.messages[0].content
     assert "SELECTED_SKILL_INSTRUCTIONS" not in request.messages[0].content
 
@@ -561,9 +624,8 @@ async def test_native_tool_use_selects_one_skill_before_exposing_its_instruction
     )
 
     assert result.run.status is RunStatus.COMPLETED
-    assert [tool.name for tool in gateway.requests[0].tools] == ["list_skills", "invoke_skill"]
+    assert [tool.name for tool in gateway.requests[0].tools] == ["invoke_skill"]
     assert [tool.name for tool in gateway.requests[1].tools] == [
-        "list_skills",
         "invoke_skill",
         definition.name,
     ]
@@ -575,7 +637,7 @@ async def test_native_tool_use_selects_one_skill_before_exposing_its_instruction
     }
 
 
-async def test_native_tool_use_lists_routes_without_skill_instructions() -> None:
+async def test_native_tool_use_puts_thin_skill_catalog_in_initial_context() -> None:
     registry = InMemoryToolRegistry(handlers={"tool": _handler})
     definition = registry.register(_tool())
     knowledge = _skill(
@@ -584,10 +646,7 @@ async def test_native_tool_use_lists_routes_without_skill_instructions() -> None
         tools=(definition.ref,),
     )
     creator = _unavailable_skill("skill_creator")
-    gateway = SequenceNativeGateway(
-        _response(calls=(ChatToolCall("call_1", "list_skills", {}),), finish_reason="tool_calls"),
-        _response(text="Synthetic terminal response."),
-    )
+    gateway = SequenceNativeGateway(_response(text="Synthetic terminal response."))
     result = await NativeToolUseAgentLoopExecutor(
         tool_registry=registry,
         allowed_tools=(definition.ref,),
@@ -602,10 +661,49 @@ async def test_native_tool_use_lists_routes_without_skill_instructions() -> None
     )
 
     assert result.run.status is RunStatus.COMPLETED
-    observation = gateway.requests[1].tool_results[0].observation
-    assert observation == {"status": "succeeded", "summary": "Listed 2 Skill routes."}
-    assert "KNOWLEDGE_SKILL_INSTRUCTIONS" not in str(observation)
-    assert "CREATOR_SKILL_INSTRUCTIONS" not in str(observation)
+    request = gateway.requests[0]
+    assert [tool.name for tool in request.tools] == ["invoke_skill"]
+    assert "knowledge_agent v1.0.0" in request.messages[0].content
+    assert "skill_creator v1.0.0" in request.messages[0].content
+    assert "KNOWLEDGE_SKILL_INSTRUCTIONS" not in request.messages[0].content
+    assert "CREATOR_SKILL_INSTRUCTIONS" not in request.messages[0].content
+
+
+async def test_native_tool_use_exposes_base_tools_before_skill_selection() -> None:
+    registry = InMemoryToolRegistry(handlers={"base": _handler})
+    base = registry.register(
+        ToolDefinition(
+            name="fs_list",
+            version="1.0.0",
+            description="List common workspace files.",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={
+                "type": "object",
+                "required": ["status"],
+                "properties": {"status": {"type": "string"}},
+            },
+            permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
+            handler_name="base",
+            model_visible=True,
+        )
+    )
+    gateway = SequenceNativeGateway(_response(text="Synthetic terminal response."))
+    result = await NativeToolUseAgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(base.ref,),
+        base_tools=(base.ref,),
+        system_prompt="Native base prompt.",
+        model_gateway=cast(ModelGateway, gateway),
+        skill_catalog=SyntheticSkillCatalog(),
+    ).execute(
+        _run(permissions=base.permissions),
+        _pin(),
+        {"question": "synthetic"},
+        goal="Answer the synthetic request.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert [tool.name for tool in gateway.requests[0].tools] == ["invoke_skill", "fs_list"]
 
 
 async def test_native_tool_use_rejects_skill_without_runtime_adapter() -> None:

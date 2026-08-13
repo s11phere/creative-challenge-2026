@@ -25,6 +25,7 @@ from jsonschema.exceptions import SchemaError
 
 type JSONValue = None | bool | int | float | str | list[JSONValue] | dict[str, JSONValue]
 type ToolHandler = Callable[[dict[str, JSONValue], ToolExecutionContext], Awaitable[JSONValue]]
+QA_ANSWER_MARKER = "{{current_grounded_qa_answer}}"
 
 _NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 _VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
@@ -485,6 +486,7 @@ def tool_input_summary(value: JSONValue | Mapping[str, JSONValue]) -> str:
 __all__ = [
     "InMemoryToolRegistry",
     "JSONValue",
+    "QA_ANSWER_MARKER",
     "ToolDefinition",
     "ToolExecutionContext",
     "ToolHandler",

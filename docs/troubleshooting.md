@@ -259,12 +259,18 @@ Collector 不可达时 exporter 会有界失败，API/Worker 应继续运行。�
 `agent-run-sse-v4` 只由启用 native Tool-use 的 v2 executor 写入；旧 Run 仍读取
 `agent-run-sse-v3`，不要在 Web timeline 中把两种 schema 混为同一历史。事件 payload 只包含安全
 字符串和计数，禁止 prompt、回答、文档正文、Tool body 和密钥；如果看到 v4 字段缺失，先检查
-Provider 是否显式声明 `FAST_CHAT_NATIVE_TOOL_USE` 能力并启用了对应配置。
+`FAST_CHAT_NATIVE_TOOL_USE` 是否被部署显式设为 `false`，或 Provider capability 是否未声明
+native Tool-use；默认配置启用 v2，能力不可用时会回退到保留的 v1 路径。
 
 Prompt cache 仅在 `FAST_CHAT_PROMPT_CACHING=true`、ModelGateway capability 声明支持且部署策略
 允许时发送 `extra_body.cache_key`。cache key 只由静态 prompt/schema/Skill/provider 摘要组成，
 不包含用户消息、Space、Tool 观察或私有内容；隐私策略或 Provider 不支持时仍会正常执行并显示
 `cache_mode=unsupported`。不要把 cache key 当作安全边界。
+
+如果 `agent_harness_trace` 的最后事件是 `llm_error=MODEL_INVALID_RESPONSE`，且 Provider 原始响应
+中 `reasoning_content` 充满重复的“如何保存文件”推理并出现 `finish_reason=length`，检查请求是否要求
+“知识问答并保存为 md 文件”。v2 现在会让 `knowledge_answer` 返回非终态观察，agent 随后自行决定
+`fs_list`、`fs_write` 顺序，并使用 `{{current_grounded_qa_answer}}` 由服务端解析和 finalize。
 
 ## Windows 下 pnpm 脚本被阻止
 
@@ -315,8 +321,9 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
 - 已有 Agent Runtime、Tool/Skill Registry、声明式执行器、内存与 PostgreSQL 检查点恢复和 Skill 模板；
   新建 QA HTTP/Web Run 默认由 `knowledge_agent 1.0.0` 初始化，每个 Run 都固定包摘要，Worker 校验后才调用唯一 QA Application Port。
   可用 `GET /api/v1/skills` 检查当前安装版本和 manifest 预算。
-  当前 `assistant_agent 1.0.0` 与 `knowledge_agent 1.0.0` 的复合任务预算已提高到 32 steps、24 Tool
-  calls、131072 input tokens、32768 output tokens 和 600 秒。若仍触发 `RUN_BUDGET_EXCEEDED`，
+  当前 `assistant_agent 1.0.0` 的复合任务预算已提高到 256 steps、256 Tool calls、262144 input
+  tokens、131072 output tokens 和 7200 秒；`knowledge_agent 1.0.0` 仍按固定 32/24/600 秒用于
+  QA Runtime。若仍触发 `RUN_BUDGET_EXCEEDED`，
   Runtime error message 会列出具体超限项及实际值；优先检查 `input_tokens` 是否因长对话上下文累积。
 - `knowledge_agent 1.0.0` 通过 `fast_chat` 执行当前默认的受约束 LLM 决策，可在同一顶层 Loop 中串行调用
   注册 Tool；可调用

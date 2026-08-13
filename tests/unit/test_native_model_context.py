@@ -191,16 +191,16 @@ def test_projection_keeps_only_declared_fields_and_bounds_strings() -> None:
 
 def test_native_model_context_enforces_schema_bounds() -> None:
     with pytest.raises(ValueError, match="decision history is too large"):
-        _context(decisions=13)
+        _context(decisions=49)
     with pytest.raises(ValueError, match="observations are too large"):
-        _context(observations=9)
+        _context(observations=33)
     with pytest.raises(ValueError, match="progress summary is too large"):
         NativeModelContextV2(
             goal="Synthetic goal.",
             selected_skills=(),
             decision_history=(),
             observations=(),
-            progress_summary="x" * 4_001,
+            progress_summary="x" * 16_001,
         )
 
 

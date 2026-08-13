@@ -199,6 +199,31 @@ class TracingModelGateway:
                 {"role": message.role.value, "content": message.content}
                 for message in request.messages
             ],
+            tools=[
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "input_schema": tool.input_schema,
+                }
+                for tool in request.tools
+            ],
+            tool_call_history=[
+                {
+                    "call_id": call.call_id,
+                    "tool_name": call.tool_name,
+                    "arguments": call.arguments,
+                }
+                for call in request.tool_call_history
+            ],
+            tool_results=[
+                {
+                    "call_id": result.call_id,
+                    "tool_name": result.tool_name,
+                    "observation": result.observation,
+                }
+                for result in request.tool_results
+            ],
+            cache_key=request.cache_key,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
         )
@@ -224,6 +249,16 @@ class TracingModelGateway:
             finish_reason=response.finish_reason,
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
+            cache_read_tokens=response.usage.cached_input_tokens,
+            cache_write_tokens=response.usage.cache_write_input_tokens,
+            tool_calls=[
+                {
+                    "call_id": call.call_id,
+                    "tool_name": call.tool_name,
+                    "arguments": call.arguments,
+                }
+                for call in response.tool_calls
+            ],
             latency_ms=response.latency_ms,
         )
         return response

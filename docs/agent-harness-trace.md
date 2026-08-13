@@ -4,15 +4,28 @@
 disabled outside `APP_ENV=development`; no trace content is added to logs, SSE, HTTP responses, or
 PostgreSQL.
 
-Each top-level Agent Loop iteration records an `agent_round` event containing the complete Chat
-request messages and the complete model response. Existing `tool_call` and `tool_result` events
-retain the corresponding full Tool arguments and outputs.
+For preserved Harness v1 Runs, each top-level Agent Loop iteration records an `agent_round` event
+containing the complete Chat request messages and the complete model response. Existing
+`tool_call` and `tool_result` events retain the corresponding full Tool arguments and outputs.
+
+For native Harness v2 Runs, the same event keys are body-free. `agent_round` records safe
+request/output counters, context and cache metadata, plus the current native Tool surface and
+available Skill routes; `tool_call` and `tool_result` record stable Tool identity plus input/output
+digest summaries. The exporter detects `agent-harness-trace-v2` events and renders those safe
+projections instead of raw bodies.
 
 Export a Run as a readable Markdown report:
 
 ```powershell
 .venv\Scripts\python.exe scripts/export_agent_harness_trace.py --run-id <run-uuid>
 ```
+
+The default report keeps v2 provider bodies redacted. To inspect the complete chronological v2
+model transcript during local development, add `--include-v2-bodies`. The report adds a
+`Provider Transcript` section containing messages, native Tool definitions, prior Tool calls and
+results, response text, response Tool calls, and, when the Provider rejects a truncated reasoning
+turn, the returned reasoning text and finish reason. This flag is still local-only and must never
+be used for shared reports.
 
 The command reads only `QA_DEBUG_TRACE_PATH/<run-uuid>.jsonl` and writes by default to:
 

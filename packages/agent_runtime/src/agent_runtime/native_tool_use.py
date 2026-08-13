@@ -68,6 +68,7 @@ from .native_skill_catalog import (
 )
 from .skills import PinnedSkill, SkillRegistryError
 from .tools import (
+    QA_ANSWER_MARKER,
     JSONValue,
     ToolDefinition,
     ToolInvocation,
@@ -86,10 +87,9 @@ type PromptCacheAllowed = Callable[[AgentRunContext], bool]
 
 _STATE_SCHEMA_VERSION = "native-tool-use-loop-state-v2"
 _PROMPT_CACHE_SCHEMA_VERSION = "assistant-base-prompt-v8"
-_MAX_TERMINAL_TEXT_CHARS = 20_000
+_MAX_TERMINAL_TEXT_CHARS = 120_000
 _MAX_SELECTED_SKILLS = 2
-_DEFAULT_MAX_SELECTED_SKILL_INSTRUCTION_BYTES = 24 * 1024
-_LIST_SKILLS_TOOL_NAME = "list_skills"
+_DEFAULT_MAX_SELECTED_SKILL_INSTRUCTION_BYTES = 96 * 1024
 _INVOKE_SKILL_TOOL_NAME = "invoke_skill"
 
 
@@ -527,13 +527,14 @@ class NativeToolUseAgentLoopExecutor:
         *,
         tool_registry: AgentToolRegistry,
         allowed_tools: tuple[ToolRef, ...],
+        base_tools: tuple[ToolRef, ...] = (),
         system_prompt: str,
         model_gateway: ModelGateway,
         state_store: RuntimeStateStore | None = None,
         reasoning_profile: ReasoningProfile | None = None,
         finalizer: NativeToolUseFinalizer | None = None,
-        emergency_ceiling: int = 32,
-        max_tokens_per_turn: int = 6_144,
+        emergency_ceiling: int = 128,
+        max_tokens_per_turn: int = 32_768,
         cancellation_check: CancellationCheck | None = None,
         clock_ms: ClockMilliseconds | None = None,
         approval_request: ApprovalRequest | None = None,
@@ -549,6 +550,9 @@ class NativeToolUseAgentLoopExecutor:
         names = tuple(ref.name for ref in allowed_tools)
         if len(names) != len(set(names)):
             raise ValueError("Native Tool-use Tools must have unique names")
+        base_names = tuple(ref.name for ref in base_tools)
+        if len(base_names) != len(set(base_names)) or not set(base_tools).issubset(allowed_tools):
+            raise ValueError("Native base Tools must be unique and server-allowlisted")
         if not system_prompt.strip():
             raise ValueError("Native Tool-use system prompt must not be blank")
         if (
@@ -559,6 +563,7 @@ class NativeToolUseAgentLoopExecutor:
             raise ValueError("Native Tool-use limits must be positive")
         self._tool_registry = tool_registry
         self._allowed_tools = allowed_tools
+        self._base_tools = base_tools
         self._system_prompt = system_prompt
         self._model_gateway = model_gateway
         self._state_store = state_store
@@ -856,6 +861,7 @@ class NativeToolUseAgentLoopExecutor:
         cache_key: str | None = None,
     ) -> ChatRequest:
         selected_instructions = self._selected_skill_instructions(state)
+        catalog_text = self._skill_catalog_text()
         context = self._model_context(state, surface)
         projected_results = tuple(
             ChatToolResult(
@@ -869,7 +875,13 @@ class NativeToolUseAgentLoopExecutor:
             messages=(
                 ChatMessage(
                     role=ChatRole.SYSTEM,
-                    content="\n\n".join((self._system_prompt, *selected_instructions)),
+                    content="\n\n".join(
+                        (
+                            self._system_prompt,
+                            *((catalog_text,) if catalog_text else ()),
+                            *selected_instructions,
+                        )
+                    ),
                 ),
                 ChatMessage(
                     role=ChatRole.USER,
@@ -964,12 +976,6 @@ class NativeToolUseAgentLoopExecutor:
         item: NativeToolUseObservation,
         surface: _NativeToolSurface,
     ) -> dict[str, JSONValue]:
-        if item.call.tool_name == _LIST_SKILLS_TOOL_NAME:
-            skills = item.observation.get("skills")
-            return {
-                "status": "succeeded",
-                "summary": f"Listed {len(skills) if isinstance(skills, list) else 0} Skill routes.",
-            }
         if item.call.tool_name == _INVOKE_SKILL_TOOL_NAME:
             return {
                 "status": "succeeded",
@@ -1060,7 +1066,7 @@ class NativeToolUseAgentLoopExecutor:
 
     @staticmethod
     def _tool_family(tool_name: str, definition: ToolDefinition | None) -> str:
-        if tool_name in {_LIST_SKILLS_TOOL_NAME, _INVOKE_SKILL_TOOL_NAME}:
+        if tool_name == _INVOKE_SKILL_TOOL_NAME:
             return "bootstrap"
         if tool_name in {"knowledge_retrieve", "knowledge_answer"}:
             return "knowledge"
@@ -1270,6 +1276,7 @@ class NativeToolUseAgentLoopExecutor:
             return
         surface = self._tool_surface(state)
         context = self._model_context(state, surface)
+        selected_instructions = self._selected_skill_instructions(state)
         visible_observation_bytes = sum(
             len(
                 json.dumps(
@@ -1283,8 +1290,10 @@ class NativeToolUseAgentLoopExecutor:
         )
         await self._debug_trace.record(
             "agent_round",
-            round_number=state.iteration,
+            round_number=state.iteration + 1,
             phase="native_tool_use",
+            harness_version="native-tool-use-v2",
+            schema_version="agent-harness-trace-v2",
             context_digest=context.digest(),
             cache_mode=cache_mode,
             visible_observation_bytes=visible_observation_bytes,
@@ -1292,17 +1301,139 @@ class NativeToolUseAgentLoopExecutor:
                 "tool_count": len(request.tools),
                 "message_count": len(request.messages),
                 "cache_key": request.cache_key,
+                "tools": [
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "input_schema": tool.input_schema,
+                    }
+                    for tool in request.tools
+                ],
+                "skill_routes": [
+                    {
+                        "name": route.pin.name,
+                        "version": route.pin.version,
+                        "description": route.description,
+                        "command": route.command,
+                        "adapter_available": route.adapter_available,
+                    }
+                    for route in (
+                        self._skill_catalog.list_routes() if self._skill_catalog is not None else ()
+                    )
+                ],
+                "tool_call_history": [
+                    {"call_id": call.call_id, "tool_name": call.tool_name}
+                    for call in request.tool_call_history
+                ],
+                "tool_results": [
+                    {
+                        "call_id": result.call_id,
+                        "tool_name": result.tool_name,
+                        "observation": result.observation,
+                    }
+                    for result in request.tool_results
+                ],
+                "static_prompt_bytes": len(
+                    "\n\n".join((self._system_prompt, *selected_instructions)).encode("utf-8")
+                ),
+                "dynamic_context_bytes": sum(
+                    len(message.content.encode("utf-8"))
+                    for message in request.messages
+                    if message.role is not ChatRole.SYSTEM
+                ),
+                "eager_skill_instruction_bytes": sum(
+                    len(instruction.encode("utf-8")) for instruction in selected_instructions
+                ),
+                "unselected_skill_instruction_bytes": 0,
             },
             output={
                 "usage": {
                     "input_tokens": response.usage.input_tokens,
                     "output_tokens": response.usage.output_tokens,
-                    "cached_input_tokens": response.usage.cached_input_tokens,
-                    "cache_write_input_tokens": response.usage.cache_write_input_tokens,
+                    "cache_read_tokens": response.usage.cached_input_tokens,
+                    "cache_write_tokens": response.usage.cache_write_input_tokens,
                 },
                 "tool_calls": len(response.tool_calls),
                 "finish_reason": response.finish_reason,
             },
+        )
+
+    async def _trace_tool_success(
+        self,
+        *,
+        tool_name: str,
+        tool_version: str,
+        idempotency_key: str,
+        input_summary: str,
+        output_summary: str,
+        retry_count: int,
+        duration_ms: int,
+        tool_family: str,
+        decision_summary: str,
+    ) -> None:
+        if self._debug_trace is None:
+            return
+        input_projection = {
+            "summary": input_summary,
+            "family": tool_family,
+        }
+        await self._debug_trace.record(
+            "tool_call",
+            harness_version="native-tool-use-v2",
+            schema_version="agent-harness-trace-v2",
+            tool_name=tool_name,
+            tool_version=tool_version,
+            idempotency_key=idempotency_key,
+            input=input_projection,
+        )
+        await self._debug_trace.record(
+            "tool_result",
+            harness_version="native-tool-use-v2",
+            schema_version="agent-harness-trace-v2",
+            tool_name=tool_name,
+            tool_version=tool_version,
+            idempotency_key=idempotency_key,
+            output={
+                "summary": output_summary,
+                "decision_summary": decision_summary,
+                "retry_count": retry_count,
+                "duration_ms": duration_ms,
+                "family": tool_family,
+            },
+        )
+
+    async def _trace_tool_failure(
+        self,
+        *,
+        tool_name: str,
+        tool_version: str,
+        idempotency_key: str,
+        input_summary: str,
+        tool_family: str,
+        error: BaseException,
+    ) -> None:
+        if self._debug_trace is None:
+            return
+        code = getattr(error, "code", None)
+        if not isinstance(code, str):
+            code = type(error).__name__
+        await self._debug_trace.record(
+            "tool_call",
+            harness_version="native-tool-use-v2",
+            schema_version="agent-harness-trace-v2",
+            tool_name=tool_name,
+            tool_version=tool_version,
+            idempotency_key=idempotency_key,
+            input={"summary": input_summary, "family": tool_family},
+        )
+        await self._debug_trace.record(
+            "tool_error",
+            harness_version="native-tool-use-v2",
+            schema_version="agent-harness-trace-v2",
+            tool_name=tool_name,
+            tool_version=tool_version,
+            idempotency_key=idempotency_key,
+            error={"code": code, "message": str(error)[:2000]},
         )
 
     async def _complete_pending_tool(
@@ -1337,14 +1468,24 @@ class NativeToolUseAgentLoopExecutor:
                 tool_family=self._tool_family(definition.name, definition),
             )
             return await self._complete_server_tool(run, state, surface, input_data)
-        if self._skill_catalog is not None and call.tool_name in {
-            _LIST_SKILLS_TOOL_NAME,
-            _INVOKE_SKILL_TOOL_NAME,
-        }:
+        if self._skill_catalog is not None and call.tool_name == _INVOKE_SKILL_TOOL_NAME:
             return await self._complete_bootstrap_tool(run, state)
         definition = surface.by_name.get(call.tool_name)
         if definition is None:
             raise RecoveryRejectedError("native Tool-use checkpoint Tool is not allowed")
+        is_qa_workspace_write = (
+            call.tool_name == "fs_write" and call.arguments.get("content") == QA_ANSWER_MARKER
+        )
+        if is_qa_workspace_write and self._server_tools is not None:
+            resolver = getattr(self._server_tools, "resolve_workspace_write", None)
+            if resolver is not None:
+                call = replace(
+                    call,
+                    arguments=cast(
+                        dict[str, JSONValue],
+                        dict(resolver(run.context.run_id, dict(call.arguments))),
+                    ),
+                )
         invocation = ToolInvocation(
             ref=definition.ref,
             arguments=call.arguments,
@@ -1386,7 +1527,18 @@ class NativeToolUseAgentLoopExecutor:
             input_summary=tool_input_summary(call.arguments),
             tool_family=self._tool_family(definition.name, definition),
         )
-        result = await self._invoke_with_retry(run, invocation, definition)
+        try:
+            result = await self._invoke_with_retry(run, invocation, definition)
+        except BaseException as error:
+            await self._trace_tool_failure(
+                tool_name=definition.name,
+                tool_version=definition.version,
+                idempotency_key=invocation.idempotency_key,
+                input_summary=tool_input_summary(call.arguments),
+                tool_family=self._tool_family(definition.name, definition),
+                error=error,
+            )
+            raise
         try:
             state = state.observe(result)
         except ValueError as exc:
@@ -1395,6 +1547,17 @@ class NativeToolUseAgentLoopExecutor:
                 category=RunErrorCategory.SCHEMA,
                 message="Native Tool-use result is not a model-visible object.",
             ) from exc
+        await self._trace_tool_success(
+            tool_name=definition.name,
+            tool_version=definition.version,
+            idempotency_key=result.record.idempotency_key,
+            input_summary=result.record.input_summary,
+            output_summary=result.record.output_summary,
+            retry_count=result.record.retry_count,
+            duration_ms=result.record.duration_ms,
+            tool_family=self._tool_family(definition.name, definition),
+            decision_summary=self._observation_summary(state.observations[-1]),
+        )
         await self._emit_tool_output(
             run,
             state,
@@ -1408,6 +1571,19 @@ class NativeToolUseAgentLoopExecutor:
             tool_family=self._tool_family(definition.name, definition),
             decision_summary=self._observation_summary(state.observations[-1]),
         )
+        if is_qa_workspace_write and self._server_tools is not None:
+            note_written = getattr(self._server_tools, "note_workspace_written", None)
+            if note_written is not None:
+                note_written(run.context.run_id)
+            terminal_projection = getattr(self._server_tools, "server_terminal_projection", None)
+            if terminal_projection is not None:
+                projection = terminal_projection(run.context.run_id)
+                if projection is not None:
+                    terminal_output, publication_id = projection
+                    state = state.begin_server_finalization(terminal_output, publication_id)
+                    run = _move_to_executing(result.run).transition(RunEvent.FINALIZE)
+                    run = await self._persist(run, state, next_step=RunStep.VERIFYING)
+                    return run, state, False
         run = await self._persist(result.run, state)
         return run, state, False
 
@@ -1424,7 +1600,19 @@ class NativeToolUseAgentLoopExecutor:
             raise RecoveryRejectedError("native server Tool continuation is unavailable")
         if call.tool_name not in {ref.name for ref in coordinator.tool_refs()}:
             raise RecoveryRejectedError("native server Tool is not owned by the coordinator")
-        result = await coordinator.execute(run, state, call, input_data)
+        definition = surface.by_name.get(call.tool_name)
+        try:
+            result = await coordinator.execute(run, state, call, input_data)
+        except BaseException as error:
+            await self._trace_tool_failure(
+                tool_name=call.tool_name,
+                tool_version=(definition.version if definition is not None else "1.0.0"),
+                idempotency_key=self._idempotency_key(run, state.iteration, call),
+                input_summary=tool_input_summary(call.arguments),
+                tool_family=self._tool_family(call.tool_name, definition),
+                error=error,
+            )
+            raise
         if result.run.context.run_id != run.context.run_id:
             raise NodeExecutionError(
                 code="RUN_NATIVE_TOOL_USE_SERVER_RUN_INVALID",
@@ -1461,6 +1649,17 @@ class NativeToolUseAgentLoopExecutor:
                 category=RunErrorCategory.SCHEMA,
                 message="Native server Tool result is not a model-visible object.",
             ) from exc
+        await self._trace_tool_success(
+            tool_name=result.record.tool_name,
+            tool_version=result.record.tool_version,
+            idempotency_key=result.record.idempotency_key,
+            input_summary=result.record.input_summary,
+            output_summary=result.record.output_summary,
+            retry_count=result.record.retry_count,
+            duration_ms=result.record.duration_ms,
+            tool_family=self._tool_family(result.record.tool_name, definition),
+            decision_summary=self._observation_summary(state.observations[-1]),
+        )
         updated_run = _move_to_executing(result.run)
         if state.terminal_output is not None:
             updated_run = updated_run.transition(RunEvent.FINALIZE)
@@ -1478,26 +1677,7 @@ class NativeToolUseAgentLoopExecutor:
         call = state.pending_call
         if catalog is None or call is None:
             raise RecoveryRejectedError("native Tool-use bootstrap Tool is unavailable")
-        if call.tool_name == _LIST_SKILLS_TOOL_NAME:
-            if call.arguments:
-                raise NodeExecutionError(
-                    code="RUN_NATIVE_TOOL_USE_BOOTSTRAP_INPUT_INVALID",
-                    category=RunErrorCategory.SCHEMA,
-                    message="list_skills does not accept arguments.",
-                )
-            observation: dict[str, JSONValue] = {
-                "skills": [
-                    {
-                        "name": route.pin.name,
-                        "version": route.pin.version,
-                        "description": route.description,
-                        "command": route.command,
-                        "adapter_available": route.adapter_available,
-                    }
-                    for route in catalog.list_routes()
-                ]
-            }
-        elif call.tool_name == _INVOKE_SKILL_TOOL_NAME:
+        if call.tool_name == _INVOKE_SKILL_TOOL_NAME:
             name = _skill_name_argument(call.arguments)
             try:
                 selection = catalog.select(name)
@@ -1521,7 +1701,7 @@ class NativeToolUseAgentLoopExecutor:
                     category=RunErrorCategory.PERMISSION,
                     message="Requested Skill is not available through the native runtime.",
                 ) from exc
-            observation = {
+            observation: dict[str, JSONValue] = {
                 "name": selection.pin.name,
                 "version": selection.pin.version,
                 "selected": True,
@@ -1546,11 +1726,22 @@ class NativeToolUseAgentLoopExecutor:
                 permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
                 idempotency_key=self._idempotency_key(run, state.iteration, call),
                 input_summary=tool_input_summary(call.arguments),
-                output_summary=_bootstrap_output_summary(call.tool_name, observation),
+                output_summary=_bootstrap_output_summary(observation),
             ),
         )
         try:
             state = state.observe(result)
+            await self._trace_tool_success(
+                tool_name=call.tool_name,
+                tool_version="1.0.0",
+                idempotency_key=result.record.idempotency_key,
+                input_summary=result.record.input_summary,
+                output_summary=result.record.output_summary,
+                retry_count=result.record.retry_count,
+                duration_ms=result.record.duration_ms,
+                tool_family="bootstrap",
+                decision_summary=self._observation_summary(state.observations[-1]),
+            )
             await self._emit_tool_output(
                 run,
                 state,
@@ -1580,7 +1771,8 @@ class NativeToolUseAgentLoopExecutor:
             return _NativeToolSurface(definitions=definitions)
         selections = tuple(self._skill_catalog.resolve(pin) for pin in state.selected_skills)
         selected_tools = tuple(ref for selection in selections for ref in selection.allowed_tools)
-        if not set(selected_tools).issubset(self._allowed_tools):
+        combined_tools = tuple(dict.fromkeys((*selected_tools, *self._base_tools)))
+        if not set(combined_tools).issubset(self._allowed_tools):
             raise NodeExecutionError(
                 code="RUN_NATIVE_TOOL_USE_SKILL_TOOL_DENIED",
                 category=RunErrorCategory.PERMISSION,
@@ -1590,17 +1782,16 @@ class NativeToolUseAgentLoopExecutor:
         if (
             self._server_tools is not None
             and self._server_tools.blocks_direct_terminal(selected_names)
-            and not set(self._server_tools.tool_refs()).issubset(selected_tools)
+            and not set(self._server_tools.tool_refs()).issubset(combined_tools)
         ):
             raise NodeExecutionError(
                 code="RUN_NATIVE_TOOL_USE_KNOWLEDGE_TOOL_DENIED",
                 category=RunErrorCategory.PERMISSION,
                 message="Selected knowledge Skill does not expose the server knowledge Tools.",
             )
-        definitions = tuple(self._tool_registry.get(ref) for ref in selected_tools)
+        definitions = tuple(self._tool_registry.get(ref) for ref in combined_tools)
         self._validate_model_visible_definitions(definitions)
         if {definition.name for definition in definitions} & {
-            _LIST_SKILLS_TOOL_NAME,
             _INVOKE_SKILL_TOOL_NAME,
         }:
             raise NodeExecutionError(
@@ -1611,11 +1802,6 @@ class NativeToolUseAgentLoopExecutor:
         return _NativeToolSurface(
             definitions=definitions,
             bootstrap_tools=(
-                ChatToolDefinition(
-                    name=_LIST_SKILLS_TOOL_NAME,
-                    description="List active Skill routes without Skill instructions.",
-                    input_schema={"type": "object", "additionalProperties": False},
-                ),
                 ChatToolDefinition(
                     name=_INVOKE_SKILL_TOOL_NAME,
                     description="Select one active Skill by name for a later model turn.",
@@ -1643,6 +1829,23 @@ class NativeToolUseAgentLoopExecutor:
                 message="Selected Skill instructions exceed the native context budget.",
             )
         return instructions
+
+    def _skill_catalog_text(self) -> str:
+        if self._skill_catalog is None:
+            return ""
+        routes = self._skill_catalog.list_routes()
+        if not routes:
+            return ""
+        lines = [
+            "Available Skill routes (call `invoke_skill` with one `name` when a route is needed):",
+        ]
+        for route in routes:
+            availability = "callable" if route.adapter_available else "entry-point only"
+            lines.append(
+                f"- {route.pin.name} v{route.pin.version} "
+                f"[{availability}] command={route.command}: {route.description}"
+            )
+        return "\n".join(lines)
 
     def _validate_recovery_selected_skills(self, state: NativeToolUseLoopState) -> None:
         if state.selected_skills and self._skill_catalog is None:
@@ -1934,10 +2137,7 @@ def _skill_name_argument(arguments: Mapping[str, JSONValue]) -> str:
     return name
 
 
-def _bootstrap_output_summary(tool_name: str, observation: Mapping[str, JSONValue]) -> str:
-    if tool_name == _LIST_SKILLS_TOOL_NAME:
-        skills = observation.get("skills")
-        return f"Listed {len(skills) if isinstance(skills, list) else 0} Skill routes."
+def _bootstrap_output_summary(observation: Mapping[str, JSONValue]) -> str:
     name = observation.get("name")
     return f"Selected Skill {name}." if isinstance(name, str) else "Selected a Skill."
 

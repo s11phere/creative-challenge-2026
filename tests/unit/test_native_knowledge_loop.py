@@ -609,9 +609,8 @@ async def test_native_executor_finalizes_knowledge_answer_without_an_extra_model
     ]
     assert len(gateway.requests) == 3
     assert gateway.remaining == 0
-    assert gateway.requests[0].tools[0].name == "list_skills"
+    assert gateway.requests[0].tools[0].name == "invoke_skill"
     assert [tool.name for tool in gateway.requests[1].tools] == [
-        "list_skills",
         "invoke_skill",
         "knowledge_retrieve",
         "knowledge_answer",
@@ -847,8 +846,162 @@ async def test_workspace_tool_does_not_unlock_a_direct_knowledge_terminal() -> N
         goal="Answer and save a synthetic workspace artifact.",
     )
 
-    assert write_calls == 1
+    assert write_calls == 0
     assert result.run.status is RunStatus.FAILED
     assert result.error is not None
-    assert result.error.code == "RUN_NATIVE_TOOL_USE_KNOWLEDGE_TERMINAL_DENIED"
+    assert result.error.code == "RUN_KNOWLEDGE_WORKSPACE_QA_REQUIRED"
     assert qa.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_workspace_write_after_knowledge_answer_is_resolved_and_finalized() -> None:
+    write_calls: list[dict[str, JSONValue]] = []
+    list_calls = 0
+
+    async def write_handler(
+        arguments: dict[str, JSONValue], _context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        write_calls.append(arguments)
+        return {"status": "ok"}
+
+    async def list_handler(
+        _arguments: dict[str, JSONValue], _context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        nonlocal list_calls
+        list_calls += 1
+        return {"status": "ok"}
+
+    class AlwaysApprovedPort:
+        async def request(self, context: AgentRunContext, tool: ToolCallRecord) -> str:
+            del context, tool
+            return "approval-1"
+
+        async def is_approved(self, approval_id: str, context: AgentRunContext) -> bool:
+            del approval_id, context
+            return True
+
+        async def is_always_allowed(
+            self, context: AgentRunContext, tool_name: str, tool_version: str
+        ) -> bool:
+            del context, tool_name, tool_version
+            return True
+
+    search = FakeSearchService()
+    qa = FakeGroundedQA()
+    adapter = _adapter(search, qa)
+    combined = InMemoryToolRegistry(
+        handlers={
+            "knowledge_retrieve": adapter._retrieve_handler,
+            "knowledge_answer": adapter._answer_handler,
+            "fs_list": list_handler,
+            "fs_write": write_handler,
+        },
+        approval_port=AlwaysApprovedPort(),
+    )
+    combined.register(adapter.retrieve_tool)
+    combined.register(adapter.answer_tool)
+    list_tool = combined.register(
+        ToolDefinition(
+            name="fs_list",
+            version="1.0.0",
+            description="List workspace files.",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={
+                "type": "object",
+                "required": ["status"],
+                "properties": {"status": {"type": "string"}},
+            },
+            permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
+            handler_name="fs_list",
+            model_visible=True,
+        )
+    )
+    write_tool = combined.register(
+        ToolDefinition(
+            name="fs_write",
+            version="1.0.0",
+            description="Write a workspace artifact.",
+            input_schema={
+                "type": "object",
+                "required": ["path", "content"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+            },
+            output_schema={
+                "type": "object",
+                "required": ["status"],
+                "properties": {"status": {"type": "string"}},
+            },
+            permissions=frozenset({ToolPermission.WRITE_KNOWLEDGE}),
+            handler_name="fs_write",
+            model_visible=True,
+        )
+    )
+    allowed_tools = (*adapter.allowed_tools(), list_tool.ref, write_tool.ref)
+    gateway = SequenceNativeGateway(
+        _response(
+            calls=(_call("invoke_skill", {"name": "knowledge_agent"}, "call-1"),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(_call("knowledge_retrieve", {"query": "architecture"}, "call-2"),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(_call("knowledge_answer", {}, "call-3"),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(_call("fs_list", {"path": "."}, "call-4"),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(
+                _call(
+                    "fs_write",
+                    {
+                        "path": "answer.md",
+                        "content": "{{current_grounded_qa_answer}}",
+                    },
+                    "call-5",
+                ),
+            ),
+            finish_reason="tool_calls",
+        ),
+    )
+
+    result = await NativeToolUseAgentLoopExecutor(
+        tool_registry=combined,
+        allowed_tools=allowed_tools,
+        system_prompt="Native base prompt.",
+        model_gateway=cast(ModelGateway, gateway),
+        skill_catalog=SyntheticSkillCatalog(_skill(allowed_tools)),
+        server_tools=adapter,
+        approval_port=AlwaysApprovedPort(),
+    ).execute(
+        _run(
+            permissions=frozenset(
+                {
+                    ToolPermission.READ_KNOWLEDGE,
+                    ToolPermission.MODEL,
+                    ToolPermission.WRITE_KNOWLEDGE,
+                }
+            )
+        ),
+        _pin(),
+        {
+            "question": "Answer and save as md file.",
+            "conversation": "Answer and save as md file.",
+            "workspace": {"selected": True, "tools_enabled": True},
+        },
+        goal="Answer and save a synthetic workspace artifact.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert result.error is None
+    assert list_calls == 1
+    assert write_calls[0]["content"] == "Synthetic authoritative QA answer."
+    assert qa.execute_calls == [RUN_ID]
+    assert gateway.remaining == 0
