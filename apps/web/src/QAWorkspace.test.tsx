@@ -85,13 +85,107 @@ describe('assistant conversation workspace', () => {
     const composer = await screen.findByRole('combobox', { name: '消息' })
     fireEvent.change(composer, { target: { value: '/su' } })
 
-    expect(await screen.findByRole('listbox', { name: '可用指令' })).toBeInTheDocument()
+    expect(await screen.findByRole('listbox', { name: '指令与技能' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: /\/summarize/ })).toBeInTheDocument()
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' })
 
-    expect(composer).toHaveValue('/summarize ')
+    expect(composer).toHaveValue('')
+    expect(screen.getByLabelText('已选择技能 summarize')).toBeInTheDocument()
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'LLM Agent' })).not.toBeInTheDocument()
+  })
+
+  it('通过入口按钮按“指令”和“技能”分组展示目录，选择后只插入内容', async () => {
+    const fetchMock = baseFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox', { name: '消息' })
+    const trigger = screen.getByRole('button', { name: '指令与技能' })
+    fireEvent.click(trigger)
+
+    expect(screen.getByRole('listbox', { name: '指令与技能' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '指令' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '技能' })).toBeInTheDocument()
+    expect(screen.getByText('查看或调整当前会话的默认思考强度。')).toBeInTheDocument()
+    expect(screen.queryByText('别名：/summary', { exact: false })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('option', { name: /\/summarize/ }))
+    expect(composer).toHaveValue('')
+    expect(screen.getByLabelText('已选择技能 summarize')).toBeInTheDocument()
+    await waitFor(() => expect(composer).toHaveFocus())
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringMatching(/\/turns$/),
+      expect.anything(),
+    )
+  })
+
+  it('将可视化技能标签与任务正文还原为现有斜杠协议提交', async () => {
+    const submittedBodies: unknown[] = []
+    const fetchMock = baseFetch()
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
+        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [], runs: [] }] }))
+      }
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [] }))
+      if (url.endsWith('/api/v2/conversations/conversation-1/turns')) {
+        submittedBodies.push(JSON.parse(String(init?.body)))
+        return Promise.resolve(response(assistantRun({
+          run_kind: 'skill',
+          selection: { source: 'command', skill: { name: 'summarize_document', version: '1.0.0', content_sha256: 'a'.repeat(64) } },
+        }), 202))
+      }
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: () => 'visual-skill-idempotency' })
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox', { name: '消息' })
+    fireEvent.click(screen.getByRole('button', { name: '指令与技能' }))
+    fireEvent.click(screen.getByRole('option', { name: /\/summarize/ }))
+    fireEvent.change(composer, { target: { value: '总结这篇论文的关键贡献' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(submittedBodies).toEqual([{
+      content: '/summarize 总结这篇论文的关键贡献',
+      idempotency_key: 'visual-skill-idempotency',
+    }]))
+  })
+
+  it('将指令也显示为可视化标签，并支持补充参数', async () => {
+    vi.stubGlobal('fetch', baseFetch())
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox', { name: '消息' })
+    fireEvent.click(screen.getByRole('button', { name: '指令与技能' }))
+    fireEvent.click(screen.getByRole('option', { name: /\/effort/ }))
+
+    expect(composer).toHaveValue('')
+    expect(screen.getByLabelText('已选择指令 effort')).toBeInTheDocument()
+    expect(composer).toHaveAttribute('placeholder', '[low|medium|high|xhigh|max]')
+    fireEvent.keyDown(composer, { key: 'Backspace' })
+    expect(screen.queryByLabelText('已选择指令 effort')).not.toBeInTheDocument()
+  })
+
+  it('支持跨分组键盘导航、关闭面板和中文空结果', async () => {
+    vi.stubGlobal('fetch', baseFetch())
+    renderWorkspace()
+
+    const composer = await screen.findByRole('combobox', { name: '消息' })
+    fireEvent.click(screen.getByRole('button', { name: '指令与技能' }))
+    fireEvent.keyDown(composer, { key: 'ArrowUp' })
+    expect(screen.getByRole('option', { name: /\/summarize/ })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+
+    fireEvent.change(composer, { target: { value: '/zzzz' } })
+    expect(screen.getByText('未找到匹配的指令或技能')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '指令与技能' }))
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
 
   it('prefers command-name prefixes over description matches', async () => {
