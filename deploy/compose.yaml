@@ -299,6 +299,7 @@ services:
       timeout: 5s
       retries: 60
       start_period: 60s
+    restart: unless-stopped
 
   tei-reranker:
     profiles:
@@ -325,6 +326,7 @@ services:
       timeout: 5s
       retries: 60
       start_period: 60s
+    restart: unless-stopped
 
 volumes:
   pgdata:
