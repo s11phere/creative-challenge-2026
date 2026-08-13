@@ -11,6 +11,8 @@ from domain.conversation_run import (
     ConversationRunStatus,
     ResourceCandidate,
 )
+from infrastructure.conversation_runs import _is_orphaned_native_approval
+from infrastructure.orm import ConversationRunModel, RuntimeCheckpointModel
 
 
 def test_completed_run_requires_a_safe_result_reference() -> None:
@@ -58,3 +60,32 @@ def test_clarification_keeps_only_bounded_safe_resource_metadata() -> None:
 
     assert result.clarification is not None
     assert result.clarification.resource_candidates[0].label == "Architecture"
+
+
+def test_recovery_only_marks_legacy_native_approval_orphans() -> None:
+    run = ConversationRunModel(cancellation_requested=False)
+    checkpoint = RuntimeCheckpointModel(
+        run_id=UUID(int=1),
+        sequence=1,
+        schema_version=1,
+        skill_name="assistant_agent",
+        skill_version="1.0.0",
+        skill_content_sha256="a" * 64,
+        state={
+            "schema_version": "native-tool-use-loop-state-v2",
+            "pending_call": {"call_id": "call-1", "tool_name": "fs_write"},
+            "approval_id": None,
+        },
+        state_sha256="b" * 64,
+        usage={},
+        next_step="executing",
+        next_node="native_tool_use_loop",
+        verified=True,
+    )
+
+    assert _is_orphaned_native_approval(run, checkpoint)
+    checkpoint.state["approval_id"] = "approval-1"
+    assert not _is_orphaned_native_approval(run, checkpoint)
+    checkpoint.state["approval_id"] = None
+    checkpoint.next_node = "agent_loop"
+    assert not _is_orphaned_native_approval(run, checkpoint)

@@ -383,6 +383,14 @@ aggregate counters for routing misfires, clarification loops, cancellation, reco
 and latency. Keep `MODEL_ALLOW_EXTERNAL`, source policy, deployment policy, and user consent
 unchanged when rebuilding the current Web image.
 
+## Native Tool-use multiple Tool calls
+
+If a native Tool-use Provider returns more than one Tool call in one response,
+the Runtime executes none of them. It records one bounded protocol retry and
+asks the model to choose one Tool in the next turn. A repeated violation fails
+with `RUN_NATIVE_TOOL_USE_MULTIPLE_CALLS`. The retry does not bypass approval,
+execute a discarded call, or impose a Tool order or artifact path.
+
 ## Workspace Tool unavailable
 
 The Assistant registers local filesystem and command Tools when a conversation has selected a
@@ -428,6 +436,19 @@ its Tool name for the current Conversation. It does not permit arbitrary paths o
 a new Conversation starts without that allowance. The card also shows filesystem paths, shell
 command and cwd, plus a bounded expandable output preview for commands and directory listings. A
 truncated preview indicates only that the display limit was reached.
+
+Runs created by the short-lived native Tool-use approval wiring defect may have
+`waiting_approval` without an approval record. Worker startup recovery recognizes only a verified
+native v2 checkpoint with a pending Tool call and a missing approval ID, requeues that Run, and lets
+the current executor create the ordinary approval request. It never executes the pending write or
+command automatically. Normal pending approvals, non-native checkpoints, cancelled Runs, and
+malformed checkpoints remain untouched.
+
+For a recovered workspace write that uses the Grounded QA answer marker, the Worker first reloads
+the current Run's persisted QA result and repeats the normal claim/citation verification before it
+can create the approval card. It still does not write the file until that approval is accepted. A
+missing, failed, or non-publishable QA result leaves the Run failed rather than substituting model
+text or re-running the write.
 
 ## `start-local.ps1` Count error
 

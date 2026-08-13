@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from typing import cast
 from uuid import UUID
 
@@ -310,6 +311,8 @@ def execution_profile() -> GroundedQAExecutionProfile:
 def _adapter(
     search: FakeSearchService,
     qa: FakeGroundedQA,
+    *,
+    result_reader: Callable[[UUID], Awaitable[QARunRecord | None]] | None = None,
 ) -> NativeKnowledgeTools:
     return NativeKnowledgeTools(
         qa=cast(GroundedQAApplicationPort, qa),
@@ -322,6 +325,7 @@ def _adapter(
                 document_ids=frozenset({DOCUMENT_ID}),
                 version_ids=frozenset({VERSION_ID}),
             ),
+            result_reader=result_reader,
         ),
     )
 
@@ -1005,3 +1009,224 @@ async def test_workspace_write_after_knowledge_answer_is_resolved_and_finalized(
     assert write_calls[0]["content"] == "Synthetic authoritative QA answer."
     assert qa.execute_calls == [RUN_ID]
     assert gateway.remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_workspace_marker_write_restores_qa_facts_before_durable_approval() -> None:
+    write_calls: list[dict[str, JSONValue]] = []
+    completed = qa_run(QAOutcome.ANSWER, run_id=RUN_ID)
+
+    async def list_handler(
+        _arguments: dict[str, JSONValue], _context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        return {"status": "ok"}
+
+    async def write_handler(
+        arguments: dict[str, JSONValue], _context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        write_calls.append(arguments)
+        return {"status": "ok"}
+
+    class ApprovalPort:
+        def __init__(self) -> None:
+            self.approved = False
+            self.requests: list[ToolCallRecord] = []
+
+        async def request(self, context: AgentRunContext, tool: ToolCallRecord) -> str:
+            del context
+            self.requests.append(tool)
+            return "approval-1"
+
+        async def is_approved(self, approval_id: str, _context: AgentRunContext) -> bool:
+            return self.approved and approval_id == "approval-1"
+
+        async def is_always_allowed(
+            self, context: AgentRunContext, tool_name: str, tool_version: str
+        ) -> bool:
+            del context, tool_name, tool_version
+            return False
+
+    approvals = ApprovalPort()
+    first_search = FakeSearchService()
+    first_qa = FakeGroundedQA()
+    first_adapter = _adapter(first_search, first_qa)
+    combined = InMemoryToolRegistry(
+        handlers={
+            "knowledge_retrieve": first_adapter._retrieve_handler,
+            "knowledge_answer": first_adapter._answer_handler,
+            "fs_list": list_handler,
+            "fs_write": write_handler,
+        },
+        approval_port=approvals,
+    )
+    combined.register(first_adapter.retrieve_tool)
+    combined.register(first_adapter.answer_tool)
+    list_tool = combined.register(
+        ToolDefinition(
+            name="fs_list",
+            version="1.0.0",
+            description="List workspace files.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["path"],
+                "properties": {"path": {"type": "string", "minLength": 1}},
+            },
+            output_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["status"],
+                "properties": {"status": {"type": "string"}},
+            },
+            permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
+            handler_name="fs_list",
+            model_visible=True,
+        )
+    )
+    write_tool = combined.register(
+        ToolDefinition(
+            name="fs_write",
+            version="1.0.0",
+            description="Write a workspace artifact.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["path", "content"],
+                "properties": {
+                    "path": {"type": "string", "minLength": 1},
+                    "content": {"type": "string"},
+                },
+            },
+            output_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["status"],
+                "properties": {"status": {"type": "string"}},
+            },
+            permissions=frozenset({ToolPermission.WRITE_KNOWLEDGE}),
+            handler_name="fs_write",
+            model_visible=True,
+        )
+    )
+    allowed_tools = (*first_adapter.allowed_tools(), list_tool.ref, write_tool.ref)
+    state_store = InMemoryRuntimeStateStore()
+    initial = await NativeToolUseAgentLoopExecutor(
+        tool_registry=combined,
+        allowed_tools=allowed_tools,
+        system_prompt="Native base prompt.",
+        model_gateway=cast(
+            ModelGateway,
+            SequenceNativeGateway(
+                _response(
+                    calls=(_call("invoke_skill", {"name": "knowledge_agent"}, "call-1"),),
+                    finish_reason="tool_calls",
+                ),
+                _response(
+                    calls=(_call("knowledge_retrieve", {"query": "architecture"}, "call-2"),),
+                    finish_reason="tool_calls",
+                ),
+                _response(
+                    calls=(_call("knowledge_answer", {}, "call-3"),),
+                    finish_reason="tool_calls",
+                ),
+                _response(
+                    calls=(_call("fs_list", {"path": "."}, "call-4"),),
+                    finish_reason="tool_calls",
+                ),
+                _response(
+                    calls=(
+                        _call(
+                            "fs_write",
+                            {"path": "answer.md", "content": "{{current_grounded_qa_answer}}"},
+                            "call-5",
+                        ),
+                    ),
+                    finish_reason="tool_calls",
+                ),
+            ),
+        ),
+        state_store=state_store,
+        skill_catalog=SyntheticSkillCatalog(_skill(allowed_tools)),
+        server_tools=first_adapter,
+        approval_port=approvals,
+    ).execute(
+        _run(
+            permissions=frozenset(
+                {
+                    ToolPermission.READ_KNOWLEDGE,
+                    ToolPermission.MODEL,
+                    ToolPermission.WRITE_KNOWLEDGE,
+                }
+            )
+        ),
+        _pin(),
+        {
+            "question": "Answer and save as md file.",
+            "conversation": "Answer and save as md file.",
+            "workspace": {"selected": True, "tools_enabled": True},
+        },
+        goal="Answer and save a synthetic workspace artifact.",
+    )
+
+    assert initial.waiting_approval
+    assert write_calls == []
+    assert first_qa.execute_calls == [RUN_ID]
+    checkpoint = await state_store.get_latest(RUN_ID)
+    assert checkpoint is not None
+    assert checkpoint.approval_id is None
+
+    async def result_reader(run_id: UUID) -> QARunRecord | None:
+        return completed if run_id == RUN_ID else None
+
+    fresh_qa = FakeGroundedQA(fail=True)
+    fresh_adapter = _adapter(FakeSearchService(), fresh_qa, result_reader=result_reader)
+    recovered_executor = NativeToolUseAgentLoopExecutor(
+        tool_registry=combined,
+        allowed_tools=allowed_tools,
+        system_prompt="Native base prompt.",
+        model_gateway=cast(ModelGateway, SequenceNativeGateway()),
+        state_store=state_store,
+        skill_catalog=SyntheticSkillCatalog(_skill(allowed_tools)),
+        server_tools=fresh_adapter,
+        approval_request=approvals.request,
+        approval_port=approvals,
+    )
+    recovered = await recovered_executor.resume(
+        initial.run,
+        _pin(),
+        checkpoint,
+        {
+            "question": "Answer and save as md file.",
+            "conversation": "Answer and save as md file.",
+            "workspace": {"selected": True, "tools_enabled": True},
+        },
+        caller_id=initial.run.context.caller_id,
+        space_id=initial.run.context.space_id,
+    )
+
+    assert recovered.waiting_approval
+    assert write_calls == []
+    assert [record.tool_name for record in approvals.requests] == ["fs_write"]
+    recovered_checkpoint = await state_store.get_latest(RUN_ID)
+    assert recovered_checkpoint is not None
+    assert recovered_checkpoint.approval_id == "approval-1"
+
+    approvals.approved = True
+    resumed = await recovered_executor.resume(
+        recovered.run,
+        _pin(),
+        recovered_checkpoint,
+        {
+            "question": "Answer and save as md file.",
+            "conversation": "Answer and save as md file.",
+            "workspace": {"selected": True, "tools_enabled": True},
+        },
+        caller_id=recovered.run.context.caller_id,
+        space_id=recovered.run.context.space_id,
+        approval_id="approval-1",
+    )
+
+    assert resumed.run.status is RunStatus.COMPLETED
+    assert resumed.error is None
+    assert write_calls == [{"path": "answer.md", "content": "Synthetic authoritative QA answer."}]
+    assert fresh_qa.execute_calls == []

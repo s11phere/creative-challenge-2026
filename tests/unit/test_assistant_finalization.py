@@ -103,6 +103,9 @@ async def test_finalizer_publishes_llm_synthesized_answer_once() -> None:
     assert gateway.calls == 1
     assert "How do I use the architecture document?" in gateway.requests[0].messages[-1].content
     assert skill_result in gateway.requests[0].messages[-1].content
+    system_prompt = gateway.requests[0].messages[0].content
+    assert "introductions, overviews" in system_prompt
+    assert "Do not force every answer into a list" in system_prompt
     assert len(await repository.list_messages(run.conversation_id)) == 2
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.resources import files
 from typing import Protocol, cast
 from uuid import UUID, uuid4
@@ -51,7 +51,7 @@ from domain.qa_persistence import MessageRecord, MessageRole, QARunRecord
 from model_gateway import CapabilityAlias, ModelGateway
 
 from .context import ConversationContextService
-from .finalization import ConversationFinalizer
+from .finalization import ConversationFinalizer, FinalizationInput, grounded_material
 from .metrics import AssistantMetrics
 
 _CONTRACT_ROOT = files("application.assistant").joinpath("contracts")
@@ -81,7 +81,7 @@ class AssistantSkillContext:
 
 
 class AssistantConversationLoopFinalizer:
-    """Publish one direct response or the already-published grounded QA message."""
+    """Publish one direct response, synthesizing verified grounded QA material."""
 
     def __init__(
         self,
@@ -134,14 +134,23 @@ class AssistantConversationLoopFinalizer:
                     RunErrorCategory.SCHEMA,
                     "Grounded QA finalization is unavailable.",
                 )
-            published = await self._runs.publish_existing_skill_result(
-                run_id=parent.run_id,
-                message_id=qa_run.answer_message_id,
-                usage=usage,
-                model_identity=self._model_identity,
-                refused=qa_run.status is QAStatus.REFUSED,
+            if self._conversation_finalizer is None:
+                raise NodeExecutionError(
+                    "RUN_KNOWLEDGE_FINALIZATION_REQUIRED",
+                    RunErrorCategory.INTERNAL,
+                    "Grounded QA requires the shared ConversationFinalizer.",
+                )
+            fallback = _qa_fallback_text(qa_run)
+            finalized = await self._conversation_finalizer.execute(
+                replace(parent, usage=usage),
+                input=FinalizationInput(
+                    question=state.task.goal,
+                    skill_result=grounded_material(qa_run, fallback),
+                    fallback_content=fallback,
+                    refused=qa_run.status is QAStatus.REFUSED,
+                ),
             )
-            return {"status": published.status.value, "publication": "grounded_qa"}
+            return {"status": finalized.status.value, "publication": "grounded_qa"}
         if decision.action.value == "clarify":
             clarified = await self._runs.publish_clarification(
                 run_id=parent.run_id,
@@ -498,6 +507,9 @@ class AutonomousAssistantLoopService:
             skill_catalog=self._native_skill_catalog,
             server_tools=self._native_server_tools,
             debug_trace=self._debug_trace,
+            approval_request=(
+                self._approval_port.request if self._approval_port is not None else None
+            ),
             approval_port=self._approval_port,
             prompt_caching_allowed=self._prompt_caching_allowed,
         )
@@ -563,12 +575,15 @@ class AutonomousAssistantLoopService:
                 or qa_run.answer_message_id is None
             ):
                 return await self._fail(parent.run_id, "RUN_KNOWLEDGE_FINALIZATION_REQUIRED")
-            await self._runs.publish_existing_skill_result(
-                run_id=parent.run_id,
-                message_id=qa_run.answer_message_id,
-                usage=_combined_usage(parent, result.run),
-                model_identity=self._gateway.status.provider.value,
-                refused=qa_run.status is QAStatus.REFUSED,
+            fallback = _qa_fallback_text(qa_run)
+            await self._conversation_finalizer.execute(
+                replace(parent, usage=_combined_usage(parent, result.run)),
+                input=FinalizationInput(
+                    question=user_message.content,
+                    skill_result=grounded_material(qa_run, fallback),
+                    fallback_content=fallback,
+                    refused=qa_run.status is QAStatus.REFUSED,
+                ),
             )
         completed = await self._runs.get_conversation_run(parent.run_id)
         if completed is None:
@@ -777,6 +792,19 @@ def _grounded_finalization_ready(state: AgentLoopState) -> bool:
         and observation.model_output.get("publication") == "grounded_qa"
         for observation in state.observations
     )
+
+
+def _qa_fallback_text(qa_run: QARunRecord) -> str:
+    result = qa_run.result
+    if result is None:
+        return ""
+    if result.answer is not None:
+        return result.answer.text
+    if result.refusal is not None:
+        return result.refusal.message
+    if result.conflict is not None:
+        return result.conflict.message
+    return ""
 
 
 _INTERNAL_CLARIFICATION_MARKERS = re.compile(

@@ -23,8 +23,14 @@ from application.assistant import (
 from application.assistant.autonomous_loop import _next_workspace_artifact_decision
 from application.qa import InMemoryGroundedQARepository
 from domain.agent_loop import AgentLoopState, AgentLoopTask, AgentLoopToolObservation
-from domain.agent_runtime import AgentRun, AgentRunContext, RunBudget, ToolPermission
-from domain.agent_sse import AgentRunEventLog
+from domain.agent_runtime import (
+    AgentRun,
+    AgentRunContext,
+    RunBudget,
+    ToolCallRecord,
+    ToolPermission,
+)
+from domain.agent_sse import AgentRunEventLog, AgentRunEventType
 from domain.assistant_sse import AssistantEventLog
 from domain.conversation_run import ConversationRunStatus
 from domain.qa_persistence import ConversationRecord, QARunRecord
@@ -32,6 +38,7 @@ from model_gateway import (
     CapabilityAlias,
     ChatRequest,
     ChatResponse,
+    ChatToolCall,
     FakeModelGateway,
     GatewayStatus,
     ModelGateway,
@@ -182,6 +189,30 @@ class DirectNativeGateway:
         return ChatResponse(
             text=self._text,
             finish_reason="stop",
+            usage=ModelUsage(input_tokens=5, output_tokens=3),
+            capability=capability,
+            latency_ms=1.0,
+        )
+
+
+class WorkspaceWriteNativeGateway(DirectNativeGateway):
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
+    ) -> ChatResponse:
+        self.requests.append(request)
+        return ChatResponse(
+            text="",
+            tool_calls=(
+                ChatToolCall(
+                    "call-1",
+                    "fs_write",
+                    {"path": "notes/omnistudio.md", "content": "draft"},
+                ),
+            ),
+            finish_reason="tool_calls",
             usage=ModelUsage(input_tokens=5, output_tokens=3),
             capability=capability,
             latency_ms=1.0,
@@ -453,6 +484,116 @@ async def test_native_capability_and_catalog_route_new_runs_through_v2() -> None
     request = gateway.requests[0]
     assert request.messages[0].content.startswith("You are the Assistant controller")
     assert {tool.name for tool in request.tools} == {"invoke_skill"}
+
+
+
+@pytest.mark.asyncio
+async def test_native_workspace_write_creates_an_approvable_assistant_run() -> None:
+    class PendingApprovalPort:
+        def __init__(self) -> None:
+            self.requests: list[ToolCallRecord] = []
+
+        async def request(self, _context: AgentRunContext, record: ToolCallRecord) -> str:
+            self.requests.append(record)
+            return "approval-1"
+
+        async def is_approved(self, _approval_id: str, _context: AgentRunContext) -> bool:
+            return False
+
+        async def is_always_allowed(
+            self, _context: AgentRunContext, *, tool_name: str, tool_version: str
+        ) -> bool:
+            assert (tool_name, tool_version) == ("fs_write", "1.0.0")
+            return False
+
+    async def write_handler(
+        _arguments: dict[str, JSONValue], _context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        raise AssertionError("The write must wait for approval.")
+
+    repository = InMemoryGroundedQARepository()
+    conversation = ConversationRecord(
+        conversation_id=UUID(int=1171), space_id=UUID(int=1172), owner_id="loop-user"
+    )
+    await repository.create_conversation(conversation)
+    submitted = await ConversationRunService(conversations=repository, runs=repository).submit(
+        AssistantTurnSubmission(
+            conversation_id=conversation.conversation_id,
+            content="Save the workspace note.",
+            idempotency_key="autonomous-native-workspace-approval-1",
+        )
+    )
+    await repository.claim_conversation_run(
+        submitted.run_id, lease_owner="test-worker", lease_seconds=60
+    )
+    approvals = PendingApprovalPort()
+    registry = InMemoryToolRegistry(handlers={"fs_write": write_handler}, approval_port=approvals)
+    write_tool = registry.register(
+        ToolDefinition(
+            name="fs_write",
+            version="1.0.0",
+            description="Write a synthetic workspace file.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["path", "content"],
+                "properties": {
+                    "path": {"type": "string", "minLength": 1},
+                    "content": {"type": "string"},
+                },
+            },
+            output_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["status"],
+                "properties": {"status": {"type": "string"}},
+            },
+            permissions=frozenset({ToolPermission.WRITE_KNOWLEDGE}),
+            handler_name="fs_write",
+            model_visible=True,
+        )
+    )
+    agent_events = AgentRunEventLog()
+    service = AutonomousAssistantLoopService(
+        runs=repository,
+        messages=repository,
+        gateway=cast(ModelGateway, WorkspaceWriteNativeGateway()),
+        events=AssistantEventLog(),
+        agent_events=agent_events,
+        runtime_state=InMemoryRuntimeStateStore(),
+        pin=_pin(),
+        budget=RunBudget(
+            max_steps=4,
+            max_tool_calls=2,
+            max_input_tokens=100,
+            max_output_tokens=100,
+            timeout_seconds=30,
+        ),
+        tool_registry=InMemoryToolRegistry(handlers={}),
+        allowed_tools=(),
+        qa_results=_no_qa_result,
+        skill_contexts=(),
+        native_skill_catalog=cast(object, EmptyNativeCatalog()),
+        native_server_tools=cast(object, NoOpNativeServerTools()),
+        native_tool_registry=registry,
+        native_allowed_tools=(write_tool.ref,),
+        native_base_tools=(write_tool.ref,),
+        additional_permissions=frozenset({ToolPermission.WRITE_KNOWLEDGE}),
+        approval_port=approvals,
+    )
+
+    waiting = await service.execute(submitted.run_id, trace_id="h" * 32)
+
+    assert waiting is not None
+    assert waiting.status is ConversationRunStatus.WAITING_APPROVAL
+    assert [record.tool_name for record in approvals.requests] == ["fs_write"]
+    history = await agent_events.page(submitted.run_id, limit=20)
+    approval_event = next(
+        event for event in history.events if event.event_type is AgentRunEventType.APPROVAL_REQUIRED
+    )
+    assert approval_event.schema_version == "agent-run-sse-v4"
+    assert approval_event.payload["approval_id"] == "approval-1"
+    assert approval_event.payload["path"] == "notes/omnistudio.md"
 
 
 @pytest.mark.asyncio

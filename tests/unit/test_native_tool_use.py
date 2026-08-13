@@ -27,8 +27,10 @@ from domain.agent_runtime import (
     RecoveryRejectedError,
     RunBudget,
     RunStatus,
+    ToolCallRecord,
     ToolPermission,
 )
+from domain.agent_sse import AgentRunEventLog, AgentRunEventType
 from model_gateway import (
     CapabilityAlias,
     ChatRequest,
@@ -465,7 +467,143 @@ async def test_native_tool_use_resumes_an_approved_pending_call_once() -> None:
     assert resumed.run.usage.tool_calls == 1
 
 
-async def test_native_tool_use_rejects_multiple_calls_without_invoking_a_tool() -> None:
+async def test_native_tool_use_persists_and_projects_a_durable_approval_request() -> None:
+    class PendingApprovalPort:
+        async def is_approved(self, _approval_id: str, _context: AgentRunContext) -> bool:
+            return False
+
+    registry = InMemoryToolRegistry(
+        handlers={"tool": _handler}, approval_port=PendingApprovalPort()
+    )
+    definition = registry.register(_tool(permission=ToolPermission.WRITE_KNOWLEDGE))
+    requested: list[ToolCallRecord] = []
+
+    async def request_approval(_context: AgentRunContext, record: ToolCallRecord) -> str:
+        requested.append(record)
+        return "approval-1"
+
+    events = AgentRunEventLog()
+    result = await NativeToolUseAgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use native Tools only when needed.",
+        model_gateway=cast(
+            ModelGateway,
+            SequenceNativeGateway(
+                _response(
+                    calls=(ChatToolCall("call_1", definition.name, {"query": "synthetic"}),),
+                    finish_reason="tool_calls",
+                )
+            ),
+        ),
+        approval_request=request_approval,
+        approval_port=PendingApprovalPort(),
+        event_store=events,
+        state_store=InMemoryRuntimeStateStore(),
+    ).execute(
+        _run(permissions=definition.permissions),
+        _pin(),
+        {"question": "synthetic"},
+        goal="Write the approved synthetic note.",
+    )
+
+    assert result.waiting_approval
+    assert result.run.status is RunStatus.WAITING_APPROVAL
+    assert len(requested) == 1
+    assert requested[0].tool_name == definition.name
+    history = await events.page(result.run.context.run_id, limit=20)
+    approval_event = next(
+        event for event in history.events if event.event_type is AgentRunEventType.APPROVAL_REQUIRED
+    )
+    assert approval_event.schema_version == "agent-run-sse-v4"
+    assert approval_event.payload["approval_id"] == "approval-1"
+    assert approval_event.payload["tool_name"] == definition.name
+    assert approval_event.payload["tool_family"] == "workspace"
+
+
+async def test_native_tool_use_repairs_a_legacy_orphaned_approval_before_execution() -> None:
+    class PendingApprovalPort:
+        async def is_approved(self, _approval_id: str, _context: AgentRunContext) -> bool:
+            return False
+
+    handler_calls = 0
+
+    async def count_handler(
+        arguments: dict[str, JSONValue], context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        nonlocal handler_calls
+        handler_calls += 1
+        return await _handler(arguments, context)
+
+    registry = InMemoryToolRegistry(
+        handlers={"tool": count_handler}, approval_port=PendingApprovalPort()
+    )
+    definition = registry.register(_tool(permission=ToolPermission.WRITE_KNOWLEDGE))
+    state_store = InMemoryRuntimeStateStore()
+    legacy_executor = NativeToolUseAgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use native Tools only when needed.",
+        model_gateway=cast(
+            ModelGateway,
+            SequenceNativeGateway(
+                _response(
+                    calls=(ChatToolCall("call_1", definition.name, {"query": "synthetic"}),),
+                    finish_reason="tool_calls",
+                )
+            ),
+        ),
+        state_store=state_store,
+        approval_port=PendingApprovalPort(),
+    )
+    started = _run(permissions=definition.permissions)
+
+    orphaned = await legacy_executor.execute(
+        started,
+        _pin(),
+        {"question": "synthetic"},
+        goal="Write the approved synthetic note.",
+    )
+    checkpoint = await state_store.get_latest(started.context.run_id)
+
+    assert orphaned.waiting_approval
+    assert checkpoint is not None
+    assert checkpoint.approval_id is None
+    assert handler_calls == 0
+
+    requested: list[ToolCallRecord] = []
+
+    async def request_approval(_context: AgentRunContext, record: ToolCallRecord) -> str:
+        requested.append(record)
+        return "approval-1"
+
+    recovered = await NativeToolUseAgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use native Tools only when needed.",
+        model_gateway=cast(ModelGateway, SequenceNativeGateway()),
+        state_store=state_store,
+        approval_request=request_approval,
+        approval_port=PendingApprovalPort(),
+    ).resume(
+        orphaned.run,
+        _pin(),
+        checkpoint,
+        {"question": "synthetic"},
+        caller_id=started.context.caller_id,
+        space_id=started.context.space_id,
+    )
+
+    assert recovered.waiting_approval
+    assert recovered.run.status is RunStatus.WAITING_APPROVAL
+    assert [record.tool_name for record in requested] == [definition.name]
+    assert handler_calls == 0
+    repaired_checkpoint = await state_store.get_latest(started.context.run_id)
+    assert repaired_checkpoint is not None
+    assert repaired_checkpoint.approval_id == "approval-1"
+
+
+async def test_native_tool_use_retries_one_multiple_call_response() -> None:
     registry = InMemoryToolRegistry(handlers={"tool": _handler})
     definition = registry.register(_tool())
     gateway = SequenceNativeGateway(
@@ -475,13 +613,50 @@ async def test_native_tool_use_rejects_multiple_calls_without_invoking_a_tool() 
                 ChatToolCall("call_2", definition.name, {"query": "two"}),
             ),
             finish_reason="tool_calls",
-        )
+        ),
+        _response(
+            calls=(ChatToolCall("call_3", definition.name, {"query": "recovered"}),),
+            finish_reason="tool_calls",
+        ),
+        _response(text="Synthetic terminal response."),
     )
     result = await NativeToolUseAgentLoopExecutor(
         tool_registry=registry,
         allowed_tools=(definition.ref,),
         system_prompt="Use native Tools only when needed.",
         model_gateway=cast(ModelGateway, gateway),
+    ).execute(
+        _run(permissions=definition.permissions),
+        cast(PinnedSkill, object()),
+        {"question": "synthetic"},
+        goal="Answer the synthetic request.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert result.error is None
+    assert result.run.usage.tool_calls == 1
+    assert len(gateway.requests) == 3
+    retry_context = json.loads(gateway.requests[1].messages[-1].content)["model_context"]
+    assert retry_context["progress_summary"].endswith(
+        "previous_multiple_tool_request_not_executed=choose_one_tool_or_terminal_text"
+    )
+
+
+async def test_native_tool_use_fails_after_repeating_a_multiple_call_protocol_violation() -> None:
+    registry = InMemoryToolRegistry(handlers={"tool": _handler})
+    definition = registry.register(_tool())
+    multiple_calls = _response(
+        calls=(
+            ChatToolCall("call_1", definition.name, {"query": "one"}),
+            ChatToolCall("call_2", definition.name, {"query": "two"}),
+        ),
+        finish_reason="tool_calls",
+    )
+    result = await NativeToolUseAgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use native Tools only when needed.",
+        model_gateway=cast(ModelGateway, SequenceNativeGateway(multiple_calls, multiple_calls)),
     ).execute(
         _run(permissions=definition.permissions),
         cast(PinnedSkill, object()),
@@ -671,39 +846,61 @@ async def test_native_tool_use_puts_thin_skill_catalog_in_initial_context() -> N
 
 async def test_native_tool_use_exposes_base_tools_before_skill_selection() -> None:
     registry = InMemoryToolRegistry(handlers={"base": _handler})
-    base = registry.register(
-        ToolDefinition(
-            name="fs_list",
-            version="1.0.0",
-            description="List common workspace files.",
-            input_schema={"type": "object", "properties": {}},
-            output_schema={
-                "type": "object",
-                "required": ["status"],
-                "properties": {"status": {"type": "string"}},
-            },
-            permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
-            handler_name="base",
-            model_visible=True,
+    definitions = tuple(
+        registry.register(
+            ToolDefinition(
+                name=name,
+                version="1.0.0",
+                description=f"Synthetic workspace Tool: {name}.",
+                input_schema={"type": "object", "properties": {}},
+                output_schema={
+                    "type": "object",
+                    "required": ["status"],
+                    "properties": {"status": {"type": "string"}},
+                },
+                permissions=frozenset({permission}),
+                handler_name="base",
+                model_visible=True,
+            )
+        )
+        for name, permission in (
+            ("fs_list", ToolPermission.READ_KNOWLEDGE),
+            ("fs_read", ToolPermission.READ_KNOWLEDGE),
+            ("fs_write", ToolPermission.WRITE_KNOWLEDGE),
+            ("shell_exec", ToolPermission.EXECUTE_PROCESS),
         )
     )
     gateway = SequenceNativeGateway(_response(text="Synthetic terminal response."))
     result = await NativeToolUseAgentLoopExecutor(
         tool_registry=registry,
-        allowed_tools=(base.ref,),
-        base_tools=(base.ref,),
+        allowed_tools=tuple(definition.ref for definition in definitions),
+        base_tools=tuple(definition.ref for definition in definitions),
         system_prompt="Native base prompt.",
         model_gateway=cast(ModelGateway, gateway),
         skill_catalog=SyntheticSkillCatalog(),
     ).execute(
-        _run(permissions=base.permissions),
+        _run(
+            permissions=frozenset(
+                {
+                    ToolPermission.READ_KNOWLEDGE,
+                    ToolPermission.WRITE_KNOWLEDGE,
+                    ToolPermission.EXECUTE_PROCESS,
+                }
+            )
+        ),
         _pin(),
         {"question": "synthetic"},
         goal="Answer the synthetic request.",
     )
 
     assert result.run.status is RunStatus.COMPLETED
-    assert [tool.name for tool in gateway.requests[0].tools] == ["invoke_skill", "fs_list"]
+    assert {tool.name for tool in gateway.requests[0].tools} == {
+        "invoke_skill",
+        "fs_list",
+        "fs_read",
+        "fs_write",
+        "shell_exec",
+    }
 
 
 async def test_native_tool_use_rejects_skill_without_runtime_adapter() -> None:

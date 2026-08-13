@@ -90,6 +90,7 @@ _PROMPT_CACHE_SCHEMA_VERSION = "assistant-base-prompt-v8"
 _MAX_TERMINAL_TEXT_CHARS = 120_000
 _MAX_SELECTED_SKILLS = 2
 _DEFAULT_MAX_SELECTED_SKILL_INSTRUCTION_BYTES = 96 * 1024
+_MAX_MULTI_CALL_PROTOCOL_RETRIES = 1
 _INVOKE_SKILL_TOOL_NAME = "invoke_skill"
 
 
@@ -258,6 +259,7 @@ class NativeToolUseLoopState:
     terminal_text: str | None = None
     terminal_output: dict[str, JSONValue] | None = None
     publication_id: str | None = None
+    multi_call_protocol_retries: int = 0
     context_schema_version: str = MODEL_CONTEXT_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -267,6 +269,8 @@ class NativeToolUseLoopState:
             raise ValueError("Native Tool-use context schema version is unsupported")
         if self.iteration < 0 or len(self.observations) > self.iteration:
             raise ValueError("Native Tool-use loop iteration is invalid")
+        if not 0 <= self.multi_call_protocol_retries <= _MAX_MULTI_CALL_PROTOCOL_RETRIES:
+            raise ValueError("Native Tool-use protocol retry count is invalid")
         call_ids = tuple(item.call.call_id for item in self.observations)
         if len(call_ids) != len(set(call_ids)):
             raise ValueError("Native Tool-use call IDs must not repeat")
@@ -331,6 +335,21 @@ class NativeToolUseLoopState:
         if self.pending_call is None:
             raise ValueError("Native Tool-use approval has no pending Tool")
         return replace(self, approval_id=approval_id)
+
+    def retry_after_multiple_calls(self) -> NativeToolUseLoopState:
+        if (
+            self.pending_call is not None
+            or self.terminal_text is not None
+            or self.terminal_output is not None
+        ):
+            raise ValueError("Native Tool-use loop cannot retry its protocol now")
+        if self.multi_call_protocol_retries >= _MAX_MULTI_CALL_PROTOCOL_RETRIES:
+            raise ValueError("Native Tool-use protocol retry limit was reached")
+        return replace(
+            self,
+            iteration=self.iteration + 1,
+            multi_call_protocol_retries=self.multi_call_protocol_retries + 1,
+        )
 
     def select_skill(self, selection: NativeSkillSelection) -> NativeToolUseLoopState:
         if self.pending_call is None:
@@ -400,6 +419,7 @@ class NativeToolUseLoopState:
                 _json_copy(self.terminal_output) if self.terminal_output is not None else None,
             ),
             "publication_id": self.publication_id,
+            "multi_call_protocol_retries": self.multi_call_protocol_retries,
             "context_schema_version": self.context_schema_version,
         }
 
@@ -453,6 +473,12 @@ class NativeToolUseLoopState:
                     cast(str, value["publication_id"])
                     if isinstance(value.get("publication_id"), str)
                     else None
+                ),
+                multi_call_protocol_retries=(
+                    cast(int, value["multi_call_protocol_retries"])
+                    if isinstance(value.get("multi_call_protocol_retries"), int)
+                    and not isinstance(value.get("multi_call_protocol_retries"), bool)
+                    else 0
                 ),
                 context_schema_version=(
                     cast(str, value["context_schema_version"])
@@ -742,11 +768,15 @@ class NativeToolUseAgentLoopExecutor:
                     ),
                 )
                 if len(response.tool_calls) > 1:
-                    raise NodeExecutionError(
-                        code="RUN_NATIVE_TOOL_USE_MULTIPLE_CALLS",
-                        category=RunErrorCategory.SCHEMA,
-                        message="A native Tool-use turn may request exactly one Tool.",
-                    )
+                    if state.multi_call_protocol_retries >= _MAX_MULTI_CALL_PROTOCOL_RETRIES:
+                        raise NodeExecutionError(
+                            code="RUN_NATIVE_TOOL_USE_MULTIPLE_CALLS",
+                            category=RunErrorCategory.SCHEMA,
+                            message="A native Tool-use turn may request exactly one Tool.",
+                        )
+                    state = state.retry_after_multiple_calls()
+                    run = await self._persist(run, state)
+                    continue
                 if response.tool_calls:
                     call = response.tool_calls[0]
                     if call.tool_name not in surface.by_name and call.tool_name not in {
@@ -1041,9 +1071,15 @@ class NativeToolUseAgentLoopExecutor:
             if state.terminal_output is not None
             else "none"
         )
+        retry_note = (
+            ";previous_multiple_tool_request_not_executed=choose_one_tool_or_terminal_text"
+            if state.multi_call_protocol_retries
+            else ""
+        )
         return (
             f"resolved={len(state.observations)};pending={pending};"
-            f"approval={state.approval_id or 'none'};terminal={terminal}"
+            f"approval={state.approval_id or 'none'};terminal={terminal};"
+            f"protocol_retries={state.multi_call_protocol_retries}{retry_note}"
         )
 
     async def _emit(
@@ -1477,6 +1513,9 @@ class NativeToolUseAgentLoopExecutor:
             call.tool_name == "fs_write" and call.arguments.get("content") == QA_ANSWER_MARKER
         )
         if is_qa_workspace_write and self._server_tools is not None:
+            restore_facts = getattr(self._server_tools, "restore_finalization_facts", None)
+            if restore_facts is not None:
+                await restore_facts(run.context.run_id)
             resolver = getattr(self._server_tools, "resolve_workspace_write", None)
             if resolver is not None:
                 call = replace(
@@ -1516,6 +1555,25 @@ class NativeToolUseAgentLoopExecutor:
             )
             state = state.wait_for_approval(requested_approval)
             run = _move_to_executing(run).transition(RunEvent.WAIT_APPROVAL)
+            await self._emit(
+                run,
+                AgentRunEventType.APPROVAL_REQUIRED,
+                {
+                    "status": "waiting_approval",
+                    "iteration": state.iteration,
+                    "tool_name": definition.name,
+                    "tool_version": definition.version,
+                    "approval_id": requested_approval or "unavailable",
+                    "input_summary": tool_input_summary(call.arguments),
+                    "retry_count": 0,
+                    "tool_family": self._tool_family(definition.name, definition),
+                    **_tool_display_payload(definition, call.arguments),
+                },
+                event_key=(
+                    f"native:approval_required:{state.iteration}:"
+                    f"{definition.name}:{definition.version}"
+                ),
+            )
             run = await self._persist(run, state)
             return run, state, True
         run = _move_to_executing(run)
@@ -2103,6 +2161,32 @@ def _move_to_executing(run: AgentRun) -> AgentRun:
 
 def _publication_id(run: AgentRun) -> str:
     return f"assistant-publication:{run.context.run_id.hex}"
+
+
+def _tool_display_payload(
+    definition: ToolDefinition, arguments: Mapping[str, JSONValue]
+) -> dict[str, str]:
+    if definition.name in {"fs_list", "fs_read", "fs_write"}:
+        path = arguments.get("path")
+        return {"path": _display_text(path)} if isinstance(path, str) else {}
+    if definition.name != "shell_exec":
+        return {}
+    executable = arguments.get("executable")
+    argv = arguments.get("argv")
+    cwd = arguments.get("cwd")
+    payload: dict[str, str] = {}
+    if isinstance(executable, str) and isinstance(argv, list):
+        payload["command"] = _display_text(
+            " ".join([executable, *[item for item in argv if isinstance(item, str)]])
+        )
+    if isinstance(cwd, str):
+        payload["cwd"] = _display_text(cwd)
+    return payload
+
+
+def _display_text(value: str) -> str:
+    cleaned = "".join(character if character.isprintable() else " " for character in value)
+    return " ".join(cleaned.split())[:512]
 
 
 def _native_skill_pin_from_checkpoint(value: object) -> NativeSkillPin:

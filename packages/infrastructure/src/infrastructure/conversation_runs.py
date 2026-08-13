@@ -27,7 +27,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import Database
-from .orm import ConversationModel, ConversationRunModel, QAMessageModel
+from .orm import (
+    ConversationModel,
+    ConversationRunModel,
+    QAMessageModel,
+    RuntimeCheckpointModel,
+)
 
 _TERMINAL = frozenset(
     {
@@ -50,6 +55,26 @@ def _clear_lease(model: ConversationRunModel) -> None:
     model.lease_owner = None
     model.lease_expires_at = None
     model.heartbeat_at = None
+
+
+def _is_orphaned_native_approval(
+    run: ConversationRunModel, checkpoint: RuntimeCheckpointModel | None
+) -> bool:
+    """Recognize only legacy v2 checkpoints that never persisted an approval ID."""
+    if (
+        run.cancellation_requested
+        or checkpoint is None
+        or not checkpoint.verified
+        or checkpoint.next_node != "native_tool_use_loop"
+        or not isinstance(checkpoint.state, dict)
+    ):
+        return False
+    state = checkpoint.state
+    return (
+        state.get("schema_version") == "native-tool-use-loop-state-v2"
+        and isinstance(state.get("pending_call"), dict)
+        and state.get("approval_id") is None
+    )
 
 
 class PostgresConversationRunRepository:
@@ -243,7 +268,7 @@ class PostgresConversationRunRepository:
             return tuple(models)
 
     async def prepare_assistant_recovery(self) -> tuple[UUID, ...]:
-        """Return unleased Assistant work and reset expired direct executions."""
+        """Return unleased Assistant work and repair pre-v2 approval orphans."""
         async with self._database.transaction() as session:
             models = (
                 await session.execute(
@@ -256,6 +281,7 @@ class PostgresConversationRunRepository:
                                 ConversationRunStatus.QUEUED.value,
                                 ConversationRunStatus.RUNNING.value,
                                 ConversationRunStatus.CANCEL_REQUESTED.value,
+                                ConversationRunStatus.WAITING_APPROVAL.value,
                             )
                         ),
                     )
@@ -268,7 +294,24 @@ class PostgresConversationRunRepository:
             for model in models:
                 if _lease_is_active(model, now):
                     continue
+                orphaned_approval = False
+                if model.status == ConversationRunStatus.WAITING_APPROVAL.value:
+                    checkpoint = await session.scalar(
+                        select(RuntimeCheckpointModel)
+                        .where(RuntimeCheckpointModel.run_id == model.id)
+                        .order_by(RuntimeCheckpointModel.sequence.desc())
+                        .limit(1)
+                    )
+                    orphaned_approval = _is_orphaned_native_approval(model, checkpoint)
+                    if not orphaned_approval:
+                        continue
                 if model.status == ConversationRunStatus.RUNNING.value:
+                    model.status = ConversationRunStatus.QUEUED.value
+                    model.updated_at = now
+                elif orphaned_approval:
+                    # The checkpoint retains the model-selected pending call. A
+                    # current Worker creates its normal durable approval and
+                    # stops again before the side effect can run.
                     model.status = ConversationRunStatus.QUEUED.value
                     model.updated_at = now
                 _clear_lease(model)

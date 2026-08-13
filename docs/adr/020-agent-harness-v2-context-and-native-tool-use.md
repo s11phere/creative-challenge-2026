@@ -26,9 +26,10 @@ explicit decision-history projection that distinguishes audit digests from usefu
    executor, checkpoint, and recovery path. No existing checkpoint is converted in place.
 2. Harness v2 normalizes provider-native Tool use through a provider-neutral contract. A model turn
    either requests exactly one Tool with a stable call ID or returns non-empty terminal text. A Tool
-   request always causes one server-validated Tool invocation and another model turn. A no-Tool
-   response becomes the terminal direct response. Provider text accompanying a Tool call is not a
-   publication candidate.
+   request always causes one server-validated Tool invocation and another model turn. If a provider
+   returns multiple calls, the executor executes none of them and allows one bounded corrective
+   model turn; a repeated violation fails with a stable schema error. A no-Tool response becomes the
+   terminal direct response. Provider text accompanying a Tool call is not a publication candidate.
 3. Harness v2 does not use `complete.final_response`, textual `call_tool` JSON, or the v1
    long-answer escalation. Direct text and Tool selection have separate protocol paths and
    publication remains exactly once through a server-owned finalizer.
@@ -56,6 +57,17 @@ explicit decision-history projection that distinguishes audit digests from usefu
    adds development-local trace measurements for prompt/context byte estimates and repeated
    generation counts. These diagnostics remain outside PostgreSQL, SSE, normal logs, API responses,
    fixtures containing real content, and formal quality reporting.
+10. Worker startup recovery may repair the narrowly identified pre-fix approval orphan: a parent
+    Assistant Run in `waiting_approval` whose latest verified native v2 checkpoint contains a
+    pending Tool call but no `approval_id`. Recovery only requeues that Run; the current executor
+    creates a normal durable approval and remains stopped until the user decides it. Existing
+    approvals, non-native checkpoints, cancellation requests, and invalid checkpoints are not
+    requeued by this compatibility path.
+11. A pending workspace write using the server-owned QA marker may resume on a new Worker only
+    after the coordinator rehydrates the current Run's persisted QA record and repeats its existing
+    publishability verification. The marker resolves to the verified server-owned answer only in
+    memory for the normal Tool Registry invocation; it does not alter the checkpoint, bypass
+    approval, constrain the selected path, or execute a side effect during recovery.
 
 ## Alternatives
 

@@ -72,8 +72,8 @@ NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS = (
     "verifies claims and citations, handles refusal or conflict, and publishes the single "
     "terminal result. Do not emit direct terminal text for a knowledge answer and do not "
     "request another model turn after this Tool succeeds.\n\n"
-    "If a knowledge_answer observation requires a workspace artifact, inspect the workspace with "
-    "`fs_list` and then call `fs_write` with the path you choose and "
+    "If a knowledge_answer observation requires a workspace artifact, choose any useful workspace "
+    "inspection, then call `fs_write` with the path you choose and "
     "`content={{current_grounded_qa_answer}}`. Do not compose or fabricate the answer text; the "
     "server resolves that marker and finalizes after the write.\n\n"
     "Local workspace Tools remain separate deliverables. A workspace write cannot replace "
@@ -240,8 +240,11 @@ class NativeKnowledgeTools(NativeServerToolCoordinator):
             and completed.result is not None
         ):
             facts.answer_run = completed
-            facts.verified = True
-            facts.finalization_ready = True
+            verification = _verify_completed_qa(completed)
+            facts.verified = cast(bool, verification["ready"])
+            if facts.verified:
+                facts.finalization_ready = True
+                facts.answer_text = _qa_result_text(completed)
         return facts
 
     async def _retrieve_handler(
