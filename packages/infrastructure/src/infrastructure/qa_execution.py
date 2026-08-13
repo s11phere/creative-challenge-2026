@@ -393,6 +393,29 @@ class StructuredNativeAssistantLoopGateway(StructuredAgentGateway):
         )
 
 
+# Mirrors the knowledge loop's max_search_observations default (the fake must
+# not answer before the server considers retrieval exhausted).
+_FAKE_MAX_RETRIEVES = 8
+
+
+def _fake_search_count(observation: dict[str, object]) -> int | None:
+    """Read the retrieval search count from an observation.
+
+    Direct unit-test fixtures carry ``search_count``; at runtime the loop only
+    exposes ``summary`` (e.g. ``Coverage: 0 matched across 3 searches.``), so
+    fall back to parsing it.
+    """
+    value = observation.get("search_count")
+    if isinstance(value, int) and value >= 0:
+        return value
+    summary = observation.get("summary")
+    if isinstance(summary, str):
+        match = re.search(r"across (\d+) searches", summary)
+        if match is not None:
+            return int(match.group(1))
+    return None
+
+
 def _native_assistant_decision(
     request: ChatRequest,
 ) -> tuple[str | None, dict[str, JSONValue], str]:
@@ -441,12 +464,19 @@ def _native_assistant_decision(
         if last_tool == "knowledge_retrieve":
             if recommended == "knowledge_answer" and "knowledge_answer" in tool_names:
                 return "knowledge_answer", {}, ""
-            if "knowledge_retrieve" in tool_names:
+            # Persistent gap (no evidence): mirror the server's bounded retrieval.
+            # The knowledge loop only runs Grounded QA after max_search_observations
+            # searches, so the fake re-issues retrieval up to that cap, then answers.
+            search_count = _fake_search_count(last_observation)
+            if isinstance(search_count, int) and search_count < _FAKE_MAX_RETRIEVES:
                 return (
                     "knowledge_retrieve",
                     {"query": f"{_fake_knowledge_query(goal)} follow-up"},
                     "",
                 )
+            if "knowledge_answer" in tool_names:
+                return "knowledge_answer", {}, ""
+            return None, {}, "No usable evidence was retrieved."
         elif last_tool == "knowledge_answer":
             if "knowledge_retrieve" in tool_names:
                 return (

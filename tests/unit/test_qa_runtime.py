@@ -174,6 +174,97 @@ async def test_native_fake_gateway_follows_retrieval_recommendation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_native_fake_gateway_retrieves_again_below_gap_cap() -> None:
+    # A retrieval that recommends another retrieve (no evidence) is answered by
+    # re-issuing retrieval while the search count is below the cap, not by a
+    # direct terminal (which the harness denies for a selected knowledge Skill).
+    gateway = StructuredNativeAssistantLoopGateway(FakeModelGateway())
+    response = await gateway.chat(
+        _native_request(
+            goal="Answer from the current Space document.",
+            selected_skills=[
+                {
+                    "name": "knowledge_agent",
+                    "version": "2.0.0",
+                    "content_sha256": "a" * 64,
+                }
+            ],
+            observations=[
+                {
+                    "iteration": 1,
+                    "tool_name": "knowledge_retrieve",
+                    "status": "succeeded",
+                    "summary": "Coverage: 0 matched across 1 searches.",
+                    "recommended_next": "knowledge_retrieve",
+                    "search_count": 1,
+                }
+            ],
+            tools=(
+                ChatToolDefinition(
+                    "knowledge_retrieve",
+                    "Retrieve knowledge.",
+                    {"type": "object"},
+                ),
+                ChatToolDefinition(
+                    "knowledge_answer",
+                    "Answer with Grounded QA.",
+                    {"type": "object"},
+                ),
+            ),
+        )
+    )
+
+    assert response.finish_reason == "tool_calls"
+    assert response.tool_calls[0].tool_name == "knowledge_retrieve"
+
+
+@pytest.mark.asyncio
+async def test_native_fake_gateway_answers_when_retrieval_gap_reaches_cap() -> None:
+    # Once the search count reaches the retrieval cap, the fake must route to
+    # Grounded QA (knowledge_answer), which owns the server terminal and refuses
+    # deterministically when there is no evidence.
+    gateway = StructuredNativeAssistantLoopGateway(FakeModelGateway())
+    response = await gateway.chat(
+        _native_request(
+            goal="Answer from the current Space document.",
+            selected_skills=[
+                {
+                    "name": "knowledge_agent",
+                    "version": "2.0.0",
+                    "content_sha256": "a" * 64,
+                }
+            ],
+            observations=[
+                {
+                    "iteration": 8,
+                    "tool_name": "knowledge_retrieve",
+                    "status": "succeeded",
+                    "summary": "Coverage: 0 matched across 8 searches.",
+                    "recommended_next": "knowledge_retrieve",
+                    "search_count": 8,
+                }
+            ],
+            tools=(
+                ChatToolDefinition(
+                    "knowledge_retrieve",
+                    "Retrieve knowledge.",
+                    {"type": "object"},
+                ),
+                ChatToolDefinition(
+                    "knowledge_answer",
+                    "Answer with Grounded QA.",
+                    {"type": "object"},
+                ),
+            ),
+        )
+    )
+
+    assert response.finish_reason == "tool_calls"
+    assert response.tool_calls[0].tool_name == "knowledge_answer"
+    assert response.tool_calls[0].arguments == {}
+
+
+@pytest.mark.asyncio
 async def test_native_fake_gateway_returns_direct_text_for_ordinary_request() -> None:
     gateway = StructuredNativeAssistantLoopGateway(FakeModelGateway())
     response = await gateway.chat(
