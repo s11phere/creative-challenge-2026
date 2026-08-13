@@ -57,6 +57,11 @@ from infrastructure.assistant_resources import PostgresAssistantResourceResolver
 from infrastructure.config import settings
 from infrastructure.conversation_runs import PostgresConversationRunRepository
 from infrastructure.database import Database
+from infrastructure.memory_entries import (
+    GatewayMemoryRetriever,
+    GatewayTextEmbedder,
+    PostgresMemoryEntryRepository,
+)
 from infrastructure.qa import DatabaseSearchService
 from infrastructure.qa_debug_trace import QADebugTrace, TracingModelGateway, TracingToolRegistry
 from infrastructure.qa_execution import (
@@ -185,7 +190,11 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
     registry = assistant_skill_registry()
     await _apply_personal_skill_activations(registry)
     qa_repository = PostgresGroundedQARepository(database)
-    context = ConversationContextService(data=qa_repository, runs=runs)
+    memory = GatewayMemoryRetriever(
+        repository=PostgresMemoryEntryRepository(database),
+        embedder=GatewayTextEmbedder(gateway),
+    )
+    context = ConversationContextService(data=qa_repository, runs=runs, memory=memory)
     metrics = AssistantMetrics()
 
     service = await _autonomous_loop_service(
