@@ -135,15 +135,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
+      - run: pnpm typecheck:e2e
       - run: pnpm test
       - run: pnpm build
 
   compose-smoke:
-    name: Compose smoke
+    name: Compose smoke + web E2E
     runs-on: ubuntu-latest
     env:
       APP_SECRET_KEY: ci-test-only
       POSTGRES_PASSWORD: ci-test-only
+      NODE_VERSION: "24.11.0"
+      PNPM_VERSION: "10.20.0"
     steps:
       - uses: actions/checkout@v7.0.0
       - name: Validate Compose configuration
@@ -161,6 +164,50 @@ jobs:
           test -z "$(docker compose -f deploy/compose.yaml exec -T redis redis-cli --scan --pattern 'dramatiq:diagnostics*')"
           ! docker compose -f deploy/compose.yaml logs --no-color | grep -F 'ci-test-only'
           docker compose -f deploy/compose.yaml ps
+      - name: Setup Node
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: corepack enable
+      - run: corepack prepare pnpm@${PNPM_VERSION} --activate
+      - name: Locate pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('apps/web/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('apps/web/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-playwright-
+      - name: Install Playwright Chromium
+        working-directory: apps/web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run Playwright E2E
+        working-directory: apps/web
+        env:
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:5173
+        run: pnpm test:e2e
+      - name: Privacy scan on E2E artifacts
+        if: failure()
+        working-directory: apps/web
+        run: "! grep -RIl 'ci-test-only' test-results playwright-report 2>/dev/null | grep -q ."
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            apps/web/test-results/
+            apps/web/playwright-report/
+          retention-days: 7
       - name: Show service logs on failure
         if: failure()
         run: docker compose -f deploy/compose.yaml logs --no-color

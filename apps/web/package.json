@@ -11,9 +11,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc --noEmit",
+    "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
     "lint": "oxlint",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "preview": "vite preview"
   },
   "pnpm": {
@@ -31,6 +33,7 @@
     "remark-math": "6.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.53.0",
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^16.0.0",
     "@types/node": "^24.13.2",

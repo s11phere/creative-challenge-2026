@@ -71,11 +71,15 @@ if [ "$HAS_FRONTEND" -eq 1 ]; then
     corepack pnpm@10.20.0 --dir apps/web lint || fail "前端 lint 失败"
     say "pnpm typecheck (apps/web)"
     corepack pnpm@10.20.0 --dir apps/web typecheck || fail "前端 typecheck 失败"
+    say "pnpm typecheck:e2e (apps/web)"
+    corepack pnpm@10.20.0 --dir apps/web typecheck:e2e || fail "前端 e2e typecheck 失败"
   elif command -v pnpm >/dev/null 2>&1; then
     say "pnpm lint (apps/web)"
     pnpm --dir apps/web lint || fail "前端 lint 失败"
     say "pnpm typecheck (apps/web)"
     pnpm --dir apps/web typecheck || fail "前端 typecheck 失败"
+    say "pnpm typecheck:e2e (apps/web)"
+    pnpm --dir apps/web typecheck:e2e || fail "前端 e2e typecheck 失败"
   else
     say "未找到 corepack/pnpm，跳过前端检查（CI 仍会执行）"
   fi

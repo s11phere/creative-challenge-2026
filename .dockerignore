@@ -28,3 +28,6 @@ tmp
 **/dist
 **/build
 **/*.egg-info
+**/test-results
+**/playwright-report
+**/blob-report
