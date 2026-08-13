@@ -125,3 +125,26 @@ async def test_finalizer_uses_fallback_when_skill_result_is_empty() -> None:
     message = await repository.get_message(completed.result.message_id)
     assert message is not None
     assert message.content == "工具执行已完成，但没有生成可展示的最终回答，请重试。"
+
+
+@pytest.mark.asyncio
+async def test_finalizer_appends_server_delivery_notice_after_synthesis() -> None:
+    repository = InMemoryGroundedQARepository()
+    run = await _skill_run(repository)
+    gateway = SynthesisGateway(response="LLM answer without the delivery status.")
+    notice = "补充说明：答案已生成，但文件未创建；请选择可写工作区后重试。"
+
+    completed = await ConversationFinalizer(runs=repository, gateway=gateway).execute(
+        run,
+        input=FinalizationInput(
+            question="Answer and save this as Markdown.",
+            skill_result="Synthetic verified answer.",
+            user_notice=notice,
+        ),
+    )
+
+    assert completed.result is not None
+    message = await repository.get_message(completed.result.message_id)
+    assert message is not None
+    assert message.content == f"LLM answer without the delivery status.\n\n{notice}"
+    assert notice not in gateway.requests[0].messages[-1].content

@@ -309,6 +309,15 @@ class AutonomousAssistantLoopService:
             ):
                 return await self._fail(parent.run_id, "RUN_KNOWLEDGE_FINALIZATION_REQUIRED")
             fallback = _qa_fallback_text(qa_run)
+            user_notice = None
+            delivery_facts_restorer = getattr(
+                self._native_server_tools, "restore_delivery_facts", None
+            )
+            if delivery_facts_restorer is not None:
+                delivery_facts_restorer(parent.run_id, result.state)
+            notice_reader = getattr(self._native_server_tools, "user_notice", None)
+            if notice_reader is not None:
+                user_notice = notice_reader(parent.run_id)
             await self._conversation_finalizer.execute(
                 replace(parent, usage=_combined_usage(parent, result.run)),
                 input=FinalizationInput(
@@ -316,6 +325,7 @@ class AutonomousAssistantLoopService:
                     skill_result=grounded_material(qa_run, fallback),
                     fallback_content=fallback,
                     refused=qa_run.status is QAStatus.REFUSED,
+                    user_notice=user_notice,
                 ),
             )
         completed = await self._runs.get_conversation_run(parent.run_id)

@@ -99,6 +99,18 @@ _MAX_SELECTED_SKILLS = 2
 _DEFAULT_MAX_SELECTED_SKILL_INSTRUCTION_BYTES = 96 * 1024
 _MAX_MULTI_CALL_PROTOCOL_RETRIES = 1
 _INVOKE_SKILL_TOOL_NAME = "invoke_skill"
+_RECOVERABLE_TOOL_ERROR_CODES = frozenset(
+    {
+        ToolRegistryErrorCode.APPROVAL_REQUIRED.value,
+        ToolRegistryErrorCode.CAPABILITY_UNAVAILABLE.value,
+        ToolRegistryErrorCode.ENCODING_INVALID.value,
+        ToolRegistryErrorCode.FILE_TOO_LARGE.value,
+        ToolRegistryErrorCode.INPUT_INVALID.value,
+        ToolRegistryErrorCode.PATH_DENIED.value,
+        ToolRegistryErrorCode.PERMISSION_DENIED.value,
+        ToolRegistryErrorCode.SOURCE_CHANGED.value,
+    }
+)
 
 
 class NativeToolUseFinalizer(Protocol):
@@ -324,16 +336,46 @@ class NativeToolUseLoopState:
             raise ValueError("Native Tool-use loop has no pending Tool")
         if not isinstance(result.output, dict):
             raise ValueError("Native Tool-use result must be an object")
-        observation = NativeToolUseObservation(
-            iteration=self.iteration,
-            call=self.pending_call,
-            observation=cast(dict[str, JSONValue], _json_copy(result.output)),
+        return self._observe(
+            result.output,
             input_summary=result.record.input_summary,
             output_summary=result.record.output_summary,
         )
+
+    def observe_failure(
+        self,
+        *,
+        error_code: str,
+        input_summary: str,
+        output_summary: str,
+    ) -> NativeToolUseLoopState:
+        if not error_code:
+            raise ValueError("Native Tool-use failure observation is invalid")
+        return self._observe(
+            {"status": "tool_error", "error_code": error_code},
+            input_summary=input_summary,
+            output_summary=output_summary,
+        )
+
+    def _observe(
+        self,
+        observation: dict[str, JSONValue],
+        *,
+        input_summary: str,
+        output_summary: str,
+    ) -> NativeToolUseLoopState:
+        if self.pending_call is None:
+            raise ValueError("Native Tool-use loop has no pending Tool")
+        recorded_observation = NativeToolUseObservation(
+            iteration=self.iteration,
+            call=self.pending_call,
+            observation=cast(dict[str, JSONValue], _json_copy(observation)),
+            input_summary=input_summary,
+            output_summary=output_summary,
+        )
         return replace(
             self,
-            observations=self.observations + (observation,),
+            observations=self.observations + (recorded_observation,),
             pending_call=None,
             approval_id=None,
         )
@@ -962,6 +1004,11 @@ class NativeToolUseAgentLoopExecutor:
                     tool_name=item.call.tool_name,
                     status=status,
                     summary=summary,
+                    error_code=(
+                        cast(str, item.observation["error_code"])
+                        if isinstance(item.observation.get("error_code"), str)
+                        else None
+                    ),
                     unresolved_item=self._unresolved_item(item),
                 )
             )
@@ -971,6 +1018,11 @@ class NativeToolUseAgentLoopExecutor:
                     tool_name=item.call.tool_name,
                     status=status,
                     summary=summary,
+                    error_code=(
+                        cast(str, item.observation["error_code"])
+                        if isinstance(item.observation.get("error_code"), str)
+                        else None
+                    ),
                 )
             )
         if state.terminal_text is not None or state.terminal_output is not None:
@@ -1013,6 +1065,11 @@ class NativeToolUseAgentLoopExecutor:
         item: NativeToolUseObservation,
         surface: _NativeToolSurface,
     ) -> dict[str, JSONValue]:
+        if item.observation.get("status") == "tool_error":
+            return {
+                "status": "failed",
+                "summary": self._observation_summary(item),
+            }
         if item.call.tool_name == _INVOKE_SKILL_TOOL_NAME:
             return {
                 "status": "succeeded",
@@ -1034,6 +1091,11 @@ class NativeToolUseAgentLoopExecutor:
     @staticmethod
     def _observation_summary(item: NativeToolUseObservation) -> str:
         observation = item.observation
+        if observation.get("status") == "tool_error":
+            code = observation.get("error_code")
+            if isinstance(code, str):
+                return _recoverable_tool_failure_summary(code)
+            return "The Tool could not complete with the current request."
         if item.call.tool_name == "knowledge_retrieve":
             matched = observation.get("matched_count")
             searches = observation.get("search_count")
@@ -1048,6 +1110,8 @@ class NativeToolUseAgentLoopExecutor:
 
     @staticmethod
     def _native_model_status(value: JSONValue | None) -> str:
+        if value in {"tool_error", "failed"}:
+            return "failed"
         if value == "needs_retrieval":
             return "needs_input"
         if value == "verification_failed":
@@ -1056,6 +1120,8 @@ class NativeToolUseAgentLoopExecutor:
 
     @staticmethod
     def _unresolved_item(item: NativeToolUseObservation) -> str | None:
+        if item.observation.get("status") == "tool_error":
+            return NativeToolUseAgentLoopExecutor._observation_summary(item)
         if (
             item.call.tool_name == "knowledge_retrieve"
             and item.observation.get("recommended_next") == "knowledge_retrieve"
@@ -1161,6 +1227,7 @@ class NativeToolUseAgentLoopExecutor:
         duration_ms: int,
         tool_family: str,
         decision_summary: str,
+        status: str = "succeeded",
     ) -> None:
         item = state.observations[-1]
         projection = self._model_observation_for(item, surface)
@@ -1169,7 +1236,7 @@ class NativeToolUseAgentLoopExecutor:
             run,
             AgentRunEventType.TOOL_OUTPUT,
             {
-                "status": "succeeded",
+                "status": status,
                 "iteration": state.iteration,
                 "tool_name": tool_name,
                 "tool_version": tool_version,
@@ -1476,7 +1543,7 @@ class NativeToolUseAgentLoopExecutor:
             tool_name=tool_name,
             tool_version=tool_version,
             idempotency_key=idempotency_key,
-            error={"code": code, "message": str(error)[:2000]},
+            error={"code": code, "message": "Tool invocation did not complete."},
         )
 
     async def _complete_pending_tool(
@@ -1603,6 +1670,61 @@ class NativeToolUseAgentLoopExecutor:
                 tool_family=self._tool_family(definition.name, definition),
                 error=error,
             )
+            recoverable = _recoverable_tool_failure(error)
+            if recoverable is not None:
+                run = run.consume(tool_calls=1)
+                state = state.observe_failure(
+                    error_code=recoverable,
+                    input_summary=tool_input_summary(call.arguments),
+                    output_summary=f"error:{recoverable}",
+                )
+                if is_qa_workspace_write and self._server_tools is not None:
+                    note_blocked = getattr(
+                        self._server_tools, "note_workspace_delivery_blocked", None
+                    )
+                    if note_blocked is not None:
+                        note_blocked(run.context.run_id, recoverable)
+                    terminal_projection = getattr(
+                        self._server_tools, "server_terminal_projection", None
+                    )
+                    if terminal_projection is not None:
+                        projection = terminal_projection(run.context.run_id)
+                        if projection is not None:
+                            terminal_output, publication_id = projection
+                            await self._emit_tool_output(
+                                run,
+                                state,
+                                surface,
+                                tool_name=definition.name,
+                                tool_version=definition.version,
+                                input_summary=tool_input_summary(call.arguments),
+                                output_summary=f"error:{recoverable}",
+                                retry_count=0,
+                                duration_ms=0,
+                                tool_family=self._tool_family(definition.name, definition),
+                                decision_summary=self._observation_summary(state.observations[-1]),
+                                status="failed",
+                            )
+                            state = state.begin_server_finalization(terminal_output, publication_id)
+                            run = _move_to_executing(run).transition(RunEvent.FINALIZE)
+                            run = await self._persist(run, state, next_step=RunStep.VERIFYING)
+                            return run, state, False
+                await self._emit_tool_output(
+                    run,
+                    state,
+                    surface,
+                    tool_name=definition.name,
+                    tool_version=definition.version,
+                    input_summary=tool_input_summary(call.arguments),
+                    output_summary=f"error:{recoverable}",
+                    retry_count=0,
+                    duration_ms=0,
+                    tool_family=self._tool_family(definition.name, definition),
+                    decision_summary=self._observation_summary(state.observations[-1]),
+                    status="failed",
+                )
+                run = await self._persist(run, state)
+                return run, state, False
             raise
         try:
             state = state.observe(result)
@@ -1677,6 +1799,31 @@ class NativeToolUseAgentLoopExecutor:
                 tool_family=self._tool_family(call.tool_name, definition),
                 error=error,
             )
+            recoverable = _recoverable_tool_failure(error)
+            if recoverable is not None:
+                run = run.consume(tool_calls=1)
+                state = state.observe_failure(
+                    error_code=recoverable,
+                    input_summary=tool_input_summary(call.arguments),
+                    output_summary=f"error:{recoverable}",
+                )
+                tool_version = definition.version if definition is not None else "1.0.0"
+                await self._emit_tool_output(
+                    run,
+                    state,
+                    surface,
+                    tool_name=call.tool_name,
+                    tool_version=tool_version,
+                    input_summary=tool_input_summary(call.arguments),
+                    output_summary=f"error:{recoverable}",
+                    retry_count=0,
+                    duration_ms=0,
+                    tool_family=self._tool_family(call.tool_name, definition),
+                    decision_summary=self._observation_summary(state.observations[-1]),
+                    status="failed",
+                )
+                run = await self._persist(run, state)
+                return run, state, False
             raise
         if result.run.context.run_id != run.context.run_id:
             raise NodeExecutionError(
@@ -2263,6 +2410,47 @@ def _tool_error_category(code: ToolRegistryErrorCode) -> RunErrorCategory:
     if code is ToolRegistryErrorCode.CANCELLED:
         return RunErrorCategory.CANCELLATION
     return RunErrorCategory.DEPENDENCY
+
+
+def _recoverable_tool_failure(error: BaseException) -> str | None:
+    if isinstance(error, NodeExecutionError):
+        return (
+            error.code
+            if error.category in {RunErrorCategory.INPUT, RunErrorCategory.PERMISSION}
+            else None
+        )
+    if isinstance(error, ToolRegistryError) and error.code.value in _RECOVERABLE_TOOL_ERROR_CODES:
+        return error.code.value
+    return None
+
+
+def _recoverable_tool_failure_summary(code: str) -> str:
+    if code in {
+        ToolRegistryErrorCode.APPROVAL_REQUIRED.value,
+        ToolRegistryErrorCode.PERMISSION_DENIED.value,
+    }:
+        return "The requested action is not authorized yet; approval or access is required."
+    if code == ToolRegistryErrorCode.PATH_DENIED.value:
+        return (
+            "The requested workspace location is unavailable; a valid workspace or allowed path "
+            "is required."
+        )
+    if code == ToolRegistryErrorCode.CAPABILITY_UNAVAILABLE.value:
+        return (
+            "The requested capability is not available in this run; a supported alternative is "
+            "required."
+        )
+    if code in {
+        ToolRegistryErrorCode.FILE_TOO_LARGE.value,
+        ToolRegistryErrorCode.ENCODING_INVALID.value,
+        ToolRegistryErrorCode.SOURCE_CHANGED.value,
+    }:
+        return "The requested file cannot be used in its current state; it must be prepared again."
+    if code == ToolRegistryErrorCode.INPUT_INVALID.value or code.startswith("SKILL_INPUT_"):
+        return "The Tool request is incomplete or invalid; additional valid input is required."
+    return (
+        "The Tool could not complete with the current request; another valid next step is required."
+    )
 
 
 def _model_error_code(code: ModelErrorCode) -> str:

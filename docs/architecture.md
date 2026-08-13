@@ -16,6 +16,13 @@ The authoritative event timeline is agent-run-sse-v4 from /api/v3; /api/v2 remai
 and command API and does not select or recover a legacy executor. Historical sections below describe
 completed implementation stages, not supported runtime paths.
 
+User-correctable native Tool failures are recorded as bounded, redacted observations and exposed to
+the next model turn as stable error codes plus actionable summaries. The runtime keeps dependency,
+budget, cancellation, schema, and internal failures fail-closed. When a verified knowledge answer
+could not complete a requested workspace delivery, the final Assistant message deterministically
+adds the server-owned delivery fact and a next step; raw exceptions, paths, command output, source
+content, and provider details remain excluded from checkpoints, traces, SSE, and final messages.
+
 Phase 4 (Skill Creator) adds `skill_creator 1.0.0`（manifest v2 + `invocation`，`command:
 create-skill`，`execution_mode: agent_loop`，alias `skill`）to the assistant catalog and six
 creator Tools to the autonomous loop. `/create-skill` submits a turn driven by the assistant

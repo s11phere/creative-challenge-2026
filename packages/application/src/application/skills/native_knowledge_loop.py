@@ -66,8 +66,9 @@ NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS = (
     "aggregate coverage metadata. The result contains a deterministic `recommended_next` "
     "guardrail. You may make targeted follow-up retrievals for distinct gaps, but do not "
     "repeat an identical request or treat Tool guidance as a search query.\n\n"
-    "Call `knowledge_answer()` only when the latest retrieval observation says coverage "
-    "is sufficient. The server then executes the existing Grounded QA Application Port, "
+    "Call `knowledge_answer()` when the latest retrieval observation recommends it. "
+    "A zero-result search is still useful input to the existing Grounded QA Application "
+    "Port, which may refuse when the current Space has insufficient evidence. The server then "
     "verifies claims and citations, handles refusal or conflict, and publishes the single "
     "terminal result. Do not emit direct terminal text for a knowledge answer and do not "
     "request another model turn after this Tool succeeds.\n\n"
@@ -129,6 +130,7 @@ class _RunFacts:
     finalization_ready: bool = False
     workspace_requested: bool = False
     workspace_written: bool = False
+    workspace_delivery_error_code: str | None = None
     answer_text: str | None = None
 
 
@@ -246,6 +248,29 @@ class NativeKnowledgeTools(NativeServerToolCoordinator):
                 facts.answer_text = _qa_result_text(completed)
         return facts
 
+    def restore_delivery_facts(self, run_id: UUID, state: NativeToolUseLoopState) -> None:
+        """Rebuild workspace delivery state from bounded native checkpoint observations."""
+
+        facts = self._facts_for(run_id)
+        for item in state.observations:
+            if item.call.tool_name == _ANSWER_TOOL_NAME:
+                if item.observation.get("workspace_required") is True:
+                    facts.workspace_requested = True
+                if item.observation.get("workspace_delivery") == "unavailable":
+                    facts.workspace_delivery_error_code = "RUN_WORKSPACE_UNAVAILABLE"
+                continue
+            if (
+                item.call.tool_name == "fs_write"
+                and item.call.arguments.get("content") == QA_ANSWER_MARKER
+            ):
+                facts.workspace_requested = True
+                if item.observation.get("status") == "tool_error":
+                    error_code = item.observation.get("error_code")
+                    if isinstance(error_code, str):
+                        facts.workspace_delivery_error_code = error_code
+                else:
+                    facts.workspace_written = True
+
     async def _retrieve_handler(
         self, arguments: dict[str, JSONValue], context: ToolExecutionContext
     ) -> dict[str, JSONValue]:
@@ -357,9 +382,27 @@ class NativeKnowledgeTools(NativeServerToolCoordinator):
 
         facts.finalization_ready = True
         facts.answer_text = _qa_result_text(completed)
-        if _workspace_artifact_requested(input_data) and _workspace_tools_enabled(input_data):
+        if _workspace_artifact_requested(input_data):
             facts.workspace_requested = True
             observation = _terminal_answer_observation(completed, verification)
+            if not _workspace_tools_enabled(input_data):
+                facts.workspace_delivery_error_code = "RUN_WORKSPACE_UNAVAILABLE"
+                observation["workspace_delivery"] = "unavailable"
+                observation["workspace_required"] = True
+                observation["terminal_reason"] = "workspace_unavailable"
+                return self._result(
+                    run,
+                    call,
+                    observation,
+                    self.answer_tool,
+                    terminal_output={
+                        "status": completed.status.value,
+                        "outcome": completed.result.outcome.value,
+                        "qa_run_id": str(completed.run_id),
+                        "publication": "grounded_qa",
+                    },
+                    publication_id=_publication_id(run.context.run_id),
+                )
             observation["recommended_next"] = "workspace"
             observation["workspace_required"] = True
             return self._result(run, call, observation, self.answer_tool)
@@ -508,6 +551,40 @@ class NativeKnowledgeTools(NativeServerToolCoordinator):
         facts = self._facts_for(run_id)
         facts.workspace_written = True
 
+    def note_workspace_delivery_blocked(self, run_id: UUID, error_code: str) -> None:
+        facts = self._facts_for(run_id)
+        facts.workspace_delivery_error_code = error_code
+
+    def user_notice(self, run_id: UUID) -> str | None:
+        facts = self._facts_for(run_id)
+        notices: list[str] = []
+        if facts.workspace_requested and not facts.workspace_written:
+            if facts.workspace_delivery_error_code == "RUN_WORKSPACE_UNAVAILABLE":
+                notices.append(
+                    "补充说明：答案已生成，但未创建文件，因为尚未选择可写工作区。"
+                    "请选择工作区后重新请求保存。"
+                )
+            elif facts.workspace_delivery_error_code is not None:
+                notices.append(
+                    "补充说明：答案已生成，但文件未创建；目标位置不可用或未获授权。"
+                    "请选择可写工作区或有效路径后重试。"
+                )
+            else:
+                notices.append(
+                    "补充说明：答案已生成，但文件未创建。请选择可写工作区后重新请求保存。"
+                )
+        completed = facts.answer_run
+        if (
+            completed is not None
+            and completed.result is not None
+            and completed.result.outcome is QAOutcome.REFUSE
+        ):
+            notices.append(
+                "补充说明：当前空间的资料不足以支持该回答。"
+                "请上传相关文件，或改为询问已上传资料涵盖的内容。"
+            )
+        return "\n\n".join(notices) or None
+
     def server_terminal_projection(self, run_id: UUID) -> tuple[dict[str, JSONValue], str] | None:
         facts = self._facts_for(run_id)
         completed = facts.answer_run
@@ -647,7 +724,13 @@ def _coverage_projection(
             for source_id, document_id, version_id in source_versions
         ],
         "profile_version": profile_version,
-        "recommended_next": ("knowledge_retrieve" if gap_signals else "knowledge_answer"),
+        "recommended_next": (
+            "knowledge_answer"
+            if latest is not None and latest.hit_count == 0
+            else "knowledge_retrieve"
+            if gap_signals
+            else "knowledge_answer"
+        ),
     }
 
 
@@ -655,6 +738,8 @@ def _needs_retrieval(facts: _RunFacts, max_search_observations: int) -> bool:
     if not facts.searches:
         return True
     latest = facts.searches[-1]
+    if latest.hit_count == 0:
+        return False
     if len(facts.searches) >= max_search_observations:
         return False
     return latest.matched_count == 0 or latest.matched_count <= latest.context_only_count
