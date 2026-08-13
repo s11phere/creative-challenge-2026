@@ -108,3 +108,15 @@ def test_operational_metrics_reject_untrusted_labels() -> None:
             "assistant.routing.decisions",
             labels={"action": "user supplied response text"},
         )
+
+
+def test_operational_metrics_accept_bounded_personal_skill_command() -> None:
+    metrics = AssistantMetrics()
+    # A personal-Skill command slug (Phase 3/6) is a bounded label: any slug
+    # matching the safe command pattern must not crash metric recording.
+    metrics.record_command("monthly-report", matched=True)
+    metrics.record_command("review-sources", matched=True)
+    snapshot = metrics.snapshot()
+    counters = cast(dict[str, int], snapshot["counters"])
+    assert counters["assistant.commands|command=monthly-report,matched=true"] == 1
+    assert counters["assistant.commands|command=review-sources,matched=true"] == 1
