@@ -394,6 +394,25 @@ export type SkillSuggestion = {
   hint: string
 }
 
+export type SkillDraftEvidence = {
+  name: string
+  evidence: {
+    pattern: string
+    task_category: string
+    tool_sequence: string
+    frequency: number
+    distinct_conversations: number
+    first_seen_at: string
+    last_seen_at: string
+    exemplars: {
+      run_id: string
+      conversation_id: string
+      input_summary: string
+      created_at: string
+    }[]
+  } | null
+}
+
 const DRAFTS_PATH = '/api/v1/skills/personal/drafts'
 
 export function fetchDrafts(signal?: AbortSignal): Promise<SkillDraft[]> {
@@ -420,6 +439,10 @@ export function deleteDraft(name: string): Promise<{ status: string }> {
 
 export function fetchDraftFiles(name: string, signal?: AbortSignal): Promise<{ name: string; files: Record<string, string> }> {
   return request(`${DRAFTS_PATH}/${encodeURIComponent(name)}/files`, { signal })
+}
+
+export function fetchDraftEvidence(name: string, signal?: AbortSignal): Promise<SkillDraftEvidence> {
+  return request(`${DRAFTS_PATH}/${encodeURIComponent(name)}/evidence`, { signal })
 }
 
 export function validateDraft(name: string): Promise<SkillDraftValidation> {
