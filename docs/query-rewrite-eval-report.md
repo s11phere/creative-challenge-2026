@@ -141,13 +141,7 @@ EMBEDDING_ENDPOINT=http://localhost:8080 RERANKER_ENDPOINT=http://localhost:8081
 4. **A1 已是现状**（`.env` 早就是 qwen3 指令），无需改动。
 5. **检索侧已收口**（与 recall-optimization-report-v2 §八 一致），剩余 recall 空间属于「zh→en 语义桥接」，改写已兑现其价值。
 
-## 5. 后续方向（未在本轮执行）
-
-- **Step-Back（C1）**：不同 query 生成策略（原问题 + 回退概念问题）。按「加约束就变差」的规律预期有限，且受合并池稀释效应拖累；若要试需 harness 评测门禁。改动点：新 `StepBackRewriter` 接 `QueryPlanner(rewriter=...)`。
-- **HyDE（C2）**：不建议。成本（每次提问多一次完整 LLM 回答）+ 证据保真风险不成比例；其想达到的「问句→陈述句对齐」已由 qwen3 指令覆盖。
-- **Ragas 等 LLM-as-judge 框架**：不建议引入。默认会外发 question+context+answer 违反 `internal_team_only`/`private_local` 隐私红线；gold 是 locator 级与 Ragas 的 ground_truth 文本格式不匹配；与现有确定性引证门禁（`min_claim_support_rate`/`min_citation_completeness_rate`）重叠。若补「答案忠实度」软指标，应本地 judge + 现有 fast_chat Port 自建，不引第三方框架。
-
-## 6. 产物
+## 5. 产物
 
 | 文件 | 内容 |
 |---|---|
