@@ -93,21 +93,21 @@ class TestPersonalSkillStoreCrud:
         with pytest.raises(SkillRegistryError):
             store.create("builtin_skill", package_files(name="builtin_skill"))
 
-    def test_update_replaces_content(self, store: PersonalSkillStore) -> None:
+    async def test_update_replaces_content(self, store: PersonalSkillStore) -> None:
         store.create("my_skill", package_files())
-        updated = store.update("my_skill", package_files(description="Updated."))
+        updated = await store.update("my_skill", package_files(description="Updated."))
 
         assert updated.description == "Updated."
         assert store.get("my_skill").description == "Updated."
 
-    def test_delete_removes(self, store: PersonalSkillStore) -> None:
+    async def test_delete_removes(self, store: PersonalSkillStore) -> None:
         store.create("my_skill", package_files())
-        store.delete("my_skill")
+        await store.delete("my_skill")
         assert store.list() == ()
 
-    def test_delete_missing_skill(self, store: PersonalSkillStore) -> None:
+    async def test_delete_missing_skill(self, store: PersonalSkillStore) -> None:
         with pytest.raises(SkillRegistryError):
-            store.delete("missing")
+            await store.delete("missing")
 
 
 class TestPersonalSkillStoreActivation:
@@ -122,3 +122,26 @@ class TestPersonalSkillStoreActivation:
         with pytest.raises(PersonalSkillError) as excinfo:
             await store.activate("missing")
         assert excinfo.value.code is PersonalSkillErrorCode.NOT_FOUND
+
+    async def test_update_active_skill_refreshes_activation_pointer(
+        self, store: PersonalSkillStore
+    ) -> None:
+        store.create("my_skill", package_files())
+        await store.activate("my_skill")
+        updated = await store.update("my_skill", package_files(description="Updated content"))
+
+        assert updated.active is True
+        assert store.get("my_skill").active is True
+        pointer = await store._store.get("my_skill")
+        assert pointer is not None
+        assert pointer.content_sha256 == updated.content_sha256
+
+    async def test_delete_active_skill_removes_activation_pointer(
+        self, store: PersonalSkillStore
+    ) -> None:
+        store.create("my_skill", package_files())
+        await store.activate("my_skill")
+        await store.delete("my_skill")
+
+        assert store.list() == ()
+        assert await store._store.get("my_skill") is None

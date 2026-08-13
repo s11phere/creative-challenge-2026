@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from application.skills import SkillActivation
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from .database import Database
@@ -68,6 +68,12 @@ class PostgresSkillActivationStore:
             )
             return _record(model) if model is not None else None
 
+    async def remove(self, name: str) -> None:
+        async with self._database.transaction() as session:
+            await session.execute(
+                delete(SkillActivationModel).where(SkillActivationModel.skill_name == name)
+            )
+
 
 class InMemorySkillActivationStore:
     def __init__(self) -> None:
@@ -101,6 +107,10 @@ class InMemorySkillActivationStore:
             )
             self._records[activation.name] = updated
             return updated
+
+    async def remove(self, name: str) -> None:
+        async with self._lock:
+            self._records.pop(name, None)
 
 
 def _record(model: SkillActivationModel) -> SkillActivation:

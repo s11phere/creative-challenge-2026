@@ -198,3 +198,13 @@ it('shows pattern-extraction evidence on candidate drafts', async () => {
 
   expect(await screen.findByText('候选模式 · 3 次 / 3 会话 · 1 个来源 run')).toBeInTheDocument()
 })
+
+it('allows editing and deleting an active personal Skill', async () => {
+  vi.stubGlobal('fetch', routedFetch({ personal: [{ ...personalSkill, active: true }] }))
+
+  renderPanel()
+
+  expect(await screen.findByText('my_skill')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /编辑 my_skill/ })).toBeEnabled()
+  expect(screen.getByRole('button', { name: /删除 my_skill/ })).toBeEnabled()
+})

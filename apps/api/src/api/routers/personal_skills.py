@@ -114,20 +114,20 @@ def get_personal_skill(request: Request, name: str) -> PersonalSkillResponse:
 
 
 @router.put("/{name}", response_model=PersonalSkillResponse)
-def update_personal_skill(
+async def update_personal_skill(
     request: Request, name: str, body: PersonalSkillUpdateRequest
 ) -> PersonalSkillResponse:
     try:
-        view = request.app.state.personal_skill_store.update(name, body.files)
+        view = await request.app.state.personal_skill_store.update(name, body.files)
     except (PersonalSkillError, SkillRegistryError) as exc:
         raise _app_error(exc) from exc
     return _to_response(view)
 
 
 @router.delete("/{name}", response_model=dict[str, str])
-def delete_personal_skill(request: Request, name: str) -> dict[str, str]:
+async def delete_personal_skill(request: Request, name: str) -> dict[str, str]:
     try:
-        request.app.state.personal_skill_store.delete(name)
+        await request.app.state.personal_skill_store.delete(name)
     except (PersonalSkillError, SkillRegistryError) as exc:
         raise _app_error(exc) from exc
     return {"status": "deleted"}

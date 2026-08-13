@@ -80,6 +80,8 @@ class SkillActivationStore(Protocol):
         self, activation: SkillActivation, *, expected_revision: int
     ) -> SkillActivation | None: ...
 
+    async def remove(self, name: str) -> None: ...
+
 
 __all__ = [
     "SkillActivation",

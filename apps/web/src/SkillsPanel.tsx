@@ -246,9 +246,9 @@ function PersonalSkillRow({
           type="button"
           className="panel-action-button"
           onClick={() => onEdit(skill)}
-          disabled={pending || skill.active}
+          disabled={pending}
           aria-label={`编辑 ${skill.name}`}
-          title={skill.active ? '激活中的个人 Skill 不可编辑' : '编辑个人 Skill'}
+          title="编辑个人 Skill（激活状态下直接编辑会同步激活指针）"
         >
           <Pencil size={14} />编辑
         </button>
@@ -256,9 +256,9 @@ function PersonalSkillRow({
           type="button"
           className="panel-action-button"
           onClick={() => deleteMutation.mutate()}
-          disabled={pending || skill.active}
+          disabled={pending}
           aria-label={`删除 ${skill.name}`}
-          title={skill.active ? '激活中的个人 Skill 不可删除' : '删除个人 Skill'}
+          title="删除个人 Skill（激活状态下会同时移除激活记录）"
         >
           <Trash2 size={14} />删除
         </button>
