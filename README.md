@@ -163,12 +163,13 @@ uv run python scripts/distill_memories.py --enqueue
 记忆表 pgvector 检索复用 `embedding_zh` 能力别名；注入 best-effort，检索失败只记日志、不打断回合。
 
 个性化 Phase 6（自动提取工作模式，Path B）从使用痕迹自动提议个人 skill，走 creator 定稿 + eval 门禁 +
-用户审批，**绝不自动激活**。`scripts/extract_skill_candidates.py`（或 `--enqueue` 调度 Worker
-`skill_pattern_extract`）挖掘强模式：按 Phase 2 维度聚类 usage_traces，过拟合防护（仅 COMPLETED +
-未绑定 skill + 使用工具，频次 ≥3、跨 ≥2 会话、30 天窗口、排除 general）→ 用 Phase 4 creator 机制草拟
-候选包（category 定制 prompt + 从 exemplar 蒸馏的 eval cases，case_id 锚定来源 run）→ **双闸验证**
-（Phase 1 结构化门禁全过 + 历史锚定：每个 eval case 都溯源到真实来源 run）→ 通过的进入 SkillsPanel 草稿区
-并附 `evidence.json`；未过闸的候选删除、不 surfacing。
+用户审批，**绝不自动激活**。每次 Assistant/Skill 回合结束 Worker 会自动调度 `skill_pattern_extract`
+（Redis 节流，默认每 30 分钟最多一次）；也可手动 `--enqueue` 或本地执行。挖掘按 Phase 2 维度聚类
+usage_traces，过拟合防护（仅 COMPLETED + 未绑定 skill + 使用工具，频次 ≥3、跨 ≥2 会话、30 天窗口、
+排除 general）→ 用 Phase 4 creator 机制草拟候选包（category 定制 prompt + 从 exemplar 蒸馏的
+eval cases，case_id 锚定来源 run）→ **双闸验证**（Phase 1 结构化门禁全过 + 历史锚定：每个 eval case
+都溯源到真实来源 run）→ 通过的进入 SkillsPanel 草稿区并附 `evidence.json`；未过闸的候选删除、不
+surfacing。
 
 ```powershell
 uv run python scripts/extract_skill_candidates.py --json

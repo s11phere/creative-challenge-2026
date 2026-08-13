@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("worker.skill_extraction")
 database = Database(settings.database_url, poolclass=NullPool)
 
+_THROTTLE_KEY = "personalization:skill_extraction:due"
+
 
 class SkillExtractionResult(TypedDict):
     event_version: int
@@ -123,6 +125,30 @@ def skill_pattern_extract(*, trace_id: str, event_version: int) -> SkillExtracti
         return result
 
 
+def maybe_enqueue_skill_pattern_extract(*, throttle_seconds: int | None = None) -> bool:
+    """Best-effort, throttled scheduling after a finished turn (Phase 6).
+
+    Returns ``True`` when a ``skill_pattern_extract`` message was enqueued. A Redis
+    SETNX-with-TTL key bounds runs (default 30 minutes) so a burst of turns triggers
+    at most one extraction window. Redis or enqueue failures are logged and treated
+    as "not enqueued" — never breaking the turn path.
+    """
+    throttle = throttle_seconds or settings.skill_extraction_throttle_seconds
+    try:
+        acquired = broker.client.set(_THROTTLE_KEY, "1", nx=True, ex=throttle)
+    except Exception:
+        logger.exception("skill_extraction_throttle_unavailable")
+        return False
+    if not acquired:
+        return False
+    try:
+        enqueue_skill_pattern_extract()
+        return True
+    except Exception:
+        logger.exception("skill_extraction_enqueue_failed")
+        return False
+
+
 def enqueue_skill_pattern_extract(
     *, trace_id: str | None = None, event_version: int = 1
 ) -> dramatiq.Message[Any]:
@@ -155,5 +181,6 @@ __all__ = [
     "SkillExtractionResult",
     "enqueue_skill_pattern_extract",
     "extract_skill_patterns_sync",
+    "maybe_enqueue_skill_pattern_extract",
     "skill_pattern_extract",
 ]
