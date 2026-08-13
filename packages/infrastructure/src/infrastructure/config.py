@@ -113,9 +113,6 @@ class Settings(BaseSettings):
     model_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     fast_chat_timeout_seconds: float = Field(default=120.0, gt=0, le=300)
     fast_chat_reasoning_enabled: bool = False
-    # Harness v2 is the default path; providers that do not support native Tool
-    # use still fall back to the preserved v1 executor.
-    fast_chat_native_tool_use: bool = True
     # Prompt caching is a provider capability plus an explicit cost/privacy opt-in.
     fast_chat_prompt_caching: bool = False
     model_max_retries: int = Field(default=2, ge=0, le=5)

@@ -1,7 +1,6 @@
 """Server-owned knowledge Tools for the native Tool-use Harness v2 loop.
 
-This adapter keeps the v1 `KnowledgeLoopTools` surface untouched.  In the v2
-path the model selects ``knowledge_agent`` and can call two Tools:
+In the native v2 path the model selects ``knowledge_agent`` and can call two Tools:
 
 * ``knowledge_retrieve(query)`` runs the existing SearchService and
   immediately projects a bounded coverage inspection, never source text.

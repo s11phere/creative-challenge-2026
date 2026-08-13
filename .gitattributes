@@ -7,4 +7,3 @@
 packages/application/src/application/assistant/contracts/* text eol=lf
 packages/agent_runtime/src/agent_runtime/contracts/*.json text eol=lf
 cases/evals/datasets/assistant-routing-v1/* text eol=lf
-cases/evals/datasets/agent-loop-v1/* text eol=lf

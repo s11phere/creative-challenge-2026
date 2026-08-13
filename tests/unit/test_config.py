@@ -122,10 +122,8 @@ def test_current_agent_loop_version_is_fixed() -> None:
     assert default.knowledge_agent_skill_version == "1.0.0"
 
 
-def test_native_tool_use_is_default_with_an_explicit_v1_fallback() -> None:
-    assert Settings(_env_file=None).fast_chat_native_tool_use is True
-    assert Settings(fast_chat_native_tool_use=False).fast_chat_native_tool_use is False
-    assert Settings(fast_chat_native_tool_use=True).fast_chat_native_tool_use is True
+def test_native_tool_use_has_no_runtime_fallback_setting() -> None:
+    assert not hasattr(Settings(_env_file=None), "fast_chat_native_tool_use")
 
 
 async def test_application_lifespan_rejects_missing_production_secrets(

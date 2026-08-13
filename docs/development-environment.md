@@ -295,7 +295,7 @@ Validate the hash-pinned synthetic development fixture without invoking a model 
 controlled corpus:
 
 ```powershell
-uv run --frozen python scripts/evaluate_agent_loop.py --validate-only
+uv run --frozen python scripts/evaluate_agent_harness_v2.py --validate-only
 ```
 
 Predictions, when supplied to the evaluator, may contain only safe action/count/coverage/latency/

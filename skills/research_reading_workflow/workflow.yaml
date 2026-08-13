@@ -1,9 +1,9 @@
 workflow_version: "1"
-start: enter_agent_loop
+start: projected_skill
 nodes:
-  - id: enter_agent_loop
+  - id: projected_skill
     step: executing
-    handler: research_agent_loop
+    handler: projected_skill
     next: null
     max_retries: 1
     required_permissions: [read_knowledge, model]

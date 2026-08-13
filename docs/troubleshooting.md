@@ -256,11 +256,11 @@ Collector 不可达时 exporter 会有界失败，API/Worker 应继续运行。�
 
 ## Harness v2 SSE 或 prompt cache 不生效
 
-`agent-run-sse-v4` 只由启用 native Tool-use 的 v2 executor 写入；旧 Run 仍读取
+`agent-run-sse-v4` 由当前 native Tool-use executor 写入；历史 v1 Run 不会被恢复。
 `agent-run-sse-v3`，不要在 Web timeline 中把两种 schema 混为同一历史。事件 payload 只包含安全
 字符串和计数，禁止 prompt、回答、文档正文、Tool body 和密钥；如果看到 v4 字段缺失，先检查
-`FAST_CHAT_NATIVE_TOOL_USE` 是否被部署显式设为 `false`，或 Provider capability 是否未声明
-native Tool-use；默认配置启用 v2，能力不可用时会回退到保留的 v1 路径。
+Provider capability 是否声明 native Tool-use；当前路径没有 v1 回退，能力不可用时 Run 会
+以 `RUN_NATIVE_TOOL_USE_UNSUPPORTED` 失败。
 
 Prompt cache 仅在 `FAST_CHAT_PROMPT_CACHING=true`、ModelGateway capability 声明支持且部署策略
 允许时发送 `extra_body.cache_key`。cache key 只由静态 prompt/schema/Skill/provider 摘要组成，

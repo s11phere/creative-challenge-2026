@@ -3,8 +3,8 @@
 The report is deliberately non-blocking: it surveys every requested Skill and
 records per-case pass/fail with body-free evidence. Cases without declared checks
 are marked ``case_too_thin`` and never reported as passing. Probe execution reuses
-the production Skill executors (``DeterministicWorkflowExecutor`` /
-``AgentLoopExecutor``) plus the registered Grounded QA adapters; Skills without a
+the production ``DeterministicWorkflowExecutor`` plus the registered Grounded QA
+adapters; Skills without a
 registered adapter, or that need a database which is unavailable, are reported as
 ``run_error`` without blocking the rest of the survey.
 """
@@ -24,10 +24,6 @@ from typing import Any, cast
 from uuid import UUID, uuid4, uuid5
 
 from agent_runtime import (
-    AgentLoopExecutor,
-    AgentLoopFinalizer,
-    AgentLoopResult,
-    AgentToolRegistry,
     DeterministicWorkflowExecutor,
     FileSystemSkillRegistry,
     InMemoryRuntimeStateStore,
@@ -38,7 +34,6 @@ from agent_runtime import (
     RuntimeAuditEventType,
     RuntimeExecutionResult,
     SkillPackage,
-    ToolRef,
 )
 from application.skills import (
     GroundedQASkillAdapter,
@@ -52,7 +47,6 @@ from application.skills import (
     invalid_case_result,
 )
 from domain.agent_runtime import AgentRun, AgentRunContext
-from domain.reasoning import ReasoningProfile
 from infrastructure.database import Database
 from infrastructure.qa_execution import GroundedQAExecutor, qa_execution_versions
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
@@ -99,19 +93,15 @@ _FORBIDDEN_REPORT_KEYS = frozenset(
 
 @dataclass(frozen=True)
 class FixtureProbe:
-    """Handlers and optional agent-loop tools for a synthetic fixture Skill."""
+    """Handlers for a synthetic fixture Skill."""
 
     handlers: Mapping[str, NodeHandler]
-    tool_registry: AgentToolRegistry | None = None
-    allowed_tools: tuple[ToolRef, ...] = ()
-    system_prompt: str | None = None
-    finalizer: AgentLoopFinalizer | None = None
 
 
 class SkillEvalProbeRunner:
     """Run one eval case through the production Skill execution stack.
 
-    A fixture probe (injected handlers / agent-loop tools) always takes precedence.
+    A fixture probe with injected handlers always takes precedence.
     Skills without a registered adapter are reported as ``run_error``.
     """
 
@@ -161,20 +151,6 @@ class SkillEvalProbeRunner:
         run = _build_run(package, pin, case)
         input_data = _input_data(case, package)
         state_store = InMemoryRuntimeStateStore()
-        if _uses_agent_loop(package):
-            if fixture.tool_registry is None or fixture.finalizer is None:
-                return _error_observation(case, "SKILL_EVAL_FIXTURE_TOOLS_REQUIRED", started)
-            executor = AgentLoopExecutor(
-                tool_registry=fixture.tool_registry,
-                allowed_tools=fixture.allowed_tools,
-                system_prompt=fixture.system_prompt or "",
-                model_gateway=self._gateway,
-                state_store=state_store,
-                reasoning_profile=ReasoningProfile.unresolved(),
-                finalizer=fixture.finalizer,
-            )
-            result = await executor.execute(run, pin, input_data, goal=case.case_id)
-            return _agent_loop_observation(result, case, started)
         executor = DeterministicWorkflowExecutor(
             skill_registry=self._registry,
             model_gateway=self._gateway,
@@ -248,11 +224,6 @@ def _input_data(case: SkillEvalCase, package: SkillPackage) -> Mapping[str, JSON
     return {"question": case.case_id}
 
 
-def _uses_agent_loop(package: SkillPackage) -> bool:
-    invocation = package.manifest.invocation
-    return invocation is not None and invocation.execution_mode == "agent_loop"
-
-
 def _runtime_observation(
     result: RuntimeExecutionResult, case: SkillEvalCase, started: float
 ) -> SkillEvalObservation:
@@ -265,31 +236,6 @@ def _runtime_observation(
         for event in result.events
         if event.event_type is RuntimeAuditEventType.NODE_STARTED and event.node_id
     )
-    return SkillEvalObservation(
-        case_id=case.case_id,
-        status=status,
-        output=result.output,
-        tool_calls=tool_calls,
-        latency_ms=latency_ms,
-    )
-
-
-def _agent_loop_observation(
-    result: AgentLoopResult, case: SkillEvalCase, started: float
-) -> SkillEvalObservation:
-    latency_ms = (perf_counter() - started) * 1000
-    if result.error is not None:
-        timed_out = bool(getattr(result.error, "timed_out", False))
-        return SkillEvalObservation(
-            case_id=case.case_id,
-            status="timed_out" if timed_out else "failed",
-            output=None,
-            tool_calls=(),
-            latency_ms=latency_ms,
-            error=result.error.code,
-        )
-    status = "clarify" if result.clarified else ("refused" if result.refused else "complete")
-    tool_calls = tuple(observation.tool_name for observation in result.state.observations)
     return SkillEvalObservation(
         case_id=case.case_id,
         status=status,

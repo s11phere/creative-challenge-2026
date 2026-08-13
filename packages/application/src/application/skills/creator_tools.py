@@ -300,9 +300,8 @@ def register_skill_creator_tools(
     """Register all Skill Creator Tools against a registry that already holds their handlers.
 
     ``SkillCreatorTools.handlers()`` must have been merged into ``registry``
-    beforehand (the same contract ``KnowledgeLoopTools`` uses for additional
-    Tools); ``register`` then validates each definition's handler against the
-    registry.
+    beforehand; ``register`` then validates each definition's handler against
+    the registry.
     """
     return (
         registry.register(_skill_scaffold_definition()),

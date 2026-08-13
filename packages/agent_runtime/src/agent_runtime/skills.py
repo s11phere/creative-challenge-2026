@@ -166,7 +166,7 @@ SKILL_MANIFEST_SCHEMA: dict[str, JSONValue] = {
                     },
                 },
                 "input_mode": {"enum": ["none", "question", "document", "sources"]},
-                "execution_mode": {"enum": ["projected", "agent_loop"]},
+                "execution_mode": {"enum": ["projected", "native_tool_use"]},
             },
         },
     },
@@ -400,7 +400,7 @@ class FileSystemSkillRegistry:
         *,
         personal_root: Path | None = None,
         runtime_version: str = "0.1.0",
-        checkpoint_schema_version: int = 1,
+        checkpoint_schema_version: int = 2,
     ) -> None:
         try:
             self._runtime_version = Version(runtime_version)

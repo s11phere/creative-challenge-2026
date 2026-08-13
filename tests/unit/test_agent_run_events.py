@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
-from agent_runtime.loop import _display_text
+from agent_runtime.native_tool_use import _display_text
 from domain.agent_sse import (
     AGENT_RUN_SSE_V4,
     AgentRunEventConflictError,

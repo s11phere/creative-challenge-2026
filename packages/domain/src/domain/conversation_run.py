@@ -182,8 +182,8 @@ class ConversationRun:
     status: ConversationRunStatus = ConversationRunStatus.CREATED
     cancellation_requested: bool = False
     error_code: str | None = None
-    router_version: str = "assistant-agent-loop-v1"
-    core_prompt_version: str = "assistant-base-prompt-v7"
+    router_version: str = "assistant-native-tool-use-v2"
+    core_prompt_version: str = "assistant-base-prompt-v8"
     model_identity: str = "unselected"
     reasoning_profile: ReasoningProfile = field(default_factory=ReasoningProfile.unresolved)
     skill: FixedSkillIdentity | None = None

@@ -68,7 +68,7 @@ async def _skill_run(repository: InMemoryGroundedQARepository):
         run_kind=ConversationRunKind.SKILL,
         selection_source=run.selection_source,
         skill=FixedSkillIdentity("knowledge_agent", "0.3.0", "a" * 64),
-        core_prompt_version="assistant-base-prompt-v7",
+        core_prompt_version="assistant-base-prompt-v8",
     )
 
 

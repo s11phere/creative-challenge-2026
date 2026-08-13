@@ -76,7 +76,6 @@ class OpenAICompatibleGateway:
         timeout_seconds: float = 15.0,
         fast_chat_timeout_seconds: float = 120.0,
         fast_chat_reasoning_enabled: bool = False,
-        fast_chat_native_tool_use: bool = False,
         fast_chat_prompt_caching: bool = False,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.1,
@@ -129,7 +128,6 @@ class OpenAICompatibleGateway:
         self.reranker_batch_size = reranker_batch_size
         self.fast_chat_timeout_seconds = fast_chat_timeout_seconds
         self.fast_chat_reasoning_enabled = fast_chat_reasoning_enabled
-        self.fast_chat_native_tool_use = fast_chat_native_tool_use
         self.fast_chat_prompt_caching = fast_chat_prompt_caching
         self._owns_client = client is None
         self.client = client
@@ -142,9 +140,7 @@ class OpenAICompatibleGateway:
                 available=config.available,
                 code="MODEL_CAPABILITY_CONFIGURED" if config.available else config.status_code,
                 supports_native_tool_use=(
-                    config.available
-                    and capability is CapabilityAlias.FAST_CHAT
-                    and self.fast_chat_native_tool_use
+                    config.available and capability is CapabilityAlias.FAST_CHAT
                 ),
                 supports_prompt_caching=(
                     config.available
@@ -223,13 +219,6 @@ class OpenAICompatibleGateway:
             if self.fast_chat_prompt_caching and request.cache_key is not None:
                 payload["extra_body"] = {"cache_key": request.cache_key}
             if request.tools:
-                if not self.fast_chat_native_tool_use:
-                    raise ModelGatewayError(
-                        ModelErrorCode.UNSUPPORTED_CAPABILITY,
-                        "The configured chat provider does not support native Tool use.",
-                        retryable=False,
-                        capability=capability,
-                    )
                 payload["tools"] = [
                     {
                         "type": "function",

@@ -1,20 +1,14 @@
 manifest_version: "2"
 name: knowledge_agent
 version: 1.0.0
-description: Provisional autonomous knowledge Tool loop with workspace artifact and duplicate-request recovery.
+description: Provisional native Tool-use knowledge workflow with workspace artifact support.
 input_schema: schemas/input.json
 output_schema: schemas/output.json
 required_tools:
-  - name: knowledge_search
-    version: 1.1.0
-  - name: knowledge_inspect
-    version: 1.1.0
-  - name: grounded_answer
-    version: 1.1.0
-  - name: verify_answer
-    version: 1.1.0
-  - name: finalize_answer
-    version: 1.1.0
+  - name: knowledge_retrieve
+    version: 1.0.0
+  - name: knowledge_answer
+    version: 1.0.0
 required_capabilities:
   - fast_chat
 permissions:
@@ -29,7 +23,7 @@ budgets:
 entrypoint: workflow.yaml
 compatibility:
   runtime: ">=0.1.0,<1.0.0"
-  checkpoint_schema_versions: [1]
+  checkpoint_schema_versions: [2]
 prompts:
   - prompts/system.md
 evals:

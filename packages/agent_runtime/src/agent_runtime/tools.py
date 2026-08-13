@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from time import monotonic
+from typing import Protocol
 from uuid import UUID
 
 from domain.agent_runtime import (
@@ -163,6 +164,16 @@ class ToolInvocationResult:
     output: JSONValue
     run: AgentRun
     record: ToolCallRecord
+
+
+class AgentToolRegistry(Protocol):
+    """Minimal Tool registry contract shared by native Tool-use execution."""
+
+    def is_available(self, name: str, version: str) -> bool: ...
+
+    def get(self, ref: ToolRef) -> ToolDefinition: ...
+
+    async def invoke(self, run: AgentRun, invocation: ToolInvocation) -> ToolInvocationResult: ...
 
 
 class InMemoryToolRegistry:
@@ -484,6 +495,7 @@ def tool_input_summary(value: JSONValue | Mapping[str, JSONValue]) -> str:
 
 
 __all__ = [
+    "AgentToolRegistry",
     "InMemoryToolRegistry",
     "JSONValue",
     "QA_ANSWER_MARKER",

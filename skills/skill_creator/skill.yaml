@@ -18,7 +18,7 @@ budgets:
 entrypoint: workflow.yaml
 compatibility:
   runtime: ">=0.1.0,<1.0.0"
-  checkpoint_schema_versions: [1]
+  checkpoint_schema_versions: [2]
 prompts:
   - prompts/system.md
 evals:
@@ -38,4 +38,4 @@ invocation:
       - "帮我建一个总结会议纪要的 skill"
       - "/create_skill 代码审查 skill"
   input_mode: question
-  execution_mode: agent_loop
+  execution_mode: projected

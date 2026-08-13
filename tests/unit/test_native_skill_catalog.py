@@ -45,7 +45,7 @@ def _manifest() -> dict[str, object]:
                 "examples": [],
             },
             "input_mode": "question",
-            "execution_mode": "agent_loop",
+            "execution_mode": "native_tool_use",
         },
     }
 

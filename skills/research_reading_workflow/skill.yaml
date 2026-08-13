@@ -21,7 +21,7 @@ budgets:
 entrypoint: workflow.yaml
 compatibility:
   runtime: ">=0.1.0,<1.0.0"
-  checkpoint_schema_versions: [1]
+  checkpoint_schema_versions: [2]
 prompts: [prompts/boundary.md]
 evals: [evals/cases.jsonl]
 invocation:
@@ -40,4 +40,4 @@ invocation:
       - "精读 Transformer 论文，并用本科生能理解的方式解释核心方法"
       - "综合这四篇图神经网络论文，给出证据矩阵和主题综述"
   input_mode: question
-  execution_mode: agent_loop
+  execution_mode: projected

@@ -250,7 +250,7 @@ class AssistantSkillInvocationService:
             run_kind=ConversationRunKind.SKILL,
             selection_source=selection_source,
             skill=skill,
-            core_prompt_version="assistant-base-prompt-v7",
+            core_prompt_version="assistant-base-prompt-v8",
         )
         assert promoted.skill is not None
         projection_arguments = dict(arguments)

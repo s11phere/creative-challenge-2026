@@ -21,7 +21,7 @@ from domain.agent_runtime import (
 
 from .tools import JSONValue
 
-CHECKPOINT_SCHEMA_VERSION = 1
+CHECKPOINT_SCHEMA_VERSION = 2
 
 
 def checkpoint_state_sha256(state: Mapping[str, JSONValue]) -> str:

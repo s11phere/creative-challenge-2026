@@ -11,12 +11,10 @@ from typing import Protocol
 from uuid import UUID, uuid4
 
 from agent_runtime import NativeModelContextV2
-from domain.agent_loop import AgentLoopPhase, AgentLoopState
 from domain.conversation_context import (
     ConversationEvidenceCoverage,
     ConversationSensitivity,
     ConversationSummary,
-    ConversationToolHistoryItem,
     most_restrictive_sensitivity,
 )
 from domain.conversation_run import (
@@ -90,7 +88,6 @@ class ConversationContextSnapshot:
     soft_limit_exceeded: bool
     current_goal: str = ""
     subquestions: tuple[str, ...] = ()
-    tool_history: tuple[ConversationToolHistoryItem, ...] = ()
     evidence_coverage: ConversationEvidenceCoverage = ConversationEvidenceCoverage()
     unresolved_items: tuple[str, ...] = ()
     cancellation_requested: bool = False
@@ -104,8 +101,6 @@ class ConversationContextSnapshot:
             object.__setattr__(self, "current_goal", self.current_content)
         if len(self.subquestions) > 20 or len(self.unresolved_items) > 20:
             raise ValueError("Conversation context task state is too large")
-        if len(self.tool_history) > 50:
-            raise ValueError("Conversation context Tool history is too large")
         if self.approval_id is not None and not self.approval_id.strip():
             raise ValueError("Conversation context approval ID must not be blank")
         if self.previous_clarification is not None and (
@@ -139,28 +134,6 @@ class ConversationContextSnapshot:
             parts.append("<subquestions>")
             parts.extend(f"<subquestion>{item}</subquestion>" for item in self.subquestions)
             parts.append("</subquestions>")
-        if self.tool_history:
-            parts.append('<tool-history redacted="true">')
-            for item in self.tool_history:
-                status = item.error_code or "ok"
-                parts.append(
-                    "<tool-observation "
-                    f'iteration="{item.iteration}" name="{item.tool_name}" '
-                    f'version="{item.tool_version}" status="{status}" '
-                    f'retries="{item.retry_count}" duration_ms="{item.duration_ms}">'
-                )
-                parts.extend(
-                    [
-                        "<input-summary>",
-                        item.input_summary,
-                        "</input-summary>",
-                        "<output-summary>",
-                        item.output_summary,
-                        "</output-summary>",
-                        "</tool-observation>",
-                    ]
-                )
-            parts.append("</tool-history>")
         parts.append(
             "<evidence-coverage "
             f'candidates="{self.evidence_coverage.candidate_count}" '
@@ -370,7 +343,6 @@ class ConversationContextService:
         self,
         run: ConversationRun,
         *,
-        loop_state: AgentLoopState | None = None,
         evidence_coverage: ConversationEvidenceCoverage | None = None,
         unresolved_items: tuple[str, ...] = (),
         native_model_context: NativeModelContextV2 | None = None,
@@ -436,14 +408,6 @@ class ConversationContextService:
             for item in messages[:current_index]
             if _is_user_visible_message(item, runs)
         )
-        (
-            loop_goal,
-            subquestions,
-            tool_history,
-            inferred_unresolved,
-            approval_pending,
-            approval_id,
-        ) = _loop_context(loop_state, current.content)
         previous_clarification = _latest_clarification(runs, excluding=run.run_id)
         return ConversationContextSnapshot(
             conversation_id=run.conversation_id,
@@ -456,15 +420,10 @@ class ConversationContextService:
             estimated_input_tokens=estimated,
             soft_limit_exceeded=prior_tokens + _token_count(current.content)
             > self._soft_token_limit,
-            current_goal=loop_goal,
-            subquestions=subquestions,
-            tool_history=tool_history,
-            evidence_coverage=evidence_coverage or _coverage_from_loop(loop_state, subquestions),
-            unresolved_items=unresolved_items or inferred_unresolved,
+            evidence_coverage=evidence_coverage or ConversationEvidenceCoverage(),
+            unresolved_items=unresolved_items,
             cancellation_requested=run.cancellation_requested,
-            approval_pending=approval_pending
-            or run.status is ConversationRunStatus.WAITING_APPROVAL,
-            approval_id=approval_id,
+            approval_pending=run.status is ConversationRunStatus.WAITING_APPROVAL,
             previous_clarification=previous_clarification,
             native_model_context=native_model_context,
         )
@@ -698,66 +657,6 @@ def _latest_clarification(runs: Mapping[UUID, ConversationRun], *, excluding: UU
     if result is None or result.clarification is None:
         return None
     return str(result.clarification.message[:1_000])
-
-
-def _loop_context(
-    loop_state: AgentLoopState | None, current_content: str
-) -> tuple[
-    str,
-    tuple[str, ...],
-    tuple[ConversationToolHistoryItem, ...],
-    tuple[str, ...],
-    bool,
-    str | None,
-]:
-    if loop_state is None:
-        return current_content, (), (), (), False, None
-    history = tuple(
-        ConversationToolHistoryItem(
-            iteration=item.iteration,
-            tool_name=item.tool_name,
-            tool_version=item.tool_version,
-            input_summary=_bounded_summary(item.input_summary),
-            output_summary=_bounded_summary(item.output_summary),
-            error_code=item.error_code,
-            retry_count=item.retry_count,
-            duration_ms=item.duration_ms,
-        )
-        for item in loop_state.observations[-50:]
-    )
-    approval_pending = loop_state.phase is AgentLoopPhase.WAITING_APPROVAL
-    unresolved = () if loop_state.completion.goal_complete else loop_state.task.subquestions
-    return (
-        loop_state.task.goal,
-        loop_state.task.subquestions,
-        history,
-        unresolved,
-        approval_pending,
-        loop_state.approval_id if approval_pending else None,
-    )
-
-
-def _coverage_from_loop(
-    loop_state: AgentLoopState | None, subquestions: tuple[str, ...]
-) -> ConversationEvidenceCoverage:
-    if loop_state is None:
-        return ConversationEvidenceCoverage()
-    required = len(subquestions)
-    successful = sum(item.error_code is None for item in loop_state.observations)
-    candidates = len(loop_state.observations)
-    if loop_state.completion.evidence_sufficient:
-        required = max(required, 1)
-        candidates = max(candidates, required)
-        successful = max(successful, required)
-    return ConversationEvidenceCoverage(
-        candidate_count=candidates,
-        covered_count=min(successful, candidates),
-        required_count=required,
-    )
-
-
-def _bounded_summary(value: str) -> str:
-    return value[:2_000] or "(empty)"
 
 
 def _compaction_input(

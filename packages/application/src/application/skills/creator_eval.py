@@ -109,7 +109,7 @@ class DraftSkillEvalRunner:
         started: float,
     ) -> SkillEvalObservation:
         invocation = package.manifest.invocation
-        if invocation is not None and invocation.execution_mode == "agent_loop":
+        if invocation is not None and invocation.execution_mode == "native_tool_use":
             # Agent-loop drafts need model-driven tool calls; the creator gate is
             # deterministic and structural, so this draft is reported as unsupported.
             return _error_observation(case, "SKILL_EVAL_DRAFT_AGENT_LOOP", started)

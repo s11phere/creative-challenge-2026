@@ -31,7 +31,6 @@ from agent_runtime import (
 )
 from application.assistant import (
     AssistantMetrics,
-    AssistantSkillContext,
     AutonomousAssistantLoopService,
     ConversationCompactionService,
     ConversationContextService,
@@ -40,8 +39,6 @@ from application.assistant import (
 from application.skills import (
     NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS,
     DraftSkillEvalRunner,
-    KnowledgeLoopTools,
-    KnowledgeLoopToolsConfig,
     NativeKnowledgeTools,
     NativeKnowledgeToolsConfig,
     PersonalSkillStore,
@@ -56,15 +53,13 @@ from domain.grounded_qa import QAAttempt, QAEvent, QAStatus
 from domain.qa_persistence import QARetrievalScope, QARunRecord
 from infrastructure.agent_events import PostgresAgentRunEventStore
 from infrastructure.assistant_events import PostgresAssistantEventStore
-from infrastructure.assistant_resources import PostgresAssistantResourceResolver
 from infrastructure.config import settings
 from infrastructure.conversation_runs import PostgresConversationRunRepository
 from infrastructure.database import Database
 from infrastructure.qa import DatabaseSearchService
-from infrastructure.qa_debug_trace import QADebugTrace, TracingModelGateway, TracingToolRegistry
+from infrastructure.qa_debug_trace import QADebugTrace, TracingModelGateway
 from infrastructure.qa_execution import (
     GroundedQAExecutor,
-    StructuredAssistantLoopGateway,
     StructuredFakeGateway,
     StructuredNativeAssistantLoopGateway,
     assistant_skill_registry,
@@ -264,42 +259,18 @@ async def _autonomous_loop_service(
     trace_id: str,
 ) -> AutonomousAssistantLoopService:
     """Build the top-level Loop from existing QA ports and trusted Skill packages."""
-    from agent_runtime import SkillRegistryError
-
     skill_registry = registry
     assert isinstance(skill_registry, PersonalSkillRegistry)
-    resources = PostgresAssistantResourceResolver(database)
     assistant_pin = skill_registry.pin("assistant_agent", "1.0.0")
     assistant_package = skill_registry.validate_pin(assistant_pin)
     knowledge_pin = skill_registry.pin("knowledge_agent")
-    active_skill_contexts: list[AssistantSkillContext] = []
-    for skill_name in skill_registry.names():
-        try:
-            active_pin = skill_registry.pin(skill_name)
-        except SkillRegistryError:
-            # The assistant package is pinned explicitly and is not an active
-            # user-facing Skill; only expose activated catalog entries.
-            continue
-        active_package = skill_registry.validate_pin(active_pin)
-        active_instructions = "\n\n".join(
-            (active_package.root / prompt).read_text(encoding="utf-8")
-            for prompt in active_package.manifest.prompts
-        )
-        active_skill_contexts.append(
-            AssistantSkillContext(
-                name=active_pin.name,
-                version=active_pin.version,
-                description=active_package.manifest.description,
-                instructions=active_instructions,
-            )
-        )
     trace = QADebugTrace.from_settings(run_id=run_id, trace_id=trace_id, settings=settings)
     await trace.record(
         "run_started",
         skill_name=assistant_pin.name,
         skill_version=assistant_pin.version,
         knowledge_skill_version=knowledge_pin.version,
-        active_skill_names=tuple(context.name for context in active_skill_contexts),
+        active_skill_names=skill_registry.names(),
     )
     qa_executor = GroundedQAExecutor(
         database=database,
@@ -455,111 +426,54 @@ async def _autonomous_loop_service(
             return await qa_repository.transition_run(created.run_id, QAEvent.QUEUE)
         return created
 
-    tools = KnowledgeLoopTools(
+    native_knowledge = NativeKnowledgeTools(
         qa=qa_service,
         search=DatabaseSearchService(database, gateway),
-        config=KnowledgeLoopToolsConfig(
+        config=NativeKnowledgeToolsConfig(
             profile=qa_executor.profile,
             versions=versions,
-            tool_version="1.1.0",
-            resource_resolver=resources,
+            retrieval_scope=QARetrievalScope(),
+            result_reader=qa_repository.get_run,
+            ensure_qa_run=ensure_qa_run,
+            instructions=NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS,
         ),
-        result_reader=qa_repository.get_run,
-        ensure_qa_run=ensure_qa_run,
-        extra_handlers=extra_handlers,
-        extra_tool_registrar=extra_tool_registrar,
+    )
+    native_registry = InMemoryToolRegistry(
+        handlers={
+            "knowledge_retrieve": native_knowledge._retrieve_handler,
+            "knowledge_answer": native_knowledge._answer_handler,
+            **extra_handlers,
+        },
         approval_port=PostgresApprovalPort(database),
     )
-    tools.replace_tool_registry(TracingToolRegistry(tools.tool_registry, trace))
-    knowledge_tool_skill = ToolRef(knowledge_pin.name, knowledge_pin.version)
-    tool_skill_refs = {
-        tools.search_tool.ref: knowledge_tool_skill,
-        tools.inspect_tool.ref: knowledge_tool_skill,
-        tools.answer_tool.ref: knowledge_tool_skill,
-        tools.verify_tool.ref: knowledge_tool_skill,
-        tools.finalize_tool.ref: knowledge_tool_skill,
-    }
-    summary_context = next(
-        (context for context in active_skill_contexts if context.name == "summarize_document"),
-        None,
-    )
-    if tools.summary_tool is not None:
-        tool_skill_refs[tools.summary_tool.ref] = (
-            ToolRef(summary_context.name, summary_context.version)
-            if summary_context is not None
-            else knowledge_tool_skill
-        )
-    research_context = next(
-        (
-            context
-            for context in active_skill_contexts
-            if context.name == "research_reading_workflow"
-        ),
-        None,
-    )
-    if research_context is not None:
-        research_skill = ToolRef(research_context.name, research_context.version)
-        if tools.research_discover_tool is not None:
-            tool_skill_refs[tools.research_discover_tool.ref] = research_skill
-        if tools.research_prepare_tool is not None:
-            tool_skill_refs[tools.research_prepare_tool.ref] = research_skill
-    native_knowledge: NativeKnowledgeTools | None = None
-    native_catalog: FileSystemNativeSkillCatalog | None = None
-    native_registry: InMemoryToolRegistry | None = None
-    native_allowed_tools: tuple[ToolRef, ...] = tools.allowed_tools
+    native_registry.register(native_knowledge.retrieve_tool)
+    native_registry.register(native_knowledge.answer_tool)
+    extra_native_tools = extra_tool_registrar(native_registry)
     native_base_tools: tuple[ToolRef, ...] = ()
-    if settings.fast_chat_native_tool_use:
-        native_knowledge = NativeKnowledgeTools(
-            qa=qa_service,
-            search=DatabaseSearchService(database, gateway),
-            config=NativeKnowledgeToolsConfig(
-                profile=qa_executor.profile,
-                versions=versions,
-                retrieval_scope=QARetrievalScope(),
-                result_reader=qa_repository.get_run,
-                ensure_qa_run=ensure_qa_run,
-                instructions=NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS,
-            ),
-        )
-        native_registry = InMemoryToolRegistry(
-            handlers={
-                "knowledge_retrieve": native_knowledge._retrieve_handler,
-                "knowledge_answer": native_knowledge._answer_handler,
-                **extra_handlers,
-            },
-            approval_port=PostgresApprovalPort(database),
-        )
-        native_registry.register(native_knowledge.retrieve_tool)
-        native_registry.register(native_knowledge.answer_tool)
-        extra_native_tools = extra_tool_registrar(native_registry)
-        native_base_tools = tuple(
-            definition.ref
-            for definition in extra_native_tools
-            if definition.name in {"fs_list", "fs_read", "fs_write", "shell_exec"}
-        )
-        native_allowed_tools = (
-            *native_knowledge.allowed_tools(),
-            *(definition.ref for definition in extra_native_tools),
-        )
-        native_catalog = FileSystemNativeSkillCatalog(
-            skill_registry,
-            FileSystemSkillCatalog(skill_registry, include_manifest_v2=True),
-            tool_adapters={
-                ToolRef(knowledge_pin.name, knowledge_pin.version): native_allowed_tools,
-            },
-            prompt_overrides={
-                knowledge_pin.name: NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS,
-            },
-        )
+    native_base_tools = tuple(
+        definition.ref
+        for definition in extra_native_tools
+        if definition.name in {"fs_list", "fs_read", "fs_write", "shell_exec"}
+    )
+    native_allowed_tools = (
+        *native_knowledge.allowed_tools(),
+        *(definition.ref for definition in extra_native_tools),
+    )
+    native_catalog = FileSystemNativeSkillCatalog(
+        skill_registry,
+        FileSystemSkillCatalog(skill_registry, include_manifest_v2=True),
+        tool_adapters={
+            ToolRef(knowledge_pin.name, knowledge_pin.version): native_allowed_tools,
+        },
+        prompt_overrides={
+            knowledge_pin.name: NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS,
+        },
+    )
     return AutonomousAssistantLoopService(
         runs=runs,
         messages=qa_repository,
         gateway=TracingModelGateway(
-            (
-                StructuredNativeAssistantLoopGateway(gateway)
-                if settings.fast_chat_native_tool_use
-                else StructuredAssistantLoopGateway(gateway)
-            ),
+            StructuredNativeAssistantLoopGateway(gateway),
             trace,
             phase="assistant_agent_decision",
         ),
@@ -568,8 +482,6 @@ async def _autonomous_loop_service(
         runtime_state=PostgresRuntimeStateStore(database),
         pin=assistant_pin,
         budget=assistant_package.manifest.budgets,
-        tool_registry=tools.tool_registry,
-        allowed_tools=tools.allowed_tools,
         native_tool_registry=native_registry,
         native_allowed_tools=native_allowed_tools,
         native_base_tools=native_base_tools,
@@ -580,9 +492,6 @@ async def _autonomous_loop_service(
         ),
         native_skill_catalog=native_catalog,
         native_server_tools=native_knowledge,
-        decision_policy=tools.decision_policy,
-        tool_skill_refs=tool_skill_refs,
-        skill_contexts=tuple(active_skill_contexts),
         context=context,
         metrics=metrics,
         workspace_context=workspace_context,

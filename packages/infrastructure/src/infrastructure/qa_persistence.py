@@ -1018,8 +1018,8 @@ def _conversation_run_model(run: QARunRecord) -> ConversationRunModel:
         status=_conversation_run_status(run.status).value,
         cancellation_requested=run.cancellation_requested,
         error_code=run.error_code,
-        router_version="assistant-agent-loop-v1",
-        core_prompt_version="assistant-base-prompt-v7",
+        router_version="assistant-native-tool-use-v2",
+        core_prompt_version="assistant-base-prompt-v8",
         model_identity=run.versions.model_identity,
         skill_name=(
             run.versions.skill_name if run.versions.skill_content_sha256 is not None else None
@@ -1045,8 +1045,8 @@ def _validate_parent(
         or model.caller_id != run.caller_id
         or model.user_message_id != run.question_message_id
         or (check_idempotency and model.idempotency_key != run.idempotency_key)
-        or model.router_version != "assistant-agent-loop-v1"
-        or model.core_prompt_version != "assistant-base-prompt-v7"
+        or model.router_version != "assistant-native-tool-use-v2"
+        or model.core_prompt_version != "assistant-base-prompt-v8"
     ):
         raise QAContractError("QA Run conflicts with its current ConversationRun parent")
     if model.run_kind == ConversationRunKind.ASSISTANT_TURN.value:
@@ -1088,8 +1088,8 @@ def _project_conversation_run(model: ConversationRunModel, run: QARunRecord) -> 
     _validate_parent(model, run, check_idempotency=False)
     hold_for_finalizer = (
         model.run_kind == ConversationRunKind.ASSISTANT_TURN.value
-        and model.router_version == "assistant-agent-loop-v1"
-        and model.core_prompt_version == "assistant-base-prompt-v7"
+        and model.router_version == "assistant-native-tool-use-v2"
+        and model.core_prompt_version == "assistant-base-prompt-v8"
         and model.result is None
     )
     hold_for_finalizer = hold_for_finalizer and run.status in _BUSINESS_TERMINAL

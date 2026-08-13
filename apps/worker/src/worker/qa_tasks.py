@@ -79,7 +79,6 @@ def _create_gateway() -> ModelGateway:
             timeout_seconds=settings.model_timeout_seconds,
             fast_chat_timeout_seconds=settings.fast_chat_timeout_seconds,
             fast_chat_reasoning_enabled=settings.fast_chat_reasoning_enabled,
-            fast_chat_native_tool_use=settings.fast_chat_native_tool_use,
             fast_chat_prompt_caching=settings.fast_chat_prompt_caching,
             max_retries=settings.model_max_retries,
             retry_backoff_seconds=settings.model_retry_backoff_seconds,

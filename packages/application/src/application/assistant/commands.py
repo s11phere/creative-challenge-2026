@@ -529,7 +529,7 @@ class AssistantCommandService:
                 selection_source=ConversationRunSelectionSource.COMMAND,
             )
         )
-        if descriptor.execution_mode == "agent_loop":
+        if descriptor.execution_mode == "native_tool_use":
             return CommandExecutionResult(
                 command=descriptor.name,
                 status=run.status.value,

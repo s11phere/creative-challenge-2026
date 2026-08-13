@@ -11,7 +11,7 @@ required_capabilities: [fast_chat]
 permissions: [read_knowledge, model]
 budgets: {max_steps: 14, max_tool_calls: 14, max_input_tokens: 65536, max_output_tokens: 16384, timeout_seconds: 600}
 entrypoint: workflow.yaml
-compatibility: {runtime: ">=0.1.0,<1.0.0", checkpoint_schema_versions: [1]}
+compatibility: {runtime: ">=0.1.0,<1.0.0", checkpoint_schema_versions: [2]}
 prompts: [prompts/boundary.md]
 evals: [evals/cases.jsonl]
 invocation:

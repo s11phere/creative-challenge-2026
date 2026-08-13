@@ -10,6 +10,12 @@ current pinned identity. Historical Skill packages, prompt versions, version act
 rollback, cleanup APIs, and the `knowledge_qa` adapter have been removed; persisted Runs are not
 recovered through compatibility code.
 
+All new Assistant Runs use only native Tool-use v2. The former text-JSON executor, feature flag,
+compatibility recovery, v1 contracts, synthetic fixture, evaluator, and v1-only tests are absent.
+The authoritative event timeline is agent-run-sse-v4 from /api/v3; /api/v2 remains the product Run
+and command API and does not select or recover a legacy executor. Historical sections below describe
+completed implementation stages, not supported runtime paths.
+
 Phase 4 (Skill Creator) adds `skill_creator 1.0.0`（manifest v2 + `invocation`，`command:
 create-skill`，`execution_mode: agent_loop`，alias `skill`）to the assistant catalog and six
 creator Tools to the autonomous loop. `/create-skill` submits a turn driven by the assistant
@@ -1024,7 +1030,8 @@ termination or formal holdout boundary.
 
 运行时已收敛到 Assistant 主路径：每个 Skill 只保留 `1.0.0`，知识请求固定使用
 `knowledge_agent 1.0.0`。旧 Skill 目录、旧 Prompt、旧 `knowledge_qa` 适配器、Skill 版本激活/回滚/清理
-接口和 Web 兼容问答模式已删除。持久化新 Run 统一使用 `assistant-agent-loop-v1` 与
-`assistant-base-prompt-v7`；旧 Run 不再提供恢复兼容。
+接口和 Web 兼容问答模式已删除。持久化新 Run 统一使用
+`assistant-native-tool-use-v2` 与 `assistant-base-prompt-v8`；历史 v1 Run 不再由当前
+执行或恢复逻辑解释。
 
 本文后续阶段记录中的旧版本仅表示历史实现，不代表当前部署内容。

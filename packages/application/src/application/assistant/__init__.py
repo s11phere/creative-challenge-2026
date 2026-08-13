@@ -1,8 +1,6 @@
-"""Versioned contracts and application services for the product-level Assistant Agent."""
+"""Application services for the native Tool-use Assistant."""
 
 from .autonomous_loop import (
-    AssistantConversationLoopFinalizer,
-    AssistantSkillContext,
     AutonomousAssistantLoopService,
 )
 from .commands import (
@@ -60,12 +58,10 @@ from .workspace import (
 
 __all__ = [
     "AssistantTurnApplicationPort",
-    "AssistantConversationLoopFinalizer",
     "AssistantCommandCatalog",
     "AssistantCommandKind",
     "AssistantCommandParser",
     "AssistantCommandService",
-    "AssistantSkillContext",
     "AutonomousAssistantLoopService",
     "ConversationCompactionService",
     "ConversationContextDataPort",

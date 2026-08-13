@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from enum import StrEnum
 
@@ -158,21 +157,6 @@ class FakeModelGateway:
                     ),
                 )
                 finish_reason = "tool_calls"
-            elif any(
-                "assistant router decision v1" in message.content.lower()
-                for message in request.messages
-                if message.role.value == "system"
-            ):
-                text = json.dumps(
-                    {
-                        "schema_version": "assistant-router-decision-v1",
-                        "action": "respond",
-                        "assistant_message": f"fake-response-{digest[:16]}",
-                    },
-                    separators=(",", ":"),
-                )
-                tool_calls = ()
-                finish_reason = "stop"
             else:
                 text = f"fake-response-{digest[:16]}"
                 tool_calls = ()

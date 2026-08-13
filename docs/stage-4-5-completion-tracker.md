@@ -1,5 +1,14 @@
 # 阶段 4/5 收尾看板
 
+## 2026-08-13 Native Tool-use v2 only
+
+The former v1 text-JSON executor, its feature flag, compatibility recovery, contracts, synthetic
+fixture, evaluator, and v1-only tests have been removed. New Assistant Runs use
+`assistant-native-tool-use-v2`, `assistant-base-prompt-v8`, checkpoint schema 2, and the native
+`agent-run-sse-v4` timeline. Historical sections below are implementation records only and do not
+describe a supported deployment path. This remains provisional engineering under ADR-010 and
+ADR-011; no formal holdout was run.
+
 ## 2026-08-13 Agent Harness v2 Step 6 收口
 
 Native Tool-use v2 的 SSE/Web 投影和文档收口已完成。新增 `agent-run-sse-v4`，兼容读取旧

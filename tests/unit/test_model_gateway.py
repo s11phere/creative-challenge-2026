@@ -160,7 +160,6 @@ async def test_provider_uses_native_tools_replays_results_and_parses_cache_usage
         endpoint="http://localhost:11434/v1",
         fast_chat_model="chat-model",
         embedding_model="embedding-model",
-        fast_chat_native_tool_use=True,
         client=client,
     )
     tool = ChatToolDefinition(

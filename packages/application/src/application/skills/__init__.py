@@ -42,7 +42,6 @@ from .evaluation import (
     run_skill_evaluation,
 )
 from .grounded_qa_skill import DerivedKnowledgeWriter, GroundedQASkillAdapter, GroundedQASkillConfig
-from .knowledge_loop import KnowledgeLoopTools, KnowledgeLoopToolsConfig
 from .lifecycle import SkillLifecycleError, SkillLifecycleErrorCode, SkillLifecycleService
 from .native_knowledge_loop import (
     NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS,
@@ -71,8 +70,6 @@ __all__ = [
     "scaffold_skill_files",
     "GroundedQASkillConfig",
     "DerivedKnowledgeWriter",
-    "KnowledgeLoopTools",
-    "KnowledgeLoopToolsConfig",
     "NativeKnowledgeTools",
     "NativeKnowledgeToolsConfig",
     "NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS",

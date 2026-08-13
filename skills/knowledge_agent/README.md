@@ -7,6 +7,6 @@ request; the runtime only supplies approval, path, QA-result, and duplicate-requ
 
 The package retains the existing QA Application Port, fixed Space/version boundaries, durable
 runtime checkpoints, cancellation, permissions, and QA-owned citation/publication semantics.
-The package is provisional. Run `uv run --frozen python scripts/evaluate_agent_loop.py
+The package is provisional. Run `uv run --frozen python scripts/evaluate_agent_harness_v2.py
 --validate-only` before local rollout; this does not close any formal retrieval, answer, or Skill
 quality gate.

@@ -43,8 +43,8 @@ Assistant 输出支持 GFM Markdown 和 LaTeX 渲染。这些改动不改变阶�
 | 阶段 5 🟡 临时 Skills | Assistant 对话演进 Step 3-8 的当前调用目录、自主可恢复 Skill/Tool Loop、上下文、指标、最终回答生成器、调用记录卡和 Web 展示已完成；新知识请求固定 `knowledge_agent 1.0.0`；正式质量仍为临时状态 |
 
 Agent Harness v2 的 native Tool-use、按需 Skill 加载、知识服务端编排、有界模型上下文和 prompt
-cache 已作为独立的 provisional 工程路径完成。当前默认 Assistant Run 仍走 v1 路径；
-`agent-run-sse-v4` 只由显式启用 native Tool-use 的新 Run 写入，旧 `agent-run-sse-v3` 历史继续可读。
+cache 已作为当前唯一 Assistant 执行路径完成。新 Run 统一写入 `agent-run-sse-v4`；历史 v1
+记录不会被当前执行或恢复逻辑解释。
 这不改变 ADR-010/ADR-011 的正式质量边界，也不授权任何正式 holdout。
 
 当前 Web 展示系统健康、数据来源和临时知识问答工作区；HTTP API 可创建持久会话、提交
@@ -124,7 +124,7 @@ Agent Loop 是 fake/local 的默认 provisional 路径。新 Run 默认固定到
 `knowledge_agent 1.0.0`。先执行只读取 hash 固定合成 fixture 的检查：
 
 ```powershell
-uv run --frozen python scripts/evaluate_agent_loop.py --validate-only
+uv run --frozen python scripts/evaluate_agent_harness_v2.py --validate-only
 ```
 
 该命令不调用 Provider、不读取受控语料，也不会启用 formal holdout；其所有报告均为 development / provisional。
@@ -171,7 +171,7 @@ uv run python -c "from infrastructure.qa_execution import assistant_skill_regist
 `draft → 校验 → eval 门禁 → 用户审批 → active` 生命周期：
 
 - `skills/skill_creator/` 是 manifest v2 + `invocation`（`command: create-skill`，别名 `skill`，
-  `execution_mode: agent_loop`），激活后其指令进入 assistant 循环 active contexts；
+  `execution_mode: native_tool_use`），激活后其指令进入 native Tool-use 上下文；
   `/create-skill` 命令提交的 turn 由 assistant 循环驱动（与 `/research` 同路径）。assistant
   循环始终注册六个 creator 工具（`skill_scaffold` / `skill_write` / `skill_validate` /
   `skill_run_eval` / `skill_activate` / `skill_draft`），写类工具走既有 durable approval。

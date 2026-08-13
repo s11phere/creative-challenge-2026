@@ -1,9 +1,9 @@
 workflow_version: "1"
-start: loop
+start: native_tool_use
 nodes:
-  - id: loop
+  - id: native_tool_use
     step: executing
-    handler: assistant_agent_loop
+    handler: native_tool_use
     next: null
     max_retries: 0
     required_permissions:

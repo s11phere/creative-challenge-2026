@@ -148,7 +148,7 @@ async def test_explicit_skill_dispatch_reuses_turn_port_and_command_selection() 
 
 
 @pytest.mark.asyncio
-async def test_agent_loop_skill_command_stays_an_assistant_turn_without_projection() -> None:
+async def test_native_skill_command_stays_an_assistant_turn_for_native_runtime() -> None:
     repository = InMemoryGroundedQARepository()
     conversation = ConversationRecord(
         conversation_id=UUID(int=605), space_id=UUID(int=606), owner_id="synthetic-user"
@@ -157,7 +157,7 @@ async def test_agent_loop_skill_command_stays_an_assistant_turn_without_projecti
     research = skill(
         name="research_reading_workflow",
         command="research",
-        execution_mode="agent_loop",
+        execution_mode="native_tool_use",
     )
     catalog = AssistantCommandCatalog(FakeSkillCatalog(research))
 
@@ -165,7 +165,7 @@ async def test_agent_loop_skill_command_stays_an_assistant_turn_without_projecti
         catalog = FakeSkillCatalog(research)
 
         async def invoke(self, *_args: object, **_kwargs: object) -> ConversationRun:
-            raise AssertionError("agent_loop commands must not use Skill projection")
+            raise AssertionError("native commands must not use projected Skill execution")
 
     service = AssistantCommandService(
         catalog=catalog,

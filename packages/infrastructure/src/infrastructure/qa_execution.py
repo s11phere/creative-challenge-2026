@@ -10,8 +10,6 @@ from pathlib import Path
 from uuid import UUID
 
 from agent_runtime import (
-    AgentLoopExecutor,
-    AgentLoopResult,
     DeterministicWorkflowExecutor,
     FileSystemSkillRegistry,
     JSONValue,
@@ -37,8 +35,6 @@ from application.skills import (
     DerivedKnowledgeWriter,
     GroundedQASkillAdapter,
     GroundedQASkillConfig,
-    KnowledgeLoopTools,
-    KnowledgeLoopToolsConfig,
 )
 from domain.agent_runtime import AgentRun, AgentRunContext, ApprovalPort, RunStatus
 from domain.agent_sse import AgentRunEventStore
@@ -50,7 +46,6 @@ from domain.qa_persistence import (
     QARunVersions,
 )
 from domain.qa_sse import QAEventStore, QAEventType
-from domain.reasoning import ReasoningProfile
 from domain.retrieval import RetrievalProfileV1
 from model_gateway import (
     CapabilityAlias,
@@ -68,10 +63,9 @@ from model_gateway import (
 )
 
 from .config import settings
-from .conversation_runs import PostgresConversationRunRepository
 from .database import Database
 from .qa import DatabaseSearchService, PostgresCitationTargetPort
-from .qa_debug_trace import QADebugTrace, TracingModelGateway, TracingToolRegistry
+from .qa_debug_trace import QADebugTrace, TracingModelGateway
 from .runtime_state import PostgresRuntimeStateStore
 
 logger = logging.getLogger(__name__)
@@ -357,56 +351,6 @@ class StructuredAgentGateway:
         return None
 
 
-class StructuredKnowledgeLoopGateway(StructuredAgentGateway):
-    """Drive the opt-in generic knowledge Loop for the deterministic fake provider only."""
-
-    async def chat(
-        self,
-        request: ChatRequest,
-        *,
-        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
-    ) -> ChatResponse:
-        if not isinstance(self._delegate, FakeModelGateway):
-            return await self._delegate.chat(request, capability=capability)
-        payload = _knowledge_loop_decision(request.messages[-1].content)
-        text = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
-        return ChatResponse(
-            text=text,
-            finish_reason="stop",
-            usage=ModelUsage(
-                input_tokens=sum(max(1, len(item.content.split())) for item in request.messages),
-                output_tokens=max(1, len(text.split())),
-            ),
-            capability=capability,
-            latency_ms=0.0,
-        )
-
-
-class StructuredAssistantLoopGateway(StructuredAgentGateway):
-    """Provide deterministic multi-turn Tool decisions for local fake Assistant runs."""
-
-    async def chat(
-        self,
-        request: ChatRequest,
-        *,
-        capability: CapabilityAlias = CapabilityAlias.FAST_CHAT,
-    ) -> ChatResponse:
-        if not isinstance(self._delegate, FakeModelGateway):
-            return await self._delegate.chat(request, capability=capability)
-        payload = _assistant_loop_decision(request.messages[-1].content)
-        text = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
-        return ChatResponse(
-            text=text,
-            finish_reason="stop",
-            usage=ModelUsage(
-                input_tokens=sum(max(1, len(item.content.split())) for item in request.messages),
-                output_tokens=max(1, len(text.split())),
-            ),
-            capability=capability,
-            latency_ms=0.0,
-        )
-
-
 class StructuredNativeAssistantLoopGateway(StructuredAgentGateway):
     """Provide a deterministic native Tool-use policy for local fake Assistant runs."""
 
@@ -447,45 +391,6 @@ class StructuredNativeAssistantLoopGateway(StructuredAgentGateway):
             capability=capability,
             latency_ms=0.0,
         )
-
-
-def _knowledge_loop_decision(content: str) -> dict[str, str | dict[str, str]]:
-    """Return deterministic decisions for local FakeModelGateway development runs."""
-    try:
-        request = json.loads(content)
-        state = request.get("state", {})
-        input_data = request.get("input", {})
-        observations = state.get("observations", [])
-    except (TypeError, ValueError):
-        observations = []
-        input_data = {}
-    last = observations[-1] if observations else {}
-    last_tool = last.get("tool_name") if isinstance(last, dict) else None
-    if last_tool is None:
-        query = (
-            input_data.get("question", "knowledge request")
-            if isinstance(input_data, dict)
-            else "knowledge request"
-        )
-        return {
-            "action": "call_tool",
-            "tool_name": "knowledge_search",
-            "arguments": {"query": query},
-        }
-    next_tools = {
-        "knowledge_search": "knowledge_inspect",
-        "knowledge_inspect": "grounded_answer",
-        "grounded_answer": "verify_answer",
-        "verify_answer": "finalize_answer",
-    }
-    next_tool = next_tools.get(last_tool)
-    if next_tool is not None:
-        return {"action": "call_tool", "tool_name": next_tool, "arguments": {}}
-    output = last.get("output", {}) if isinstance(last, dict) else {}
-    outcome = output.get("outcome") if isinstance(output, dict) else None
-    if outcome in {"refuse", "conflict"}:
-        return {"action": "refuse", "reason": "Grounded QA verified a safe terminal refusal."}
-    return {"action": "complete", "reason": "Grounded QA verified the current Run."}
 
 
 def _native_assistant_decision(
@@ -551,84 +456,6 @@ def _native_assistant_decision(
                 )
         return None, {}, "fake-response-autonomous"
     return None, {}, "fake-response-autonomous"
-
-
-def _assistant_loop_decision(content: str) -> dict[str, object]:
-    """Use Tool-provided next-step metadata, while keeping ordinary fake turns direct."""
-    try:
-        request = json.loads(content)
-        state = request.get("state", {})
-        input_data = request.get("input", {})
-        observations = state.get("observations", [])
-    except (TypeError, ValueError):
-        observations = []
-        input_data = {}
-    question = input_data.get("question", "") if isinstance(input_data, dict) else ""
-    workspace = input_data.get("workspace") if isinstance(input_data, dict) else None
-    workspace_enabled = isinstance(workspace, dict) and workspace.get("tools_enabled") is True
-    last = observations[-1] if observations else {}
-    if not isinstance(last, dict) or not last.get("tool_name"):
-        research = _fake_research_request(question)
-        if research is not None:
-            return research
-        if _requires_fake_knowledge_tool(question):
-            return {
-                "action": "call_tool",
-                "tool_name": "knowledge_search",
-                "arguments": {"query": _fake_knowledge_query(question)},
-            }
-        return {
-            "action": "complete",
-            "reason": "The request does not require current-Space knowledge.",
-            "final_response": "fake-response-autonomous",
-        }
-    output = last.get("output", {})
-    recommended = output.get("recommended_next") if isinstance(output, dict) else None
-    last_tool = last.get("tool_name")
-    if workspace_enabled and _requires_fake_workspace_artifact(question):
-        if (
-            last_tool == "finalize_answer"
-            and isinstance(output, dict)
-            and output.get("ready") is True
-            and output.get("outcome") not in {"refuse", "conflict"}
-        ):
-            return {"action": "call_tool", "tool_name": "fs_list", "arguments": {"path": "."}}
-        if last_tool == "fs_list":
-            return {
-                "action": "call_tool",
-                "tool_name": "fs_write",
-                "arguments": {
-                    "path": _fake_markdown_path(question, output),
-                    "content": "{{current_grounded_qa_answer}}",
-                },
-            }
-    if recommended in {
-        "knowledge_search",
-        "knowledge_inspect",
-        "grounded_answer",
-        "verify_answer",
-        "finalize_answer",
-    }:
-        arguments: dict[str, str] = {}
-        if recommended == "knowledge_search":
-            arguments["query"] = _fake_knowledge_query(question)
-        return {"action": "call_tool", "tool_name": recommended, "arguments": arguments}
-    if recommended == "clarify":
-        return {"action": "clarify", "reason": "Please confirm or correct the paper selection."}
-    if recommended == "refuse":
-        return {"action": "refuse", "reason": "Grounded QA verified a safe terminal refusal."}
-    if recommended == "complete":
-        return {"action": "complete", "reason": "Grounded QA verified the current Run."}
-    next_tools = {
-        "knowledge_search": "knowledge_inspect",
-        "knowledge_inspect": "grounded_answer",
-        "grounded_answer": "verify_answer",
-        "verify_answer": "finalize_answer",
-    }
-    next_tool = next_tools.get(last_tool) if isinstance(last_tool, str) else None
-    if next_tool is not None:
-        return {"action": "call_tool", "tool_name": next_tool, "arguments": {}}
-    return {"action": "complete", "reason": "Grounded QA verified the current Run."}
 
 
 def _fake_research_request(question: object) -> dict[str, object] | None:
@@ -958,47 +785,30 @@ class GroundedQAExecutor:
             return await self._repository.transition_run(
                 run.run_id, QAEvent.FAIL, error_code="QA_RUNTIME_FAILED"
             )
-        use_generic_knowledge_loop = run.versions.skill_name == "knowledge_agent"
+        if run.versions.skill_name == "knowledge_agent":
+            return await service.execute(run.run_id, profile=self.profile)
         runtime_gateway: ModelGateway
         state_store = PostgresRuntimeStateStore(self._database)
-        if use_generic_knowledge_loop:
-            loop_tools = KnowledgeLoopTools(
-                qa=service,
-                search=DatabaseSearchService(self._database, self._gateway),
-                config=KnowledgeLoopToolsConfig(
-                    profile=self.profile,
-                    versions=run.versions,
-                    retrieval_scope=run.retrieval_scope,
-                    tool_version="1.1.0",
+        qa_adapter = GroundedQASkillAdapter(
+            qa=service,
+            config=GroundedQASkillConfig(
+                profile=self.profile,
+                versions=run.versions,
+                execute_existing_run=True,
+                skill_name=run.versions.skill_name,
+                output_schema_version=_skill_output_schema(run.versions.skill_name),
+                preview_only_write=(
+                    run.versions.skill_name == "create_review_cards"
+                    and self._derived_writer is None
                 ),
-                result_reader=self._repository.get_run,
-            )
-            runtime_gateway = TracingModelGateway(
-                StructuredKnowledgeLoopGateway(self._gateway), trace, phase="agent_decision"
-            )
-            runtime_tool_registry = TracingToolRegistry(loop_tools.tool_registry, trace)
-            loop_tools.replace_tool_registry(runtime_tool_registry)
-        else:
-            qa_adapter = GroundedQASkillAdapter(
-                qa=service,
-                config=GroundedQASkillConfig(
-                    profile=self.profile,
-                    versions=run.versions,
-                    execute_existing_run=True,
-                    skill_name=run.versions.skill_name,
-                    output_schema_version=_skill_output_schema(run.versions.skill_name),
-                    preview_only_write=(
-                        run.versions.skill_name == "create_review_cards"
-                        and self._derived_writer is None
-                    ),
-                    approval_port=self._approval_port,
-                    approval_id=self._approval_id,
-                    derived_writer=self._derived_writer,
-                ),
-            )
-            runtime_gateway = self._gateway
-            runtime_tool_registry = None
-            runtime_handlers = qa_adapter.handlers()
+                approval_port=self._approval_port,
+                approval_id=self._approval_id,
+                derived_writer=self._derived_writer,
+            ),
+        )
+        runtime_gateway = self._gateway
+        runtime_tool_registry = None
+        runtime_handlers = qa_adapter.handlers()
         runtime_run = AgentRun(
             context=AgentRunContext(
                 run_id=run.run_id,
@@ -1029,65 +839,26 @@ class GroundedQAExecutor:
                 RunStatus.TIMED_OUT,
             }
         )
-        result: AgentLoopResult | RuntimeExecutionResult
-        if use_generic_knowledge_loop:
-            assert runtime_tool_registry is not None
-            parent = await PostgresConversationRunRepository(self._database).get_conversation_run(
-                run.run_id
+        result: RuntimeExecutionResult
+        runtime_executor = DeterministicWorkflowExecutor(
+            skill_registry=registry,
+            model_gateway=runtime_gateway,
+            handlers=runtime_handlers,
+            tool_registry=runtime_tool_registry,
+            state_store=state_store,
+        )
+        if resumable:
+            assert persisted_runtime is not None and checkpoint is not None
+            result = await runtime_executor.resume(
+                persisted_runtime,
+                pin,
+                checkpoint,
+                runtime_input,
+                caller_id=run.caller_id,
+                space_id=run.space_id,
             )
-            reasoning_profile = (
-                parent.reasoning_profile if parent is not None else ReasoningProfile.unresolved()
-            )
-            loop_executor = AgentLoopExecutor(
-                tool_registry=runtime_tool_registry,
-                allowed_tools=loop_tools.allowed_tools,
-                system_prompt=(package.root / package.manifest.prompts[0]).read_text(
-                    encoding="utf-8"
-                ),
-                model_gateway=runtime_gateway,
-                state_store=state_store,
-                event_store=self._agent_events,
-                reasoning_profile=reasoning_profile,
-                finalizer=loop_tools.finalizer(),
-                decision_policy=loop_tools.decision_policy,
-            )
-            if resumable:
-                assert persisted_runtime is not None and checkpoint is not None
-                result = await loop_executor.resume(
-                    persisted_runtime,
-                    pin,
-                    checkpoint,
-                    runtime_input,
-                    caller_id=run.caller_id,
-                    space_id=run.space_id,
-                )
-            else:
-                result = await loop_executor.execute(
-                    runtime_run,
-                    pin,
-                    runtime_input,
-                    goal=question.content,
-                )
         else:
-            runtime_executor = DeterministicWorkflowExecutor(
-                skill_registry=registry,
-                model_gateway=runtime_gateway,
-                handlers=runtime_handlers,
-                tool_registry=runtime_tool_registry,
-                state_store=state_store,
-            )
-            if resumable:
-                assert persisted_runtime is not None and checkpoint is not None
-                result = await runtime_executor.resume(
-                    persisted_runtime,
-                    pin,
-                    checkpoint,
-                    runtime_input,
-                    caller_id=run.caller_id,
-                    space_id=run.space_id,
-                )
-            else:
-                result = await runtime_executor.execute(runtime_run, pin, runtime_input)
+            result = await runtime_executor.execute(runtime_run, pin, runtime_input)
         persisted = await self._repository.get_run(run.run_id)
         if persisted is None:
             raise RuntimeError("Grounded QA run disappeared during Skill execution")
@@ -1160,7 +931,6 @@ def _safe_error(error: BaseException) -> dict[str, str]:
 
 __all__ = [
     "GroundedQAExecutor",
-    "StructuredAssistantLoopGateway",
     "StructuredFakeGateway",
     "StructuredNativeAssistantLoopGateway",
     "assistant_skill_registry",

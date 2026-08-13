@@ -21,9 +21,9 @@ explicit decision-history projection that distinguishes audit digests from usefu
 
 ## Decision
 
-1. New Assistant Runs may opt into a versioned Harness v2 only through a disabled-by-default feature
-   flag and a provider capability check. Existing v1 Runs retain their pinned prompt, text-JSON
-   executor, checkpoint, and recovery path. No existing checkpoint is converted in place.
+1. All new Assistant Runs use native Tool-use v2. There is no runtime feature flag, text-JSON
+   executor, or v1 recovery fallback. Historical v1 records remain inert data and are not routed
+   or recovered by current code.
 2. Harness v2 normalizes provider-native Tool use through a provider-neutral contract. A model turn
    either requests exactly one Tool with a stable call ID or returns non-empty terminal text. A Tool
    request always causes one server-validated Tool invocation and another model turn. If a provider
@@ -57,7 +57,7 @@ explicit decision-history projection that distinguishes audit digests from usefu
    adds development-local trace measurements for prompt/context byte estimates and repeated
    generation counts. These diagnostics remain outside PostgreSQL, SSE, normal logs, API responses,
    fixtures containing real content, and formal quality reporting.
-10. Worker startup recovery may repair the narrowly identified pre-fix approval orphan: a parent
+10. Worker startup recovery may repair the narrowly identified native v2 approval orphan: a parent
     Assistant Run in `waiting_approval` whose latest verified native v2 checkpoint contains a
     pending Tool call but no `approval_id`. Recovery only requeues that Run; the current executor
     creates a normal durable approval and remains stopped until the user decides it. Existing
@@ -84,11 +84,9 @@ explicit decision-history projection that distinguishes audit digests from usefu
 
 ## Consequences
 
-The v2 boundary adds new immutable schemas, synthetic fixtures, metrics, prompt identities, and
-feature-gated execution paths. It does not add a second Worker, QA workflow, publication mechanism,
-or retrieval implementation. Historical v1 API and event projections remain readable. Any public
-API or persistence change introduced by later v2 steps must be explicitly versioned and, where
-needed, migrated through Alembic.
+The v2 boundary owns the only current Assistant execution path. It does not add a second Worker, QA
+workflow, publication mechanism, or retrieval implementation. Historical v1 data is not interpreted
+by current execution or recovery code.
 
 All evaluation artifacts remain synthetic, development-only, hash-pinned, and provisional. They do
 not read corpus bodies, enable an external provider, or authorize a formal holdout.

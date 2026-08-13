@@ -52,8 +52,6 @@ from model_gateway import (
 
 from .checkpoints import build_checkpoint, checkpoint_state_sha256
 from .executor import NodeExecutionError
-from .llm_decision import AgentToolRegistry
-from .loop import AgentLoopDebugTrace
 from .native_model_context import (
     MODEL_CONTEXT_SCHEMA_VERSION,
     NativeDecisionHistoryItem,
@@ -69,6 +67,7 @@ from .native_skill_catalog import (
 from .skills import PinnedSkill, SkillRegistryError
 from .tools import (
     QA_ANSWER_MARKER,
+    AgentToolRegistry,
     JSONValue,
     ToolDefinition,
     ToolInvocation,
@@ -83,6 +82,14 @@ from .tools import (
 type CancellationCheck = Callable[[AgentRun], Awaitable[bool]]
 type ClockMilliseconds = Callable[[], int]
 type ApprovalRequest = Callable[[AgentRunContext, ToolCallRecord], Awaitable[str]]
+
+
+class AgentLoopDebugTrace(Protocol):
+    """Development-only native Harness trace sink."""
+
+    async def record(self, event_type: str, **payload: object) -> None: ...
+
+
 type PromptCacheAllowed = Callable[[AgentRunContext], bool]
 
 _STATE_SCHEMA_VERSION = "native-tool-use-loop-state-v2"

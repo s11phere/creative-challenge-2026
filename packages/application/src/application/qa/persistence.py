@@ -524,7 +524,7 @@ class InMemoryGroundedQARepository:
                 run,
                 run_kind=run_kind,
                 selection_source=selection_source,
-                router_version="assistant-agent-loop-v1",
+                router_version="assistant-native-tool-use-v2",
                 skill=skill,
                 core_prompt_version=core_prompt_version,
                 updated_at=datetime.now(UTC),
@@ -1212,8 +1212,8 @@ class InMemoryGroundedQARepository:
         projected = _conversation_run_from_qa(run, existing=parent)
         if (
             parent.run_kind is ConversationRunKind.ASSISTANT_TURN
-            and parent.router_version == "assistant-agent-loop-v1"
-            and parent.core_prompt_version == "assistant-base-prompt-v7"
+            and parent.router_version == "assistant-native-tool-use-v2"
+            and parent.core_prompt_version == "assistant-base-prompt-v8"
             and parent.result is None
             and run.status in {QAStatus.COMPLETED, QAStatus.REFUSED}
         ):
@@ -1332,8 +1332,8 @@ def _same_qa_parent_identity(existing: ConversationRun, run: QARunRecord) -> boo
         ):
             return False
     if (
-        existing.router_version == "assistant-agent-loop-v1"
-        and existing.core_prompt_version == "assistant-base-prompt-v7"
+        existing.router_version == "assistant-native-tool-use-v2"
+        and existing.core_prompt_version == "assistant-base-prompt-v8"
     ):
         if existing.run_kind is ConversationRunKind.ASSISTANT_TURN:
             return existing.skill is None and run.versions.skill_name == "knowledge_agent"
@@ -1391,10 +1391,10 @@ def _conversation_run_from_qa(
         cancellation_requested=run.cancellation_requested,
         error_code=run.error_code,
         router_version=(
-            existing.router_version if existing is not None else "assistant-agent-loop-v1"
+            existing.router_version if existing is not None else "assistant-native-tool-use-v2"
         ),
         core_prompt_version=(
-            existing.core_prompt_version if existing is not None else "assistant-base-prompt-v7"
+            existing.core_prompt_version if existing is not None else "assistant-base-prompt-v8"
         ),
         model_identity=run.versions.model_identity,
         skill=existing.skill if existing is not None else skill,
