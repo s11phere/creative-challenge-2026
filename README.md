@@ -148,6 +148,20 @@ uv run python scripts/distill_usage_patterns.py --json
 
 `--enqueue` 可把蒸馏调度到 Dramatiq Worker（需 Redis）；Phase 6 前这些模式只产出、不消费。
 
+个性化 Phase 5（跨会话长期记忆）让 agent 跨会话记得用户。Worker 蒸馏任务（`memory_distill`）从
+`conversation_summaries` + Phase 2 `usage_patterns` 用 LLM 提炼持久的 fact/preference/pattern，
+按 content 哈希去重 + 余弦近邻合并（同实体更新而非重复插入，sensitivity 继承源摘要最严格值）写入
+`memory_entries`；新 Assistant 回合组装上下文快照时按当前问题做向量 + 近因加权检索，注入有界
+`<long-term-memory>` 块（top-K 默认 5），restricted 内容不注入、且不得把记忆泄漏到更低 sensitivity
+的会话。蒸馏为显式触发，支持本地或调度到 Worker：
+
+```powershell
+uv run python scripts/distill_memories.py --json
+uv run python scripts/distill_memories.py --enqueue
+```
+
+记忆表 pgvector 检索复用 `embedding_zh` 能力别名；注入 best-effort，检索失败只记日志、不打断回合。
+
 个性化 Phase 3（个人 Skill 存储与信任模型）让用户可写自己的 Skill，但严格复用内置校验与信任边界：
 个人 Skill 存放于 `PERSONAL_SKILLS_DIR`（默认 `./data/personal_skills`），只组合既有 handler/tool、
 不引入新 Python 行为，且不得覆盖内置 Skill 名（ADR-018）。CRUD + 激活经 `/api/v1/skills/personal`，
