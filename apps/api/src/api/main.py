@@ -64,7 +64,12 @@ from infrastructure.qa_execution import (
 )
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
 from infrastructure.runtime_approval import PostgresApprovalPort, PostgresDerivedKnowledgeStore
-from infrastructure.skill_catalog import FileSystemSkillCatalog
+from infrastructure.skill_catalog import (
+    INTERNAL_RUNTIME_SKILL_NAMES,
+    FileSystemSkillCatalog,
+    user_manageable_skill_names,
+    user_manageable_skill_versions,
+)
 from infrastructure.skill_lifecycle import (
     PostgresSkillActivationStore,
 )
@@ -135,18 +140,6 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
-def _active_skill_versions() -> dict[str, str]:
-    """Return the Skills that may receive new durable activations."""
-    return {
-        "knowledge_agent": settings.knowledge_agent_skill_version,
-        "summarize_document": "1.0.0",
-        "compare_sources": "1.0.0",
-        "create_review_cards": "1.0.0",
-        "research_reading_workflow": "1.1.0",
-        "skill_creator": "1.0.0",
-    }
-
-
 def create_app(
     model_gateway: ModelGateway | None = None,
     *,
@@ -203,7 +196,7 @@ def create_app(
     )
     assistant_metrics = AssistantMetrics()
     skill_registry = qa_skill_registry()
-    active_skill_versions = _active_skill_versions()
+    active_skill_versions = user_manageable_skill_versions(skill_registry)
     activation_store = skill_activation_store or PostgresSkillActivationStore(database)
     skill_lifecycle = SkillLifecycleService(
         registry=skill_registry,
@@ -213,19 +206,14 @@ def create_app(
     skill_catalog = skill_catalog or FileSystemSkillCatalog(
         skill_registry,
         include_manifest_v2=True,
-        visible_names=frozenset(
-            {
-                "knowledge_agent",
-                "summarize_document",
-                "compare_sources",
-                "create_review_cards",
-                "research_reading_workflow",
-                "skill_creator",
-            }
-        ),
+        visible_names=user_manageable_skill_names(skill_registry),
     )
     assistant_registry = assistant_skill_registry()
-    assistant_catalog = FileSystemSkillCatalog(assistant_registry, include_manifest_v2=True)
+    assistant_catalog = FileSystemSkillCatalog(
+        assistant_registry,
+        include_manifest_v2=True,
+        excluded_names=INTERNAL_RUNTIME_SKILL_NAMES,
+    )
     skill_activation_service = SkillActivationService(
         lifecycle=skill_lifecycle,
         assistant_registry=assistant_registry,

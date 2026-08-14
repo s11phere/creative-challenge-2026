@@ -135,6 +135,10 @@ async def test_fixed_skill_toggle_updates_the_next_assistant_catalog(app) -> Non
             next(skill for skill in initial.json() if skill["name"] == "knowledge_agent")["active"]
             is True
         )
+        initial_skills = {skill["name"]: skill for skill in initial.json()}
+        assert "assistant_agent" not in initial_skills
+        assert initial_skills["course_project_workflow"]["active"] is True
+        assert initial_skills["exam_preparation_workflow"]["active"] is True
 
         disabled = await client.patch(
             "/api/v1/skills/knowledge_agent/activation", json={"active": False}
@@ -156,6 +160,9 @@ async def test_fixed_skill_toggle_updates_the_next_assistant_catalog(app) -> Non
         assert skill_statuses.status_code == 202
         statuses = {item["name"]: item for item in skill_statuses.json()["skills"]}
         assert statuses["knowledge_agent"]["active"] is False
+        assert statuses["course_project_workflow"]["active"] is True
+        assert statuses["exam_preparation_workflow"]["active"] is True
+        assert "assistant_agent" not in statuses
 
         enabled = await client.patch(
             "/api/v1/skills/knowledge_agent/activation", json={"active": True}
@@ -166,6 +173,29 @@ async def test_fixed_skill_toggle_updates_the_next_assistant_catalog(app) -> Non
             item.name
             for item in app.state.assistant_skill_invoker.catalog.list_active_invocations()
         }
+
+
+@pytest.mark.asyncio
+async def test_disabled_skill_is_omitted_from_commands_and_skills_status(app) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        disabled = await client.patch(
+            "/api/v1/skills/compare_sources/activation", json={"active": False}
+        )
+        assert disabled.status_code == 200
+        assert disabled.json()["active"] is False
+
+        commands = await client.get("/api/v2/commands")
+        assert commands.status_code == 200
+        assert "compare" not in {item["name"] for item in commands.json()["commands"]}
+
+        skills = await client.post(
+            "/api/v2/conversations/00000000-0000-0000-0000-000000000064/turns",
+            json={"content": "/skills", "idempotency_key": "skills-status-compare-disabled"},
+        )
+        assert skills.status_code == 202
+        statuses = {item["name"]: item for item in skills.json()["skills"]}
+        assert statuses["compare_sources"]["active"] is False
+        assert "assistant_agent" not in statuses
 
 
 @pytest.mark.asyncio

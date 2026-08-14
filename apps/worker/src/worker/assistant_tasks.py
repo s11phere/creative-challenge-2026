@@ -42,8 +42,11 @@ from application.skills import (
     NativeKnowledgeTools,
     NativeKnowledgeToolsConfig,
     PersonalSkillStore,
+    SkillActivationService,
+    SkillActivationStore,
     SkillCreatorTools,
     SkillDraftStore,
+    SkillLifecycleService,
     register_skill_creator_tools,
 )
 from domain.agent_runtime import ToolPermission
@@ -73,7 +76,12 @@ from infrastructure.qa_execution import (
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
 from infrastructure.runtime_approval import PostgresApprovalPort
 from infrastructure.runtime_state import PostgresRuntimeStateStore
-from infrastructure.skill_catalog import FileSystemNativeSkillCatalog, FileSystemSkillCatalog
+from infrastructure.skill_catalog import (
+    INTERNAL_RUNTIME_SKILL_NAMES,
+    FileSystemNativeSkillCatalog,
+    FileSystemSkillCatalog,
+    user_manageable_skill_versions,
+)
 from infrastructure.skill_lifecycle import PostgresSkillActivationStore
 from infrastructure.telemetry_context import (
     bind_observability_context,
@@ -163,19 +171,35 @@ def _run_assistant_sync(run_id: UUID, trace_id: str) -> bool:
             loop.close()
 
 
-async def _apply_personal_skill_activations(registry: PersonalSkillRegistry) -> None:
-    """Re-apply durable personal-Skill activations; failures never break the Run."""
+async def _apply_skill_activations(
+    registry: PersonalSkillRegistry,
+    store: SkillActivationStore | None = None,
+) -> None:
+    """Apply durable fixed and personal Skill activation state to a fresh registry."""
     try:
-        store = PostgresSkillActivationStore(database)
-        persisted = await store.list()
+        activation_store = store or PostgresSkillActivationStore(database)
+        lifecycle = SkillLifecycleService(
+            registry=registry,
+            store=activation_store,
+            defaults=user_manageable_skill_versions(registry),
+        )
+        await SkillActivationService(
+            lifecycle=lifecycle,
+            assistant_registry=registry,
+        ).synchronize()
+        persisted = await activation_store.list()
         activations = {
             item.name: item.version
             for item in persisted
-            if registry.is_personal(item.name) and item.version in registry.versions(item.name)
+            if (
+                item.active
+                and registry.is_personal(item.name)
+                and item.version in registry.versions(item.name)
+            )
         }
         registry.activate_all(activations)
     except Exception:
-        logger.exception("personal_skill_activation_apply_failed")
+        logger.exception("skill_activation_apply_failed")
 
 
 async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id: str) -> bool:
@@ -189,7 +213,7 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
     if claimed is None:
         return False
     registry = assistant_skill_registry()
-    await _apply_personal_skill_activations(registry)
+    await _apply_skill_activations(registry)
     qa_repository = PostgresGroundedQARepository(database)
     memory = GatewayMemoryRetriever(
         repository=PostgresMemoryEntryRepository(database),
@@ -474,7 +498,11 @@ async def _autonomous_loop_service(
     )
     native_catalog = FileSystemNativeSkillCatalog(
         skill_registry,
-        FileSystemSkillCatalog(skill_registry, include_manifest_v2=True),
+        FileSystemSkillCatalog(
+            skill_registry,
+            include_manifest_v2=True,
+            excluded_names=INTERNAL_RUNTIME_SKILL_NAMES,
+        ),
         tool_adapters={
             ToolRef(knowledge_pin.name, knowledge_pin.version): native_allowed_tools,
         },

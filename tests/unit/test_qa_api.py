@@ -2,7 +2,7 @@ import json
 from uuid import UUID
 
 import pytest
-from api.main import _active_skill_versions, create_app
+from api.main import create_app
 from application.qa import InMemoryGroundedQARepository
 from domain.grounded_qa import Citation, CitationResolution, CitationStatus, QAEvent
 from domain.qa_persistence import QARetrievalScope
@@ -10,6 +10,8 @@ from domain.qa_sse import QAEventLog
 from domain.retrieval import LocatorKind, SearchLocator
 from httpx import ASGITransport, AsyncClient
 from infrastructure.config import settings
+from infrastructure.qa_execution import qa_skill_registry
+from infrastructure.skill_catalog import user_manageable_skill_versions
 from infrastructure.skill_lifecycle import InMemorySkillActivationStore
 from model_gateway import FakeModelGateway
 
@@ -54,13 +56,16 @@ def enable_current_agent_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "knowledge_agent_skill_version", "1.0.0")
 
 
-def test_active_skill_versions_exclude_legacy_recovery_package() -> None:
-    assert _active_skill_versions() == {
+def test_user_manageable_skill_versions_exclude_internal_runtime_package() -> None:
+    assert user_manageable_skill_versions(qa_skill_registry()) == {
         "knowledge_agent": "1.0.0",
         "summarize_document": "1.0.0",
         "compare_sources": "1.0.0",
         "create_review_cards": "1.0.0",
         "research_reading_workflow": "1.1.0",
+        "course_project_workflow": "1.0.0",
+        "exam_preparation_workflow": "1.0.0",
+        "skill_creator": "1.0.0",
     }
 
 
@@ -228,10 +233,13 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
     assert listed.status_code == 200
     assert {item["name"] for item in listed.json()} == {
         "compare_sources",
+        "course_project_workflow",
         "create_review_cards",
+        "exam_preparation_workflow",
         "knowledge_agent",
         "summarize_document",
         "research_reading_workflow",
+        "skill_creator",
     }
     payload = next(item for item in listed.json() if item["name"] == "knowledge_agent")
     assert payload["version"] == "1.0.0"

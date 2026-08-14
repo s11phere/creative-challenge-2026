@@ -2,13 +2,13 @@
 
 ## Current Skill and Assistant Contract (2026-08-11)
 
-The runtime exposes the five existing `1.0.0` Skills plus active provisional
-`research_reading_workflow 1.1.0`. Two inactive `1.0.0` student Workflow contracts
-(`exam_preparation_workflow` and `course_project_workflow`) are installed for future implementation
-but are not in the Assistant catalog. Research is present in the catalog; new Runs use only the
-current pinned identity. Historical Skill packages, prompt versions, version activation,
-rollback, cleanup APIs, and the `knowledge_qa` adapter have been removed; persisted Runs are not
-recovered through compatibility code.
+The runtime exposes every user-facing built-in Skill through the activation catalog. Installed
+Skills, including `exam_preparation_workflow` and `course_project_workflow`, are active by default
+and can be toggled without restarting. `assistant_agent` remains an internal root runtime package:
+it is pinned by the Worker but never appears in Web management, `/skills`, command catalogs, or
+the native Skill route context. New Runs use only the current pinned identity. Historical Skill
+packages, prompt versions, version activation, rollback, cleanup APIs, and the `knowledge_qa`
+adapter have been removed; persisted Runs are not recovered through compatibility code.
 
 Installed and personal Skills are active by default. ADR-021 adds a durable activation toggle that
 updates the QA and Assistant registries before the API response returns. The next Assistant turn
