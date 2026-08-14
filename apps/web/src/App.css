@@ -2082,27 +2082,43 @@
   font-weight: 650;
 }
 
-.chat-agent-cache-summary {
+.chat-agent-cache-details {
   margin: 7px 0 0 21px;
-  padding: 6px 8px;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
   color: var(--ink-soft);
-  background: #f4f7f6;
-  border: 1px solid #d4e4dc;
-  border-radius: 5px;
   font-size: 11px;
   line-height: 16px;
 }
 
-.chat-agent-cache-summary small {
-  min-width: 0;
-  overflow: hidden;
+.chat-agent-cache-details summary {
+  width: fit-content;
   color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.chat-agent-cache-details dl {
+  margin: 6px 0 0;
+  padding: 7px 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  background: #f4f7f6;
+  border: 1px solid #d4e4dc;
+  border-radius: 5px;
+}
+
+.chat-agent-cache-details dt {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.chat-agent-cache-details dd {
+  margin: 1px 0 0;
+  color: var(--ink-soft);
+  font: 11px/16px var(--mono);
+  overflow-wrap: anywhere;
 }
 
 .chat-agent-iteration {
@@ -2908,7 +2924,8 @@
   }
 
   .chat-agent-run-metadata,
-  .chat-agent-tool-details {
+  .chat-agent-tool-details,
+  .chat-agent-cache-details dl {
     grid-template-columns: 1fr;
   }
 

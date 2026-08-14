@@ -526,6 +526,7 @@ async def _autonomous_loop_service(
         native_tool_registry=native_registry,
         native_allowed_tools=native_allowed_tools,
         native_base_tools=native_base_tools,
+        prompt_caching_allowed=lambda _context: settings.fast_chat_prompt_caching,
         qa_results=qa_repository.get_run,
         conversation_finalizer=ConversationFinalizer(
             runs=runs,

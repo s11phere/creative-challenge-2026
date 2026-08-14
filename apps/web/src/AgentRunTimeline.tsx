@@ -420,15 +420,23 @@ export function AgentRunTimeline({
             <li key={iteration} className="chat-agent-iteration">
               <div className="chat-agent-iteration-heading"><Clock3 size={15} aria-hidden="true" /><strong>第 {iteration} 轮</strong></div>
               {iterationCache.map((item) => (
-                <div key={`cache-${item.iteration}`} className="chat-agent-cache-summary">
-                  <span>缓存：{item.mode ?? 'unsupported'} · 读取 {item.readTokens} · 写入 {item.writeTokens}</span>
-                  {(item.visibleObservationBytes !== null || item.toolCount !== null) && (
-                    <small>
-                      上下文：{item.visibleObservationBytes ?? 0} B 可见结果
-                      {item.toolCount !== null && ` · ${item.toolCount} 个工具`}
-                    </small>
-                  )}
-                </div>
+                <details key={`cache-${item.iteration}`} className="chat-agent-cache-details">
+                  <summary>缓存详情</summary>
+                  <dl>
+                    <div><dt>状态</dt><dd>{item.mode ?? 'unsupported'}</dd></div>
+                    <div><dt>读取 Token</dt><dd>{item.readTokens.toLocaleString('zh-CN')}</dd></div>
+                    <div><dt>写入 Token</dt><dd>{item.writeTokens.toLocaleString('zh-CN')}</dd></div>
+                    {(item.visibleObservationBytes !== null || item.toolCount !== null) && (
+                      <div>
+                        <dt>上下文</dt>
+                        <dd>
+                          {item.visibleObservationBytes ?? 0} B 可见结果
+                          {item.toolCount !== null && ` · ${item.toolCount} 个工具`}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                </details>
               ))}
               {iterationActivations.map((activation) => (
                 <p key={activation.event.event_id} className="chat-agent-skill-activation">

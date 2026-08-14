@@ -320,9 +320,9 @@ describe('AgentRunTimeline', () => {
     expect(screen.getByText('fake-fast-chat-v1')).toBeInTheDocument()
     expect(screen.queryByText('模型耗时')).not.toBeInTheDocument()
     expect(screen.getByText('Coverage: 1 matched across 1 searches.')).toBeInTheDocument()
-    expect(screen.getByText(/缓存：requested/)).toBeInTheDocument()
+    expect(screen.getByText('缓存详情')).toBeInTheDocument()
     expect(screen.getByText('知识问答终态')).toBeInTheDocument()
-    expect(document.querySelector('.chat-agent-cache-summary')).not.toBeNull()
+    expect(document.querySelector('.chat-agent-cache-details')).not.toBeNull()
   })
 
   it('uses wall-clock and event timing while merging safe Tool details without hashes', () => {
@@ -388,7 +388,12 @@ describe('AgentRunTimeline', () => {
 
     expect(screen.getByText('总耗时')).toBeInTheDocument()
     expect(screen.getByText('5.0 秒')).toBeInTheDocument()
-    expect(screen.getByText('上下文：96 B 可见结果 · 3 个工具')).toBeInTheDocument()
+    const cacheDetails = document.querySelector('.chat-agent-cache-details')
+    if (!cacheDetails) throw new Error('cache details were not rendered')
+    fireEvent.click(cacheDetails.querySelector('summary')!)
+    expect(cacheDetails).toHaveTextContent('上下文')
+    expect(cacheDetails).toHaveTextContent('96 B')
+    expect(cacheDetails).toHaveTextContent('3 个工具')
     expect(screen.queryByText(digest)).not.toBeInTheDocument()
     expect(screen.queryByText(`sha256:${digest}`)).not.toBeInTheDocument()
 
