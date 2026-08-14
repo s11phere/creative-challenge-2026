@@ -93,6 +93,9 @@ const activeStatuses = new Set(['created', 'queued', 'running', 'cancel_requeste
 // Approval decisions are persisted asynchronously by the Worker. Keep polling while a
 // run waits for approval so the UI observes the resumed execution without navigation.
 const refreshingStatuses = new Set([...activeStatuses, 'waiting_approval'])
+const settledAgentEventTypes = new Set<AgentRunEvent['event_type']>([
+  'completed', 'refused', 'failed', 'cancelled', 'timed_out',
+])
 
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
@@ -311,6 +314,12 @@ function SkillRunCard(props: SkillRunCardProps) {
         queryClient.setQueryData<AgentRunEvent[]>(['agent-run-events', run.run_id], (current = []) =>
           mergeAgentRunEvents(current, incoming),
         )
+        if (incoming.some((event) => settledAgentEventTypes.has(event.event_type))) {
+          // The event announces completion before the cached Run has its final citations.
+          void queryClient.invalidateQueries({ queryKey: ['qa-run', run.run_id] })
+          void queryClient.invalidateQueries({ queryKey: ['assistant-runs'] })
+          void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
+        }
       },
     })
     return () => controller.abort()
@@ -438,7 +447,6 @@ export function QAWorkspace({
   const isComposingRef = useRef(false)
   const excerptRef = useRef<HTMLDivElement>(null)
   const historyInitializedRef = useRef(false)
-  const evidenceUserClosedRef = useRef(false)
   const timelineSequenceRef = useRef(0)
   const localMessageOrdersRef = useRef(new Map<string, number>())
   const effortPickerConsumedRef = useRef(false)
@@ -611,7 +619,6 @@ export function QAWorkspace({
       setLocalMessages([])
       setLocalRuns([])
       setActiveRunId(null)
-      evidenceUserClosedRef.current = false
       setEvidenceRunId(null)
       setSelectedEvidenceId(null)
       setCommandNotices([])
@@ -628,21 +635,18 @@ export function QAWorkspace({
   }, [pendingEffortPicker])
 
   useEffect(() => {
-    if (currentRun && !activeStatuses.has(currentRun.status)) {
-      void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
+    if (!currentRun || activeStatuses.has(currentRun.status)) return
+    void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
+    if (isGroundedRun(currentRun) || currentRun.run_kind === 'assistant_turn') {
+      // The Agent terminal event precedes publication of the final Assistant message.
+      // Refresh once more when that message's persisted Run becomes terminal.
+      void queryClient.invalidateQueries({ queryKey: ['qa-run', currentRun.run_id] })
     }
   }, [currentRun, queryClient])
 
   useEffect(() => {
     if (selectedEvidenceId && (citationQuery.data || citationQuery.error)) excerptRef.current?.focus()
   }, [citationQuery.data, citationQuery.error, selectedEvidenceId])
-
-  useEffect(() => {
-    const citations = currentQARunQuery.data?.citations ?? []
-    if (!evidenceRunId && !evidenceUserClosedRef.current && currentRun?.run_id && citations.length > 0) {
-      setEvidenceRunId(currentRun.run_id)
-    }
-  }, [currentQARunQuery.data?.citations, currentRun?.run_id, evidenceRunId])
 
   const nextTimelinePosition = () => ({
     created_at: new Date().toISOString(),
@@ -729,7 +733,6 @@ export function QAWorkspace({
         setConversationId(nextConversationId)
         onConversationSelected?.(nextConversationId)
       }
-      evidenceUserClosedRef.current = false
       setSelectedEvidenceId(null)
       setDraft('')
       setSelectedCommand(null)
@@ -951,12 +954,10 @@ export function QAWorkspace({
   const currentRunIsActive = currentRun ? activeStatuses.has(currentRun.status) : false
   const visibleCitations = evidenceRun?.citations ?? []
   const openEvidence = (runId: string) => {
-    evidenceUserClosedRef.current = false
     setEvidenceRunId(runId)
     setSelectedEvidenceId(null)
   }
   const closeEvidence = () => {
-    evidenceUserClosedRef.current = true
     setEvidenceRunId(null)
     setSelectedEvidenceId(null)
   }

@@ -618,6 +618,67 @@ describe('assistant conversation workspace', () => {
     ))
   })
 
+  it('refreshes final evidence when an Agent Run completes without opening the sidebar', async () => {
+    let agentTerminalReceived = false
+    let finalAssistantRunSeen = false
+    const live = assistantRun({
+      status: 'running',
+      run_kind: 'assistant_turn',
+      assistant_message: { message_id: 'assistant-1', content: 'Answer already rendered.' },
+      selection: { source: 'auto', skill: null },
+    })
+    const finalRun = assistantRun({
+      status: 'completed',
+      run_kind: 'assistant_turn',
+      assistant_message: { message_id: 'assistant-1', content: 'Answer already rendered.' },
+      selection: { source: 'auto', skill: null },
+    })
+    const pendingQaRun: QARun = {
+      run_id: 'run-1', attempt_id: 'attempt-1', status: 'running', conversation_id: 'conversation-1', question_message_id: 'message-1', cancellation_requested: false, error_code: null,
+      skill: { name: 'knowledge_agent', version: '1.0.0', content_sha256: 'a'.repeat(64) }, fixed_scope: { source_ids: [], document_ids: [], version_ids: [] }, result: null, citations: [],
+    }
+    const completedQaRun: QARun = {
+      ...pendingQaRun,
+      status: 'completed',
+      result: { type: 'answer', text: 'Answer already rendered.', limitations: ['Evidence is limited to the indexed sources.'] },
+      citations: [{ evidence_id: 'evidence-1', source_id: 'source-1', document_id: 'document-1', version_id: 'version-1', chunk_id: 'chunk-1', locator: { kind: 'lines', start: 1, end: 2 } }],
+    }
+    const fetchMock = baseFetch({
+      conversations: [{
+        ...conversation,
+        messages: [{ message_id: 'message-1', role: 'user', content: 'Answer with evidence.', run_id: null, created_at: '2026-08-09T10:00:00Z' }],
+        runs: [],
+      }],
+    })
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
+        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [{ message_id: 'message-1', role: 'user', content: 'Answer with evidence.', run_id: null, created_at: '2026-08-09T10:00:00Z' }], runs: [] }] }))
+      }
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) {
+        if (agentTerminalReceived) finalAssistantRunSeen = true
+        return Promise.resolve(response({ runs: [agentTerminalReceived ? finalRun : live] }))
+      }
+      if (url.endsWith('/api/v1/qa/runs/run-1')) return Promise.resolve(response(finalAssistantRunSeen ? completedQaRun : pendingQaRun))
+      if (url.includes('/api/v3/runs/run-1/events?after_sequence=0')) return Promise.resolve(response({ schema_version: 'agent-run-event-page-v1', events: [], next_sequence: 0, has_more: false }))
+      if (url.endsWith('/api/v3/runs/run-1/events/stream')) {
+        agentTerminalReceived = true
+        return Promise.resolve(eventStream([{
+          schema_version: 'agent-run-sse-v3', event_id: 'event-1', run_id: 'run-1', sequence: 1, occurred_at: '2026-08-09T10:00:01Z', event_type: 'completed', payload: { status: 'completed' },
+        }]))
+      }
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderWorkspace()
+
+    expect(await screen.findByText('Answer already rendered.')).toBeInTheDocument()
+    expect(await screen.findByText('Evidence is limited to the indexed sources.')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '查看引用证据' }).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('heading', { name: '引用证据' })).not.toBeInTheDocument()
+  })
+
   it('uses the refreshed API Run instead of an optimistic created snapshot', async () => {
     let submitted = false
     const fetchMock = baseFetch()
@@ -811,7 +872,7 @@ describe('assistant conversation workspace', () => {
     ))
   })
 
-  it('shows the evidence sidebar only for a grounded Run with citations', async () => {
+  it('keeps the evidence sidebar collapsed for a grounded Run until opened', async () => {
     const grounded = assistantRun({
       run_kind: 'grounded_qa',
       assistant_message: null,
@@ -838,7 +899,11 @@ describe('assistant conversation workspace', () => {
     vi.stubGlobal('fetch', fetchMock)
     renderWorkspace()
 
-    expect(await screen.findByRole('heading', { name: '引用证据' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '查看引用证据' })).toBeInTheDocument()
     expect(screen.getByText('Grounded response.')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '引用证据' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '查看引用证据' }))
+    expect(await screen.findByRole('heading', { name: '引用证据' })).toBeInTheDocument()
   })
 })
