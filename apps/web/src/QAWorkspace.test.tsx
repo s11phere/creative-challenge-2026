@@ -45,6 +45,11 @@ function assistantRun(overrides: Record<string, unknown> = {}) {
     error_code: null,
     selection: { source: 'none', skill: null },
     model_identity: 'fake',
+    reasoning_profile: {
+      schema_version: 'reasoning-profile-v1', requested_effort: 'auto', effective_effort: 'low',
+      provider: 'fake', model: 'fake-fast-chat-v1', mapping_version: 'reasoning-mapping-v1',
+      mode: 'native', downgrade_reason: 'none',
+    },
     assistant_message: { message_id: 'assistant-1', content: 'Direct response.' },
     clarification: null,
     usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6, model_latency_ms: 12.5 },
@@ -512,9 +517,14 @@ describe('assistant conversation workspace', () => {
       selection: { source: 'auto', skill: null },
       assistant_message: { message_id: 'assistant-1', content: 'Architecture answer.' },
       usage: { input_tokens: 120, output_tokens: 48, total_tokens: 168, model_latency_ms: 1240 },
+      reasoning_profile: {
+        schema_version: 'reasoning-profile-v1', requested_effort: 'high', effective_effort: 'medium',
+        provider: 'openai-compatible', model: 'deepseek-v4-flash', mapping_version: 'reasoning-mapping-v2',
+        mode: 'native', downgrade_reason: 'none',
+      },
     })
     const events = [
-      { schema_version: 'agent-run-sse-v3', event_id: 'event-1', run_id: 'run-1', sequence: 1, occurred_at: '2026-08-09T10:00:01Z', event_type: 'accepted', payload: { status: 'accepted', requested_effort: 'high', effective_effort: 'medium', model: 'fake-reasoner' } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-1', run_id: 'run-1', sequence: 1, occurred_at: '2026-08-09T10:00:01Z', event_type: 'accepted', payload: { status: 'accepted', requested_effort: 'high', effective_effort: 'medium', model: 'openai-compatible' } },
       { schema_version: 'agent-run-sse-v3', event_id: 'event-2', run_id: 'run-1', sequence: 2, occurred_at: '2026-08-09T10:00:02Z', event_type: 'iteration_started', payload: { status: 'planning', iteration: 1, tool_call_count: 0, observation_count: 0 } },
       { schema_version: 'agent-run-sse-v3', event_id: 'event-3', run_id: 'run-1', sequence: 3, occurred_at: '2026-08-09T10:00:03Z', event_type: 'tool_requested', payload: { status: 'requested', iteration: 1, tool_name: 'knowledge_search', tool_version: '1.0.0', input_summary: 'sha256:input-1', query_preview: 'How is the architecture indexed?', retry_count: 0 } },
       { schema_version: 'agent-run-sse-v3', event_id: 'event-4', run_id: 'run-1', sequence: 4, occurred_at: '2026-08-09T10:00:04Z', event_type: 'tool_output', payload: { status: 'succeeded', iteration: 1, tool_name: 'knowledge_search', tool_version: '1.0.0', input_summary: 'sha256:input-1', query_preview: 'How is the architecture indexed?', output_summary: 'sha256:output-1', retry_count: 1, duration_ms: 126 } },
@@ -559,6 +569,10 @@ describe('assistant conversation workspace', () => {
 
     const timeline = await screen.findByLabelText('Agent 运行时间线')
     await waitFor(() => expect(screen.getByText('请求强度')).toBeInTheDocument())
+    expect(screen.getByText('deepseek-v4-flash')).toBeInTheDocument()
+    expect(screen.queryByText('openai-compatible')).not.toBeInTheDocument()
+    expect(screen.getByText('模型耗时：1.2 秒')).toBeInTheDocument()
+    expect(screen.queryByText('最终回答')).not.toBeInTheDocument()
     expect(screen.getByText('实际强度')).toBeInTheDocument()
     expect(screen.getByText('实际 Token')).toBeInTheDocument()
     expect(screen.getByText('目标已完成')).toBeInTheDocument()

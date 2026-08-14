@@ -115,6 +115,7 @@ it('loads the fixed installed Skill set without version-management controls', as
   expect(screen.queryByText('Grounded knowledge requests.')).not.toBeInTheDocument()
   fireEvent.click(summary)
   expect(screen.getByText('Grounded knowledge requests.')).toBeInTheDocument()
+  expect(screen.queryByText('a'.repeat(64))).not.toBeInTheDocument()
   expect(fetchMock).toHaveBeenCalledWith(
     expect.stringContaining('/api/v1/skills'),
     expect.objectContaining({ headers: { 'Content-Type': 'application/json' } }),

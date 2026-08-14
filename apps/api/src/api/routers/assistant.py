@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -138,6 +139,8 @@ class ClarificationSelectionRequest(BaseModel):
 class ConversationRunResponse(BaseModel):
     run_id: UUID
     user_message_id: UUID
+    created_at: datetime
+    updated_at: datetime
     status: str
     run_kind: str
     error_code: str | None = None
@@ -535,6 +538,8 @@ async def _response(run: ConversationRun, request: Request) -> ConversationRunRe
     return ConversationRunResponse(
         run_id=run.run_id,
         user_message_id=run.user_message_id,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
         status=run.status.value,
         run_kind=run.run_kind.value,
         error_code=run.error_code,

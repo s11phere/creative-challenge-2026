@@ -1105,6 +1105,11 @@
               }
             ]
           },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
           "error_code": {
             "anyOf": [
               {
@@ -1139,6 +1144,11 @@
             "title": "Status",
             "type": "string"
           },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
           "usage": {
             "$ref": "#/components/schemas/UsageResponse"
           },
@@ -1151,6 +1161,8 @@
         "required": [
           "run_id",
           "user_message_id",
+          "created_at",
+          "updated_at",
           "status",
           "run_kind",
           "selection",

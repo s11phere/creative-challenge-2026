@@ -114,6 +114,12 @@ function statusLabel(status: string): string {
   return labels[status] ?? status
 }
 
+function formatModelLatency(value: number): string | null {
+  if (!Number.isFinite(value) || value <= 0) return null
+  if (value < 1_000) return `${Math.round(value)} ms`
+  return `${(value / 1_000).toFixed(1)} 秒`
+}
+
 function citationKey(sourceId: string, documentId: string): string {
   return `${sourceId}:${documentId}`
 }
@@ -216,15 +222,17 @@ function LegacySkillRunCard({
           <h3>执行信息</h3>
           <dl className="chat-skill-run-metadata">
             <div><dt>状态</dt><dd>{statusLabel(run.status)}</dd></div>
-            <div><dt>模型</dt><dd>{run.model_identity}</dd></div>
+            <div><dt>模型</dt><dd>{run.reasoning_profile.model || run.model_identity}</dd></div>
             <div><dt>输入 Token</dt><dd>{run.usage.input_tokens.toLocaleString('zh-CN')}</dd></div>
             <div><dt>输出 Token</dt><dd>{run.usage.output_tokens.toLocaleString('zh-CN')}</dd></div>
-            <div><dt>模型耗时</dt><dd>{Math.round(run.usage.model_latency_ms).toLocaleString('zh-CN')} ms</dd></div>
           </dl>
         </section>
         {result && (result.text || result.message) && (
           <section>
             <h3>Skill 结果</h3>
+            {formatModelLatency(run.usage.model_latency_ms) && (
+              <p className="chat-final-answer-meta">模型耗时：{formatModelLatency(run.usage.model_latency_ms)}</p>
+            )}
             <div className="qa-answer">
               <RenderedAssistantAnswer
                 content={result.text ?? result.message ?? ''}
@@ -1080,7 +1088,9 @@ export function QAWorkspace({
                       />
                       {answer && (
                         <article className="chat-final-answer" data-status={run.status}>
-                          <div className="qa-run-heading"><Check size={17} aria-hidden="true" /><strong>最终回答</strong></div>
+                          {formatModelLatency(run.usage.model_latency_ms) && (
+                            <p className="chat-final-answer-meta">模型耗时：{formatModelLatency(run.usage.model_latency_ms)}</p>
+                          )}
                           <div className="qa-answer"><RenderedAssistantAnswer content={answer} limitations={limitations} /></div>
                           {hasGroundedEvidence && (
                             <button className="chat-evidence-button" type="button" onClick={() => openEvidence(run.run_id)}>

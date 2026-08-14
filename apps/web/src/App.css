@@ -1744,6 +1744,12 @@
   border-left-color: var(--danger);
 }
 
+.chat-final-answer-meta {
+  margin: 0;
+  color: var(--muted);
+  font: 11px/16px var(--mono);
+}
+
 .chat-evidence-button {
   min-height: 30px;
   margin-top: 9px;
@@ -2091,11 +2097,10 @@
   line-height: 16px;
 }
 
-.chat-agent-cache-summary code {
+.chat-agent-cache-summary small {
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
-  font-family: var(--mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

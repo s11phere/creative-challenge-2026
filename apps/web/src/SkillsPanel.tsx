@@ -89,7 +89,6 @@ function SkillRow({ skill }: { skill: SkillVersion }) {
             </div>
             <p>{skill.description}</p>
             <dl className="skill-version-meta">
-              <div><dt>摘要</dt><dd title={skill.content_sha256}>{skill.content_sha256}</dd></div>
               <div><dt>权限</dt><dd>{skill.permissions.join(', ') || '无'}</dd></div>
               <div><dt>能力</dt><dd>{skill.required_capabilities.join(', ') || '无'}</dd></div>
               <div><dt>预算</dt><dd>{skill.budget.max_steps} 步 / {skill.budget.max_tool_calls} Tool / {skill.budget.timeout_seconds}s</dd></div>

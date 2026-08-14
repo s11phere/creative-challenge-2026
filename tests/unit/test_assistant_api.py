@@ -58,6 +58,8 @@ async def test_v2_turn_skeleton_persists_and_cancels_a_model_free_turn() -> None
     assert created.status_code == 202
     created_payload = created.json()
     assert UUID(created_payload.pop("user_message_id"))
+    assert created_payload.pop("created_at")
+    assert created_payload.pop("updated_at")
     assert created_payload == {
         "run_id": str(run_id),
         "status": "created",

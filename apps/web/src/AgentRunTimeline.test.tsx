@@ -6,11 +6,18 @@ import type { AgentApproval, AgentRunEvent, AssistantRun } from './qa'
 const run: AssistantRun = {
   run_id: 'run-1',
   user_message_id: 'message-1',
+  created_at: '2026-08-11T10:00:00Z',
+  updated_at: '2026-08-11T10:00:01Z',
   status: 'waiting_approval',
   run_kind: 'assistant_turn',
   error_code: null,
   selection: { source: 'none', skill: null },
   model_identity: 'fake',
+  reasoning_profile: {
+    schema_version: 'reasoning-profile-v1', requested_effort: 'auto', effective_effort: 'low',
+    provider: 'fake', model: 'fake-fast-chat-v1', mapping_version: 'reasoning-mapping-v1',
+    mode: 'native', downgrade_reason: 'none',
+  },
   assistant_message: null,
   clarification: null,
   usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0, model_latency_ms: 0 },
@@ -123,7 +130,7 @@ describe('AgentRunTimeline', () => {
     expect(onDecideApproval).toHaveBeenCalledWith('approval-1', true, true)
 
     fireEvent.click(outputShellCard.querySelector('summary')!)
-    expect(screen.getByText('python -m pytest')).toBeInTheDocument()
+    expect(outputShellCard).toHaveTextContent('python -m pytest')
     expect(screen.getByText('Exit code')).toBeInTheDocument()
 
     const output = outputShellCard.querySelector('.chat-agent-tool-output')
@@ -310,9 +317,87 @@ describe('AgentRunTimeline', () => {
     )
 
     expect(screen.getByText('native-tool-use-v2')).toBeInTheDocument()
+    expect(screen.getByText('fake-fast-chat-v1')).toBeInTheDocument()
+    expect(screen.queryByText('模型耗时')).not.toBeInTheDocument()
     expect(screen.getByText('Coverage: 1 matched across 1 searches.')).toBeInTheDocument()
     expect(screen.getByText(/缓存：requested/)).toBeInTheDocument()
     expect(screen.getByText('知识问答终态')).toBeInTheDocument()
     expect(document.querySelector('.chat-agent-cache-summary')).not.toBeNull()
+  })
+
+  it('uses wall-clock and event timing while merging safe Tool details without hashes', () => {
+    const digest = 'a'.repeat(64)
+    const timingEvents: AgentRunEvent[] = [
+      {
+        schema_version: 'agent-run-sse-v3', event_id: 'timing-request', run_id: 'run-1', sequence: 1,
+        occurred_at: '2026-08-14T10:00:01Z', event_type: 'tool_requested',
+        payload: {
+          status: 'requested', iteration: 1, tool_name: 'knowledge_search', tool_version: '1.0.0',
+          query_preview: 'Which sources describe the architecture?', input_summary: `sha256:${digest}`,
+        },
+      },
+      {
+        schema_version: 'agent-run-sse-v3', event_id: 'timing-start', run_id: 'run-1', sequence: 2,
+        occurred_at: '2026-08-14T10:00:02Z', event_type: 'tool_started',
+        payload: {
+          status: 'running', iteration: 1, tool_name: 'knowledge_search', tool_version: '1.0.0',
+          input_summary: `sha256:${digest}`,
+        },
+      },
+      {
+        schema_version: 'agent-run-sse-v3', event_id: 'timing-output', run_id: 'run-1', sequence: 3,
+        occurred_at: '2026-08-14T10:00:04Z', event_type: 'tool_output',
+        payload: {
+          status: 'succeeded', iteration: 1, tool_name: 'knowledge_search', tool_version: '1.0.0',
+          output_summary: 'Found 2 matching sources.', duration_ms: 0, retry_count: 1,
+        },
+      },
+      {
+        schema_version: 'agent-run-sse-v3', event_id: 'timing-cache', run_id: 'run-1', sequence: 4,
+        occurred_at: '2026-08-14T10:00:04Z', event_type: 'cache_used',
+        payload: {
+          iteration: 1, cache_mode: 'requested', cache_read_tokens: 4, cache_write_tokens: 1,
+          context_digest: `sha256:${digest}`, visible_observation_bytes: 96, tool_count: 3,
+        },
+      },
+      {
+        schema_version: 'agent-run-sse-v3', event_id: 'timing-completed', run_id: 'run-1', sequence: 5,
+        occurred_at: '2026-08-14T10:00:05Z', event_type: 'completed',
+        payload: { status: 'completed', iteration: 1, stop_reason: 'goal_complete' },
+      },
+    ]
+
+    render(
+      <AgentRunTimeline
+        run={{
+          ...run,
+          status: 'completed',
+          created_at: '2026-08-14T10:00:00Z',
+          updated_at: '2026-08-14T10:00:05Z',
+        }}
+        events={timingEvents}
+        hasGroundedEvidence={false}
+        clarificationPending={false}
+        onSelectClarification={vi.fn()}
+        onOpenEvidence={vi.fn()}
+        approvals={[]}
+        approvalBusy={false}
+        onDecideApproval={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('总耗时')).toBeInTheDocument()
+    expect(screen.getByText('5.0 秒')).toBeInTheDocument()
+    expect(screen.getByText('上下文：96 B 可见结果 · 3 个工具')).toBeInTheDocument()
+    expect(screen.queryByText(digest)).not.toBeInTheDocument()
+    expect(screen.queryByText(`sha256:${digest}`)).not.toBeInTheDocument()
+
+    const toolCard = screen.getByText('knowledge_search').closest('details')
+    if (!toolCard) throw new Error('knowledge search Tool card was not rendered')
+    fireEvent.click(toolCard.querySelector('summary')!)
+    expect(screen.getByText('Which sources describe the architecture?')).toBeInTheDocument()
+    expect(screen.getByText('Found 2 matching sources.')).toBeInTheDocument()
+    expect(screen.getByText('2.0 秒')).toBeInTheDocument()
+    expect(screen.queryByText('0 ms')).not.toBeInTheDocument()
   })
 })
