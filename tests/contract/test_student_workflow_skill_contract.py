@@ -12,7 +12,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SKILL_ROOT = REPOSITORY_ROOT / "skills"
 WORKFLOW_SKILLS = {
     "research_reading_workflow": ("research_reading_workflow", "1.1.0"),
-    "exam_preparation_workflow": ("exam_preparation_workflow", "1.0.0"),
+    "exam_preparation_workflow": ("exam_preparation_workflow", "1.2.1"),
     "course_project_workflow": ("course_project_workflow", "1.0.0"),
 }
 
@@ -38,7 +38,8 @@ def test_student_workflow_packages_load_pin_and_remain_inactive() -> None:
     active_catalog = FileSystemSkillCatalog(assistant_skill_registry(), include_manifest_v2=True)
     active_names = {item.name for item in active_catalog.list_active_invocations()}
     assert "research_reading_workflow" in active_names
-    assert active_names.isdisjoint({"exam_preparation_workflow", "course_project_workflow"})
+    assert "exam_preparation_workflow" in active_names
+    assert "course_project_workflow" not in active_names
 
 
 def test_student_workflow_commands_and_aliases_are_unique() -> None:

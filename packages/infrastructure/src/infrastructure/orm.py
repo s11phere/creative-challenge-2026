@@ -953,6 +953,86 @@ class MemoryEntryModel(Base):
     )
 
 
+class ExamSessionModel(Base):
+    __tablename__ = "exam_sessions"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    skill_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    skill_content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    phase: Mapped[str] = mapped_column(String(32), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    state: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    current_interaction: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+    __table_args__ = (
+        Index("idx_exam_sessions_conversation", "conversation_id", "created_at"),
+        CheckConstraint("revision >= 1", name="ck_exam_sessions_revision"),
+    )
+
+
+class ExamPaperModel(Base):
+    __tablename__ = "exam_papers"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("exam_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    locked: Mapped[bool] = mapped_column(nullable=False, default=True)
+    public_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    private_answer_key: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("session_id", "id", "version", name="uq_exam_paper_version"),
+    )
+
+
+class ExamSubmissionModel(Base):
+    __tablename__ = "exam_submissions"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("exam_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    paper_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("exam_papers.id", ondelete="CASCADE"), nullable=False
+    )
+    paper_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    submission_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    answers: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    __table_args__ = (
+        UniqueConstraint("session_id", "submission_id", name="uq_exam_submission_idempotency"),
+    )
+
+
+class ExamActionModel(Base):
+    __tablename__ = "exam_actions"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("exam_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversation_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    interaction_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    safe_result: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    __table_args__ = (
+        UniqueConstraint("session_id", "idempotency_key", name="uq_exam_action_idempotency"),
+    )
+
+
 class DerivedKnowledgeItemModel(Base):
     """Idempotent, citation-backed derived knowledge produced by a Skill."""
 

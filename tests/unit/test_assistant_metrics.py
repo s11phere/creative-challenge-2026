@@ -78,6 +78,7 @@ def test_operational_metrics_are_labelled_and_body_free() -> None:
     metrics = AssistantMetrics()
     metrics.record_router_decision("respond")
     metrics.record_command("ask", matched=True)
+    metrics.record_command("prepare-exam", matched=True)
     metrics.record_command("research", matched=True)
     metrics.record_usage(
         run_kind="assistant_turn", input_tokens=5, output_tokens=3, latency_ms=12.5
@@ -88,6 +89,7 @@ def test_operational_metrics_are_labelled_and_body_free() -> None:
     counters = cast(dict[str, int], snapshot["counters"])
     assert counters["assistant.routing.decisions|action=respond"] == 1
     assert counters["assistant.commands|command=ask,matched=true"] == 1
+    assert counters["assistant.commands|command=prepare-exam,matched=true"] == 1
     assert counters["assistant.commands|command=research,matched=true"] == 1
     observations = cast(dict[str, dict[str, object]], snapshot["observations"])
     assert observations["assistant.tokens.input|run_kind=assistant_turn"]["sum"] == 5

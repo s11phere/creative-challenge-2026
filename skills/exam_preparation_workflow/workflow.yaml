@@ -1,14 +1,10 @@
 workflow_version: "1"
-start: map_course
+start: enter_native_exam
 nodes:
-  - {id: map_course, step: planning, handler: exam_workflow_map_course, next: broad_quiz, max_retries: 1, required_permissions: [read_knowledge, model], reserve: {tool_calls: 2, input_tokens: 12288, output_tokens: 2048}}
-  - {id: broad_quiz, step: executing, handler: exam_workflow_broad_quiz, next: await_broad_answers, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 2, input_tokens: 8192, output_tokens: 2048}}
-  - {id: await_broad_answers, step: waiting_user_input, handler: exam_workflow_wait_answers, next: adaptive_quiz, max_retries: 0, required_permissions: [], reserve: {tool_calls: 0, input_tokens: 0, output_tokens: 0}}
-  - {id: adaptive_quiz, step: executing, handler: exam_workflow_adaptive_quiz, next: await_adaptive_answers, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 2, input_tokens: 8192, output_tokens: 2048}}
-  - {id: await_adaptive_answers, step: waiting_user_input, handler: exam_workflow_wait_answers, next: diagnose, max_retries: 0, required_permissions: [], reserve: {tool_calls: 0, input_tokens: 0, output_tokens: 0}}
-  - {id: diagnose, step: executing, handler: exam_workflow_diagnose, next: review_plan, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 1, input_tokens: 8192, output_tokens: 2048}}
-  - {id: review_plan, step: executing, handler: exam_workflow_review_plan, next: card_preview, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 1, input_tokens: 6144, output_tokens: 1536}}
-  - {id: card_preview, step: executing, handler: exam_workflow_card_preview, next: mock_exam, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 1, input_tokens: 4096, output_tokens: 1024}}
-  - {id: mock_exam, step: executing, handler: exam_workflow_mock_exam, next: await_mock_answers, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 2, input_tokens: 12288, output_tokens: 4096}}
-  - {id: await_mock_answers, step: waiting_user_input, handler: exam_workflow_wait_mock_answers, next: mock_review, max_retries: 0, required_permissions: [], reserve: {tool_calls: 0, input_tokens: 0, output_tokens: 0}}
-  - {id: mock_review, step: verifying, handler: exam_workflow_mock_review, next: null, max_retries: 0, required_permissions: [read_knowledge, model], reserve: {tool_calls: 1, input_tokens: 4096, output_tokens: 1536}}
+  - id: enter_native_exam
+    step: executing
+    handler: exam_preparation_native_tool_use
+    next: null
+    max_retries: 1
+    required_permissions: [read_knowledge, model]
+    reserve: {tool_calls: 16, input_tokens: 65536, output_tokens: 24576}

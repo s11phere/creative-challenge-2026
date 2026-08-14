@@ -1,11 +1,23 @@
 # 项目架构概览
 
+## Exam Preparation vertical slice (2026-08-13)
+
+`exam_preparation_workflow 1.2.1` is an active native Tool-use Skill. One durable `ExamSession`
+spans multiple short `ConversationRun` actions; the Runtime does not add a generic
+`waiting_user_input` state. Public interactions and private answer keys are separate database
+columns and separate API projections. `exam_actions` stores only a body-free recovery summary,
+while student answers remain in `exam_submissions` and never enter chat messages or the v4 event
+timeline. The model may propose schema-bound artifacts after retrieval through `SearchService`, but
+the service owns authorization, paper versions, answer isolation, idempotency and objective scoring.
+The interaction renderer lives inside the existing conversation page and refetches the Session after
+each action. This closes a development vertical slice only; quality remains provisional.
+
 ## Current Skill and Assistant Contract (2026-08-11)
 
-The runtime exposes the five existing `1.0.0` Skills plus active provisional
-`research_reading_workflow 1.1.0`. Two inactive `1.0.0` student Workflow contracts
-(`exam_preparation_workflow` and `course_project_workflow`) are installed for future implementation
-but are not in the Assistant catalog. Research is present in the catalog; new Runs use only the
+The runtime exposes the existing Skills plus active provisional
+`research_reading_workflow 1.1.0` and `exam_preparation_workflow 1.2.1`. The inactive
+`course_project_workflow 1.0.0` contract remains installed for future implementation.
+Research and Exam Preparation are present in the catalog; new Runs use only the
 current pinned identity. Historical Skill packages, prompt versions, version activation,
 rollback, cleanup APIs, and the `knowledge_qa` adapter have been removed; persisted Runs are not
 recovered through compatibility code.

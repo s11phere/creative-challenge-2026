@@ -1501,6 +1501,204 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "ExamActionRequest": {
+        "properties": {
+          "action": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Action",
+            "type": "string"
+          },
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/ExamAnswerRequest"
+            },
+            "maxItems": 200,
+            "title": "Answers",
+            "type": "array"
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "interaction_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Interaction Id",
+            "type": "string"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "paper_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Version"
+          },
+          "submission_id": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submission Id"
+          }
+        },
+        "required": [
+          "interaction_id",
+          "action",
+          "idempotency_key"
+        ],
+        "title": "ExamActionRequest",
+        "type": "object"
+      },
+      "ExamAnswerRequest": {
+        "properties": {
+          "question_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "response_text": {
+            "anyOf": [
+              {
+                "maxLength": 12000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Text"
+          },
+          "selected_options": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Options"
+          }
+        },
+        "required": [
+          "question_id"
+        ],
+        "title": "ExamAnswerRequest",
+        "type": "object"
+      },
+      "ExamMessageInteractionResponse": {
+        "properties": {
+          "anchor_message_id": {
+            "format": "uuid",
+            "title": "Anchor Message Id",
+            "type": "string"
+          },
+          "anchor_run_id": {
+            "format": "uuid",
+            "title": "Anchor Run Id",
+            "type": "string"
+          },
+          "interaction": {
+            "additionalProperties": true,
+            "title": "Interaction",
+            "type": "object"
+          },
+          "schema_version": {
+            "default": "exam-message-interaction-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "submitted": {
+            "title": "Submitted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session_id",
+          "anchor_run_id",
+          "anchor_message_id",
+          "interaction",
+          "submitted"
+        ],
+        "title": "ExamMessageInteractionResponse",
+        "type": "object"
+      },
+      "ExamSessionResponse": {
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "interaction": {
+            "additionalProperties": true,
+            "title": "Interaction",
+            "type": "object"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "default": "exam-session-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "conversation_id",
+          "phase",
+          "revision",
+          "interaction"
+        ],
+        "title": "ExamSessionResponse",
+        "type": "object"
+      },
       "FeedbackDecision": {
         "enum": [
           "positive",
@@ -8212,6 +8410,204 @@
         "summary": "Stream Events"
       }
     },
+    "/api/v3/conversations/{conversation_id}/exam-sessions": {
+      "get": {
+        "operationId": "list_sessions_api_v3_conversations__conversation_id__exam_sessions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExamSessionResponse"
+                  },
+                  "title": "Response List Sessions Api V3 Conversations  Conversation Id  Exam Sessions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Sessions"
+      }
+    },
+    "/api/v3/exam-sessions/{session_id}": {
+      "get": {
+        "operationId": "get_session_api_v3_exam_sessions__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner_id",
+            "required": false,
+            "schema": {
+              "default": "local",
+              "title": "Owner Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session"
+      }
+    },
+    "/api/v3/exam-sessions/{session_id}/actions": {
+      "post": {
+        "operationId": "apply_action_api_v3_exam_sessions__session_id__actions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply Action"
+      }
+    },
+    "/api/v3/exam-sessions/{session_id}/history": {
+      "get": {
+        "operationId": "history_api_v3_exam_sessions__session_id__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner_id",
+            "required": false,
+            "schema": {
+              "default": "local",
+              "title": "Owner Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExamSessionResponse"
+                  },
+                  "title": "Response History Api V3 Exam Sessions  Session Id  History Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "History"
+      }
+    },
     "/api/v3/runs/{run_id}/events": {
       "get": {
         "operationId": "list_agent_events_api_v3_runs__run_id__events_get",
@@ -8379,6 +8775,50 @@
           }
         },
         "summary": "Stream Agent Events"
+      }
+    },
+    "/api/v4/conversations/{conversation_id}/exam-interactions": {
+      "get": {
+        "operationId": "list_message_interactions_api_v4_conversations__conversation_id__exam_interactions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExamMessageInteractionResponse"
+                  },
+                  "title": "Response List Message Interactions Api V4 Conversations  Conversation Id  Exam Interactions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Message Interactions"
       }
     }
   }

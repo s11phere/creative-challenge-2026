@@ -1,17 +1,25 @@
 manifest_version: "2"
 name: exam_preparation_workflow
-version: 1.0.0
-description: Provisional diagnostic exam-preparation workflow with adaptive quizzes, evidence-grounded review plans, approval-gated cards, and answer-hidden mock exams.
+version: 1.2.1
+description: Provisional interactive exam-preparation Skill for course mapping, adaptive diagnostics, structured study materials, approval-gated review cards, and answer-hidden mock exams. Use when a student wants a guided midterm, final, or custom-exam preparation workflow rather than a one-off factual answer.
 input_schema: schemas/input.json
 output_schema: schemas/output.json
 required_tools:
-  - name: grounded_qa
-    version: 1.0.0
+  - {name: exam_prepare, version: 1.2.1}
+  - {name: exam_submit, version: 1.2.1}
+  - {name: exam_review_cards, version: 1.2.1}
 required_capabilities: [fast_chat]
 permissions: [read_knowledge, model]
-budgets: {max_steps: 12, max_tool_calls: 12, max_input_tokens: 65536, max_output_tokens: 16384, timeout_seconds: 600}
+budgets:
+  max_steps: 20
+  max_tool_calls: 16
+  max_input_tokens: 65536
+  max_output_tokens: 24576
+  timeout_seconds: 600
 entrypoint: workflow.yaml
-compatibility: {runtime: ">=0.1.0,<1.0.0", checkpoint_schema_versions: [2]}
+compatibility:
+  runtime: ">=0.1.0,<1.0.0"
+  checkpoint_schema_versions: [2]
 prompts: [prompts/boundary.md]
 evals: [evals/cases.jsonl]
 invocation:
@@ -19,13 +27,15 @@ invocation:
   aliases: [exam-prep]
   argument_hint: "<课程、资料范围与考试目标>"
   trigger:
-    summary: "通过自适应小测诊断章节薄弱点，并生成复习计划、复习卡预览和模拟考试"
+    summary: "通过交互式自适应小测诊断章节薄弱点，并生成结构化复习材料和模拟考试"
     when:
       - "用户希望根据课程资料备考期中、期末或自定义考试"
-      - "用户希望先自测薄弱章节，再制定复习计划或生成模拟卷"
+      - "用户希望先快速自检，再制定复习计划、复习讲义或生成模拟卷"
     avoid_when:
       - "用户只要求解释一道题或查询一个知识点"
-      - "用户要求泄露未提交测验的答案"
+      - "用户要求提前泄露未提交测验或模拟卷的答案"
     examples:
       - "用操作系统课件和往年题帮我准备期末，先快速测一下薄弱章节"
+      - "给我生成一份两小时的算法模拟期末，交卷前不要显示答案"
   input_mode: sources
+  execution_mode: native_tool_use

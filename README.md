@@ -227,6 +227,21 @@ docker compose -f deploy/compose.yaml --env-file .env down --volumes --remove-or
 
 ## 开发命令
 
+### Exam Preparation 本地纵向演示
+
+先校验独立的 CC0 合成课程包（不会修改冻结的 corpus v0）：
+
+```bash
+uv run python scripts/exam_preparation_demo.py --validate-only
+```
+
+启动常规 Compose 服务后运行 `uv run python scripts/exam_preparation_demo.py --prepare-space`
+（它只调用正式 Source/Upload/Ingestion API），再在对话中输入 `/prepare-exam`。题卡会
+嵌入当前对话；每次提交通过独立 v3 API 恢复同一
+Session，答案不会写入聊天或 agent-run-sse-v4。真实 DeepSeek 运行使用下方环境配置，且
+仅允许 `public_demo` 或用户明确授权外发的来源。当前工程与质量结论均为
+development/provisional。
+
 后端基线为 Python 3.12 和 uv 0.11.x：
 
 ```powershell

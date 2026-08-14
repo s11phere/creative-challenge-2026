@@ -22,6 +22,7 @@ from application.assistant import (
     ReasoningProfileResolver,
 )
 from application.assistant.workspace import ConversationWorkspaceRepository
+from application.exam_preparation import ExamArtifactGenerator, ExamPreparationService
 from application.qa import (
     CitationResolver,
     PublishedCitationApplicationPort,
@@ -44,6 +45,7 @@ from domain.conversation_run import ConversationRunRepository
 from domain.grounded_qa import CitationContentKind
 from domain.qa_persistence import GroundedQARepository, QARunVersions
 from domain.qa_sse import QAEventStore
+from domain.retrieval import RetrievalProfileV1
 from fastapi import FastAPI, Response
 from infrastructure.agent_events import PostgresAgentRunEventStore
 from infrastructure.assistant_events import PostgresAssistantEventStore
@@ -53,9 +55,10 @@ from infrastructure.blob_store import LocalFileBlobStore
 from infrastructure.config import settings
 from infrastructure.conversation_runs import PostgresConversationRunRepository
 from infrastructure.database import Database
+from infrastructure.exam_preparation import PostgresExamSessionRepository
 from infrastructure.organization import PostgresKnowledgeOrganizationScope
 from infrastructure.parsers import MarkdownParser, PdfParser
-from infrastructure.qa import PostgresCitationTargetPort
+from infrastructure.qa import DatabaseSearchService, PostgresCitationTargetPort
 from infrastructure.qa_execution import (
     assistant_skill_registry,
     qa_execution_versions,
@@ -88,6 +91,7 @@ from .qa_runtime import QAWorkerDispatcher
 from .routers import (
     agent_events,
     assistant,
+    exam_preparation,
     personal_skills,
     qa,
     search,
@@ -142,6 +146,7 @@ def _active_skill_versions() -> dict[str, str]:
         "compare_sources": "1.0.0",
         "create_review_cards": "1.0.0",
         "research_reading_workflow": "1.1.0",
+        "exam_preparation_workflow": "1.2.1",
     }
 
 
@@ -165,6 +170,7 @@ def create_app(
     """Application factory. Call once at process start."""
 
     database = database or Database(settings.database_url)
+    uses_external_qa_repository = qa_repository is not None
     gateway = model_gateway or _create_configured_model_gateway()
     reasoning = ReasoningProfileResolver(gateway=gateway)
     qa_repository = qa_repository or PostgresGroundedQARepository(database)
@@ -218,11 +224,25 @@ def create_app(
                 "compare_sources",
                 "create_review_cards",
                 "research_reading_workflow",
+                "exam_preparation_workflow",
             }
         ),
     )
     assistant_registry = assistant_skill_registry()
     assistant_catalog = FileSystemSkillCatalog(assistant_registry, include_manifest_v2=True)
+    exam_repository = PostgresExamSessionRepository(database)
+    app_exam_service = ExamPreparationService(
+        exam_repository,
+        ExamArtifactGenerator(
+            search=DatabaseSearchService(database, gateway),
+            gateway=gateway,
+            profile=RetrievalProfileV1(
+                embedding_version=settings.active_embedding_identity(
+                    allow_unconfigured=True
+                ).version
+            ),
+        ),
+    )
     qa_event_log = qa_event_store or PostgresQAEventStore(database)
     if assistant_event_store is not None:
         assistant_event_log = assistant_event_store
@@ -355,6 +375,9 @@ def create_app(
     app.state.skill_catalog = skill_catalog
     app.state.skill_registry = skill_registry
     app.state.assistant_registry = assistant_registry
+    app.state.exam_repository = exam_repository
+    app.state.exam_continuation_enabled = not uses_external_qa_repository
+    app.state.exam_service = app_exam_service
     app.state.skill_reference_checker = PostgresSkillReferenceChecker(database)
     app.state.skill_lifecycle = skill_lifecycle
     app.state.personal_skill_store = personal_skill_store
@@ -379,6 +402,8 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(assistant.router)
     app.include_router(agent_events.router)
     app.include_router(skills.router)
+    app.include_router(exam_preparation.router)
+    app.include_router(exam_preparation.v4_router)
     # Draft routes must precede the personal `/{name}` routes so a draft named
     # "drafts" or the "/suggestions" path is never captured as a skill name.
     app.include_router(skill_drafts.router)

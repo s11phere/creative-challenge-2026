@@ -36,6 +36,12 @@ from application.assistant import (
     ConversationContextService,
     ConversationFinalizer,
 )
+from application.exam_preparation import (
+    ExamArtifactGenerator,
+    ExamNativeTools,
+    ExamPreparationService,
+    exam_tool_definitions,
+)
 from application.skills import (
     NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS,
     DraftSkillEvalRunner,
@@ -56,6 +62,7 @@ from infrastructure.assistant_events import PostgresAssistantEventStore
 from infrastructure.config import settings
 from infrastructure.conversation_runs import PostgresConversationRunRepository
 from infrastructure.database import Database
+from infrastructure.exam_preparation import PostgresExamSessionRepository
 from infrastructure.memory_entries import (
     GatewayMemoryRetriever,
     GatewayTextEmbedder,
@@ -71,6 +78,7 @@ from infrastructure.qa_execution import (
     qa_execution_versions,
 )
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
+from infrastructure.repositories import SourceRepository
 from infrastructure.runtime_approval import PostgresApprovalPort
 from infrastructure.runtime_state import PostgresRuntimeStateStore
 from infrastructure.skill_catalog import FileSystemNativeSkillCatalog, FileSystemSkillCatalog
@@ -107,10 +115,15 @@ _TERMINAL = frozenset(
 )
 
 
+def _register_tool(registry: InMemoryToolRegistry, definition: ToolDefinition) -> ToolDefinition:
+    registry.register(definition)
+    return definition
+
+
 def _workspace_model_visibility_allowed(gateway: ModelGateway) -> bool:
     """Allow workspace Tools only for fake models or explicit user consent."""
-    return (
-        gateway.status.provider.value == "fake" or settings.agent_workspace_model_visibility_consent
+    return gateway.status.provider.value == "fake" or bool(
+        settings.agent_workspace_model_visibility_consent
     )
 
 
@@ -277,6 +290,7 @@ async def _autonomous_loop_service(
     assistant_pin = skill_registry.pin("assistant_agent", "1.0.0")
     assistant_package = skill_registry.validate_pin(assistant_pin)
     knowledge_pin = skill_registry.pin("knowledge_agent")
+    exam_pin = skill_registry.pin("exam_preparation_workflow")
     trace = QADebugTrace.from_settings(run_id=run_id, trace_id=trace_id, settings=settings)
     await trace.record(
         "run_started",
@@ -306,6 +320,14 @@ async def _autonomous_loop_service(
     conversation = await qa_repository.get_conversation(parent.conversation_id)
     if conversation is None:
         raise ValueError("CONVERSATION_NOT_FOUND")
+
+    async def _exam_source_scope(space_id: UUID) -> tuple[UUID, ...]:
+        async with database.session() as session:
+            sources = await SourceRepository(session).get_by_space(space_id)
+        demo = tuple(source.id for source in sources if source.uri == "repo://exam-preparation-v1")
+        # The repository demo is intentionally isolated from unrelated default-Space fixtures.
+        return demo or tuple(source.id for source in sources)
+
     creator_drafts = SkillDraftStore(
         registry=skill_registry,
         personal_store=PersonalSkillStore(
@@ -315,7 +337,26 @@ async def _autonomous_loop_service(
         eval_runner=DraftSkillEvalRunner(registry=skill_registry),
     )
     creator_tools = SkillCreatorTools(draft_store=creator_drafts)
-    extra_handlers: dict[str, ToolHandler] = dict(creator_tools.handlers())
+    exam_definitions = exam_tool_definitions()
+    exam_tools = ExamNativeTools(
+        ExamPreparationService(
+            PostgresExamSessionRepository(database),
+            ExamArtifactGenerator(
+                search=DatabaseSearchService(database, gateway),
+                gateway=gateway,
+                profile=qa_executor.profile.retrieval,
+            ),
+        ),
+        runs.get_conversation_run,
+        exam_pin.version,
+        exam_pin.content_sha256,
+        PostgresApprovalPort(database),
+        _exam_source_scope,
+    )
+    extra_handlers: dict[str, ToolHandler] = {
+        **creator_tools.handlers(),
+        **exam_tools.handlers(),
+    }
     extra_permissions: frozenset[ToolPermission] = frozenset(
         {ToolPermission.READ_KNOWLEDGE, ToolPermission.WRITE_KNOWLEDGE}
     )
@@ -323,7 +364,10 @@ async def _autonomous_loop_service(
     def register_creator_tools(
         registry: InMemoryToolRegistry,
     ) -> tuple[ToolDefinition, ...]:
-        return register_skill_creator_tools(registry)
+        creator = register_skill_creator_tools(registry)
+        for definition in exam_definitions:
+            registry.register(definition)
+        return (*creator, *exam_definitions)
 
     extra_tool_registrar: Callable[[InMemoryToolRegistry], tuple[ToolDefinition, ...]] = (
         register_creator_tools
@@ -372,6 +416,7 @@ async def _autonomous_loop_service(
                 **file_tools.handlers(),
                 **side_effect_tools.handlers(),
                 **creator_tools.handlers(),
+                **exam_tools.handlers(),
             }
 
             def register_all_tools(
@@ -381,6 +426,7 @@ async def _autonomous_loop_service(
                     *register_read_only_file_tools(registry),
                     *register_side_effect_tools(registry),
                     *register_skill_creator_tools(registry),
+                    *tuple(_register_tool(registry, item) for item in exam_definitions),
                 )
 
             extra_tool_registrar = register_all_tools
@@ -477,6 +523,9 @@ async def _autonomous_loop_service(
         FileSystemSkillCatalog(skill_registry, include_manifest_v2=True),
         tool_adapters={
             ToolRef(knowledge_pin.name, knowledge_pin.version): native_allowed_tools,
+            ToolRef(exam_pin.name, exam_pin.version): tuple(
+                definition.ref for definition in exam_definitions
+            ),
         },
         prompt_overrides={
             knowledge_pin.name: NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS,

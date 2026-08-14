@@ -22,6 +22,7 @@ import remarkMath from 'remark-math'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react'
 import 'katex/dist/katex.min.css'
 import { AgentRunTimeline } from './AgentRunTimeline'
+import { ExamInteractionCard } from './ExamInteractionCard'
 import {
   cancelAssistantRun,
   createConversation,
@@ -33,10 +34,12 @@ import {
   fetchAgentRunEvents,
   fetchCitationExcerpt,
   fetchConversationHistory,
+  fetchExamMessageInteractions,
   fetchRun,
   isAssistantRun,
   selectClarificationResource,
   submitAssistantTurn,
+  type ExamAnswer,
   type AssistantCommand,
   type AssistantCommandResult,
   type AssistantRun,
@@ -463,6 +466,17 @@ export function QAWorkspace({
     refetchInterval: (query) =>
       query.state.data?.some((run) => refreshingStatuses.has(run.status)) ? 2_000 : false,
   })
+  const examInteractionsQuery = useQuery({
+    queryKey: ['exam-message-interactions', conversationId],
+    queryFn: ({ signal }) => fetchExamMessageInteractions(conversationId!, signal),
+    enabled: Boolean(conversationId),
+    retry: false,
+  })
+  const examInteractionsByRun = useMemo(
+    () => new Map((Array.isArray(examInteractionsQuery.data) ? examInteractionsQuery.data : [])
+      .map((value) => [value.anchor_run_id, value])),
+    [examInteractionsQuery.data],
+  )
 
   const conversations = historyQuery.data?.conversations ?? []
   const selectedConversation = conversations.find(
@@ -479,6 +493,8 @@ export function QAWorkspace({
     [runs],
   )
   const currentRun = runs.find((run) => run.run_id === activeRunId) ?? runs.at(-1)
+  const currentRunId = currentRun?.run_id
+  const currentRunStatus = currentRun?.status
   const currentQARunQuery = useQuery({
     queryKey: ['qa-run', currentRun?.run_id],
     queryFn: ({ signal }) => fetchRun(currentRun!.run_id, signal),
@@ -634,6 +650,12 @@ export function QAWorkspace({
   }, [currentRun, queryClient])
 
   useEffect(() => {
+    if (currentRunId && currentRunStatus && !activeStatuses.has(currentRunStatus)) {
+      void queryClient.invalidateQueries({ queryKey: ['exam-message-interactions', conversationId] })
+    }
+  }, [conversationId, currentRunId, currentRunStatus, queryClient])
+
+  useEffect(() => {
     if (selectedEvidenceId && (citationQuery.data || citationQuery.error)) excerptRef.current?.focus()
   }, [citationQuery.data, citationQuery.error, selectedEvidenceId])
 
@@ -735,6 +757,7 @@ export function QAWorkspace({
       setCommandMenuDismissed(false)
       void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
       void queryClient.invalidateQueries({ queryKey: ['assistant-runs'] })
+      void queryClient.invalidateQueries({ queryKey: ['exam-message-interactions'] })
     },
   })
   const cancelMutation = useMutation({
@@ -825,6 +848,13 @@ export function QAWorkspace({
       return
     }
     submitMutation.mutate(content)
+  }
+
+  const submitExamAnswers = (answers: ExamAnswer[]) => {
+    const content = answers.map((answer) => (
+      `${answer.question_id}:${answer.selected_options?.join('') ?? answer.response_text ?? ''}`
+    )).join(', ')
+    if (content && !submitMutation.isPending) submitMutation.mutate(content)
   }
 
   const onEffortPickerKeyDown = (event: KeyboardEvent<HTMLElement>) => {
@@ -1033,6 +1063,7 @@ export function QAWorkspace({
             const answer = run?.assistant_message?.content ?? null
             const limitations = qaRun?.result?.limitations ?? []
             const hasGroundedEvidence = Boolean(qaRun?.result && (qaRun.citations?.length ?? 0) > 0)
+            const examInteraction = run ? examInteractionsByRun.get(run.run_id) : undefined
             return (
               <div key={message.message_id} className={`chat-message-group chat-message-group-${message.role}`}>
                 <div
@@ -1047,7 +1078,7 @@ export function QAWorkspace({
                     <>
                       <SkillRunCard
                         run={run}
-                        result={qaRun?.result ?? null}
+                        result={answer ? null : (qaRun?.result ?? null)}
                         hasGroundedEvidence={hasGroundedEvidence}
                         clarificationPending={clarificationMutation.isPending}
                         onSelectClarification={(candidateId) => clarificationMutation.mutate({ run, candidateId })}
@@ -1063,7 +1094,17 @@ export function QAWorkspace({
                       {answer && (
                         <article className="chat-final-answer" data-status={run.status}>
                           <div className="qa-run-heading"><Check size={17} aria-hidden="true" /><strong>最终回答</strong></div>
-                          <div className="qa-answer"><RenderedAssistantAnswer content={answer} limitations={limitations} /></div>
+                          <div className="qa-answer">
+                            <RenderedAssistantAnswer content={answer} limitations={limitations} />
+                            {examInteraction && (
+                              <ExamInteractionCard
+                                interaction={examInteraction.interaction}
+                                submitted={examInteraction.submitted}
+                                submitting={submitMutation.isPending}
+                                onSubmit={submitExamAnswers}
+                              />
+                            )}
+                          </div>
                           {hasGroundedEvidence && (
                             <button className="chat-evidence-button" type="button" onClick={() => openEvidence(run.run_id)}>
                               <Quote size={15} aria-hidden="true" />查看引用证据

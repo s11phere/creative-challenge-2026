@@ -661,6 +661,7 @@ def assistant_skill_registry() -> PersonalSkillRegistry:
         ("compare_sources", "1.0.0"),
         ("create_review_cards", "1.0.0"),
         ("research_reading_workflow", "1.1.0"),
+        ("exam_preparation_workflow", "1.2.1"),
         # Prompts-only creator: its instructions enter the assistant loop's
         # active contexts so the Skill Creator Tools are always guided.
         ("skill_creator", "1.0.0"),

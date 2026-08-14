@@ -60,6 +60,7 @@ def test_active_skill_versions_exclude_legacy_recovery_package() -> None:
         "summarize_document": "1.0.0",
         "compare_sources": "1.0.0",
         "create_review_cards": "1.0.0",
+        "exam_preparation_workflow": "1.2.1",
         "research_reading_workflow": "1.1.0",
     }
 
@@ -229,6 +230,7 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
     assert {item["name"] for item in listed.json()} == {
         "compare_sources",
         "create_review_cards",
+        "exam_preparation_workflow",
         "knowledge_agent",
         "summarize_document",
         "research_reading_workflow",
