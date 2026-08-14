@@ -82,6 +82,16 @@ class CommandDescriptor:
 
 
 @dataclass(frozen=True)
+class SkillStatus:
+    """Body-free installed Skill status exposed by the ``/skills`` command."""
+
+    name: str
+    version: str
+    description: str
+    active: bool
+
+
+@dataclass(frozen=True)
 class ParsedAssistantCommand:
     """A command selected from the original user message."""
 
@@ -106,6 +116,7 @@ class CommandExecutionResult:
     conversation_id: UUID | None = None
     run: ConversationRun | None = None
     commands: tuple[CommandDescriptor, ...] = ()
+    skills: tuple[SkillStatus, ...] = ()
 
 
 _BASE_COMMANDS: tuple[CommandDescriptor, ...] = (
@@ -213,6 +224,20 @@ class AssistantCommandCatalog:
             ),
             None,
         )
+
+    def list_skill_statuses(self) -> tuple[SkillStatus, ...]:
+        """List installed Skills without treating inactive Skills as commands."""
+        statuses = [
+            SkillStatus(
+                name=version.name,
+                version=version.version,
+                description=version.description,
+                active=version.active,
+            )
+            for skill in self._skill_catalog.list_skills()
+            for version in self._skill_catalog.list_versions(skill.name)
+        ]
+        return tuple(sorted(statuses, key=lambda item: (item.name, item.version)))
 
     @staticmethod
     def _skill_descriptor(item: SkillInvocationView) -> CommandDescriptor:
@@ -357,11 +382,11 @@ class AssistantCommandService:
 
     async def skills(self) -> CommandExecutionResult:
         self._record_command("skills")
-        commands = tuple(
-            item for item in self.catalog.list() if item.kind is AssistantCommandKind.SKILL
-        )
         return CommandExecutionResult(
-            command="skills", status="completed", content="当前 active Skill。", commands=commands
+            command="skills",
+            status="completed",
+            content="Installed Skills and their activation status.",
+            skills=self.catalog.list_skill_statuses(),
         )
 
     async def new_conversation(self, conversation_id: UUID) -> CommandExecutionResult:
@@ -615,5 +640,6 @@ __all__ = [
     "CommandExecutionResult",
     "CommandParseError",
     "ParsedAssistantCommand",
+    "SkillStatus",
     "SkillCommandInvoker",
 ]

@@ -2362,6 +2362,16 @@
   font: 12px/18px var(--mono);
 }
 
+.chat-skill-status {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.chat-skill-status.active {
+  color: #1b7d49;
+}
+
 .chat-command-results li > span {
   color: var(--ink-soft);
   font-size: 12px;

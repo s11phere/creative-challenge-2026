@@ -75,7 +75,7 @@ async def test_personal_skill_crud_and_activation(app) -> None:
         )
         assert created.status_code == 201
         assert created.json()["name"] == "my_skill"
-        assert created.json()["active"] is False
+        assert created.json()["active"] is True
 
         listed = await client.get("/api/v1/skills/personal")
         assert listed.status_code == 200
@@ -96,6 +96,18 @@ async def test_personal_skill_crud_and_activation(app) -> None:
         assert activated.status_code == 200
         assert activated.json()["active"] is True
 
+        deactivated = await client.patch(
+            "/api/v1/skills/personal/my_skill/activation", json={"active": False}
+        )
+        assert deactivated.status_code == 200
+        assert deactivated.json()["active"] is False
+
+        reactivated = await client.patch(
+            "/api/v1/skills/personal/my_skill/activation", json={"active": True}
+        )
+        assert reactivated.status_code == 200
+        assert reactivated.json()["active"] is True
+
         # An active personal Skill can be edited directly; the durable
         # activation pointer is refreshed to the new content.
         reedited = await client.put(
@@ -112,6 +124,48 @@ async def test_personal_skill_crud_and_activation(app) -> None:
         assert deleted.json()["status"] == "deleted"
         listed_after = await client.get("/api/v1/skills/personal")
         assert [skill["name"] for skill in listed_after.json()] == []
+
+
+@pytest.mark.asyncio
+async def test_fixed_skill_toggle_updates_the_next_assistant_catalog(app) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        initial = await client.get("/api/v1/skills")
+        assert initial.status_code == 200
+        assert (
+            next(skill for skill in initial.json() if skill["name"] == "knowledge_agent")["active"]
+            is True
+        )
+
+        disabled = await client.patch(
+            "/api/v1/skills/knowledge_agent/activation", json={"active": False}
+        )
+        assert disabled.status_code == 200
+        assert disabled.json()["active"] is False
+        assert "knowledge_agent" not in {
+            item.name
+            for item in app.state.assistant_skill_invoker.catalog.list_active_invocations()
+        }
+        command_catalog = await client.get("/api/v2/commands")
+        assert command_catalog.status_code == 200
+        assert "ask" not in {item["name"] for item in command_catalog.json()["commands"]}
+
+        skill_statuses = await client.post(
+            "/api/v2/conversations/00000000-0000-0000-0000-000000000063/turns",
+            json={"content": "/skills", "idempotency_key": "skills-status-1"},
+        )
+        assert skill_statuses.status_code == 202
+        statuses = {item["name"]: item for item in skill_statuses.json()["skills"]}
+        assert statuses["knowledge_agent"]["active"] is False
+
+        enabled = await client.patch(
+            "/api/v1/skills/knowledge_agent/activation", json={"active": True}
+        )
+        assert enabled.status_code == 200
+        assert enabled.json()["active"] is True
+        assert "knowledge_agent" in {
+            item.name
+            for item in app.state.assistant_skill_invoker.catalog.list_active_invocations()
+        }
 
 
 @pytest.mark.asyncio

@@ -110,6 +110,21 @@ def test_active_switch_does_not_change_existing_pin(tmp_path: Path) -> None:
     assert registry.validate_pin(old_pin).manifest.version == "1.0.0"
 
 
+def test_deactivate_removes_only_the_active_pointer(tmp_path: Path) -> None:
+    write_package(tmp_path, "installed")
+    registry = FileSystemSkillRegistry(tmp_path)
+    registry.register(registry.load("installed"))
+    registry.activate("test_skill", "1.0.0")
+
+    deactivated = registry.deactivate("test_skill")
+    assert deactivated is not None
+    assert deactivated.manifest.name == "test_skill"
+    assert registry.versions("test_skill") == ("1.0.0",)
+    with pytest.raises(SkillRegistryError) as captured:
+        registry.active_version("test_skill")
+    assert captured.value.code == SkillRegistryErrorCode.ACTIVE_VERSION_MISSING
+
+
 @pytest.mark.parametrize(
     ("mutate", "code"),
     [

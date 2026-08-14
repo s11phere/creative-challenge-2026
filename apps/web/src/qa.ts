@@ -71,6 +71,7 @@ export type SkillVersion = {
   version: string
   content_sha256: string
   description: string
+  active: boolean
   permissions: string[]
   required_capabilities: string[]
   budget: {
@@ -111,6 +112,13 @@ export type AssistantCommand = {
   description: string
   argument_hint: string
   input_mode: string
+}
+
+export type AssistantSkillStatus = {
+  name: string
+  version: string
+  description: string
+  active: boolean
 }
 
 export type AssistantRun = {
@@ -211,6 +219,7 @@ export type AssistantCommandResult = {
   conversation_id: string | null
   run: AssistantRun | null
   commands: AssistantCommand[]
+  skills: AssistantSkillStatus[]
 }
 
 export type AssistantTurnResult = AssistantRun | AssistantCommandResult
@@ -303,6 +312,13 @@ export function fetchSkills(signal?: AbortSignal): Promise<SkillVersion[]> {
   return request('/api/v1/skills', { signal })
 }
 
+export function setSkillActivation(name: string, active: boolean): Promise<SkillVersion> {
+  return request(`/api/v1/skills/${encodeURIComponent(name)}/activation`, {
+    method: 'PATCH',
+    body: JSON.stringify({ active }),
+  })
+}
+
 export type PersonalSkill = {
   name: string
   version: string
@@ -351,6 +367,13 @@ export function deletePersonalSkill(name: string): Promise<{ status: string }> {
 
 export function activatePersonalSkill(name: string): Promise<PersonalSkill> {
   return request(`/api/v1/skills/personal/${encodeURIComponent(name)}/activate`, { method: 'POST' })
+}
+
+export function setPersonalSkillActivation(name: string, active: boolean): Promise<PersonalSkill> {
+  return request(`/api/v1/skills/personal/${encodeURIComponent(name)}/activation`, {
+    method: 'PATCH',
+    body: JSON.stringify({ active }),
+  })
 }
 
 export type SkillDraft = {

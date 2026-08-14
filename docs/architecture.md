@@ -10,6 +10,10 @@ current pinned identity. Historical Skill packages, prompt versions, version act
 rollback, cleanup APIs, and the `knowledge_qa` adapter have been removed; persisted Runs are not
 recovered through compatibility code.
 
+Installed and personal Skills are active by default. ADR-021 adds a durable activation toggle that
+updates the QA and Assistant registries before the API response returns. The next Assistant turn
+rebuilds its catalog from those active pointers; an already-created Run retains its fixed pin.
+
 All new Assistant Runs use only native Tool-use v2. The former text-JSON executor, feature flag,
 compatibility recovery, v1 contracts, synthetic fixture, evaluator, and v1-only tests are absent.
 The authoritative event timeline is agent-run-sse-v4 from /api/v3; /api/v2 remains the product Run
@@ -797,6 +801,7 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | `versions/0a1b2c3d4e5f_add_conversation_reasoning_profiles.py` | Persists Conversation effort defaults and per-Run `reasoning-profile-v1`; downgrade rejects changed preference or mapping data |
 | `versions/b1c2d3e4f5a6_add_conversation_context_summaries.py` | Adds rolling summaries plus standalone Skill request/sensitivity fields; downgrade removes only Step 5 schema |
 | `versions/a3b4c5d6e7f8_add_memory_entries.py` | 阶段 5 迁移：`memory_entries`（content-addressed 唯一哈希、pgvector `Vector(768)`、sensitivity/entry_type/source_kind check、`expires_at` 可选、frequency 计数），IVFFlat cosine 向量索引 + 来源/更新排序索引 |
+| `versions/b3c4d5e6f7a8_add_skill_activation_enabled_flag.py` | Adds `skill_activations.active`, defaulting existing and new installed Skills to enabled while retaining the immutable version pin |
 
 迁移链还包含 Grounded QA、attempt lease、Runtime checkpoint、审批、派生知识和生命周期 revision。
 `ConversationRun` 是新旧 Run 的共享父身份：`qa_runs` 仅保留 Grounded QA 投影及其 Evidence/Citation/

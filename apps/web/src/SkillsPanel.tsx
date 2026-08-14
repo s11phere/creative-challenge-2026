@@ -17,7 +17,6 @@ import {
 import { useEffect, useState } from 'react'
 import {
   activateDraft,
-  activatePersonalSkill,
   createDraft,
   createPersonalSkill,
   deleteDraft,
@@ -28,6 +27,8 @@ import {
   fetchSkillSuggestions,
   fetchSkills,
   runDraftEval,
+  setPersonalSkillActivation,
+  setSkillActivation,
   updateDraft,
   updatePersonalSkill,
   fetchDraftEvidence,
@@ -41,7 +42,16 @@ import {
 
 function SkillRow({ skill }: { skill: SkillVersion }) {
   const [expanded, setExpanded] = useState(false)
+  const queryClient = useQueryClient()
   const detailsId = `skill-${skill.name}-details`
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['skills'] })
+    void queryClient.invalidateQueries({ queryKey: ['assistant-commands'] })
+  }
+  const activationMutation = useMutation({
+    mutationFn: () => setSkillActivation(skill.name, !skill.active),
+    onSuccess: invalidate,
+  })
   return (
     <div className={`skill-row${expanded ? ' expanded' : ''}`}>
       <button
@@ -56,6 +66,7 @@ function SkillRow({ skill }: { skill: SkillVersion }) {
           <strong>{skill.name}</strong>
           <span>固定版本 v{skill.version}</span>
         </span>
+        <span className="skill-active-version">{skill.active ? '已激活' : '未激活'}</span>
         <ChevronDown className={expanded ? 'skill-chevron skill-chevron-open' : 'skill-chevron'} size={16} aria-hidden="true" />
       </button>
       {expanded && (
@@ -64,7 +75,17 @@ function SkillRow({ skill }: { skill: SkillVersion }) {
             <div className="skill-version-heading">
               <div>
                 <strong>v{skill.version}</strong>
+                <span className="skill-active-version">{skill.active ? '已激活' : '未激活'}</span>
               </div>
+              <button
+                type="button"
+                className="panel-action-button"
+                onClick={() => activationMutation.mutate()}
+                disabled={activationMutation.isPending}
+                aria-label={`${skill.active ? '停用' : '激活'} ${skill.name}`}
+              >
+                <Power size={14} />{skill.active ? '停用' : '激活'}
+              </button>
             </div>
             <p>{skill.description}</p>
             <dl className="skill-version-meta">
@@ -208,16 +229,19 @@ function PersonalSkillRow({
   onEdit: (skill: PersonalSkill) => void
 }) {
   const queryClient = useQueryClient()
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['personal-skills'] })
-  const activateMutation = useMutation({
-    mutationFn: () => activatePersonalSkill(skill.name),
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['personal-skills'] })
+    void queryClient.invalidateQueries({ queryKey: ['assistant-commands'] })
+  }
+  const activationMutation = useMutation({
+    mutationFn: () => setPersonalSkillActivation(skill.name, !skill.active),
     onSuccess: invalidate,
   })
   const deleteMutation = useMutation({
     mutationFn: () => deletePersonalSkill(skill.name),
     onSuccess: invalidate,
   })
-  const pending = activateMutation.isPending || deleteMutation.isPending
+  const pending = activationMutation.isPending || deleteMutation.isPending
 
   return (
     <div className="skill-row">
@@ -229,19 +253,15 @@ function PersonalSkillRow({
         </span>
       </div>
       <div className="skill-version-actions">
-        {skill.active ? (
-          <span className="skill-active-version">激活中</span>
-        ) : (
-          <button
-            type="button"
-            className="panel-action-button"
-            onClick={() => activateMutation.mutate()}
-            disabled={pending}
-            aria-label={`激活 ${skill.name}`}
-          >
-            <Power size={14} />激活
-          </button>
-        )}
+        <button
+          type="button"
+          className="panel-action-button"
+          onClick={() => activationMutation.mutate()}
+          disabled={pending}
+          aria-label={`${skill.active ? '停用' : '激活'} ${skill.name}`}
+        >
+          <Power size={14} />{skill.active ? '停用' : '激活'}
+        </button>
         <button
           type="button"
           className="panel-action-button"
@@ -278,6 +298,7 @@ function DraftRow({
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['skill-drafts'] })
     void queryClient.invalidateQueries({ queryKey: ['personal-skills'] })
+    void queryClient.invalidateQueries({ queryKey: ['assistant-commands'] })
   }
   const [evalResult, setEvalResult] = useState<SkillDraftEval | null>(null)
   const [runningEval, setRunningEval] = useState(false)

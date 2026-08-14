@@ -60,7 +60,10 @@ Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL
 阶段 3 默认检索配置和质量门禁也尚未冻结。
 新建知识问答统一固定为 `knowledge_agent 1.0.0`：API 和 Assistant 主路径只会创建该 Skill 的 Run。API 在提交时固定名称、版本和
 内容摘要，Worker 恢复时按该固定身份校验声明式 workflow，再经唯一 QA Application Port 执行。
-旧版本和 Skill 生命周期激活/回滚/清理接口均已移除；`GET /api/v1/skills` 只返回当前安装的只读清单。
+旧的版本激活、回滚和清理接口均已移除。已安装的固定与个人 Skill 默认激活；`GET /api/v1/skills`
+返回当前激活状态，`PATCH /api/v1/skills/{name}/activation` 和个人 Skill 对应端点可即时切换下一轮
+Assistant 的可用目录（ADR-021）。
+`/skills` 会列出全部已安装 Skill 及其激活状态；输入框的指令面板仅列出激活 Skill 的命令。
 阶段 5 工程功能已完成；正式 Skill 评测和阶段退出仍受阶段 3/4 质量门禁约束，不能把临时
 结果写成正式质量通过。
 `summarize_document`、`compare_sources` 和 `create_review_cards` 也已提供临时 HTTP
@@ -185,8 +188,9 @@ run），SkillsPanel 草稿卡片显示「候选模式」徽章；激活仍需�
 
 个性化 Phase 3（个人 Skill 存储与信任模型）让用户可写自己的 Skill，但严格复用内置校验与信任边界：
 个人 Skill 存放于 `PERSONAL_SKILLS_DIR`（默认 `./data/personal_skills`），只组合既有 handler/tool、
-不引入新 Python 行为，且不得覆盖内置 Skill 名（ADR-018）。CRUD + 激活经 `/api/v1/skills/personal`，
-激活沿用 `skill_activations` 持久化并在 API/worker 启动时重放；`SkillsPanel` 提供基础 CRUD 入口。
+不引入新 Python 行为，且不得覆盖内置 Skill 名（ADR-018）。个人 Skill 创建后默认激活；CRUD 和即时
+激活切换经 `/api/v1/skills/personal`，状态沿用 `skill_activations` 持久化并在 API/worker 启动时重放；
+`SkillsPanel` 显示状态并提供切换入口（ADR-021）。
 调试可先验证个人根能加载：
 
 ```powershell
@@ -489,7 +493,7 @@ security constraints.
 
 当前运行时只支持 Assistant 主路径和每个 Skill 的唯一固定版本。既有 Skill 保持 `1.0.0`，
 `research_reading_workflow` 为 `1.1.0`。知识请求固定使用 `knowledge_agent 1.0.0`；旧 Skill 目录、
-旧 Prompt、`knowledge_qa` 恢复适配器、Skill 激活/回滚/清理 API 以及 Web 的兼容问答模式均已移除。
-`GET /api/v1/skills` 仅返回当前安装的只读 Skill 清单。
+旧 Prompt、`knowledge_qa` 恢复适配器、Skill 的版本激活/回滚/清理 API 以及 Web 的兼容问答模式均已移除。
+`GET /api/v1/skills` 返回安装目录及即时激活状态；关闭的 Skill 不会进入下一轮 Assistant 上下文。
 
 下文的阶段记录保留历史背景；其中出现的旧版本、回滚开关和兼容入口不再是当前可用配置。

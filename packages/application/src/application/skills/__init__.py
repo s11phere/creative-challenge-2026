@@ -53,7 +53,12 @@ from .extraction import (
     dual_gate_passed,
 )
 from .grounded_qa_skill import DerivedKnowledgeWriter, GroundedQASkillAdapter, GroundedQASkillConfig
-from .lifecycle import SkillLifecycleError, SkillLifecycleErrorCode, SkillLifecycleService
+from .lifecycle import (
+    SkillActivationService,
+    SkillLifecycleError,
+    SkillLifecycleErrorCode,
+    SkillLifecycleService,
+)
 from .native_knowledge_loop import (
     NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS,
     NativeKnowledgeTools,
@@ -92,6 +97,7 @@ __all__ = [
     "PersonalSkillStore",
     "PersonalSkillView",
     "SkillActivation",
+    "SkillActivationService",
     "SkillActivationStore",
     "SkillBudgetView",
     "SkillDraftError",

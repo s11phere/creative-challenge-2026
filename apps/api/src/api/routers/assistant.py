@@ -17,6 +17,7 @@ from application.assistant import (
     CommandParseError,
     ConversationRunApplicationError,
     ConversationWorkspaceError,
+    SkillStatus,
 )
 from domain.assistant_sse import AssistantEventStore, AssistantEventType
 from domain.conversation_run import ConversationRun, ConversationRunKind, ConversationRunStatus
@@ -67,6 +68,13 @@ class AssistantCommandResponse(BaseModel):
     description: str
     argument_hint: str
     input_mode: str
+
+
+class SkillStatusResponse(BaseModel):
+    name: str
+    version: str
+    description: str
+    active: bool
 
 
 class CommandCatalogResponse(BaseModel):
@@ -152,6 +160,7 @@ class CommandExecutionResponse(BaseModel):
     conversation_id: UUID | None = None
     run: ConversationRunResponse | None = None
     commands: list[AssistantCommandResponse] = Field(default_factory=list)
+    skills: list[SkillStatusResponse] = Field(default_factory=list)
 
 
 _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
@@ -564,6 +573,7 @@ async def _command_response(
         conversation_id=result.conversation_id,
         run=await _response(result.run, request) if result.run is not None else None,
         commands=[_command_descriptor_response(item) for item in result.commands],
+        skills=[_skill_status_response(item) for item in result.skills],
     )
 
 
@@ -575,6 +585,15 @@ def _command_descriptor_response(item: CommandDescriptor) -> AssistantCommandRes
         description=item.description,
         argument_hint=item.argument_hint,
         input_mode=item.input_mode,
+    )
+
+
+def _skill_status_response(item: SkillStatus) -> SkillStatusResponse:
+    return SkillStatusResponse(
+        name=item.name,
+        version=item.version,
+        description=item.description,
+        active=item.active,
     )
 
 

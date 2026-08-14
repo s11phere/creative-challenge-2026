@@ -58,7 +58,7 @@ type CitationMetadata = {
   uri: string | null
 }
 
-type CommandNotice = Pick<AssistantCommandResult, 'command' | 'content' | 'commands'> & {
+type CommandNotice = Pick<AssistantCommandResult, 'command' | 'content' | 'commands' | 'skills'> & {
   notice_id: string
   created_at: string
   order: number
@@ -698,6 +698,7 @@ export function QAWorkspace({
               command: result.command,
               content: result.content,
               commands: result.commands,
+              skills: result.skills ?? [],
             },
           ])
         }
@@ -985,6 +986,22 @@ export function QAWorkspace({
                             </div>
                             <span>{command.description}</span>
                             {command.argument_hint && <small>{command.argument_hint}</small>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {commandNotice.skills.length > 0 && (
+                      <ul className="chat-command-results" aria-label="Installed Skills">
+                        {commandNotice.skills.map((skill) => (
+                          <li key={`${skill.name}-${skill.version}`}>
+                            <div className="chat-command-result-heading">
+                              <code>{skill.name}</code>
+                              <span className={`chat-skill-status${skill.active ? ' active' : ''}`}>
+                                {skill.active ? '已激活' : '未激活'}
+                              </span>
+                            </div>
+                            <span>{skill.description}</span>
+                            <small>v{skill.version}</small>
                           </li>
                         ))}
                       </ul>

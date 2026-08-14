@@ -649,7 +649,7 @@ describe('assistant conversation workspace', () => {
     expect(screen.getByText('Direct response.')).toBeInTheDocument()
   })
 
-  it('renders the command details returned by a base command', async () => {
+  it('renders installed Skill activation statuses returned by /skills', async () => {
     const fetchMock = baseFetch()
     fetchMock.mockImplementation((input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input)
@@ -662,10 +662,24 @@ describe('assistant conversation workspace', () => {
         return Promise.resolve(response({
           command: 'skills',
           status: 'completed',
-          content: 'Current active Skills.',
+          content: 'Installed Skills and their activation status.',
           conversation_id: 'conversation-1',
           run: null,
-          commands: [commands[2]],
+          commands: [],
+          skills: [
+            {
+              name: 'summarize_document',
+              version: '1.0.0',
+              description: 'Summarize one document',
+              active: true,
+            },
+            {
+              name: 'compare_sources',
+              version: '1.0.0',
+              description: 'Compare published sources',
+              active: false,
+            },
+          ],
         }, 202))
       }
       return Promise.resolve(response({}))
@@ -680,10 +694,11 @@ describe('assistant conversation workspace', () => {
     if (!sendButton) throw new Error('send control not rendered')
     fireEvent.click(sendButton)
 
-    expect(await screen.findByText('Current active Skills.')).toBeInTheDocument()
-    expect(screen.getByText('/summarize')).toBeInTheDocument()
+    expect(await screen.findByText('Installed Skills and their activation status.')).toBeInTheDocument()
+    expect(screen.getByText('summarize_document')).toBeInTheDocument()
     expect(screen.getByText('Summarize one document')).toBeInTheDocument()
-    expect(screen.getByText('<document>')).toBeInTheDocument()
+    expect(screen.getByText('已激活')).toBeInTheDocument()
+    expect(screen.getByText('未激活')).toBeInTheDocument()
   })
 
   it('keeps command notices in chronological order and scrolls to new timeline items', async () => {
@@ -721,6 +736,7 @@ describe('assistant conversation workspace', () => {
           conversation_id: 'conversation-1',
           run: null,
           commands: [],
+          skills: [],
         }, 202))
       }
       return Promise.resolve(response({}))

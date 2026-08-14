@@ -803,6 +803,13 @@
               }
             ]
           },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SkillStatusResponse"
+            },
+            "title": "Skills",
+            "type": "array"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -1852,6 +1859,19 @@
           "capabilities"
         ],
         "title": "ModelDependencyCheck",
+        "type": "object"
+      },
+      "PersonalSkillActivationRequest": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "active"
+        ],
+        "title": "PersonalSkillActivationRequest",
         "type": "object"
       },
       "PersonalSkillBudgetResponse": {
@@ -3082,6 +3102,19 @@
         "title": "SelectionResponse",
         "type": "object"
       },
+      "SkillActivationRequest": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "active"
+        ],
+        "title": "SkillActivationRequest",
+        "type": "object"
+      },
       "SkillBudgetResponse": {
         "properties": {
           "max_input_tokens": {
@@ -3495,6 +3528,10 @@
       },
       "SkillResponse": {
         "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
           "budget": {
             "$ref": "#/components/schemas/SkillBudgetResponse"
           },
@@ -3534,11 +3571,40 @@
           "version",
           "content_sha256",
           "description",
+          "active",
           "permissions",
           "required_capabilities",
           "budget"
         ],
         "title": "SkillResponse",
+        "type": "object"
+      },
+      "SkillStatusResponse": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "description",
+          "active"
+        ],
+        "title": "SkillStatusResponse",
         "type": "object"
       },
       "SkillSuggestionResponse": {
@@ -5677,7 +5743,7 @@
     },
     "/api/v1/skills": {
       "get": {
-        "description": "Expose the single installed version of every current Skill.",
+        "description": "Expose installed Skills with their current Assistant activation state.",
         "operationId": "list_skills_api_v1_skills_get",
         "responses": {
           "200": {
@@ -6381,6 +6447,111 @@
         "summary": "Activate Personal Skill",
         "tags": [
           "personal-skills"
+        ]
+      }
+    },
+    "/api/v1/skills/personal/{name}/activation": {
+      "patch": {
+        "operationId": "set_personal_skill_activation_api_v1_skills_personal__name__activation_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonalSkillActivationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalSkillResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Personal Skill Activation",
+        "tags": [
+          "personal-skills"
+        ]
+      }
+    },
+    "/api/v1/skills/{name}/activation": {
+      "patch": {
+        "description": "Apply a durable activation toggle to the next Assistant turn immediately.",
+        "operationId": "set_skill_activation_api_v1_skills__name__activation_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillActivationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Skill Activation",
+        "tags": [
+          "skills"
         ]
       }
     },

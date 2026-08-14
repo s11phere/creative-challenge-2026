@@ -35,3 +35,5 @@ ADR-020 records the feature-gated Agent Harness v2: progressive Skill instructio
 provider-neutral native Tool-use, service-owned knowledge gates, bounded decision history, and
 body-free synthetic development baselines. It preserves v1 Run recovery and the ADR-010/011
 provisional-quality boundary.
+ADR-021 records durable, live Skill activation: default-enabled packages, immediate registry
+updates, and the fixed/personal catalog toggle controls.
