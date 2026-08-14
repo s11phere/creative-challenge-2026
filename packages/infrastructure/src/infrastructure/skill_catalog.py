@@ -22,6 +22,18 @@ from application.skills.catalog import (
     SkillView,
 )
 
+INTERNAL_RUNTIME_SKILL_NAMES = frozenset({"assistant_agent"})
+
+
+def user_manageable_skill_names(registry: FileSystemSkillRegistry) -> frozenset[str]:
+    """Return built-in Skills that are part of the user-facing catalog."""
+    return frozenset(registry.builtin_names()).difference(INTERNAL_RUNTIME_SKILL_NAMES)
+
+
+def user_manageable_skill_versions(registry: FileSystemSkillRegistry) -> dict[str, str]:
+    """Use the newest installed version as each user-facing Skill's default pointer."""
+    return {name: registry.versions(name)[-1] for name in user_manageable_skill_names(registry)}
+
 
 class FileSystemSkillCatalog(SkillCatalogPort):
     def __init__(
@@ -30,10 +42,12 @@ class FileSystemSkillCatalog(SkillCatalogPort):
         *,
         include_manifest_v2: bool = False,
         visible_names: frozenset[str] | None = None,
+        excluded_names: frozenset[str] = frozenset(),
     ) -> None:
         self._registry = registry
         self._include_manifest_v2 = include_manifest_v2
         self._visible_names = visible_names
+        self._excluded_names = excluded_names
         self._active_revisions: dict[str, int] = {}
 
     def set_active_revision(self, name: str, revision: int) -> None:
@@ -56,7 +70,9 @@ class FileSystemSkillCatalog(SkillCatalogPort):
         )
 
     def list_versions(self, name: str) -> tuple[SkillVersionView, ...]:
-        if self._visible_names is not None and name not in self._visible_names:
+        if name in self._excluded_names or (
+            self._visible_names is not None and name not in self._visible_names
+        ):
             return ()
         active_version = self._active_version(name)
         return tuple(
@@ -133,9 +149,12 @@ class FileSystemSkillCatalog(SkillCatalogPort):
 
     def _names(self) -> tuple[str, ...]:
         names = self._registry.names()
-        if self._visible_names is None:
-            return names
-        return tuple(name for name in names if name in self._visible_names)
+        return tuple(
+            name
+            for name in names
+            if name not in self._excluded_names
+            and (self._visible_names is None or name in self._visible_names)
+        )
 
 
 class FileSystemNativeSkillCatalog(NativeSkillCatalog):
@@ -220,4 +239,10 @@ class FileSystemNativeSkillCatalog(NativeSkillCatalog):
             raise ValueError("Selected Skill cannot be loaded through the native runtime") from exc
 
 
-__all__ = ["FileSystemNativeSkillCatalog", "FileSystemSkillCatalog"]
+__all__ = [
+    "INTERNAL_RUNTIME_SKILL_NAMES",
+    "FileSystemNativeSkillCatalog",
+    "FileSystemSkillCatalog",
+    "user_manageable_skill_names",
+    "user_manageable_skill_versions",
+]

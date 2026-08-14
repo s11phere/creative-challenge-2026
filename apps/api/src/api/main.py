@@ -32,6 +32,7 @@ from application.skills import (
     DerivedKnowledgeWriter,
     DraftSkillEvalRunner,
     PersonalSkillStore,
+    SkillActivationService,
     SkillActivationStore,
     SkillCatalogPort,
     SkillDraftStore,
@@ -66,7 +67,12 @@ from infrastructure.qa_execution import (
 )
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
 from infrastructure.runtime_approval import PostgresApprovalPort, PostgresDerivedKnowledgeStore
-from infrastructure.skill_catalog import FileSystemSkillCatalog
+from infrastructure.skill_catalog import (
+    INTERNAL_RUNTIME_SKILL_NAMES,
+    FileSystemSkillCatalog,
+    user_manageable_skill_names,
+    user_manageable_skill_versions,
+)
 from infrastructure.skill_lifecycle import (
     PostgresSkillActivationStore,
 )
@@ -138,18 +144,6 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
-def _active_skill_versions() -> dict[str, str]:
-    """Return the Skills that may receive new durable activations."""
-    return {
-        "knowledge_agent": settings.knowledge_agent_skill_version,
-        "summarize_document": "1.0.0",
-        "compare_sources": "1.0.0",
-        "create_review_cards": "1.0.0",
-        "research_reading_workflow": "1.1.0",
-        "exam_preparation_workflow": "1.2.1",
-    }
-
-
 def create_app(
     model_gateway: ModelGateway | None = None,
     *,
@@ -207,7 +201,7 @@ def create_app(
     )
     assistant_metrics = AssistantMetrics()
     skill_registry = qa_skill_registry()
-    active_skill_versions = _active_skill_versions()
+    active_skill_versions = user_manageable_skill_versions(skill_registry)
     activation_store = skill_activation_store or PostgresSkillActivationStore(database)
     skill_lifecycle = SkillLifecycleService(
         registry=skill_registry,
@@ -217,19 +211,18 @@ def create_app(
     skill_catalog = skill_catalog or FileSystemSkillCatalog(
         skill_registry,
         include_manifest_v2=True,
-        visible_names=frozenset(
-            {
-                "knowledge_agent",
-                "summarize_document",
-                "compare_sources",
-                "create_review_cards",
-                "research_reading_workflow",
-                "exam_preparation_workflow",
-            }
-        ),
+        visible_names=user_manageable_skill_names(skill_registry),
     )
     assistant_registry = assistant_skill_registry()
-    assistant_catalog = FileSystemSkillCatalog(assistant_registry, include_manifest_v2=True)
+    assistant_catalog = FileSystemSkillCatalog(
+        assistant_registry,
+        include_manifest_v2=True,
+        excluded_names=INTERNAL_RUNTIME_SKILL_NAMES,
+    )
+    skill_activation_service = SkillActivationService(
+        lifecycle=skill_lifecycle,
+        assistant_registry=assistant_registry,
+    )
     exam_repository = PostgresExamSessionRepository(database)
     app_exam_service = ExamPreparationService(
         exam_repository,
@@ -335,10 +328,9 @@ def create_app(
         observability = configure_observability(settings, service_name="api")
         database.instrument()
         try:
+            await skill_activation_service.synchronize()
+            await _activate_personal_skills(assistant_registry, activation_store)
             if enable_qa_execution:
-                for active_skill in active_skill_versions:
-                    await skill_lifecycle.current(active_skill)
-                await _activate_personal_skills(assistant_registry, activation_store)
                 await qa_runtime.recover()
                 await assistant_runtime.recover()
             yield
@@ -380,6 +372,7 @@ def create_app(
     app.state.exam_service = app_exam_service
     app.state.skill_reference_checker = PostgresSkillReferenceChecker(database)
     app.state.skill_lifecycle = skill_lifecycle
+    app.state.skill_activation_service = skill_activation_service
     app.state.personal_skill_store = personal_skill_store
     app.state.skill_draft_store = skill_draft_store
     app.state.skill_suggestion_service = skill_suggestion_service
@@ -503,7 +496,11 @@ async def _activate_personal_skills(
     activations = {
         item.name: item.version
         for item in persisted
-        if registry.is_personal(item.name) and item.version in registry.versions(item.name)
+        if (
+            item.active
+            and registry.is_personal(item.name)
+            and item.version in registry.versions(item.name)
+        )
     }
     registry.activate_all(activations)
 

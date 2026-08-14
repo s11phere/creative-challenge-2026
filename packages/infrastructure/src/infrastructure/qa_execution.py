@@ -67,6 +67,7 @@ from .database import Database
 from .qa import DatabaseSearchService, PostgresCitationTargetPort
 from .qa_debug_trace import QADebugTrace, TracingModelGateway
 from .runtime_state import PostgresRuntimeStateStore
+from .skill_catalog import user_manageable_skill_versions
 
 logger = logging.getLogger(__name__)
 
@@ -654,18 +655,9 @@ def qa_skill_registry() -> PersonalSkillRegistry:
 
 
 def assistant_skill_registry() -> PersonalSkillRegistry:
-    """Build the v2 invocation catalog with knowledge_agent as the sole QA entry."""
+    """Build the v2 catalog with every user-facing built-in Skill active by default."""
     registry = qa_skill_registry()
-    for name, version in (
-        ("summarize_document", "1.0.0"),
-        ("compare_sources", "1.0.0"),
-        ("create_review_cards", "1.0.0"),
-        ("research_reading_workflow", "1.1.0"),
-        ("exam_preparation_workflow", "1.2.1"),
-        # Prompts-only creator: its instructions enter the assistant loop's
-        # active contexts so the Skill Creator Tools are always guided.
-        ("skill_creator", "1.0.0"),
-    ):
+    for name, version in user_manageable_skill_versions(registry).items():
         registry.activate(name, version)
     return registry
 

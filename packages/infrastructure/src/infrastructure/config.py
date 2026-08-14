@@ -118,8 +118,8 @@ class Settings(BaseSettings):
     model_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     fast_chat_timeout_seconds: float = Field(default=120.0, gt=0, le=300)
     fast_chat_reasoning_enabled: bool = False
-    # Prompt caching is a provider capability plus an explicit cost/privacy opt-in.
-    fast_chat_prompt_caching: bool = False
+    # Prompt caching is enabled by default; set false to opt out for a deployment.
+    fast_chat_prompt_caching: bool = True
     model_max_retries: int = Field(default=2, ge=0, le=5)
     model_retry_backoff_seconds: float = Field(default=0.1, ge=0, le=10)
 

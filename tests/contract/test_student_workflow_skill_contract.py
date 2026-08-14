@@ -22,7 +22,7 @@ def _schema(package_directory: str, name: str) -> dict[str, object]:
     return cast(dict[str, object], json.loads(path.read_text(encoding="utf-8")))
 
 
-def test_student_workflow_packages_load_pin_and_remain_inactive() -> None:
+def test_student_workflow_packages_load_pin_and_are_active_by_default() -> None:
     registry = FileSystemSkillRegistry(SKILL_ROOT)
     registry.reload()
 
@@ -37,9 +37,7 @@ def test_student_workflow_packages_load_pin_and_remain_inactive() -> None:
 
     active_catalog = FileSystemSkillCatalog(assistant_skill_registry(), include_manifest_v2=True)
     active_names = {item.name for item in active_catalog.list_active_invocations()}
-    assert "research_reading_workflow" in active_names
-    assert "exam_preparation_workflow" in active_names
-    assert "course_project_workflow" not in active_names
+    assert set(WORKFLOW_SKILLS).issubset(active_names)
 
 
 def test_student_workflow_commands_and_aliases_are_unique() -> None:

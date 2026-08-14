@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { SkillsPanel } from './SkillsPanel'
 
@@ -13,6 +13,7 @@ function response(body: unknown, status = 200): Response {
 const builtinSkill = {
   name: 'knowledge_agent', version: '1.0.0', content_sha256: 'a'.repeat(64),
   description: 'Grounded knowledge requests.', permissions: ['read_knowledge'],
+  active: true,
   required_capabilities: ['fast_chat'],
   budget: { max_steps: 32, max_tool_calls: 24, max_input_tokens: 100, max_output_tokens: 50, timeout_seconds: 30 },
 }
@@ -80,6 +81,12 @@ function routedFetch(state: FetchState = {}) {
       }
       return Promise.resolve(response(drafts))
     }
+    if (method === 'PATCH' && url.endsWith('/activation')) {
+      if (url.includes('/api/v1/skills/personal/')) {
+        return Promise.resolve(response({ ...personalSkill, active: true }))
+      }
+      return Promise.resolve(response({ ...builtinSkill, active: false }))
+    }
     if (url.includes('/api/v1/skills/personal')) {
       return Promise.resolve(response(personal))
     }
@@ -108,10 +115,29 @@ it('loads the fixed installed Skill set without version-management controls', as
   expect(screen.queryByText('Grounded knowledge requests.')).not.toBeInTheDocument()
   fireEvent.click(summary)
   expect(screen.getByText('Grounded knowledge requests.')).toBeInTheDocument()
+  expect(screen.queryByText('a'.repeat(64))).not.toBeInTheDocument()
   expect(fetchMock).toHaveBeenCalledWith(
     expect.stringContaining('/api/v1/skills'),
     expect.objectContaining({ headers: { 'Content-Type': 'application/json' } }),
   )
+})
+
+it('shows the fixed Skill activation status and toggles it from the details', async () => {
+  const fetchMock = routedFetch()
+  vi.stubGlobal('fetch', fetchMock)
+
+  renderPanel()
+
+  fireEvent.click(await screen.findByRole('button', { name: /knowledge_agent/ }))
+  const toggle = await screen.findByRole('button', { name: /停用 knowledge_agent/ })
+  fireEvent.click(toggle)
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/skills/knowledge_agent/activation'),
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ active: false }) }),
+    )
+  })
 })
 
 it('renders personal Skills with activate and delete actions', async () => {
@@ -123,6 +149,22 @@ it('renders personal Skills with activate and delete actions', async () => {
   expect(await screen.findByText('my_skill')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /激活 my_skill/ })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /删除 my_skill/ })).toBeInTheDocument()
+})
+
+it('activates a personal Skill with the live activation endpoint', async () => {
+  const fetchMock = routedFetch({ personal: [personalSkill] })
+  vi.stubGlobal('fetch', fetchMock)
+
+  renderPanel()
+
+  fireEvent.click(await screen.findByRole('button', { name: /激活 my_skill/ }))
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/skills/personal/my_skill/activation'),
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ active: true }) }),
+    )
+  })
 })
 
 it('shows the personal Skill create form with a package JSON editor', async () => {

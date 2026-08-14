@@ -24,6 +24,7 @@ class PostgresSkillActivationStore:
                     skill_name=activation.name,
                     active_version=activation.version,
                     content_sha256=activation.content_sha256,
+                    active=activation.active,
                     revision=1,
                 )
                 .on_conflict_do_nothing(index_elements=[SkillActivationModel.skill_name])
@@ -62,6 +63,7 @@ class PostgresSkillActivationStore:
                 .values(
                     active_version=activation.version,
                     content_sha256=activation.content_sha256,
+                    active=activation.active,
                     revision=SkillActivationModel.revision + 1,
                 )
                 .returning(SkillActivationModel)
@@ -104,6 +106,7 @@ class InMemorySkillActivationStore:
                 version=activation.version,
                 content_sha256=activation.content_sha256,
                 revision=expected_revision + 1,
+                active=activation.active,
             )
             self._records[activation.name] = updated
             return updated
@@ -119,6 +122,7 @@ def _record(model: SkillActivationModel) -> SkillActivation:
         version=model.active_version,
         content_sha256=model.content_sha256,
         revision=model.revision,
+        active=model.active,
     )
 
 

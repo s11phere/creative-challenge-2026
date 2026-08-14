@@ -41,8 +41,192 @@
 Assistant 执行路径。旧 v1 记录不会被当前执行或恢复逻辑解释。这不改变 ADR-010/011 正式质量边界，
 也不授权任何 formal holdout。
 
-旧 Skill 激活/回滚/清理接口、旧 Prompt 与 `knowledge_qa` 恢复适配器均已移除；`GET /api/v1/skills`
-只返回当前安装的只读 Skill 清单。
+当前 Web 展示系统健康、数据来源和临时知识问答工作区；HTTP API 可创建持久会话、提交
+问题，由 API 仅向 Redis 投递 Run ID，再由独立 Worker 调用唯一 `GroundedQAApplicationPort`、
+真实 PostgreSQL `SearchService` 和
+Citation 目标适配器生成回答或拒答。默认 fake 模型提供确定性抽取式回答；配置允许的外部
+Chat Provider 仍走相同结构化生成与引用校验路径。Web 会展示终态回答、限制和文档版本/locator
+引用身份；点击 Citation 后按 `run_id + evidence_id` 解析固定版本的最小原文片段并高亮。
+
+该链路是可真实使用的临时版本，不是阶段 4/5 正式完成：QA 会话、Message、Run/Attempt、
+Evidence、Citation、Feedback、SSE 事件和 Worker lease 已写入 PostgreSQL；API/Worker 重启可恢复
+未完成运行，重复投递不会重复发布终态；Citation 原文解析不会接受客户端伪造的版本、locator 或 Blob 路径；
+阶段 3 默认检索配置和质量门禁也尚未冻结。
+新建知识问答统一固定为 `knowledge_agent 1.0.0`：API 和 Assistant 主路径只会创建该 Skill 的 Run。API 在提交时固定名称、版本和
+内容摘要，Worker 恢复时按该固定身份校验声明式 workflow，再经唯一 QA Application Port 执行。
+旧的版本激活、回滚和清理接口均已移除。已安装的固定与个人 Skill 默认激活；`GET /api/v1/skills`
+返回当前激活状态，`PATCH /api/v1/skills/{name}/activation` 和个人 Skill 对应端点可即时切换下一轮
+Assistant 的可用目录（ADR-021）。
+`/skills` 会列出全部已安装 Skill 及其激活状态；输入框的指令面板仅列出激活 Skill 的命令。
+阶段 5 工程功能已完成；正式 Skill 评测和阶段退出仍受阶段 3/4 质量门禁约束，不能把临时
+结果写成正式质量通过。
+`summarize_document`、`compare_sources` 和 `create_review_cards` 也已提供临时 HTTP
+入口并固定提交时的 Source/Document/DocumentVersion 范围；版本变更、撤下或跨 Space 选择不会
+扩大检索范围。比较结果必须引用至少两个来源，否则按证据不足拒答。复习卡当前只返回带引用预览，
+并以 `SKILL_WRITE_REQUIRES_APPROVAL` 明确报告审批前 `side_effects=0`；批准后通过持久化
+Derived Knowledge Port 幂等写入，并可查询或撤销。
+`knowledge_agent 1.0.0` 提供当前默认的受约束 LLM/Tool 循环：顶层 Agent 会在每轮观察 Tool
+结果后自主选择下一步；模型仅可调用服务端注册的
+`knowledge_search`、`knowledge_inspect`、`summarize_document`、`grounded_answer`、`verify_answer` 和
+`finalize_answer`。`summarize_document` 只在服务端资源解析器可用时注册，先固定当前 Space 的已发布
+DocumentVersion，再回到同一 Grounded QA Run；复合请求可在一个 Loop 中串行组合这些 Tool。
+`grounded_answer` 继续通过现有 QA Run、Worker、SSE、Grounded QA Port 和 Citation 链路完成问答。
+动态数值由服务端 profile 封顶，Space/版本边界不能由模型扩大；规划失败会降级到原问题的
+Grounded QA，而不是把 Run 变成基础设施失败。Tool 仅向外层模型返回状态和覆盖计数，不返回回答
+或原文。首个意外重复的同一 Tool 调用不会重新执行，而是作为可恢复的模型可见观察返回；第二次相同重复才以
+`RUN_LLM_NO_PROGRESS` 停止。旧 Agent 版本、`knowledge_qa` 适配器和回退开关已删除。默认 fake 可跑通流程，配置允许的
+OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。非 fake Provider 仍不会注册本地工作区
+读写或命令 Tool；仅 fake Provider 的已选工作区可使用这些 Tool，且写入和命令必须经过持久审批。
+Assistant v2 使用独立的活动调用目录，包含 `/ask`、`/summarize`、`/compare`、`/cards`
+对应的 v2 Skill 元数据；模型只能返回 Skill 意图，服务端负责当前 Space 资源解析、版本 pin、
+权限和 QA Worker 投影。历史固定 Skill 身份仍可恢复旧 Run。普通聊天不会强制进入
+
+Assistant 对话演进 Step 5 增加有界多轮上下文。原始消息保持追加写入；版本化滚动摘要保留其覆盖范围、
+摘要指纹、prompt/模型版本和敏感度。路由、直接回答和 Skill 交接共享一个有界快照，而 QA 仍保持证据隔离。
+`/compact` 和软水位压缩通过现有 Worker 队列创建可持久化的后台 Run。这仍是 ADR-010/011 下的临时工程能力。
+
+Agent Loop Step 6 增加 `/effort`：不带参数时读取当前 Conversation 默认值，带
+`low|medium|high|xhigh|max` 时只影响后续 Run。菜单只提供这五个值；服务端会将旧的内部默认值
+解析为这五个值之一（无法解析时为 `medium`），并标记为 `(default)`。每个新 Assistant/压缩 Run 都保存
+provider-neutral 的 requested/effective effort、Provider/model、映射版本、模式和降级原因。显式不支持
+的强度请求会拒绝；仅 `auto` 可降级。当前 OpenAI-compatible Chat 仍使用布尔 `thinking` 映射，且保留
+`FAST_CHAT_REASONING_ENABLED=false` 仍只影响没有解析出会话 profile 的兼容调用；Conversation 默认 `auto`
+会按当前 Provider 能力表解析为 medium。这不代表 Responses 原生 effort 已接入或任何质量门禁已关闭。
+
+配置 `FAST_CHAT_MODEL=deepseek-v4-flash` 时，`reasoning-mapping-v2` 使用 DeepSeek Chat
+Completion 原生 `reasoning_effort` 字段，Run 显示 `mode=native`。`xhigh` 依照 DeepSeek 的公开映射
+审计为实际 `high`，但请求仍保留用户选择的 `xhigh`；`reasoning_content` 不写入 Conversation、Run、SSE、
+日志或前端。DeepSeek 当前公开的 Chat Completion 参数表列出 `low`、`high` 和 `max`，映射表另列
+`xhigh`；当前配置端点已实测接受 `medium` 并返回非空 `reasoning_content`，但应在 Provider 升级后重新
+验证该兼容性。其他 OpenAI-compatible 模型继续使用布尔 `thinking` 兼容映射。
+
+Web 中提交不带参数的 `/effort` 会在当前对话位置打开一次性选择面板。可用左右方向键切换、Enter
+确认或点击选项；确认后面板移除，并在该位置留下 `Model: <model> | reasoning effort: <effort>` 的固定结果。
+命令结果与消息按照发生顺序渲染。
+
+Assistant 对话演进 Step 6 将原 QA 工作区演进为通用对话工作区：输入 `/` 时显示可搜索、
+可键盘操作的命令面板，资源歧义在消息内显示安全候选。选择候选会重新校验当前 Space 并回到原 Run，
+不会重建会话。`GET /api/v2/conversations/{conversation_id}/runs` 用于刷新后恢复对话 Run 和待澄清
+状态；引用侧栏只在已完成的 grounded Run 有 Citation 时出现。折叠运行信息只显示实际模型、token
+和耗时，不显示预算、剩余额度或 Tool 上限。
+
+Assistant 对话演进 Step 7 增加隐私安全的运行计数器，用于记录路由、指令、澄清、上下文压缩、实际 token
+用量、延迟和终止原因。`scripts/evaluate_assistant_routing.py --validate-only` 用于校验固定的仅合成数据路由
+开发集；预测报告明确标记为“开发集/临时”，不会调用 Provider、读取受控语料或启用正式留出集。
+结构化指标日志只包含指标名称、安全标签和聚合值，不包含对话内容、prompt、文档正文、Provider 响应或内部资源 ID。
+
+Assistant 对话工作区现在只保留 Assistant 主路径；“兼容问答”模式、对应的 v1 Web 入口和兼容窗口配置已删除。
+
+Agent Loop 是 fake/local 的默认 provisional 路径。新 Run 默认固定到
+`knowledge_agent 1.0.0`。先执行只读取 hash 固定合成 fixture 的检查：
+
+```powershell
+uv run --frozen python scripts/evaluate_agent_harness_v2.py --validate-only
+```
+
+该命令不调用 Provider、不读取受控语料，也不会启用 formal holdout；其所有报告均为 development / provisional。
+
+Skill eval 门禁（个性化 Phase 1）让 `skills/*/evals/cases.jsonl` 可执行、可判定、可出报告。CLI 默认
+fake 模型、报告不阻塞任何流程：
+
+```powershell
+uv run python scripts/evaluate_skills.py --all --output tmp/skill-eval.json
+```
+
+无 `checks` 的既有 case 走最低判定（schema 合规 + finalized）并如实标注 `case_too_thin`，绝不误报 pass；
+行为标签编码为对 AgentRun trace 的结构化断言（`trace_tool_called` / `finalized`），不靠 LLM 判定。
+`--model settings` 可切换诊断模型，`--database <url>` 启用 Grounded QA Skill 的生产适配器探针；
+报告只序列化 body-free 证据，不落 output/正文。
+
+个性化 Phase 2（使用痕迹记录与蒸馏）只记录、不注入 Agent：每次 Skill 调用 / Assistant turn 结束时在
+Worker 落一条脱敏 `usage_traces`（`input_summary` 截断 + 长 hex 密钥打码，不存完整 Prompt / 私密正文），
+并按需蒸馏出 (skill, 任务类别, 工具序列, 输入类型) 的 `usage_patterns` 聚合，为后续跨会话记忆与自动提取备料。
+调试/按需查看：
+
+```powershell
+uv run python scripts/query_usage_traces.py --limit 20
+uv run python scripts/distill_usage_patterns.py --json
+```
+
+`--enqueue` 可把蒸馏调度到 Dramatiq Worker（需 Redis）；Phase 6 前这些模式只产出、不消费。
+
+个性化 Phase 5（跨会话长期记忆）让 agent 跨会话记得用户。Worker 蒸馏任务（`memory_distill`）从
+`conversation_summaries` + Phase 2 `usage_patterns` 用 LLM 提炼持久的 fact/preference/pattern，
+按 content 哈希去重 + 余弦近邻合并（同实体更新而非重复插入，sensitivity 继承源摘要最严格值）写入
+`memory_entries`；新 Assistant 回合组装上下文快照时按当前问题做向量 + 近因加权检索，注入有界
+`<long-term-memory>` 块（top-K 默认 5），restricted 内容不注入、且不得把记忆泄漏到更低 sensitivity
+的会话。蒸馏为显式触发，支持本地或调度到 Worker：
+
+```powershell
+uv run python scripts/distill_memories.py --json
+uv run python scripts/distill_memories.py --enqueue
+```
+
+记忆表 pgvector 检索复用 `embedding_zh` 能力别名；注入 best-effort，检索失败只记日志、不打断回合。
+
+个性化 Phase 6（自动提取工作模式，Path B）从使用痕迹自动提议个人 skill，走 creator 定稿 + eval 门禁 +
+用户审批，**绝不自动激活**。每次 Assistant/Skill 回合结束 Worker 会自动调度 `skill_pattern_extract`
+（Redis 节流，默认每 30 分钟最多一次）；也可手动 `--enqueue` 或本地执行。挖掘按 Phase 2 维度聚类
+usage_traces，过拟合防护（仅 COMPLETED + 未绑定 skill + 使用工具，频次 ≥3、跨 ≥2 会话、30 天窗口、
+排除 general）→ 用 Phase 4 creator 机制草拟候选包（category 定制 prompt + 从 exemplar 蒸馏的
+eval cases，case_id 锚定来源 run）→ **双闸验证**（Phase 1 结构化门禁全过 + 历史锚定：每个 eval case
+都溯源到真实来源 run）→ 通过的进入 SkillsPanel 草稿区并附 `evidence.json`；未过闸的候选删除、不
+surfacing。
+
+```powershell
+uv run python scripts/extract_skill_candidates.py --json
+```
+
+候选草稿的 `GET /api/v1/skills/personal/drafts/{name}/evidence` 暴露证据（频率/跨会话数/工具序列/来源
+run），SkillsPanel 草稿卡片显示「候选模式」徽章；激活仍需用户走原 drafts 的 activate 审批。
+
+个性化 Phase 3（个人 Skill 存储与信任模型）让用户可写自己的 Skill，但严格复用内置校验与信任边界：
+个人 Skill 存放于 `PERSONAL_SKILLS_DIR`（默认 `./data/personal_skills`），只组合既有 handler/tool、
+不引入新 Python 行为，且不得覆盖内置 Skill 名（ADR-018）。个人 Skill 创建后默认激活；CRUD 和即时
+激活切换经 `/api/v1/skills/personal`，状态沿用 `skill_activations` 持久化并在 API/worker 启动时重放；
+`SkillsPanel` 显示状态并提供切换入口（ADR-021）。
+调试可先验证个人根能加载：
+
+```powershell
+uv run python -c "from infrastructure.qa_execution import assistant_skill_registry; r=assistant_skill_registry(); print(r.personal_names())"
+```
+
+发布 Assistant 时应先使用 `MODEL_PROVIDER=fake` 或获批准的本地 Chat stub。启用外部 Chat Provider 仍需满足现有的
+`MODEL_ALLOW_EXTERNAL`、来源策略、部署策略和用户可见同意检查；Web 发布配置不会绕过这些边界。应监控路由误判、
+澄清循环、取消率、恢复失败以及实际 token/延迟回归。
+
+个性化 Phase 4（Skill Creator，Path A）让用户经 Agent 引导创建/迭代个人 Skill，形成
+`draft → 校验 → eval 门禁 → 用户审批 → active` 生命周期：
+
+- `skills/skill_creator/` 是 manifest v2 + `invocation`（`command: create-skill`，别名 `skill`，
+  `execution_mode: native_tool_use`），激活后其指令进入 native Tool-use 上下文；
+  `/create-skill` 命令提交的 turn 由 assistant 循环驱动（与 `/research` 同路径）。assistant
+  循环始终注册六个 creator 工具（`skill_scaffold` / `skill_write` / `skill_validate` /
+  `skill_run_eval` / `skill_activate` / `skill_draft`），写类工具走既有 durable approval。
+- 草稿存放于 `PERSONAL_SKILLS_DIR/_drafts/<name>/`（下划线前缀跳过 reload 扫描），
+  CRUD + `/validate` + `/eval` + `/activate` 经 `/api/v1/skills/personal/drafts`；
+  eval 门禁复用 Phase 1 的 `StructuralSkillEvalJudge` + case/check/报告类型，确定性、
+  body-free、无需模型与数据库。`SkillsPanel` 展示 draft/active，支持运行 eval / 激活 / 拒绝。
+- 轻量模式建议（Phase 6 前奏）：`/api/v1/skills/personal/drafts/suggestions` 基于 Phase 2
+  的 `usage_patterns`，达到频率阈值且未被既有 skill 覆盖时才出现；点击「创建」进入预填
+  脚手架的 creator 流程，必须人工确认。
+
+QA；资源歧义只显示服务端生成的候选，不暴露内部 UUID。该自动路由和 Step 4 Command API
+均为临时能力；Step 5 才实现上下文压缩。
+真实本地组合使用外部 OpenAI-compatible `fast_chat`、
+`EMBEDDING_PROVIDER=text-embeddings-inference`、本地 Qwen3 TEI Embedding 和本地
+BGE reranker；完整 GPU 路径使用 `RERANKER_PROVIDER=inherit`。`RERANKER_PROVIDER=fake`
+只适用于不启动 reranker 服务时的确定性流程验证。三项能力独立路由，Embedding 不会随外部
+Chat 回退为 fake。
+阶段 0 已冻结为 `internal_team_only`，原始语料和评测 JSONL 仍只在组员本地保留；退出证据见
+[阶段 0 验收记录](docs/stage-0-acceptance.md)，摄入退出证据见
+[阶段 2 验收记录](docs/stage-2-acceptance.md)。不要直接运行留出集；历史 `90.48%` Recall@5 和
+`75.8%` Claim Recall@10 均不能作为当前代码的质量结论。PR #4 的 `dense_rerank` 开发集
+复现也仍是临时结果，阶段 3 已终止；若未来重新开启，必须发布新的数据集/配置版本
+并重新走评测流程。
+
+考试准备工作流以持久化 `ExamSession` 贯穿多次短 `ConversationRun`，考试交互和评分通过既有
+对话页面与 API 投影呈现。它是临时工程 vertical slice，正式质量门禁仍未关闭。
 
 ## 快速启动
 
@@ -360,3 +544,39 @@ docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml --env-file .env
 - **2026-08-06 · LLM 查询改写**：`rewrite_enabled=true`、`max_subqueries=4`（dev 上 context
   coverage@32 +20.5pp、0 回退），A/B harness 见 `scripts/evaluate_query_rewrite.py`。
 - **2026-08-03 · 阶段 4/5 收尾计划**：按 ADR-010/011 继续临时工程。
+
+### Local Agent Workspaces
+
+The selected local workspace is independent from uploaded, current-Space knowledge. A workspace
+file listing cannot determine whether uploaded knowledge exists. When a request combines a
+knowledge question with a local save, the Agent decides whether to retrieve, inspect the workspace,
+and write based on the request and each Tool result. If no filename is provided, it chooses a
+descriptive Markdown path that avoids an unintended collision; there is no fixed default filename.
+The workspace root is always `.` in Tool paths and `shell_exec.cwd`; the displayed workspace
+selection (for example, `project-a`) is not a child cwd.
+
+The Agent timeline lists each workspace Tool's target path, and records the command and relative
+cwd for `shell_exec`. It provides in-page actions for pending write and command approvals:
+approve once, reject, or **always allow this Tool type**. The last option is limited to the current
+Conversation and only suppresses later approval prompts for the same Tool type; workspace
+containment, protected-path checks, command aliases, invocation validation, and all other runtime
+policy checks still apply. `shell_exec` output and `fs_list` results are shown as bounded previews
+in the Tool details. Long previews are marked as truncated and may be expanded in the timeline.
+
+The Tools are registered for `MODEL_PROVIDER=fake` by default. A non-fake Chat Provider requires
+explicit `AGENT_WORKSPACE_MODEL_VISIBILITY_CONSENT=true`. Run
+`.\scripts\start-local.ps1 -AllowExternalWorkspaceTools` to enable that consent for one process;
+the script warns that selected workspace content may be sent to the configured endpoint. In Compose,
+set `AGENT_WORKSPACE_HOST_PATH` and keep its `/data/agent-workspaces` mount shared by API and Worker.
+See
+[development environment](docs/development-environment.md#local-agent-workspaces) and
+[ADR-016](docs/adr/016-conversation-workspace-tools.md) for configuration, approval endpoints, and
+security constraints.
+# 当前实现说明（2026-08-11）
+
+当前运行时只支持 Assistant 主路径和每个 Skill 的唯一固定版本。既有 Skill 保持 `1.0.0`，
+`research_reading_workflow` 为 `1.1.0`。知识请求固定使用 `knowledge_agent 1.0.0`；旧 Skill 目录、
+旧 Prompt、`knowledge_qa` 恢复适配器、Skill 的版本激活/回滚/清理 API 以及 Web 的兼容问答模式均已移除。
+`GET /api/v1/skills` 返回安装目录及即时激活状态；关闭的 Skill 不会进入下一轮 Assistant 上下文。
+
+下文的阶段记录保留历史背景；其中出现的旧版本、回滚开关和兼容入口不再是当前可用配置。

@@ -17,6 +17,8 @@ from agent_runtime import (
     NativeSkillSelection,
     NativeToolUseAgentLoopExecutor,
     ToolRef,
+    ToolRegistryError,
+    ToolRegistryErrorCode,
     checkpoint_state_sha256,
 )
 from agent_runtime.skills import PinnedSkill, SkillCompatibility
@@ -374,6 +376,67 @@ async def test_debug_trace_records_body_free_native_tool_events() -> None:
     assert "Private native system prompt." not in serialized
     assert "private question" not in serialized
     assert "Private goal." not in serialized
+
+
+async def test_native_tool_use_recovers_user_correctable_tool_failure_without_leaking_detail() -> (
+    None
+):
+    async def denied_handler(
+        _arguments: dict[str, JSONValue], _context: ToolExecutionContext
+    ) -> dict[str, JSONValue]:
+        raise ToolRegistryError(
+            ToolRegistryErrorCode.PATH_DENIED,
+            "synthetic private workspace path detail",
+        )
+
+    registry = InMemoryToolRegistry(handlers={"tool": denied_handler})
+    definition = registry.register(_tool())
+    gateway = SequenceNativeGateway(
+        _response(
+            calls=(ChatToolCall("call_1", definition.name, {"query": "synthetic"}),),
+            finish_reason="tool_calls",
+        ),
+        _response(text="The requested location is unavailable; choose a writable workspace."),
+    )
+    events = AgentRunEventLog()
+    trace = RecordingDebugTrace()
+
+    result = await NativeToolUseAgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Use native Tools only when needed.",
+        model_gateway=cast(ModelGateway, gateway),
+        event_store=events,
+        debug_trace=trace,
+    ).execute(
+        _run(permissions=definition.permissions),
+        _pin(),
+        {"question": "Read a synthetic file."},
+        goal="Read the synthetic file.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert result.error is None
+    assert result.state.observations[0].observation == {
+        "status": "tool_error",
+        "error_code": "TOOL_PATH_DENIED",
+    }
+    assert gateway.requests[1].tool_results[0].observation == {
+        "status": "failed",
+        "summary": (
+            "The requested workspace location is unavailable; a valid workspace or allowed path "
+            "is required."
+        ),
+    }
+    model_context = json.loads(gateway.requests[1].messages[-1].content)["model_context"]
+    assert model_context["observations"][0]["error_code"] == "TOOL_PATH_DENIED"
+    history = await events.page(result.run.context.run_id, limit=20)
+    output_event = next(
+        event for event in history.events if event.event_type is AgentRunEventType.TOOL_OUTPUT
+    )
+    assert output_event.payload["status"] == "failed"
+    serialized_trace = json.dumps(trace.events, ensure_ascii=False, default=str)
+    assert "synthetic private workspace path detail" not in serialized_trace
 
 
 async def test_fake_gateway_executes_a_tool_then_returns_one_terminal_response() -> None:

@@ -249,6 +249,7 @@ class SkillRegistryError(Exception):
 class SkillRegistryEventType(StrEnum):
     INSTALLED = "installed"
     ACTIVATED = "activated"
+    DEACTIVATED = "deactivated"
     ROLLED_BACK = "rolled_back"
 
 
@@ -553,6 +554,21 @@ class FileSystemSkillRegistry:
 
     def activate(self, name: str, version: str) -> SkillPackage:
         return self._set_active(name, version, SkillRegistryEventType.ACTIVATED)
+
+    def deactivate(self, name: str) -> SkillPackage | None:
+        """Remove one Skill from the active registry without uninstalling it."""
+        with self._lock:
+            previous = self._active_versions.pop(name, None)
+            if previous is None:
+                return None
+            package = self._packages.get((name, previous))
+            if package is None:
+                raise SkillRegistryError(
+                    SkillRegistryErrorCode.NOT_FOUND,
+                    "Active Skill version is not installed.",
+                )
+            self._events.append(self._event(SkillRegistryEventType.DEACTIVATED, package, previous))
+            return package
 
     def rollback(self, name: str, version: str) -> SkillPackage:
         return self._set_active(name, version, SkillRegistryEventType.ROLLED_BACK)

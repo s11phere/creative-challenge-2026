@@ -61,7 +61,7 @@ type CitationMetadata = {
   uri: string | null
 }
 
-type CommandNotice = Pick<AssistantCommandResult, 'command' | 'content' | 'commands'> & {
+type CommandNotice = Pick<AssistantCommandResult, 'command' | 'content' | 'commands' | 'skills'> & {
   notice_id: string
   created_at: string
   order: number
@@ -96,6 +96,9 @@ const activeStatuses = new Set(['created', 'queued', 'running', 'cancel_requeste
 // Approval decisions are persisted asynchronously by the Worker. Keep polling while a
 // run waits for approval so the UI observes the resumed execution without navigation.
 const refreshingStatuses = new Set([...activeStatuses, 'waiting_approval'])
+const settledAgentEventTypes = new Set<AgentRunEvent['event_type']>([
+  'completed', 'refused', 'failed', 'cancelled', 'timed_out',
+])
 
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
@@ -112,6 +115,12 @@ function statusLabel(status: string): string {
     timed_out: '运行超时',
   }
   return labels[status] ?? status
+}
+
+function formatModelLatency(value: number): string | null {
+  if (!Number.isFinite(value) || value <= 0) return null
+  if (value < 1_000) return `${Math.round(value)} ms`
+  return `${(value / 1_000).toFixed(1)} 秒`
 }
 
 function citationKey(sourceId: string, documentId: string): string {
@@ -216,15 +225,17 @@ function LegacySkillRunCard({
           <h3>执行信息</h3>
           <dl className="chat-skill-run-metadata">
             <div><dt>状态</dt><dd>{statusLabel(run.status)}</dd></div>
-            <div><dt>模型</dt><dd>{run.model_identity}</dd></div>
+            <div><dt>模型</dt><dd>{run.reasoning_profile.model || run.model_identity}</dd></div>
             <div><dt>输入 Token</dt><dd>{run.usage.input_tokens.toLocaleString('zh-CN')}</dd></div>
             <div><dt>输出 Token</dt><dd>{run.usage.output_tokens.toLocaleString('zh-CN')}</dd></div>
-            <div><dt>模型耗时</dt><dd>{Math.round(run.usage.model_latency_ms).toLocaleString('zh-CN')} ms</dd></div>
           </dl>
         </section>
         {result && (result.text || result.message) && (
           <section>
             <h3>Skill 结果</h3>
+            {formatModelLatency(run.usage.model_latency_ms) && (
+              <p className="chat-final-answer-meta">模型耗时：{formatModelLatency(run.usage.model_latency_ms)}</p>
+            )}
             <div className="qa-answer">
               <RenderedAssistantAnswer
                 content={result.text ?? result.message ?? ''}
@@ -314,6 +325,12 @@ function SkillRunCard(props: SkillRunCardProps) {
         queryClient.setQueryData<AgentRunEvent[]>(['agent-run-events', run.run_id], (current = []) =>
           mergeAgentRunEvents(current, incoming),
         )
+        if (incoming.some((event) => settledAgentEventTypes.has(event.event_type))) {
+          // The event announces completion before the cached Run has its final citations.
+          void queryClient.invalidateQueries({ queryKey: ['qa-run', run.run_id] })
+          void queryClient.invalidateQueries({ queryKey: ['assistant-runs'] })
+          void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
+        }
       },
     })
     return () => controller.abort()
@@ -441,7 +458,6 @@ export function QAWorkspace({
   const isComposingRef = useRef(false)
   const excerptRef = useRef<HTMLDivElement>(null)
   const historyInitializedRef = useRef(false)
-  const evidenceUserClosedRef = useRef(false)
   const timelineSequenceRef = useRef(0)
   const localMessageOrdersRef = useRef(new Map<string, number>())
   const effortPickerConsumedRef = useRef(false)
@@ -627,7 +643,6 @@ export function QAWorkspace({
       setLocalMessages([])
       setLocalRuns([])
       setActiveRunId(null)
-      evidenceUserClosedRef.current = false
       setEvidenceRunId(null)
       setSelectedEvidenceId(null)
       setCommandNotices([])
@@ -644,8 +659,12 @@ export function QAWorkspace({
   }, [pendingEffortPicker])
 
   useEffect(() => {
-    if (currentRun && !activeStatuses.has(currentRun.status)) {
-      void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
+    if (!currentRun || activeStatuses.has(currentRun.status)) return
+    void queryClient.invalidateQueries({ queryKey: ['qa-history'] })
+    if (isGroundedRun(currentRun) || currentRun.run_kind === 'assistant_turn') {
+      // The Agent terminal event precedes publication of the final Assistant message.
+      // Refresh once more when that message's persisted Run becomes terminal.
+      void queryClient.invalidateQueries({ queryKey: ['qa-run', currentRun.run_id] })
     }
   }, [currentRun, queryClient])
 
@@ -658,13 +677,6 @@ export function QAWorkspace({
   useEffect(() => {
     if (selectedEvidenceId && (citationQuery.data || citationQuery.error)) excerptRef.current?.focus()
   }, [citationQuery.data, citationQuery.error, selectedEvidenceId])
-
-  useEffect(() => {
-    const citations = currentQARunQuery.data?.citations ?? []
-    if (!evidenceRunId && !evidenceUserClosedRef.current && currentRun?.run_id && citations.length > 0) {
-      setEvidenceRunId(currentRun.run_id)
-    }
-  }, [currentQARunQuery.data?.citations, currentRun?.run_id, evidenceRunId])
 
   const nextTimelinePosition = () => ({
     created_at: new Date().toISOString(),
@@ -720,6 +732,7 @@ export function QAWorkspace({
               command: result.command,
               content: result.content,
               commands: result.commands,
+              skills: result.skills ?? [],
             },
           ])
         }
@@ -750,7 +763,6 @@ export function QAWorkspace({
         setConversationId(nextConversationId)
         onConversationSelected?.(nextConversationId)
       }
-      evidenceUserClosedRef.current = false
       setSelectedEvidenceId(null)
       setDraft('')
       setSelectedCommand(null)
@@ -980,12 +992,10 @@ export function QAWorkspace({
   const currentRunIsActive = currentRun ? activeStatuses.has(currentRun.status) : false
   const visibleCitations = evidenceRun?.citations ?? []
   const openEvidence = (runId: string) => {
-    evidenceUserClosedRef.current = false
     setEvidenceRunId(runId)
     setSelectedEvidenceId(null)
   }
   const closeEvidence = () => {
-    evidenceUserClosedRef.current = true
     setEvidenceRunId(null)
     setSelectedEvidenceId(null)
   }
@@ -1015,6 +1025,22 @@ export function QAWorkspace({
                             </div>
                             <span>{command.description}</span>
                             {command.argument_hint && <small>{command.argument_hint}</small>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {commandNotice.skills.length > 0 && (
+                      <ul className="chat-command-results" aria-label="Installed Skills">
+                        {commandNotice.skills.map((skill) => (
+                          <li key={`${skill.name}-${skill.version}`}>
+                            <div className="chat-command-result-heading">
+                              <code>{skill.name}</code>
+                              <span className={`chat-skill-status${skill.active ? ' active' : ''}`}>
+                                {skill.active ? '已激活' : '未激活'}
+                              </span>
+                            </div>
+                            <span>{skill.description}</span>
+                            <small>v{skill.version}</small>
                           </li>
                         ))}
                       </ul>
@@ -1093,7 +1119,9 @@ export function QAWorkspace({
                       />
                       {answer && (
                         <article className="chat-final-answer" data-status={run.status}>
-                          <div className="qa-run-heading"><Check size={17} aria-hidden="true" /><strong>最终回答</strong></div>
+                          {formatModelLatency(run.usage.model_latency_ms) && (
+                            <p className="chat-final-answer-meta">模型耗时：{formatModelLatency(run.usage.model_latency_ms)}</p>
+                          )}
                           <div className="qa-answer">
                             <RenderedAssistantAnswer content={answer} limitations={limitations} />
                             {examInteraction && (

@@ -67,6 +67,7 @@ class SkillActivation:
     version: str
     content_sha256: str
     revision: int
+    active: bool = True
 
 
 class SkillActivationStore(Protocol):

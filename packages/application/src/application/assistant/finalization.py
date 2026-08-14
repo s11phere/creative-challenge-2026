@@ -44,6 +44,7 @@ class FinalizationInput:
     skill_result: str
     fallback_content: str | None = None
     refused: bool = False
+    user_notice: str | None = None
 
 
 class ConversationFinalizer:
@@ -68,6 +69,9 @@ class ConversationFinalizer:
         content, usage = await self._synthesize(run, input=input, fallback=fallback)
         if not content:
             content = _FALLBACK_CONTENT
+        # Delivery notices are server-verified facts. They must remain visible even
+        # when synthesis rephrases or omits them.
+        content = _append_notice(content, input.user_notice)
         return await self._runs.publish_direct_message(
             run_id=run.run_id,
             message=MessageRecord(
@@ -165,6 +169,13 @@ def grounded_material(qa_run: QARunRecord, fallback: str) -> str:
         f"{claim.text}"
         for claim in result.answer.claims
     )
+
+
+def _append_notice(content: str, notice: str | None) -> str:
+    safe_notice = (notice or "").strip()[:1_200]
+    if not safe_notice:
+        return content
+    return f"{content}\n\n{safe_notice}".strip()
 
 
 __all__ = ["ConversationFinalizer", "FinalizationInput", "grounded_material"]

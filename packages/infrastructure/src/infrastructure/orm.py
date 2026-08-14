@@ -66,6 +66,7 @@ class SkillActivationModel(Base):
     skill_name: Mapped[str] = mapped_column(String(255), primary_key=True)
     active_version: Mapped[str] = mapped_column(String(100), nullable=False)
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(

@@ -68,6 +68,13 @@ explicit decision-history projection that distinguishes audit digests from usefu
     publishability verification. The marker resolves to the verified server-owned answer only in
     memory for the normal Tool Registry invocation; it does not alter the checkpoint, bypass
     approval, constrain the selected path, or execute a side effect during recovery.
+12. A Tool failure caused by a user-correctable input, authorization, allowed-path, capability, or
+    file-state precondition becomes a bounded, redacted failure observation. The next model turn
+    receives only a stable error code and an actionable summary, never the raw exception, path,
+    command output, source content, or provider detail. Dependency, budget, cancellation, schema,
+    and internal failures remain fail-closed. Server-owned knowledge Tools follow the same rule.
+    A known delivery fact, such as an unavailable workspace after a verified answer, is appended by
+    the finalizer after synthesis so that it cannot be omitted or altered by the model.
 
 ## Alternatives
 
@@ -90,6 +97,10 @@ by current execution or recovery code.
 
 All evaluation artifacts remain synthetic, development-only, hash-pinned, and provisional. They do
 not read corpus bodies, enable an external provider, or authorize a formal holdout.
+
+Recoverable observations let the model choose a different valid action or explain a limitation from
+safe runtime facts; they do not impose a fixed natural-language response. The final delivery notice
+is deliberately narrower: it preserves a server-owned fact about an incomplete requested artifact.
 
 ## Reassessment Triggers
 

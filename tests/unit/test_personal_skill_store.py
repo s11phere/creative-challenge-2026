@@ -73,10 +73,10 @@ def store(tmp_path: Path) -> PersonalSkillStore:
 
 
 class TestPersonalSkillStoreCrud:
-    def test_create_and_list(self, store: PersonalSkillStore) -> None:
-        created = store.create("my_skill", package_files())
+    async def test_create_and_list(self, store: PersonalSkillStore) -> None:
+        created = await store.create("my_skill", package_files())
         assert created.name == "my_skill"
-        assert created.active is False
+        assert created.active is True
         assert created.permissions == ("read_knowledge",)
 
         listed = store.list()
@@ -87,21 +87,21 @@ class TestPersonalSkillStoreCrud:
             store.get("missing")
         assert excinfo.value.code is PersonalSkillErrorCode.NOT_FOUND
 
-    def test_create_raises_registry_conflict_for_builtin_name(
+    async def test_create_raises_registry_conflict_for_builtin_name(
         self, store: PersonalSkillStore
     ) -> None:
         with pytest.raises(SkillRegistryError):
-            store.create("builtin_skill", package_files(name="builtin_skill"))
+            await store.create("builtin_skill", package_files(name="builtin_skill"))
 
     async def test_update_replaces_content(self, store: PersonalSkillStore) -> None:
-        store.create("my_skill", package_files())
+        await store.create("my_skill", package_files())
         updated = await store.update("my_skill", package_files(description="Updated."))
 
         assert updated.description == "Updated."
         assert store.get("my_skill").description == "Updated."
 
     async def test_delete_removes(self, store: PersonalSkillStore) -> None:
-        store.create("my_skill", package_files())
+        await store.create("my_skill", package_files())
         await store.delete("my_skill")
         assert store.list() == ()
 
@@ -112,7 +112,7 @@ class TestPersonalSkillStoreCrud:
 
 class TestPersonalSkillStoreActivation:
     async def test_activate_persists_pointer(self, store: PersonalSkillStore) -> None:
-        store.create("my_skill", package_files())
+        await store.create("my_skill", package_files())
         activated = await store.activate("my_skill")
 
         assert activated.active is True
@@ -123,10 +123,24 @@ class TestPersonalSkillStoreActivation:
             await store.activate("missing")
         assert excinfo.value.code is PersonalSkillErrorCode.NOT_FOUND
 
+    async def test_toggle_deactivates_and_reactivates_a_personal_skill(
+        self, store: PersonalSkillStore
+    ) -> None:
+        await store.create("my_skill", package_files())
+
+        disabled = await store.set_active("my_skill", False)
+        assert disabled.active is False
+        assert store.get("my_skill").active is False
+        assert (await store._store.get("my_skill")).active is False
+
+        enabled = await store.set_active("my_skill", True)
+        assert enabled.active is True
+        assert store.get("my_skill").active is True
+
     async def test_update_active_skill_refreshes_activation_pointer(
         self, store: PersonalSkillStore
     ) -> None:
-        store.create("my_skill", package_files())
+        await store.create("my_skill", package_files())
         await store.activate("my_skill")
         updated = await store.update("my_skill", package_files(description="Updated content"))
 
@@ -139,7 +153,7 @@ class TestPersonalSkillStoreActivation:
     async def test_delete_active_skill_removes_activation_pointer(
         self, store: PersonalSkillStore
     ) -> None:
-        store.create("my_skill", package_files())
+        await store.create("my_skill", package_files())
         await store.activate("my_skill")
         await store.delete("my_skill")
 

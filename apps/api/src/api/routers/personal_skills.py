@@ -54,6 +54,10 @@ class PersonalSkillUpdateRequest(BaseModel):
     files: dict[str, str] = Field(min_length=1)
 
 
+class PersonalSkillActivationRequest(BaseModel):
+    active: bool
+
+
 def _app_error(exc: Exception) -> AppError:
     code = str(getattr(exc, "code", "SKILL_INVALID"))
     if code in _NOT_FOUND_CODES:
@@ -87,12 +91,12 @@ def _to_response(view: PersonalSkillView) -> PersonalSkillResponse:
 
 
 @router.post("", response_model=PersonalSkillResponse, status_code=status.HTTP_201_CREATED)
-def create_personal_skill(
+async def create_personal_skill(
     request: Request, body: PersonalSkillCreateRequest
 ) -> PersonalSkillResponse:
     """Create one writable personal Skill; every file is validated before publishing."""
     try:
-        view = request.app.state.personal_skill_store.create(body.name, body.files)
+        view = await request.app.state.personal_skill_store.create(body.name, body.files)
     except (PersonalSkillError, SkillRegistryError) as exc:
         raise _app_error(exc) from exc
     return _to_response(view)
@@ -137,6 +141,17 @@ async def delete_personal_skill(request: Request, name: str) -> dict[str, str]:
 async def activate_personal_skill(request: Request, name: str) -> PersonalSkillResponse:
     try:
         view = await request.app.state.personal_skill_store.activate(name)
+    except (PersonalSkillError, SkillRegistryError) as exc:
+        raise _app_error(exc) from exc
+    return _to_response(view)
+
+
+@router.patch("/{name}/activation", response_model=PersonalSkillResponse)
+async def set_personal_skill_activation(
+    request: Request, name: str, body: PersonalSkillActivationRequest
+) -> PersonalSkillResponse:
+    try:
+        view = await request.app.state.personal_skill_store.set_active(name, body.active)
     except (PersonalSkillError, SkillRegistryError) as exc:
         raise _app_error(exc) from exc
     return _to_response(view)

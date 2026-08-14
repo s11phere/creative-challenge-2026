@@ -140,8 +140,9 @@ class SyntheticSkillCatalog:
 
 
 class FakeSearchService:
-    def __init__(self, *, matched: bool = True) -> None:
+    def __init__(self, *, matched: bool = True, no_hits: bool = False) -> None:
         self.matched = matched
+        self.no_hits = no_hits
         self.calls: list[tuple[SearchRequest, RetrievalProfileV1]] = []
 
     async def search(self, request: SearchRequest, profile: RetrievalProfileV1) -> SearchResult:
@@ -160,7 +161,7 @@ class FakeSearchService:
             context_only=not self.matched,
         )
         return SearchResult(
-            hits=(hit,),
+            hits=() if self.no_hits else (hit,),
             diagnostics=SearchDiagnostics(
                 requested_mode=RetrievalMode.DENSE_RERANK,
                 executed_mode=RetrievalMode.DENSE_RERANK,
@@ -502,6 +503,89 @@ async def test_unmatched_retrieval_requires_more_search_before_qa() -> None:
 
 
 @pytest.mark.asyncio
+async def test_zero_hit_retrieval_runs_grounded_qa_for_a_normal_refusal() -> None:
+    search = FakeSearchService(no_hits=True)
+    qa = FakeGroundedQA(QAOutcome.REFUSE)
+    adapter = _adapter(search, qa)
+    run = _run()
+
+    retrieved = await adapter.execute(run, _state(), _retrieve_call(), {})
+    answered = await adapter.execute(run, _state(), _answer_call(), {})
+
+    assert retrieved.observation["hit_count"] == 0
+    assert retrieved.observation["recommended_next"] == "knowledge_answer"
+    assert answered.terminal_output is not None
+    assert answered.observation["terminal_reason"] == "evidence_insufficient"
+    assert qa.execute_calls == [RUN_ID]
+    notice = adapter.user_notice(RUN_ID)
+    assert notice is not None
+    assert "上传相关文件" in notice
+
+
+@pytest.mark.asyncio
+async def test_workspace_delivery_notice_distinguishes_unavailable_workspace_from_denied_path() -> (
+    None
+):
+    adapter = _adapter(FakeSearchService(), FakeGroundedQA())
+    run = _run()
+    await adapter.execute(run, _state(), _retrieve_call(), {})
+    unavailable = await adapter.execute(
+        run,
+        _state(),
+        _answer_call(),
+        {"question": "Answer and save this as answer.md.", "workspace": {}},
+    )
+
+    assert unavailable.terminal_output is not None
+    first_notice = adapter.user_notice(RUN_ID)
+    assert first_notice is not None
+    assert "尚未选择可写工作区" in first_notice
+
+    adapter.note_workspace_delivery_blocked(RUN_ID, "TOOL_PATH_DENIED")
+    denied_notice = adapter.user_notice(RUN_ID)
+    assert denied_notice is not None
+    assert "目标位置不可用或未获授权" in denied_notice
+    assert "尚未选择可写工作区" not in denied_notice
+
+
+def test_workspace_delivery_facts_are_restored_from_checkpoint_observations() -> None:
+    adapter = _adapter(FakeSearchService(), FakeGroundedQA())
+    state = NativeToolUseLoopState(
+        goal="Answer and save the synthetic result.",
+        iteration=2,
+        observations=(
+            NativeToolUseObservation(
+                iteration=1,
+                call=_answer_call(),
+                observation={
+                    "workspace_required": True,
+                    "workspace_delivery": "unavailable",
+                },
+                input_summary="sha256:answer",
+                output_summary="sha256:answer-output",
+            ),
+            NativeToolUseObservation(
+                iteration=2,
+                call=NativeToolUseCall(
+                    call_id="call-write",
+                    tool_name="fs_write",
+                    arguments={"path": "answer.md", "content": "{{current_grounded_qa_answer}}"},
+                ),
+                observation={"status": "tool_error", "error_code": "TOOL_PATH_DENIED"},
+                input_summary="sha256:write",
+                output_summary="error:TOOL_PATH_DENIED",
+            ),
+        ),
+    )
+
+    adapter.restore_delivery_facts(RUN_ID, state)
+
+    notice = adapter.user_notice(RUN_ID)
+    assert notice is not None
+    assert "目标位置不可用或未获授权" in notice
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("outcome", "status", "terminal_reason"),
     [
@@ -643,6 +727,59 @@ async def test_native_executor_finalizes_knowledge_answer_without_an_extra_model
 
 
 @pytest.mark.asyncio
+async def test_native_executor_publishes_zero_hit_knowledge_refusal() -> None:
+    search = FakeSearchService(no_hits=True)
+    qa = FakeGroundedQA(QAOutcome.REFUSE)
+    adapter = _adapter(search, qa)
+    gateway = SequenceNativeGateway(
+        _response(
+            calls=(_call("invoke_skill", {"name": "knowledge_agent"}, "call-1"),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(_call("knowledge_retrieve", {"query": "unavailable topic"}, "call-2"),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(_call("knowledge_answer", {}, "call-3"),),
+            finish_reason="tool_calls",
+        ),
+    )
+    events = AgentRunEventLog()
+
+    result = await NativeToolUseAgentLoopExecutor(
+        tool_registry=adapter.tool_registry,
+        allowed_tools=adapter.allowed_tools(),
+        system_prompt="Native base prompt.",
+        model_gateway=cast(ModelGateway, gateway),
+        skill_catalog=SyntheticSkillCatalog(_skill(adapter.allowed_tools())),
+        server_tools=adapter,
+        event_store=events,
+    ).execute(
+        _run(),
+        _pin(),
+        {"question": "Ask about a topic without uploaded documents."},
+        goal="Answer the synthetic knowledge question.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED, result.error
+    assert result.error is None
+    assert result.output == {
+        "status": "refused",
+        "outcome": "refuse",
+        "qa_run_id": str(RUN_ID),
+        "publication": "grounded_qa",
+    }
+    assert result.state.observations[-1].observation["outcome"] == "refuse"
+    assert result.state.observations[-1].observation["terminal_reason"] == "evidence_insufficient"
+    assert qa.execute_calls == [RUN_ID]
+    assert gateway.remaining == 0
+    page = await events.page(RUN_ID, limit=100)
+    assert page.events[-1].event_type is AgentRunEventType.REFUSED
+    assert page.events[-1].payload["stop_reason"] == "evidence_insufficient"
+
+
+@pytest.mark.asyncio
 async def test_direct_terminal_after_knowledge_skill_selection_is_denied() -> None:
     search = FakeSearchService()
     qa = FakeGroundedQA()
@@ -709,6 +846,65 @@ async def test_knowledge_tool_without_granted_permission_is_denied() -> None:
     assert result.error is not None
     assert result.error.code == "RUN_NATIVE_TOOL_USE_TOOL_DENIED"
     assert search.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_tool_input_failure_is_observed_then_the_knowledge_run_recovers() -> None:
+    search = FakeSearchService()
+    qa = FakeGroundedQA()
+    adapter = _adapter(search, qa)
+    events = AgentRunEventLog()
+    gateway = SequenceNativeGateway(
+        _response(
+            calls=(_call("invoke_skill", {"name": "knowledge_agent"}, "call-1"),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(_call("knowledge_retrieve", {}, "call-2"),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(_call("knowledge_retrieve", {"query": "architecture"}, "call-3"),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(_call("knowledge_answer", {}, "call-4"),),
+            finish_reason="tool_calls",
+        ),
+    )
+
+    result = await NativeToolUseAgentLoopExecutor(
+        tool_registry=adapter.tool_registry,
+        allowed_tools=adapter.allowed_tools(),
+        system_prompt="Native base prompt.",
+        model_gateway=cast(ModelGateway, gateway),
+        skill_catalog=SyntheticSkillCatalog(_skill(adapter.allowed_tools())),
+        server_tools=adapter,
+        event_store=events,
+    ).execute(
+        _run(),
+        _pin(),
+        {"question": "synthetic"},
+        goal="Answer the synthetic knowledge question.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    assert result.error is None
+    assert result.state.observations[1].observation == {
+        "status": "tool_error",
+        "error_code": "SKILL_INPUT_INVALID",
+    }
+    assert gateway.requests[2].tool_results[-1].observation["status"] == "failed"
+    context = json.loads(gateway.requests[2].messages[-1].content)["model_context"]
+    assert context["observations"][-1]["error_code"] == "SKILL_INPUT_INVALID"
+    history = await events.page(RUN_ID, limit=20)
+    failed_output = next(
+        event
+        for event in history.events
+        if event.event_type is AgentRunEventType.TOOL_OUTPUT and event.payload["status"] == "failed"
+    )
+    assert failed_output.payload["tool_name"] == "knowledge_retrieve"
+    assert qa.execute_calls == [RUN_ID]
 
 
 @pytest.mark.asyncio

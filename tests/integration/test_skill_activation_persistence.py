@@ -30,11 +30,12 @@ async def test_skill_activation_pointer_is_persistent_and_compare_and_set() -> N
         assert current == persisted
 
         updated = await store.compare_and_set(
-            SkillActivation(initial.name, "2.0.0", "b" * 64, persisted.revision + 1),
+            SkillActivation(initial.name, "2.0.0", "b" * 64, persisted.revision + 1, active=False),
             expected_revision=persisted.revision,
         )
         assert updated is not None
         assert (updated.version, updated.revision) == ("2.0.0", persisted.revision + 1)
+        assert updated.active is False
         assert (await store.compare_and_set(initial, expected_revision=persisted.revision)) is None
     finally:
         async with database.transaction() as session:

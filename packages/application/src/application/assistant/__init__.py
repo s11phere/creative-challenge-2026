@@ -14,6 +14,7 @@ from .commands import (
     CommandParseError,
     ParsedAssistantCommand,
     SkillCommandInvoker,
+    SkillStatus,
 )
 from .context import (
     ConversationCompactionService,
@@ -80,6 +81,7 @@ __all__ = [
     "CommandParseError",
     "ParsedAssistantCommand",
     "SkillCommandInvoker",
+    "SkillStatus",
     "AssistantTurnSubmission",
     "ConversationReader",
     "ConversationRunApplicationError",

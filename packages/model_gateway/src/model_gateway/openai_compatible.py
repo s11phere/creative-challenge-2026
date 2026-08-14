@@ -76,7 +76,7 @@ class OpenAICompatibleGateway:
         timeout_seconds: float = 15.0,
         fast_chat_timeout_seconds: float = 120.0,
         fast_chat_reasoning_enabled: bool = False,
-        fast_chat_prompt_caching: bool = False,
+        fast_chat_prompt_caching: bool = True,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.1,
         reranker_batch_size: int = 32,

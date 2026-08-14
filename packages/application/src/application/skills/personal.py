@@ -57,13 +57,14 @@ class PersonalSkillStore:
         self._registry = registry
         self._store = store
 
-    async def persist_activation(self, package: SkillPackage) -> None:
-        """Durably record the durable activation pointer for one package."""
+    async def persist_activation(self, package: SkillPackage, *, active: bool = True) -> None:
+        """Durably record the activation state for one package."""
         activation = SkillActivation(
             name=package.manifest.name,
             version=package.manifest.version,
             content_sha256=package.content_sha256,
             revision=1,
+            active=active,
         )
         existing = await self._store.get(activation.name)
         if existing is None:
@@ -75,6 +76,7 @@ class PersonalSkillStore:
                 version=activation.version,
                 content_sha256=activation.content_sha256,
                 revision=existing.revision + 1,
+                active=active,
             ),
             expected_revision=existing.revision,
         )
@@ -84,8 +86,10 @@ class PersonalSkillStore:
                 "Personal Skill activation changed concurrently.",
             )
 
-    def create(self, name: str, files: Mapping[str, str]) -> PersonalSkillView:
+    async def create(self, name: str, files: Mapping[str, str]) -> PersonalSkillView:
         package = self._registry.create_personal(name, dict(files))
+        self._registry.activate(package.manifest.name, package.manifest.version)
+        await self.persist_activation(package)
         return self._view(package)
 
     async def update(self, name: str, files: Mapping[str, str]) -> PersonalSkillView:
@@ -136,6 +140,19 @@ class PersonalSkillStore:
         except SkillRegistryError as exc:
             raise PersonalSkillError(PersonalSkillErrorCode.NAME_CONFLICT, str(exc)) from exc
         await self.persist_activation(package)
+        return self._view(package)
+
+    async def set_active(self, name: str, active: bool) -> PersonalSkillView:
+        """Toggle one personal Skill without restarting the Assistant process."""
+        if active:
+            return await self.activate(name)
+        if not self._registry.is_personal(name):
+            raise PersonalSkillError(
+                PersonalSkillErrorCode.NOT_FOUND, "Personal Skill is not installed."
+            )
+        package = self._active_or_only_package(name)
+        self._registry.deactivate(name)
+        await self.persist_activation(package, active=False)
         return self._view(package)
 
     def _active_or_only_package(self, name: str) -> SkillPackage:

@@ -45,6 +45,11 @@ function assistantRun(overrides: Record<string, unknown> = {}) {
     error_code: null,
     selection: { source: 'none', skill: null },
     model_identity: 'fake',
+    reasoning_profile: {
+      schema_version: 'reasoning-profile-v1', requested_effort: 'auto', effective_effort: 'low',
+      provider: 'fake', model: 'fake-fast-chat-v1', mapping_version: 'reasoning-mapping-v1',
+      mode: 'native', downgrade_reason: 'none',
+    },
     assistant_message: { message_id: 'assistant-1', content: 'Direct response.' },
     clarification: null,
     usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6, model_latency_ms: 12.5 },
@@ -512,9 +517,14 @@ describe('assistant conversation workspace', () => {
       selection: { source: 'auto', skill: null },
       assistant_message: { message_id: 'assistant-1', content: 'Architecture answer.' },
       usage: { input_tokens: 120, output_tokens: 48, total_tokens: 168, model_latency_ms: 1240 },
+      reasoning_profile: {
+        schema_version: 'reasoning-profile-v1', requested_effort: 'high', effective_effort: 'medium',
+        provider: 'openai-compatible', model: 'deepseek-v4-flash', mapping_version: 'reasoning-mapping-v2',
+        mode: 'native', downgrade_reason: 'none',
+      },
     })
     const events = [
-      { schema_version: 'agent-run-sse-v3', event_id: 'event-1', run_id: 'run-1', sequence: 1, occurred_at: '2026-08-09T10:00:01Z', event_type: 'accepted', payload: { status: 'accepted', requested_effort: 'high', effective_effort: 'medium', model: 'fake-reasoner' } },
+      { schema_version: 'agent-run-sse-v3', event_id: 'event-1', run_id: 'run-1', sequence: 1, occurred_at: '2026-08-09T10:00:01Z', event_type: 'accepted', payload: { status: 'accepted', requested_effort: 'high', effective_effort: 'medium', model: 'openai-compatible' } },
       { schema_version: 'agent-run-sse-v3', event_id: 'event-2', run_id: 'run-1', sequence: 2, occurred_at: '2026-08-09T10:00:02Z', event_type: 'iteration_started', payload: { status: 'planning', iteration: 1, tool_call_count: 0, observation_count: 0 } },
       { schema_version: 'agent-run-sse-v3', event_id: 'event-3', run_id: 'run-1', sequence: 3, occurred_at: '2026-08-09T10:00:03Z', event_type: 'tool_requested', payload: { status: 'requested', iteration: 1, tool_name: 'knowledge_search', tool_version: '1.0.0', input_summary: 'sha256:input-1', query_preview: 'How is the architecture indexed?', retry_count: 0 } },
       { schema_version: 'agent-run-sse-v3', event_id: 'event-4', run_id: 'run-1', sequence: 4, occurred_at: '2026-08-09T10:00:04Z', event_type: 'tool_output', payload: { status: 'succeeded', iteration: 1, tool_name: 'knowledge_search', tool_version: '1.0.0', input_summary: 'sha256:input-1', query_preview: 'How is the architecture indexed?', output_summary: 'sha256:output-1', retry_count: 1, duration_ms: 126 } },
@@ -559,6 +569,10 @@ describe('assistant conversation workspace', () => {
 
     const timeline = await screen.findByLabelText('Agent 运行时间线')
     await waitFor(() => expect(screen.getByText('请求强度')).toBeInTheDocument())
+    expect(screen.getByText('deepseek-v4-flash')).toBeInTheDocument()
+    expect(screen.queryByText('openai-compatible')).not.toBeInTheDocument()
+    expect(screen.getByText('模型耗时：1.2 秒')).toBeInTheDocument()
+    expect(screen.queryByText('最终回答')).not.toBeInTheDocument()
     expect(screen.getByText('实际强度')).toBeInTheDocument()
     expect(screen.getByText('实际 Token')).toBeInTheDocument()
     expect(screen.getByText('目标已完成')).toBeInTheDocument()
@@ -611,11 +625,72 @@ describe('assistant conversation workspace', () => {
     vi.stubGlobal('fetch', fetchMock)
     renderWorkspace()
 
-    expect(await screen.findByText('第 1 轮')).toBeInTheDocument()
+    expect(await screen.findByText('正在规划下一步。')).toBeInTheDocument()
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       expect.stringMatching(/\/api\/v3\/runs\/run-1\/events\/stream$/),
       expect.objectContaining({ headers: expect.objectContaining({ 'Last-Event-ID': '1' }) }),
     ))
+  })
+
+  it('refreshes final evidence when an Agent Run completes without opening the sidebar', async () => {
+    let agentTerminalReceived = false
+    let finalAssistantRunSeen = false
+    const live = assistantRun({
+      status: 'running',
+      run_kind: 'assistant_turn',
+      assistant_message: { message_id: 'assistant-1', content: 'Answer already rendered.' },
+      selection: { source: 'auto', skill: null },
+    })
+    const finalRun = assistantRun({
+      status: 'completed',
+      run_kind: 'assistant_turn',
+      assistant_message: { message_id: 'assistant-1', content: 'Answer already rendered.' },
+      selection: { source: 'auto', skill: null },
+    })
+    const pendingQaRun: QARun = {
+      run_id: 'run-1', attempt_id: 'attempt-1', status: 'running', conversation_id: 'conversation-1', question_message_id: 'message-1', cancellation_requested: false, error_code: null,
+      skill: { name: 'knowledge_agent', version: '1.0.0', content_sha256: 'a'.repeat(64) }, fixed_scope: { source_ids: [], document_ids: [], version_ids: [] }, result: null, citations: [],
+    }
+    const completedQaRun: QARun = {
+      ...pendingQaRun,
+      status: 'completed',
+      result: { type: 'answer', text: 'Answer already rendered.', limitations: ['Evidence is limited to the indexed sources.'] },
+      citations: [{ evidence_id: 'evidence-1', source_id: 'source-1', document_id: 'document-1', version_id: 'version-1', chunk_id: 'chunk-1', locator: { kind: 'lines', start: 1, end: 2 } }],
+    }
+    const fetchMock = baseFetch({
+      conversations: [{
+        ...conversation,
+        messages: [{ message_id: 'message-1', role: 'user', content: 'Answer with evidence.', run_id: null, created_at: '2026-08-09T10:00:00Z' }],
+        runs: [],
+      }],
+    })
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
+      if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
+        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [{ message_id: 'message-1', role: 'user', content: 'Answer with evidence.', run_id: null, created_at: '2026-08-09T10:00:00Z' }], runs: [] }] }))
+      }
+      if (url.endsWith('/api/v2/conversations/conversation-1/runs')) {
+        if (agentTerminalReceived) finalAssistantRunSeen = true
+        return Promise.resolve(response({ runs: [agentTerminalReceived ? finalRun : live] }))
+      }
+      if (url.endsWith('/api/v1/qa/runs/run-1')) return Promise.resolve(response(finalAssistantRunSeen ? completedQaRun : pendingQaRun))
+      if (url.includes('/api/v3/runs/run-1/events?after_sequence=0')) return Promise.resolve(response({ schema_version: 'agent-run-event-page-v1', events: [], next_sequence: 0, has_more: false }))
+      if (url.endsWith('/api/v3/runs/run-1/events/stream')) {
+        agentTerminalReceived = true
+        return Promise.resolve(eventStream([{
+          schema_version: 'agent-run-sse-v3', event_id: 'event-1', run_id: 'run-1', sequence: 1, occurred_at: '2026-08-09T10:00:01Z', event_type: 'completed', payload: { status: 'completed' },
+        }]))
+      }
+      return Promise.resolve(response({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderWorkspace()
+
+    expect(await screen.findByText('Answer already rendered.')).toBeInTheDocument()
+    expect(await screen.findByText('Evidence is limited to the indexed sources.')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '查看引用证据' }).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('heading', { name: '引用证据' })).not.toBeInTheDocument()
   })
 
   it('uses the refreshed API Run instead of an optimistic created snapshot', async () => {
@@ -649,7 +724,7 @@ describe('assistant conversation workspace', () => {
     expect(screen.getByText('Direct response.')).toBeInTheDocument()
   })
 
-  it('renders the command details returned by a base command', async () => {
+  it('renders installed Skill activation statuses returned by /skills', async () => {
     const fetchMock = baseFetch()
     fetchMock.mockImplementation((input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input)
@@ -662,10 +737,24 @@ describe('assistant conversation workspace', () => {
         return Promise.resolve(response({
           command: 'skills',
           status: 'completed',
-          content: 'Current active Skills.',
+          content: 'Installed Skills and their activation status.',
           conversation_id: 'conversation-1',
           run: null,
-          commands: [commands[2]],
+          commands: [],
+          skills: [
+            {
+              name: 'summarize_document',
+              version: '1.0.0',
+              description: 'Summarize one document',
+              active: true,
+            },
+            {
+              name: 'compare_sources',
+              version: '1.0.0',
+              description: 'Compare published sources',
+              active: false,
+            },
+          ],
         }, 202))
       }
       return Promise.resolve(response({}))
@@ -680,10 +769,11 @@ describe('assistant conversation workspace', () => {
     if (!sendButton) throw new Error('send control not rendered')
     fireEvent.click(sendButton)
 
-    expect(await screen.findByText('Current active Skills.')).toBeInTheDocument()
-    expect(screen.getByText('/summarize')).toBeInTheDocument()
+    expect(await screen.findByText('Installed Skills and their activation status.')).toBeInTheDocument()
+    expect(screen.getByText('summarize_document')).toBeInTheDocument()
     expect(screen.getByText('Summarize one document')).toBeInTheDocument()
-    expect(screen.getByText('<document>')).toBeInTheDocument()
+    expect(screen.getByText('已激活')).toBeInTheDocument()
+    expect(screen.getByText('未激活')).toBeInTheDocument()
   })
 
   it('keeps command notices in chronological order and scrolls to new timeline items', async () => {
@@ -721,6 +811,7 @@ describe('assistant conversation workspace', () => {
           conversation_id: 'conversation-1',
           run: null,
           commands: [],
+          skills: [],
         }, 202))
       }
       return Promise.resolve(response({}))
@@ -795,7 +886,7 @@ describe('assistant conversation workspace', () => {
     ))
   })
 
-  it('shows the evidence sidebar only for a grounded Run with citations', async () => {
+  it('keeps the evidence sidebar collapsed for a grounded Run until opened', async () => {
     const grounded = assistantRun({
       run_kind: 'grounded_qa',
       assistant_message: null,
@@ -822,7 +913,11 @@ describe('assistant conversation workspace', () => {
     vi.stubGlobal('fetch', fetchMock)
     renderWorkspace()
 
-    expect(await screen.findByRole('heading', { name: '引用证据' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '查看引用证据' })).toBeInTheDocument()
     expect(screen.getByText('Grounded response.')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '引用证据' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '查看引用证据' }))
+    expect(await screen.findByRole('heading', { name: '引用证据' })).toBeInTheDocument()
   })
 })

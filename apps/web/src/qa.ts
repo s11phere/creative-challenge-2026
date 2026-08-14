@@ -71,6 +71,7 @@ export type SkillVersion = {
   version: string
   content_sha256: string
   description: string
+  active: boolean
   permissions: string[]
   required_capabilities: string[]
   budget: {
@@ -113,9 +114,18 @@ export type AssistantCommand = {
   input_mode: string
 }
 
+export type AssistantSkillStatus = {
+  name: string
+  version: string
+  description: string
+  active: boolean
+}
+
 export type AssistantRun = {
   run_id: string
   user_message_id: string
+  created_at: string
+  updated_at: string
   status: string
   run_kind: 'assistant_turn' | 'grounded_qa' | 'skill' | 'context_compaction'
   error_code: string | null
@@ -124,6 +134,16 @@ export type AssistantRun = {
     skill: { name: string; version: string; content_sha256: string } | null
   }
   model_identity: string
+  reasoning_profile: {
+    schema_version: string
+    requested_effort: string
+    effective_effort: string
+    provider: string
+    model: string
+    mapping_version: string
+    mode: string
+    downgrade_reason: string
+  }
   assistant_message: { message_id: string; content: string } | null
   clarification: {
     clarification_id: string
@@ -211,6 +231,7 @@ export type AssistantCommandResult = {
   conversation_id: string | null
   run: AssistantRun | null
   commands: AssistantCommand[]
+  skills: AssistantSkillStatus[]
 }
 
 export type AssistantTurnResult = AssistantRun | AssistantCommandResult
@@ -356,6 +377,13 @@ export function fetchSkills(signal?: AbortSignal): Promise<SkillVersion[]> {
   return request('/api/v1/skills', { signal })
 }
 
+export function setSkillActivation(name: string, active: boolean): Promise<SkillVersion> {
+  return request(`/api/v1/skills/${encodeURIComponent(name)}/activation`, {
+    method: 'PATCH',
+    body: JSON.stringify({ active }),
+  })
+}
+
 export type PersonalSkill = {
   name: string
   version: string
@@ -404,6 +432,13 @@ export function deletePersonalSkill(name: string): Promise<{ status: string }> {
 
 export function activatePersonalSkill(name: string): Promise<PersonalSkill> {
   return request(`/api/v1/skills/personal/${encodeURIComponent(name)}/activate`, { method: 'POST' })
+}
+
+export function setPersonalSkillActivation(name: string, active: boolean): Promise<PersonalSkill> {
+  return request(`/api/v1/skills/personal/${encodeURIComponent(name)}/activation`, {
+    method: 'PATCH',
+    body: JSON.stringify({ active }),
+  })
 }
 
 export type SkillDraft = {

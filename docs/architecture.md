@@ -14,19 +14,30 @@ each action. This closes a development vertical slice only; quality remains prov
 
 ## Current Skill and Assistant Contract (2026-08-11)
 
-The runtime exposes the existing Skills plus active provisional
-`research_reading_workflow 1.1.0` and `exam_preparation_workflow 1.2.1`. The inactive
-`course_project_workflow 1.0.0` contract remains installed for future implementation.
-Research and Exam Preparation are present in the catalog; new Runs use only the
-current pinned identity. Historical Skill packages, prompt versions, version activation,
-rollback, cleanup APIs, and the `knowledge_qa` adapter have been removed; persisted Runs are not
-recovered through compatibility code.
+The runtime exposes every user-facing built-in Skill through the activation catalog. Installed
+Skills, including `exam_preparation_workflow` and `course_project_workflow`, are active by default
+and can be toggled without restarting. `assistant_agent` remains an internal root runtime package:
+it is pinned by the Worker but never appears in Web management, `/skills`, command catalogs, or
+the native Skill route context. New Runs use only the current pinned identity. Historical Skill
+packages, prompt versions, version activation, rollback, cleanup APIs, and the `knowledge_qa`
+adapter have been removed; persisted Runs are not recovered through compatibility code.
+
+Installed and personal Skills are active by default. ADR-021 adds a durable activation toggle that
+updates the QA and Assistant registries before the API response returns. The next Assistant turn
+rebuilds its catalog from those active pointers; an already-created Run retains its fixed pin.
 
 All new Assistant Runs use only native Tool-use v2. The former text-JSON executor, feature flag,
 compatibility recovery, v1 contracts, synthetic fixture, evaluator, and v1-only tests are absent.
 The authoritative event timeline is agent-run-sse-v4 from /api/v3; /api/v2 remains the product Run
 and command API and does not select or recover a legacy executor. Historical sections below describe
 completed implementation stages, not supported runtime paths.
+
+User-correctable native Tool failures are recorded as bounded, redacted observations and exposed to
+the next model turn as stable error codes plus actionable summaries. The runtime keeps dependency,
+budget, cancellation, schema, and internal failures fail-closed. When a verified knowledge answer
+could not complete a requested workspace delivery, the final Assistant message deterministically
+adds the server-owned delivery fact and a next step; raw exceptions, paths, command output, source
+content, and provider details remain excluded from checkpoints, traces, SSE, and final messages.
 
 Phase 4 (Skill Creator) adds `skill_creator 1.0.0`（manifest v2 + `invocation`，`command:
 create-skill`，`execution_mode: agent_loop`，alias `skill`）to the assistant catalog and six
@@ -802,6 +813,7 @@ Docker Compose 编排，定义 5 个基础长期服务、1 个一次性迁移服
 | `versions/0a1b2c3d4e5f_add_conversation_reasoning_profiles.py` | Persists Conversation effort defaults and per-Run `reasoning-profile-v1`; downgrade rejects changed preference or mapping data |
 | `versions/b1c2d3e4f5a6_add_conversation_context_summaries.py` | Adds rolling summaries plus standalone Skill request/sensitivity fields; downgrade removes only Step 5 schema |
 | `versions/a3b4c5d6e7f8_add_memory_entries.py` | 阶段 5 迁移：`memory_entries`（content-addressed 唯一哈希、pgvector `Vector(768)`、sensitivity/entry_type/source_kind check、`expires_at` 可选、frequency 计数），IVFFlat cosine 向量索引 + 来源/更新排序索引 |
+| `versions/b3c4d5e6f7a8_add_skill_activation_enabled_flag.py` | Adds `skill_activations.active`, defaulting existing and new installed Skills to enabled while retaining the immutable version pin |
 
 迁移链还包含 Grounded QA、attempt lease、Runtime checkpoint、审批、派生知识和生命周期 revision。
 `ConversationRun` 是新旧 Run 的共享父身份：`qa_runs` 仅保留 Grounded QA 投影及其 Evidence/Citation/
