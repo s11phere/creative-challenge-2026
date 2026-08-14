@@ -7,6 +7,9 @@ the production ``DeterministicWorkflowExecutor`` plus the registered Grounded QA
 adapters; Skills without a
 registered adapter, or that need a database which is unavailable, are reported as
 ``run_error`` without blocking the rest of the survey.
+
+`exam_preparation_workflow` uses a synthetic-only structural adapter backed by the
+same application artifact builders. It never invokes a provider or serializes bodies.
 """
 
 from __future__ import annotations
@@ -35,6 +38,14 @@ from agent_runtime import (
     RuntimeExecutionResult,
     SkillPackage,
 )
+from application.exam_preparation import (
+    _diagnosis,
+    _diagnostic_paper,
+    _mock_paper,
+    _review_cards,
+    _review_plan,
+    _study_guide,
+)
 from application.skills import (
     GroundedQASkillAdapter,
     GroundedQASkillConfig,
@@ -50,7 +61,7 @@ from domain.agent_runtime import AgentRun, AgentRunContext
 from infrastructure.database import Database
 from infrastructure.qa_execution import GroundedQAExecutor, qa_execution_versions
 from infrastructure.qa_persistence import PostgresGroundedQARepository, PostgresQAEventStore
-from model_gateway import GatewayConfig, ModelGateway, create_model_gateway
+from model_gateway import GatewayConfig, ModelGateway, ModelProvider, create_model_gateway
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = REPOSITORY_ROOT / "skills"
@@ -138,6 +149,8 @@ class SkillEvalProbeRunner:
             return await self._run_fixture(package, pin, case, fixture, started)
         if package.manifest.name in _QA_BACKED_SKILLS:
             return await self._run_qa_skill(package, pin, case, started)
+        if package.manifest.name == "exam_preparation_workflow":
+            return _exam_observation(case, started)
         return _error_observation(case, "SKILL_EVAL_NO_ADAPTER", started)
 
     async def _run_fixture(
@@ -256,6 +269,131 @@ def _error_observation(case: SkillEvalCase, error: str, started: float) -> Skill
     )
 
 
+def _exam_observation(case: SkillEvalCase, started: float) -> SkillEvalObservation:
+    """Execute body-free synthetic checks against the registered Exam application adapter."""
+    session_id = uuid5(_EVAL_NAMESPACE, case.case_id)
+    scenario = case.case_id
+    paper = (
+        _mock_paper(session_id)
+        if "mock" in scenario or "six-question" in scenario or "hidden-answer" in scenario
+        else _diagnostic_paper(session_id, adaptive="adaptive" in scenario)
+    )
+    evidence_id = str(uuid5(_EVAL_NAMESPACE, f"evidence-{case.case_id}"))
+    public = paper.public_payload
+    sections = cast(list[dict[str, object]], public["sections"])
+    for section in sections:
+        for question in cast(list[dict[str, object]], section["questions"]):
+            question["citation_ids"] = [evidence_id]
+    required_ids = [
+        str(question["question_id"])
+        for section in sections
+        for question in cast(list[dict[str, object]], section["questions"])
+    ]
+    action = (
+        "submit_mock_exam"
+        if paper.kind == "mock"
+        else ("submit_adaptive_answers" if paper.kind == "adaptive" else "submit_broad_answers")
+    )
+    interaction: dict[str, object] = {
+        "interaction_id": f"interaction-{case.case_id}",
+        "interaction_version": "exam-interaction-v1",
+        "kind": "mock_exam" if paper.kind == "mock" else "quiz",
+        "title": str(paper.public_payload["title"]),
+        "instructions": ["Answers remain hidden before submission."],
+        "progress": {"current": 2, "total": 9, "label": "synthetic"},
+        "submission": {
+            "submission_id": f"submission-{case.case_id}",
+            "action": action,
+            "required_question_ids": required_ids,
+            "locks_answers": True,
+            "allow_partial": False,
+        },
+        "fallback": {
+            "mode": "numbered_text",
+            "objective_answer_format": "Q1:A, Q2:BD",
+            "subjective_answer_format": (
+                "Use one labelled section per question, for example: Q3: <your answer>."
+            ),
+        },
+        "paper": paper.public_payload,
+    }
+    output: dict[str, object] = {
+        "schema_version": "exam-preparation-workflow-output-v3",
+        "status": "in_progress",
+        "capability": "mock_exam"
+        if paper.kind == "mock"
+        else ("adaptive_check" if paper.kind == "adaptive" else "diagnose"),
+        "interaction_model": interaction,
+        "course_map": [
+            {
+                "chapter": "综合",
+                "topics": ["合成知识点"],
+                "prerequisites": [],
+                "coverage": "covered",
+                "weight_basis": "historical_inference",
+                "citation_ids": [evidence_id],
+            }
+        ],
+        "diagnostic_result": [{**item, "citation_ids": [evidence_id]} for item in _diagnosis()],
+        "review_plan": _review_plan(),
+        "study_guide": _study_guide(),
+        "review_card_preview": [
+            {**item, "citation_ids": [evidence_id]} for item in _review_cards()
+        ],
+        "write": {"status": "blocked", "code": "SKILL_WRITE_REQUIRES_APPROVAL", "side_effects": 0},
+        "review": {
+            "paper_id": str(paper.paper_id),
+            "paper_version": 1,
+            "submission_id": f"submission-{case.case_id}",
+            "suggested_score": 5,
+            "max_score": 10,
+            "items": [
+                {
+                    "question_id": "Q1",
+                    "kind": "short_answer",
+                    "reference_answer": "合成参考答案",
+                    "explanation": "合成解析",
+                    "rubric": [
+                        {
+                            "criterion": "正确性",
+                            "max_points": 10,
+                            "awarded_points": 5,
+                            "feedback": "需要人工复核",
+                        }
+                    ],
+                    "suggested_score": 5,
+                    "max_score": 10,
+                    "grading_confidence": "low",
+                    "requires_human_review": True,
+                    "citation_ids": [evidence_id],
+                }
+            ],
+            "chapter_performance": [{**_diagnosis()[0], "citation_ids": [evidence_id]}],
+        },
+        "citations": [{"citation_id": "C1", "evidence_id": evidence_id}],
+        "next_action": action,
+    }
+    if "insufficient-evidence" in scenario:
+        output.update(
+            {
+                "status": "refused",
+                "capability": "diagnose",
+                "next_action": "provide_setup",
+                "refusal": {
+                    "code": "SKILL_EVIDENCE_INSUFFICIENT",
+                    "message": "Synthetic evidence is insufficient.",
+                },
+            }
+        )
+    return SkillEvalObservation(
+        case_id=case.case_id,
+        status="complete",
+        output=output,
+        tool_calls=("exam_prepare",),
+        latency_ms=(perf_counter() - started) * 1000,
+    )
+
+
 def _load_cases(path: Path) -> tuple[SkillEvalCase | None, ...]:
     """Parse a JSONL eval case file; invalid lines become ``None`` for case_invalid."""
     parsed: list[SkillEvalCase | None] = []
@@ -362,7 +500,7 @@ def _create_gateway(model: str) -> ModelGateway:
 
         return create_model_gateway(
             GatewayConfig(
-                provider=settings.model_provider,
+                provider=ModelProvider(settings.model_provider),
                 endpoint=settings.model_endpoint,
                 api_key=secret(settings.model_api_key),
                 fast_chat_endpoint=settings.fast_chat_endpoint,

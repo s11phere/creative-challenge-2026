@@ -1,0 +1,26 @@
+schema_version: exam-demo-manifest-v1
+dataset_id: exam-preparation-v1
+license: CC0-1.0
+classification: public_demo
+origin: repository_fixture
+quality_status: development/provisional
+allowed_uses:
+  - retrieval
+  - question_generation
+  - evaluation
+documents:
+  - path: syllabus.md
+    sha256: de597a7be172f8364f2dc3b9d5a047c2b0b4d98ac44857602515fe48202e0115
+  - path: complexity-linear.md
+    sha256: b28b3ceb75e411e27a12f782acb3639c94273364bb0ad700d8e1c2b99fe57ae8
+  - path: trees-heaps-hashing.md
+    sha256: 64ed634ca7212402fbde348a7eebea579f9ae98a2ed33b297b150f9d6dc54f46
+  - path: graphs-sorting.md
+    sha256: 281318a79023032a8e81d88c01baf64fbc0f4067b3de261f3c2276b0ada1f7f8
+  - path: historical-blueprint.md
+    sha256: f234a0ca24e03b4927a7b401cf74f4123f6355575e98561b666b85d93fa3cfde
+    allowed_uses:
+      - historical_structure_inference
+      - evaluation
+    forbidden_uses:
+      - verbatim_question_reproduction

@@ -215,6 +215,59 @@ export type AssistantCommandResult = {
 
 export type AssistantTurnResult = AssistantRun | AssistantCommandResult
 
+export type ExamQuestion = {
+  question_id: string
+  kind: 'single_choice' | 'multiple_choice' | 'short_answer' | 'calculation' | 'proof' | 'programming'
+  prompt: string
+  options?: Array<{ option_id: string; text: string }>
+  points: number
+  required: boolean
+  citation_ids: string[]
+}
+
+export type ExamInteraction = {
+  interaction_id: string
+  interaction_version: 'exam-interaction-v1'
+  kind: string
+  title: string
+  instructions: string[]
+  progress: { current: number; total: number; label: string }
+  paper?: {
+    paper_id: string
+    paper_version: number
+    title: string
+    suggested_minutes: number
+    total_points: number
+    sections: Array<{ section_id: string; title: string; questions: ExamQuestion[] }>
+  }
+  content?: unknown
+  next_action: string | null
+}
+
+export type ExamSession = {
+  schema_version: 'exam-session-v1'
+  session_id: string
+  conversation_id: string
+  phase: string
+  revision: number
+  interaction: ExamInteraction
+}
+
+export type ExamMessageInteraction = {
+  schema_version: 'exam-message-interaction-v1'
+  session_id: string
+  anchor_run_id: string
+  anchor_message_id: string
+  interaction: ExamInteraction
+  submitted: boolean
+}
+
+export type ExamAnswer = {
+  question_id: string
+  selected_options?: string[]
+  response_text?: string
+}
+
 function isAssistantRun(value: AssistantTurnResult): value is AssistantRun {
   return 'run_id' in value
 }
@@ -601,6 +654,40 @@ export function fetchAssistantConversationRuns(
   return request<{ runs: AssistantRun[] }>(`/api/v2/conversations/${conversationId}/runs`, {
     signal,
   }).then((response) => response.runs ?? [])
+}
+
+export function fetchExamSessions(
+  conversationId: string,
+  signal?: AbortSignal,
+): Promise<ExamSession[]> {
+  return request(`/api/v3/conversations/${conversationId}/exam-sessions`, { signal })
+}
+
+export function fetchExamMessageInteractions(
+  conversationId: string,
+  signal?: AbortSignal,
+): Promise<ExamMessageInteraction[]> {
+  return request(`/api/v4/conversations/${conversationId}/exam-interactions`, { signal })
+}
+
+export function submitExamAction(
+  session: ExamSession,
+  answers: ExamAnswer[],
+): Promise<ExamSession> {
+  const paper = session.interaction.paper
+  const nonce = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+  return request(`/api/v3/exam-sessions/${session.session_id}/actions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      interaction_id: session.interaction.interaction_id,
+      action: session.interaction.next_action,
+      idempotency_key: nonce,
+      submission_id: paper ? nonce : undefined,
+      paper_id: paper?.paper_id,
+      paper_version: paper?.paper_version,
+      answers,
+    }),
+  })
 }
 
 export function cancelAssistantRun(runId: string): Promise<AssistantRun> {

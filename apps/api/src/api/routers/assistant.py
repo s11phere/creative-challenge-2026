@@ -17,6 +17,7 @@ from application.assistant import (
     CommandParseError,
     ConversationRunApplicationError,
     ConversationWorkspaceError,
+    ParsedAssistantCommand,
 )
 from domain.assistant_sse import AssistantEventStore, AssistantEventType
 from domain.conversation_run import ConversationRun, ConversationRunKind, ConversationRunStatus
@@ -174,6 +175,24 @@ async def submit_turn(
     commands = request.app.state.assistant_command_service
     try:
         parsed = commands.parser.parse(body.content, declared_command=body.command)
+        if parsed.descriptor is None and request.app.state.exam_continuation_enabled:
+            sessions = await request.app.state.exam_repository.list_for_conversation(
+                conversation_id
+            )
+            active = [
+                session
+                for session in sessions
+                if session.owner_id == "local" and session.phase.value != "completed"
+            ]
+            if active:
+                descriptor = commands.catalog.find("prepare-exam")
+                if descriptor is not None:
+                    parsed = ParsedAssistantCommand(
+                        descriptor=descriptor,
+                        arguments={},
+                        argument_text=body.content,
+                        content=body.content,
+                    )
         if parsed.descriptor is not None:
             if parsed.descriptor.kind is AssistantCommandKind.SKILL:
                 executed = await commands.invoke_skill(

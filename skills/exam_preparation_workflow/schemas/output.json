@@ -2,27 +2,276 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "status", "phase", "citations", "next_action"],
+  "required": ["schema_version", "status", "capability", "interaction_model", "citations", "next_action"],
   "properties": {
-    "schema_version": {"const": "exam-preparation-workflow-output-v1"},
+    "schema_version": {"const": "exam-preparation-workflow-output-v3"},
     "status": {"enum": ["in_progress", "waiting_user_input", "waiting_approval", "completed", "refused"]},
-    "phase": {"enum": ["map_course", "broad_quiz", "adaptive_quiz", "diagnose", "review_plan", "card_preview", "mock_exam", "mock_review"]},
-    "course_map": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["chapter", "topics", "weight_basis", "citation_ids"], "properties": {"chapter": {"type": "string"}, "topics": {"type": "array", "items": {"type": "string"}}, "weight_basis": {"enum": ["explicit_source", "historical_inference", "unknown"]}, "citation_ids": {"type": "array", "items": {"type": "string"}}}}},
-    "diagnostic_quiz": {"$ref": "#/$defs/questionPaper"},
-    "diagnostic_review": {"$ref": "#/$defs/review"},
-    "diagnostic_result": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["chapter", "mastery", "question_ids", "citation_ids"], "properties": {"chapter": {"type": "string"}, "mastery": {"enum": ["strong", "needs_review", "uncertain", "not_tested"]}, "question_ids": {"type": "array", "items": {"type": "string"}}, "recommended_action": {"type": "string"}, "citation_ids": {"type": "array", "items": {"type": "string"}}}}},
-    "review_plan": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["goal", "tasks", "completion_criteria", "citation_ids"], "properties": {"goal": {"type": "string"}, "tasks": {"type": "array", "items": {"type": "string"}}, "completion_criteria": {"type": "string"}, "citation_ids": {"type": "array", "items": {"type": "string"}}}}},
-    "review_card_preview": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["front", "back", "citation_ids"], "properties": {"front": {"type": "string"}, "back": {"type": "string"}, "citation_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}}}}},
-    "mock_exam_paper": {"$ref": "#/$defs/questionPaper"},
-    "mock_exam_review": {"$ref": "#/$defs/review"},
+    "capability": {"enum": ["diagnose", "adaptive_check", "review_plan", "study_guide", "review_cards", "mock_exam", "review"]},
+    "interaction_model": {"$ref": "#/$defs/interaction"},
+    "course_map": {"type": "array", "items": {"$ref": "#/$defs/chapter"}},
+    "diagnostic_result": {"type": "array", "items": {"$ref": "#/$defs/diagnosis"}},
+    "review_plan": {"type": "array", "items": {"$ref": "#/$defs/planStage"}},
+    "study_guide": {"$ref": "#/$defs/studyGuide"},
+    "review_card_preview": {"type": "array", "items": {"$ref": "#/$defs/reviewCard"}},
+    "write": {"$ref": "#/$defs/writeState"},
+    "review": {"$ref": "#/$defs/review"},
     "citations": {"type": "array", "items": {"$ref": "#/$defs/citation"}},
-    "next_action": {"enum": ["submit_broad_answers", "complete_adaptive_quiz", "approve_cards", "start_mock_exam", "submit_mock_exam", "reveal_mock_exam_answers", "complete"]},
-    "refusal": {"type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": {"code": {"type": "string"}, "message": {"type": "string"}}}
+    "next_action": {"type": ["string", "null"], "maxLength": 200},
+    "refusal": {"$ref": "#/$defs/refusal"}
   },
   "$defs": {
-    "questionPaper": {"type": "object", "additionalProperties": false, "required": ["paper_id", "questions"], "properties": {"paper_id": {"type": "string"}, "suggested_minutes": {"type": "integer", "minimum": 1}, "questions": {"type": "array", "items": {"$ref": "#/$defs/question"}}}},
-    "question": {"type": "object", "additionalProperties": false, "required": ["question_id", "kind", "prompt", "options", "chapter", "difficulty", "points", "citation_ids"], "properties": {"question_id": {"type": "string"}, "kind": {"enum": ["single_choice", "multiple_choice"]}, "prompt": {"type": "string"}, "options": {"type": "array", "minItems": 2, "items": {"type": "object", "additionalProperties": false, "required": ["option_id", "text"], "properties": {"option_id": {"type": "string"}, "text": {"type": "string"}}}}, "chapter": {"type": "string"}, "difficulty": {"enum": ["easy", "medium", "hard"]}, "points": {"type": "number", "exclusiveMinimum": 0}, "citation_ids": {"type": "array", "items": {"type": "string"}}}},
-    "review": {"type": "object", "additionalProperties": false, "required": ["paper_id", "items"], "properties": {"paper_id": {"type": "string"}, "score": {"type": "number", "minimum": 0}, "items": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["question_id", "correct_options", "explanation", "citation_ids"], "properties": {"question_id": {"type": "string"}, "correct_options": {"type": "array", "minItems": 1, "items": {"type": "string"}}, "explanation": {"type": "string"}, "citation_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}}}}}}},
-    "citation": {"type": "object", "additionalProperties": false, "required": ["citation_id", "evidence_id"], "properties": {"citation_id": {"type": "string"}, "evidence_id": {"type": "string", "format": "uuid"}}}
+    "interaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interaction_id", "interaction_version", "kind", "title", "instructions", "progress", "submission", "fallback"],
+      "properties": {
+        "interaction_id": {"type": "string", "minLength": 1, "maxLength": 100},
+        "interaction_version": {"const": "exam-interaction-v1"},
+        "kind": {"enum": ["setup_form", "quiz", "mock_exam", "review_plan", "study_guide", "review_cards", "exam_review"]},
+        "title": {"type": "string", "minLength": 1, "maxLength": 160},
+        "instructions": {"type": "array", "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 400}},
+        "progress": {"$ref": "#/$defs/progress"},
+        "paper": {"$ref": "#/$defs/questionPaper"},
+        "sections": {"type": "array", "items": {"$ref": "#/$defs/presentationSection"}},
+        "submission": {"$ref": "#/$defs/submission"},
+        "fallback": {"$ref": "#/$defs/fallback"}
+      }
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current", "total", "label"],
+      "properties": {
+        "current": {"type": "integer", "minimum": 1},
+        "total": {"type": "integer", "minimum": 1},
+        "label": {"type": "string", "minLength": 1, "maxLength": 120}
+      }
+    },
+    "submission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["submission_id", "action", "required_question_ids", "locks_answers", "allow_partial"],
+      "properties": {
+        "submission_id": {"type": "string", "minLength": 1, "maxLength": 100},
+        "action": {"enum": ["provide_setup", "submit_broad_answers", "submit_adaptive_answers", "approve_review_cards", "start_mock_exam", "submit_mock_exam", "reveal_mock_exam_answers", "complete"]},
+        "required_question_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 100}},
+        "locks_answers": {"type": "boolean"},
+        "allow_partial": {"type": "boolean"}
+      }
+    },
+    "fallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "objective_answer_format", "subjective_answer_format"],
+      "properties": {
+        "mode": {"const": "numbered_text"},
+        "objective_answer_format": {"const": "Q1:A, Q2:BD"},
+        "subjective_answer_format": {"const": "Use one labelled section per question, for example: Q3: <your answer>."}
+      }
+    },
+    "questionPaper": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paper_id", "paper_version", "title", "suggested_minutes", "total_points", "sections"],
+      "properties": {
+        "paper_id": {"type": "string", "minLength": 1, "maxLength": 100},
+        "paper_version": {"type": "integer", "minimum": 1},
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "suggested_minutes": {"type": "integer", "minimum": 1, "maximum": 360},
+        "total_points": {"type": "number", "exclusiveMinimum": 0},
+        "sections": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/questionSection"}}
+      }
+    },
+    "questionSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["section_id", "title", "suggested_minutes", "questions"],
+      "properties": {
+        "section_id": {"type": "string", "minLength": 1, "maxLength": 100},
+        "title": {"type": "string", "minLength": 1, "maxLength": 160},
+        "suggested_minutes": {"type": "integer", "minimum": 1},
+        "questions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/question"}}
+      }
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["question_id", "kind", "prompt", "chapter", "difficulty", "points", "required", "citation_ids"],
+      "properties": {
+        "question_id": {"type": "string", "minLength": 1, "maxLength": 100},
+        "kind": {"enum": ["single_choice", "multiple_choice", "short_answer", "calculation", "proof", "programming"]},
+        "prompt": {"type": "string", "minLength": 1, "maxLength": 8000},
+        "options": {"type": "array", "minItems": 2, "maxItems": 12, "items": {"$ref": "#/$defs/option"}},
+        "chapter": {"type": "string", "minLength": 1, "maxLength": 200},
+        "difficulty": {"enum": ["easy", "medium", "hard"]},
+        "points": {"type": "number", "exclusiveMinimum": 0},
+        "required": {"type": "boolean"},
+        "citation_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"enum": ["single_choice", "multiple_choice"]}}}, "then": {"required": ["options"]}},
+        {"if": {"properties": {"kind": {"enum": ["short_answer", "calculation", "proof", "programming"]}}}, "then": {"not": {"required": ["options"]}}}
+      ]
+    },
+    "option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["option_id", "text"],
+      "properties": {
+        "option_id": {"type": "string", "pattern": "^[A-L]$"},
+        "text": {"type": "string", "minLength": 1, "maxLength": 1000}
+      }
+    },
+    "presentationSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["section_id", "heading", "items"],
+      "properties": {
+        "section_id": {"type": "string", "minLength": 1, "maxLength": 100},
+        "heading": {"enum": ["learning_objectives", "core_concepts", "formulas_or_methods", "common_mistakes", "worked_examples", "self_checks", "plan_stages", "review_cards", "exam_feedback"]},
+        "items": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 4000}},
+        "citation_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "chapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chapter", "topics", "prerequisites", "coverage", "weight_basis", "citation_ids"],
+      "properties": {
+        "chapter": {"type": "string", "minLength": 1},
+        "topics": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "prerequisites": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "coverage": {"enum": ["covered", "partial", "missing"]},
+        "weight_basis": {"enum": ["explicit_source", "historical_inference", "unknown"]},
+        "citation_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "diagnosis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chapter", "mastery", "question_ids", "prerequisite_impact", "recommended_action", "citation_ids"],
+      "properties": {
+        "chapter": {"type": "string", "minLength": 1},
+        "mastery": {"enum": ["strong", "needs_review", "uncertain", "not_tested"]},
+        "question_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "prerequisite_impact": {"type": "string", "maxLength": 1000},
+        "recommended_action": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "citation_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "planStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage_id", "goal", "resources", "tasks", "completion_criteria", "retest_checkpoint", "citation_ids"],
+      "properties": {
+        "stage_id": {"type": "string", "minLength": 1},
+        "goal": {"type": "string", "minLength": 1},
+        "resources": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "tasks": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "completion_criteria": {"type": "string", "minLength": 1},
+        "retest_checkpoint": {"type": "string", "minLength": 1},
+        "citation_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "studyGuide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["learning_objectives", "core_concepts", "formulas_or_methods", "common_mistakes", "worked_examples", "self_checks"],
+      "properties": {
+        "learning_objectives": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "core_concepts": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "formulas_or_methods": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "common_mistakes": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "worked_examples": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "self_checks": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "reviewCard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["card_id", "front", "back", "citation_ids"],
+      "properties": {
+        "card_id": {"type": "string", "minLength": 1},
+        "front": {"type": "string", "minLength": 1},
+        "back": {"type": "string", "minLength": 1},
+        "citation_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "writeState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "code", "side_effects"],
+      "properties": {
+        "status": {"const": "blocked"},
+        "code": {"const": "SKILL_WRITE_REQUIRES_APPROVAL"},
+        "side_effects": {"const": 0}
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paper_id", "paper_version", "submission_id", "suggested_score", "max_score", "items", "chapter_performance"],
+      "properties": {
+        "paper_id": {"type": "string", "minLength": 1},
+        "paper_version": {"type": "integer", "minimum": 1},
+        "submission_id": {"type": "string", "minLength": 1},
+        "suggested_score": {"type": "number", "minimum": 0},
+        "max_score": {"type": "number", "exclusiveMinimum": 0},
+        "items": {"type": "array", "items": {"$ref": "#/$defs/reviewItem"}},
+        "chapter_performance": {"type": "array", "items": {"$ref": "#/$defs/diagnosis"}}
+      }
+    },
+    "reviewItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["question_id", "kind", "reference_answer", "explanation", "rubric", "suggested_score", "max_score", "grading_confidence", "requires_human_review", "citation_ids"],
+      "properties": {
+        "question_id": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["single_choice", "multiple_choice", "short_answer", "calculation", "proof", "programming"]},
+        "correct_options": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-L]$"}},
+        "reference_answer": {"type": "string", "minLength": 1},
+        "explanation": {"type": "string", "minLength": 1},
+        "rubric": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/rubricCriterion"}},
+        "suggested_score": {"type": "number", "minimum": 0},
+        "max_score": {"type": "number", "exclusiveMinimum": 0},
+        "grading_confidence": {"enum": ["low", "medium", "high"]},
+        "requires_human_review": {"type": "boolean"},
+        "static_code_review_only": {"type": "boolean"},
+        "citation_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "programming"}}}, "then": {"required": ["static_code_review_only"], "properties": {"static_code_review_only": {"const": true}}}},
+        {"if": {"properties": {"grading_confidence": {"const": "low"}}}, "then": {"properties": {"requires_human_review": {"const": true}}}}
+      ]
+    },
+    "rubricCriterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["criterion", "max_points", "awarded_points", "feedback"],
+      "properties": {
+        "criterion": {"type": "string", "minLength": 1},
+        "max_points": {"type": "number", "exclusiveMinimum": 0},
+        "awarded_points": {"type": "number", "minimum": 0},
+        "feedback": {"type": "string", "minLength": 1}
+      }
+    },
+    "citation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["citation_id", "evidence_id"],
+      "properties": {
+        "citation_id": {"type": "string", "minLength": 1},
+        "evidence_id": {"type": "string", "format": "uuid"}
+      }
+    },
+    "refusal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"enum": ["SKILL_NATIVE_ADAPTER_UNAVAILABLE", "SKILL_RESOURCE_SCOPE_REQUIRED", "SKILL_EVIDENCE_INSUFFICIENT", "SKILL_INVALID_SUBMISSION"]},
+        "message": {"type": "string", "minLength": 1, "maxLength": 1000}
+      }
+    }
   }
 }

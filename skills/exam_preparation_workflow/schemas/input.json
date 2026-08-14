@@ -9,11 +9,28 @@
     "exam_date": {"type": "string", "format": "date-time"},
     "target_minutes": {"type": "integer", "minimum": 15, "maximum": 360},
     "resource_reference": {"type": "string", "minLength": 1, "maxLength": 2000},
-    "diagnostic_answers": {"type": "array", "maxItems": 20, "items": {"$ref": "#/$defs/answer"}},
-    "mock_exam_answers": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/answer"}},
-    "reveal_mock_exam_answers": {"type": "boolean", "default": false}
+    "interaction_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "paper_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "submission_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "capability": {"enum": ["diagnose", "adaptive_check", "review_plan", "study_guide", "review_cards", "mock_exam", "review"]},
+    "action": {"enum": ["submit_answers", "reveal_answers"]},
+    "answers": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/answer"}}
   },
   "$defs": {
-    "answer": {"type": "object", "additionalProperties": false, "required": ["question_id", "response"], "properties": {"question_id": {"type": "string", "minLength": 1, "maxLength": 100}, "response": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "maxLength": 20}}, "confidence": {"enum": ["low", "medium", "high"]}}}
+    "answer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["question_id"],
+      "properties": {
+        "question_id": {"type": "string", "minLength": 1, "maxLength": 100},
+        "selected_options": {"type": "array", "minItems": 1, "maxItems": 12, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 20}},
+        "response_text": {"type": "string", "minLength": 1, "maxLength": 12000},
+        "confidence": {"enum": ["low", "medium", "high"]}
+      },
+      "oneOf": [
+        {"required": ["selected_options"]},
+        {"required": ["response_text"]}
+      ]
+    }
   }
 }

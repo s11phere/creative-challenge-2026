@@ -24,6 +24,7 @@ _SAFE_COMMANDS = frozenset(
         "effort",
         "help",
         "new",
+        "prepare-exam",
         "research",
         "skill",
         "skills",

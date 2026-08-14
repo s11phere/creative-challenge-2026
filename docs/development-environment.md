@@ -179,6 +179,20 @@ RERANKER_ENDPOINT=http://tei-reranker:80
 RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 ```
 
+Exam Preparation 的真实结构生成要求 `fast_chat` 原生 Tool use；不支持时服务会返回
+`EXAM_MODEL_TOOL_USE_REQUIRED`，不会退化为自由文本题卷。DeepSeek 示例：
+
+```dotenv
+MODEL_PROVIDER=openai-compatible
+MODEL_ALLOW_EXTERNAL=true
+FAST_CHAT_ENDPOINT=<DeepSeek OpenAI-compatible endpoint>
+FAST_CHAT_API_KEY=<ignored-local-secret>
+FAST_CHAT_MODEL=deepseek-v4-flash
+```
+
+先运行 `uv run python scripts/exam_preparation_demo.py --validate-only`；真实 provider 抽检
+只可使用该 `public_demo` 语料，原始响应不得提交仓库。
+
 Replace the Chat endpoint, model, and key with values approved for the deployment. Enabling
 `MODEL_ALLOW_EXTERNAL=true` means retrieved document snippets and questions may be sent to that
 external provider; private or restricted sources require an explicit policy decision. After changing
