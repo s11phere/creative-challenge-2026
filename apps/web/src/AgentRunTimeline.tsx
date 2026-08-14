@@ -2,7 +2,6 @@ import {
   AlertCircle,
   BookOpenText,
   Check,
-  Clock3,
   FilePenLine,
   FileText,
   LoaderCircle,
@@ -378,38 +377,40 @@ export function AgentRunTimeline({
   ])].sort((left, right) => left - right)
 
   return (
-    <section className="chat-agent-timeline" data-status={run.status} aria-label="Agent 运行时间线">
-      <header className="chat-agent-timeline-header">
-        <span className="chat-agent-timeline-title">
-          <BookOpenText size={17} aria-hidden="true" />
-          <span><strong>Agent 运行时间线</strong></span>
-        </span>
-        <span className="chat-agent-timeline-status" data-status={run.status}>
-          <TimelineStatusIcon status={run.status} />{runStatusLabel(run.status)}
-        </span>
-      </header>
+    <section className="chat-agent-run" data-status={run.status} aria-label="Agent 运行时间线">
+      <section className="chat-agent-timeline" data-status={run.status}>
+        <header className="chat-agent-timeline-header">
+          <span className="chat-agent-timeline-title">
+            <BookOpenText size={17} aria-hidden="true" />
+            <span><strong>Agent 运行时间线</strong></span>
+          </span>
+          <span className="chat-agent-timeline-status" data-status={run.status}>
+            <TimelineStatusIcon status={run.status} />{runStatusLabel(run.status)}
+          </span>
+        </header>
 
-      <dl className="chat-agent-run-metadata">
-        {requestedEffort && <div><dt>请求强度</dt><dd>{requestedEffort}</dd></div>}
-        {effectiveEffort && <div><dt>实际强度</dt><dd>{effectiveEffort}</dd></div>}
-        {harnessVersion && <div><dt>Agent Harness</dt><dd>{harnessVersion}</dd></div>}
-        <div><dt>模型</dt><dd>{model}</dd></div>
-        <div><dt>输入 Token</dt><dd>{run.usage.input_tokens.toLocaleString('zh-CN')}</dd></div>
-        <div><dt>输出 Token</dt><dd>{run.usage.output_tokens.toLocaleString('zh-CN')}</dd></div>
-        <div><dt>实际 Token</dt><dd>{run.usage.total_tokens.toLocaleString('zh-CN')}</dd></div>
-        <div><dt>总耗时</dt><dd>{totalDuration === null ? '未记录' : formatDuration(totalDuration)}</dd></div>
-        {totalCacheRead > 0 && <div><dt>缓存读取 Token</dt><dd>{totalCacheRead.toLocaleString('zh-CN')}</dd></div>}
-        {totalCacheWrite > 0 && <div><dt>缓存写入 Token</dt><dd>{totalCacheWrite.toLocaleString('zh-CN')}</dd></div>}
-        {stopReason && <div><dt>停止原因</dt><dd>{stopReason}</dd></div>}
-        {terminalKind && <div><dt>终止类型</dt><dd>{terminalKindLabel(terminalKind)}</dd></div>}
-      </dl>
+        <dl className="chat-agent-run-metadata">
+          {requestedEffort && <div><dt>请求强度</dt><dd>{requestedEffort}</dd></div>}
+          {effectiveEffort && <div><dt>实际强度</dt><dd>{effectiveEffort}</dd></div>}
+          {harnessVersion && <div><dt>Agent Harness</dt><dd>{harnessVersion}</dd></div>}
+          <div><dt>模型</dt><dd>{model}</dd></div>
+          <div><dt>输入 Token</dt><dd>{run.usage.input_tokens.toLocaleString('zh-CN')}</dd></div>
+          <div><dt>输出 Token</dt><dd>{run.usage.output_tokens.toLocaleString('zh-CN')}</dd></div>
+          <div><dt>实际 Token</dt><dd>{run.usage.total_tokens.toLocaleString('zh-CN')}</dd></div>
+          <div><dt>总耗时</dt><dd>{totalDuration === null ? '未记录' : formatDuration(totalDuration)}</dd></div>
+          {totalCacheRead > 0 && <div><dt>缓存读取 Token</dt><dd>{totalCacheRead.toLocaleString('zh-CN')}</dd></div>}
+          {totalCacheWrite > 0 && <div><dt>缓存写入 Token</dt><dd>{totalCacheWrite.toLocaleString('zh-CN')}</dd></div>}
+          {stopReason && <div><dt>停止原因</dt><dd>{stopReason}</dd></div>}
+          {terminalKind && <div><dt>终止类型</dt><dd>{terminalKindLabel(terminalKind)}</dd></div>}
+        </dl>
 
-      {rootActivations.map((activation) => (
-        <p key={activation.event.event_id} className="chat-agent-skill-activation">
-          <BookOpenText size={15} aria-hidden="true" />
-          <span>Skill 已激活：<strong>{activation.skillName}</strong> v{activation.skillVersion}</span>
-        </p>
-      ))}
+        {rootActivations.map((activation) => (
+          <p key={activation.event.event_id} className="chat-agent-skill-activation">
+            <BookOpenText size={15} aria-hidden="true" />
+            <span>Skill 已激活：<strong>{activation.skillName}</strong> v{activation.skillVersion}</span>
+          </p>
+        ))}
+      </section>
 
       <ol className="chat-agent-iterations" aria-label="Agent 迭代记录">
         {iterations.map((iteration) => {
@@ -418,26 +419,6 @@ export function AgentRunTimeline({
           const iterationCache = cacheItems.filter((item) => item.iteration === iteration)
           return (
             <li key={iteration} className="chat-agent-iteration">
-              <div className="chat-agent-iteration-heading"><Clock3 size={15} aria-hidden="true" /><strong>第 {iteration} 轮</strong></div>
-              {iterationCache.map((item) => (
-                <details key={`cache-${item.iteration}`} className="chat-agent-cache-details">
-                  <summary>缓存详情</summary>
-                  <dl>
-                    <div><dt>状态</dt><dd>{item.mode ?? 'unsupported'}</dd></div>
-                    <div><dt>读取 Token</dt><dd>{item.readTokens.toLocaleString('zh-CN')}</dd></div>
-                    <div><dt>写入 Token</dt><dd>{item.writeTokens.toLocaleString('zh-CN')}</dd></div>
-                    {(item.visibleObservationBytes !== null || item.toolCount !== null) && (
-                      <div>
-                        <dt>上下文</dt>
-                        <dd>
-                          {item.visibleObservationBytes ?? 0} B 可见结果
-                          {item.toolCount !== null && ` · ${item.toolCount} 个工具`}
-                        </dd>
-                      </div>
-                    )}
-                  </dl>
-                </details>
-              ))}
               {iterationActivations.map((activation) => (
                 <p key={activation.event.event_id} className="chat-agent-skill-activation">
                   <BookOpenText size={15} aria-hidden="true" />
@@ -511,6 +492,25 @@ export function AgentRunTimeline({
                   })}
                 </div>
               ) : <p className="chat-agent-iteration-empty">正在规划下一步。</p>}
+              {iterationCache.map((item) => (
+                <details key={`cache-${item.iteration}`} className="chat-agent-cache-details">
+                  <summary>缓存详情</summary>
+                  <dl>
+                    <div><dt>状态</dt><dd>{item.mode ?? 'unsupported'}</dd></div>
+                    <div><dt>读取 Token</dt><dd>{item.readTokens.toLocaleString('zh-CN')}</dd></div>
+                    <div><dt>写入 Token</dt><dd>{item.writeTokens.toLocaleString('zh-CN')}</dd></div>
+                    {(item.visibleObservationBytes !== null || item.toolCount !== null) && (
+                      <div>
+                        <dt>上下文</dt>
+                        <dd>
+                          {item.visibleObservationBytes ?? 0} B 可见结果
+                          {item.toolCount !== null && ` · ${item.toolCount} 个工具`}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                </details>
+              ))}
             </li>
           )
         })}

@@ -318,6 +318,13 @@ describe('AgentRunTimeline', () => {
 
     expect(screen.getByText('native-tool-use-v2')).toBeInTheDocument()
     expect(screen.getByText('fake-fast-chat-v1')).toBeInTheDocument()
+    expect(document.querySelector('.chat-agent-timeline .chat-agent-iterations')).toBeNull()
+    expect(document.querySelector('.chat-agent-run > .chat-agent-iterations')).not.toBeNull()
+    expect(document.querySelector('.chat-agent-iteration-heading')).toBeNull()
+    const nativeTool = screen.getByText('knowledge_retrieve').closest('details')
+    const nativeCache = document.querySelector('.chat-agent-cache-details')
+    if (!nativeTool || !nativeCache) throw new Error('native Tool or cache details were not rendered')
+    expect(nativeTool.compareDocumentPosition(nativeCache) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.queryByText('模型耗时')).not.toBeInTheDocument()
     expect(screen.getByText('Coverage: 1 matched across 1 searches.')).toBeInTheDocument()
     expect(screen.getByText('缓存详情')).toBeInTheDocument()
