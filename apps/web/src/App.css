@@ -893,14 +893,29 @@
   height: 100svh;
   max-height: 100svh;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  padding-bottom: 32px;
+  grid-template-rows: minmax(0, 1fr);
+  padding-top: 16px;
+  padding-bottom: 6px;
   overflow: hidden;
+}
+
+/* Keep the page title available to assistive technology without reserving
+   visual space above the conversation surface. */
+.workspace-qa .workspace-header {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .qa-layout {
   min-height: 0;
-  margin-top: 18px;
+  margin-top: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
   background: var(--surface);
@@ -1507,7 +1522,7 @@
 }
 
 .qa-composer {
-  padding: 14px 16px 15px;
+  padding: 14px 16px 4px;
   border-top: 1px solid var(--border);
   background: #fafcfb;
 }
@@ -1547,8 +1562,8 @@
 }
 
 .qa-composer-actions {
-  min-height: 38px;
-  margin-top: 8px;
+  min-height: 32px;
+  margin-top: 3px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2792,9 +2807,20 @@
   gap: 8px;
 }
 
+.chat-composer .qa-composer-actions .qa-command-button,
+.chat-composer .qa-composer-actions .qa-send-button {
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 10px;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .chat-composer .qa-cancel-button.icon-button {
-  min-width: 38px;
-  width: 38px;
+  min-width: 32px;
+  width: 32px;
+  height: 32px;
   padding: 0;
 }
 
