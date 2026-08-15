@@ -38,6 +38,10 @@ budget, cancellation, schema, and internal failures fail-closed. When a verified
 could not complete a requested workspace delivery, the final Assistant message deterministically
 adds the server-owned delivery fact and a next step; raw exceptions, paths, command output, source
 content, and provider details remain excluded from checkpoints, traces, SSE, and final messages.
+Only Skill routes with a registered native Runtime adapter are shown to the model. A stale or
+otherwise unavailable `invoke_skill` selection is still treated as a user-correctable Tool
+observation, allowing the next model turn to choose another route or conclude without exposing the
+underlying exception.
 
 Phase 4 (Skill Creator) adds `skill_creator 1.0.0`（manifest v2 + `invocation`，`command:
 create-skill`，`execution_mode: agent_loop`，alias `skill`）to the assistant catalog and six

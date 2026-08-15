@@ -902,7 +902,7 @@ async def test_native_tool_use_puts_thin_skill_catalog_in_initial_context() -> N
     request = gateway.requests[0]
     assert [tool.name for tool in request.tools] == ["invoke_skill"]
     assert "knowledge_agent v1.0.0" in request.messages[0].content
-    assert "skill_creator v1.0.0" in request.messages[0].content
+    assert "skill_creator v1.0.0" not in request.messages[0].content
     assert "KNOWLEDGE_SKILL_INSTRUCTIONS" not in request.messages[0].content
     assert "CREATOR_SKILL_INSTRUCTIONS" not in request.messages[0].content
 
@@ -966,24 +966,38 @@ async def test_native_tool_use_exposes_base_tools_before_skill_selection() -> No
     }
 
 
-async def test_native_tool_use_rejects_skill_without_runtime_adapter() -> None:
+async def test_native_tool_use_recovers_from_an_unavailable_skill_selection() -> None:
     registry = InMemoryToolRegistry(handlers={"tool": _handler})
     definition = registry.register(_tool())
     unavailable = _unavailable_skill("skill_creator")
+    available = _skill(
+        "knowledge_agent",
+        instructions="KNOWLEDGE_SKILL_INSTRUCTIONS",
+        tools=(definition.ref,),
+    )
+    gateway = SequenceNativeGateway(
+        _response(
+            calls=(ChatToolCall("call_1", "invoke_skill", {"name": "skill_creator"}),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(ChatToolCall("call_2", "invoke_skill", {"name": "knowledge_agent"}),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(ChatToolCall("call_3", definition.name, {"query": "synthetic"}),),
+            finish_reason="tool_calls",
+        ),
+        _response(text="Synthetic terminal response."),
+    )
+    events = AgentRunEventLog()
     result = await NativeToolUseAgentLoopExecutor(
         tool_registry=registry,
         allowed_tools=(definition.ref,),
         system_prompt="Native base prompt.",
-        model_gateway=cast(
-            ModelGateway,
-            SequenceNativeGateway(
-                _response(
-                    calls=(ChatToolCall("call_1", "invoke_skill", {"name": "skill_creator"}),),
-                    finish_reason="tool_calls",
-                )
-            ),
-        ),
-        skill_catalog=SyntheticSkillCatalog(unavailable),
+        model_gateway=cast(ModelGateway, gateway),
+        skill_catalog=SyntheticSkillCatalog(unavailable, available),
+        event_store=events,
     ).execute(
         _run(permissions=definition.permissions),
         _pin(),
@@ -991,12 +1005,58 @@ async def test_native_tool_use_rejects_skill_without_runtime_adapter() -> None:
         goal="Answer the synthetic request.",
     )
 
-    assert result.run.status is RunStatus.FAILED
-    assert result.error is not None
-    assert result.error.code == "RUN_NATIVE_TOOL_USE_SKILL_DENIED"
+    assert result.run.status is RunStatus.COMPLETED
+    assert result.error is None
+    assert result.state.observations[0].observation == {
+        "status": "tool_error",
+        "error_code": "RUN_NATIVE_TOOL_USE_SKILL_DENIED",
+    }
+    assert gateway.requests[1].tool_results[0].observation == {
+        "status": "failed",
+        "summary": "The requested Skill is unavailable; choose an available Skill or another path.",
+    }
+    model_context = json.loads(gateway.requests[1].messages[-1].content)["model_context"]
+    assert model_context["observations"][0]["error_code"] == "RUN_NATIVE_TOOL_USE_SKILL_DENIED"
+    history = await events.page(result.run.context.run_id, limit=20)
+    failed_output = next(
+        event
+        for event in history.events
+        if event.event_type is AgentRunEventType.TOOL_OUTPUT and event.payload["status"] == "failed"
+    )
+    assert failed_output.payload["tool_name"] == "invoke_skill"
 
 
-async def test_native_tool_use_rejects_a_third_selected_skill() -> None:
+async def test_native_tool_use_hides_unavailable_skill_routes_from_the_model() -> None:
+    registry = InMemoryToolRegistry(handlers={"tool": _handler})
+    definition = registry.register(_tool())
+    available = _skill(
+        "knowledge_agent",
+        instructions="KNOWLEDGE_SKILL_INSTRUCTIONS",
+        tools=(definition.ref,),
+    )
+    unavailable = _unavailable_skill("skill_creator")
+    gateway = SequenceNativeGateway(_response(text="Synthetic terminal response."))
+
+    result = await NativeToolUseAgentLoopExecutor(
+        tool_registry=registry,
+        allowed_tools=(definition.ref,),
+        system_prompt="Native base prompt.",
+        model_gateway=cast(ModelGateway, gateway),
+        skill_catalog=SyntheticSkillCatalog(available, unavailable),
+    ).execute(
+        _run(permissions=definition.permissions),
+        _pin(),
+        {"question": "synthetic"},
+        goal="Answer the synthetic request.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED
+    prompt = gateway.requests[0].messages[0].content
+    assert "knowledge_agent" in prompt
+    assert "skill_creator" not in prompt
+
+
+async def test_native_tool_use_recovers_from_a_third_selected_skill() -> None:
     registry = InMemoryToolRegistry(handlers={"tool": _handler})
     definition = registry.register(_tool())
     first = _skill("first_skill", instructions="FIRST")
@@ -1015,6 +1075,7 @@ async def test_native_tool_use_rejects_a_third_selected_skill() -> None:
             calls=(ChatToolCall("call_3", "invoke_skill", {"name": "third_skill"}),),
             finish_reason="tool_calls",
         ),
+        _response(text="Synthetic terminal response."),
     )
     result = await NativeToolUseAgentLoopExecutor(
         tool_registry=registry,
@@ -1029,9 +1090,12 @@ async def test_native_tool_use_rejects_a_third_selected_skill() -> None:
         goal="Answer the synthetic request.",
     )
 
-    assert result.run.status is RunStatus.FAILED
-    assert result.error is not None
-    assert result.error.code == "RUN_NATIVE_TOOL_USE_SKILL_DENIED"
+    assert result.run.status is RunStatus.COMPLETED
+    assert result.error is None
+    assert result.state.observations[-1].observation == {
+        "status": "tool_error",
+        "error_code": "RUN_NATIVE_TOOL_USE_SKILL_DENIED",
+    }
 
 
 async def test_native_tool_use_rejects_a_skill_tool_outside_the_server_allowlist() -> None:

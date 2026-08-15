@@ -1891,6 +1891,15 @@ class NativeToolUseAgentLoopExecutor:
             raise RecoveryRejectedError("native Tool-use bootstrap Tool is unavailable")
         if call.tool_name == _INVOKE_SKILL_TOOL_NAME:
             name = _skill_name_argument(call.arguments)
+            input_summary = tool_input_summary(call.arguments)
+            await self._emit_tool_started(
+                run,
+                state,
+                tool_name=call.tool_name,
+                tool_version="1.0.0",
+                input_summary=input_summary,
+                tool_family="bootstrap",
+            )
             try:
                 selection = catalog.select(name)
                 candidate_state = state.select_skill(selection)
@@ -1907,12 +1916,42 @@ class NativeToolUseAgentLoopExecutor:
                     },
                     event_key=f"native:skill:{selection.pin.name}:{selection.pin.version}",
                 )
-            except ValueError as exc:
-                raise NodeExecutionError(
-                    code="RUN_NATIVE_TOOL_USE_SKILL_DENIED",
-                    category=RunErrorCategory.PERMISSION,
-                    message="Requested Skill is not available through the native runtime.",
-                ) from exc
+            except ValueError:
+                error_code = "RUN_NATIVE_TOOL_USE_SKILL_DENIED"
+                await self._trace_tool_failure(
+                    tool_name=call.tool_name,
+                    tool_version="1.0.0",
+                    idempotency_key=self._idempotency_key(run, state.iteration, call),
+                    input_summary=input_summary,
+                    tool_family="bootstrap",
+                    error=NodeExecutionError(
+                        code=error_code,
+                        category=RunErrorCategory.PERMISSION,
+                        message="Requested Skill is not available through the native runtime.",
+                    ),
+                )
+                run = run.consume(tool_calls=1)
+                state = state.observe_failure(
+                    error_code=error_code,
+                    input_summary=input_summary,
+                    output_summary=f"error:{error_code}",
+                )
+                await self._emit_tool_output(
+                    run,
+                    state,
+                    self._tool_surface(state),
+                    tool_name=call.tool_name,
+                    tool_version="1.0.0",
+                    input_summary=input_summary,
+                    output_summary=f"error:{error_code}",
+                    retry_count=0,
+                    duration_ms=0,
+                    tool_family="bootstrap",
+                    decision_summary=self._observation_summary(state.observations[-1]),
+                    status="failed",
+                )
+                run = await self._persist(run, state)
+                return run, state, False
             observation: dict[str, JSONValue] = {
                 "name": selection.pin.name,
                 "version": selection.pin.version,
@@ -1921,14 +1960,6 @@ class NativeToolUseAgentLoopExecutor:
         else:
             raise RecoveryRejectedError("native Tool-use bootstrap Tool is invalid")
         run = run.consume(tool_calls=1)
-        await self._emit_tool_started(
-            run,
-            state,
-            tool_name=call.tool_name,
-            tool_version="1.0.0",
-            input_summary=tool_input_summary(call.arguments),
-            tool_family="bootstrap",
-        )
         result = ToolInvocationResult(
             output=observation,
             run=run,
@@ -1937,7 +1968,7 @@ class NativeToolUseAgentLoopExecutor:
                 tool_version="1.0.0",
                 permissions=frozenset({ToolPermission.READ_KNOWLEDGE}),
                 idempotency_key=self._idempotency_key(run, state.iteration, call),
-                input_summary=tool_input_summary(call.arguments),
+                input_summary=input_summary,
                 output_summary=_bootstrap_output_summary(observation),
             ),
         )
@@ -2045,17 +2076,18 @@ class NativeToolUseAgentLoopExecutor:
     def _skill_catalog_text(self) -> str:
         if self._skill_catalog is None:
             return ""
-        routes = self._skill_catalog.list_routes()
+        routes = tuple(
+            route for route in self._skill_catalog.list_routes() if route.adapter_available
+        )
         if not routes:
             return ""
         lines = [
             "Available Skill routes (call `invoke_skill` with one `name` when a route is needed):",
         ]
         for route in routes:
-            availability = "callable" if route.adapter_available else "entry-point only"
             lines.append(
                 f"- {route.pin.name} v{route.pin.version} "
-                f"[{availability}] command={route.command}: {route.description}"
+                f"[callable] command={route.command}: {route.description}"
             )
         return "\n".join(lines)
 
@@ -2425,6 +2457,8 @@ def _recoverable_tool_failure(error: BaseException) -> str | None:
 
 
 def _recoverable_tool_failure_summary(code: str) -> str:
+    if code == "RUN_NATIVE_TOOL_USE_SKILL_DENIED":
+        return "The requested Skill is unavailable; choose an available Skill or another path."
     if code in {
         ToolRegistryErrorCode.APPROVAL_REQUIRED.value,
         ToolRegistryErrorCode.PERMISSION_DENIED.value,

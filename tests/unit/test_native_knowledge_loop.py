@@ -727,6 +727,51 @@ async def test_native_executor_finalizes_knowledge_answer_without_an_extra_model
 
 
 @pytest.mark.asyncio
+async def test_native_executor_completes_a_workspace_request_without_workspace_tools() -> None:
+    search = FakeSearchService()
+    qa = FakeGroundedQA()
+    adapter = _adapter(search, qa)
+    gateway = SequenceNativeGateway(
+        _response(
+            calls=(_call("invoke_skill", {"name": "knowledge_agent"}, "call-1"),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(_call("knowledge_retrieve", {"query": "Omnistudio"}, "call-2"),),
+            finish_reason="tool_calls",
+        ),
+        _response(
+            calls=(_call("knowledge_answer", {}, "call-3"),),
+            finish_reason="tool_calls",
+        ),
+    )
+    executor = NativeToolUseAgentLoopExecutor(
+        tool_registry=adapter.tool_registry,
+        allowed_tools=adapter.allowed_tools(),
+        system_prompt="Native base prompt.",
+        model_gateway=cast(ModelGateway, gateway),
+        skill_catalog=SyntheticSkillCatalog(_skill(adapter.allowed_tools())),
+        server_tools=adapter,
+    )
+
+    result = await executor.execute(
+        _run(),
+        _pin(),
+        {
+            "question": "Introduce Omnistudio's main modules and save the answer as Markdown.",
+            "workspace": {"selected": False, "tools_enabled": False},
+        },
+        goal="Introduce Omnistudio's main modules and save the answer as Markdown.",
+    )
+
+    assert result.run.status is RunStatus.COMPLETED, result.error
+    assert result.error is None
+    assert result.state.observations[-1].observation["workspace_delivery"] == "unavailable"
+    assert adapter.user_notice(RUN_ID) is not None
+    assert gateway.remaining == 0
+
+
+@pytest.mark.asyncio
 async def test_native_executor_publishes_zero_hit_knowledge_refusal() -> None:
     search = FakeSearchService(no_hits=True)
     qa = FakeGroundedQA(QAOutcome.REFUSE)
