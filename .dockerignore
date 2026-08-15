@@ -18,6 +18,7 @@ cases/evals/configs/*
 !cases/evals/prompts/
 cases/evals/prompts/*
 !cases/evals/prompts/grounded-qa-v1-provisional.txt
+!cases/evals/prompts/grounded-qa-v2-provisional.txt
 tmp
 **/__pycache__
 **/*.py[cod]

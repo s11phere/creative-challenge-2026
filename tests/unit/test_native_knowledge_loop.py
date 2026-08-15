@@ -707,6 +707,9 @@ async def test_native_executor_finalizes_knowledge_answer_without_an_extra_model
     assert "grounded_answer" not in str(gateway.requests[1])
     assert "knowledge_retrieve" in gateway.requests[1].messages[0].content
     assert "knowledge_answer" in gateway.requests[1].messages[0].content
+    assert "not a semantic judgment" in gateway.requests[1].messages[0].content
+    assert "to reach a fixed number of searches" in gateway.requests[1].messages[0].content
+    assert "execution requirements, not claims" in gateway.requests[1].messages[0].content
     assert qa.execute_calls == [RUN_ID]
     assert result.run.usage.tool_calls == 3
     page = await events.page(RUN_ID, limit=100)

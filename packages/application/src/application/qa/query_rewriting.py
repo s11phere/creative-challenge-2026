@@ -54,7 +54,10 @@ def _system_prompt(max_queries: int) -> str:
         "entities and technical terms, translate between Chinese and English where the source "
         "may use either, and split multi-part questions into focused sub-queries. Base every "
         "query only on the question text; do not invent facts, names, or answer content. "
-        + _REWRITE_FORMAT_INSTRUCTION
+        "Interpret the request semantically: presentation format, saving or writing a file, a "
+        "workspace path, and other delivery operations are execution constraints rather than "
+        "knowledge subquestions, so do not create search queries for them. Keep the subject "
+        "matter needed for the requested artifact. " + _REWRITE_FORMAT_INSTRUCTION
     )
 
 

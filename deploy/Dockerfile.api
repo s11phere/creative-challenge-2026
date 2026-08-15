@@ -14,6 +14,7 @@ COPY migrations/ migrations/
 COPY cases/evals/configs/grounded-answer-v1.schema.json cases/evals/configs/grounded-answer-v1.schema.json
 COPY cases/evals/configs/research-grounded-answer-v2.schema.json cases/evals/configs/research-grounded-answer-v2.schema.json
 COPY cases/evals/prompts/grounded-qa-v1-provisional.txt cases/evals/prompts/grounded-qa-v1-provisional.txt
+COPY cases/evals/prompts/grounded-qa-v2-provisional.txt cases/evals/prompts/grounded-qa-v2-provisional.txt
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package api

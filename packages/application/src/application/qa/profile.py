@@ -50,7 +50,7 @@ class QAGenerationProfileV1:
     retrieval_profile_reference: str = "stage3-default-pending-formal-freeze"
     capability_alias: str = "fast_chat"
     model_identity: str = "fake-fast-chat-v1"
-    prompt_template_id: str = "grounded-qa-v1-provisional"
+    prompt_template_id: str = "grounded-qa-v2-provisional"
     structured_output_schema: str = "grounded-answer-v1"
     temperature: float = 0.0
     max_output_tokens: int = 6_144

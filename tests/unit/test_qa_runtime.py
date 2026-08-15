@@ -32,11 +32,14 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 def test_runtime_images_include_every_generation_contract() -> None:
     schema = "cases/evals/configs/research-grounded-answer-v2.schema.json"
+    prompt = "cases/evals/prompts/grounded-qa-v2-provisional.txt"
     dockerignore = (REPOSITORY_ROOT / ".dockerignore").read_text(encoding="utf-8")
     assert f"!{schema}" in dockerignore
+    assert f"!{prompt}" in dockerignore
     for dockerfile in ("deploy/Dockerfile.api", "deploy/Dockerfile.worker"):
         content = (REPOSITORY_ROOT / dockerfile).read_text(encoding="utf-8")
         assert f"COPY {schema} {schema}" in content
+        assert f"COPY {prompt} {prompt}" in content
 
 
 @pytest.mark.asyncio

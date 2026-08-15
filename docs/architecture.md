@@ -1068,4 +1068,12 @@ termination or formal holdout boundary.
 `assistant-native-tool-use-v2` 与 `assistant-base-prompt-v8`；历史 v1 Run 不再由当前
 执行或恢复逻辑解释。
 
+The native knowledge prompt treats `recommended_next` as a server precondition rather than a
+semantic completeness verdict. The Agent keeps the full user request, identifies concrete missing
+knowledge points from the request and attempted queries, and chooses a focused follow-up only when
+such a gap exists; there is no keyword-based request class or fixed retrieval count. Grounded QA
+also receives the full request under `grounded-qa-v2-provisional` and treats presentation, file,
+workspace, and other delivery instructions as execution constraints rather than evidence
+obligations. Historical evaluation configs remain pinned to the v1 prompt and are not rewritten.
+
 本文后续阶段记录中的旧版本仅表示历史实现，不代表当前部署内容。

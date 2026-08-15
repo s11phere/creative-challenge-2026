@@ -140,6 +140,9 @@ services:
         - path: ../packages
           action: sync
           target: /app/packages
+        - path: ../cases/evals/prompts
+          action: sync
+          target: /app/cases/evals/prompts
 
     volumes:
       - blobdata:/app/data/blobs
@@ -228,6 +231,9 @@ services:
         - path: ../packages
           action: sync
           target: /app/packages
+        - path: ../cases/evals/prompts
+          action: sync
+          target: /app/cases/evals/prompts
     volumes:
       - blobdata:/app/data/blobs
       - ${QA_DEBUG_TRACE_HOST_PATH:-../tmp/qa-debug}:/data/qa-debug

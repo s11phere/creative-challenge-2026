@@ -74,7 +74,7 @@ logger = logging.getLogger(__name__)
 _ROOT = Path(__file__).resolve().parents[4]
 _SCHEMA = _ROOT / "cases/evals/configs/grounded-answer-v1.schema.json"
 _RESEARCH_SCHEMA = _ROOT / "cases/evals/configs/research-grounded-answer-v2.schema.json"
-_PROMPT = _ROOT / "cases/evals/prompts/grounded-qa-v1-provisional.txt"
+_PROMPT = _ROOT / "cases/evals/prompts/grounded-qa-v2-provisional.txt"
 _EVIDENCE = re.compile(
     r'<evidence id="(?P<evidence_id>[0-9a-f-]+)"(?P<attributes>[^>]*)>\s*'
     r"<<<UNTRUSTED_EVIDENCE>>>\s*(?P<text>.*?)\s*<<<END_UNTRUSTED_EVIDENCE>>>",
@@ -926,7 +926,7 @@ def _profiles() -> tuple[QAPlanningProfileV1, RetrievalProfileV1, QAGenerationPr
     generation = QAGenerationProfileV1(
         retrieval_profile_reference=retrieval.profile_version,
         model_identity=(settings.fast_chat_model or "fake-fast-chat-v1"),
-        prompt_template_id="grounded-qa-v1-provisional",
+        prompt_template_id="grounded-qa-v2-provisional",
     )
     return planning, retrieval, generation
 

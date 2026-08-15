@@ -58,6 +58,7 @@ async def test_rewrites_parse_json_queries_and_use_fast_chat() -> None:
     assert messages[0].role is ChatRole.SYSTEM
     assert messages[1].role is ChatRole.USER
     assert messages[1].content == "What is the least upper bound property?"
+    assert "execution constraints rather than knowledge subquestions" in messages[0].content
 
 
 async def test_rewrites_cap_at_max_queries() -> None:

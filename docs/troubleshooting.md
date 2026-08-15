@@ -243,6 +243,18 @@ docker compose -f deploy/compose.yaml exec -T redis redis-cli ping
 复现 actor 的 `diagnostic_task_started/completed` 事件；排查时同时检查队列状态，不要仅凭缺少
 这两条日志判断任务未执行。该日志差异是进入阶段 2 前需要关闭的已知问题。
 
+## Assistant Run remains pending or cancellation does not finish
+
+An Assistant Run that has already been claimed by the Worker must always reach a persisted terminal
+state. If initialization or execution raises an unexpected exception, the Worker records
+`RUN_ASSISTANT_RUNTIME_FAILED` and publishes a `failed` event. When the user has already requested
+cancellation, the same recovery path persists `cancelled` and publishes a `cancelled` event instead.
+
+If the Worker log reports `FileNotFoundError` before an Assistant starts, confirm that every prompt
+referenced by `packages/infrastructure/src/infrastructure/qa_execution.py` is included in both the
+API and Worker Dockerfiles and allowed through `.dockerignore`. Rebuild with
+`./scripts/start-local.ps1`; do not wait for the queue retry backoff to make the Run visible again.
+
 ## OTel Collector 不可用
 
 Collector 默认不启动，且不是 API/Worker 的启动依赖。需要本地 trace 输出时：

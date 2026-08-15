@@ -56,8 +56,13 @@ from application.skills import (
     register_skill_creator_tools,
 )
 from domain.agent_runtime import ToolPermission
-from domain.assistant_sse import AssistantEventType
-from domain.conversation_run import ConversationRunKind, ConversationRunStatus
+from domain.assistant_sse import AssistantEventStore, AssistantEventType
+from domain.conversation_run import (
+    ConversationRun,
+    ConversationRunKind,
+    ConversationRunRepository,
+    ConversationRunStatus,
+)
 from domain.grounded_qa import QAAttempt, QAEvent, QAStatus
 from domain.qa_persistence import QARetrievalScope, QARunRecord
 from infrastructure.agent_events import PostgresAgentRunEventStore
@@ -225,76 +230,123 @@ async def _run_assistant_async(run_id: UUID, gateway: ModelGateway, *, trace_id:
     )
     if claimed is None:
         return False
-    registry = assistant_skill_registry()
-    await _apply_skill_activations(registry)
-    qa_repository = PostgresGroundedQARepository(database)
-    memory = GatewayMemoryRetriever(
-        repository=PostgresMemoryEntryRepository(database),
-        embedder=GatewayTextEmbedder(gateway),
-    )
-    context = ConversationContextService(data=qa_repository, runs=runs, memory=memory)
-    metrics = AssistantMetrics()
-
-    service = await _autonomous_loop_service(
-        gateway=gateway,
-        registry=registry,
-        runs=runs,
-        qa_repository=qa_repository,
-        context=context,
-        metrics=metrics,
-        run_id=run_id,
-        trace_id=trace_id,
-    )
-    compaction = ConversationCompactionService(
-        context=context,
-        data=qa_repository,
-        runs=runs,
-        gateway=gateway,
-        metrics=metrics,
-    )
     events = PostgresAssistantEventStore(database)
-    if claimed.run_kind is ConversationRunKind.CONTEXT_COMPACTION:
-        completed = await _run_compaction_with_lease(
-            compaction=compaction,
-            events=events,
-            runs=runs,
-            run_id=run_id,
-            lease_owner=lease_owner,
-        )
-        await record_usage_trace(run_id)
-        maybe_enqueue_skill_pattern_extract()
-        return completed
-    if claimed.status in _TERMINAL:
-        if isinstance(service, AutonomousAssistantLoopService):
-            await service.execute(run_id, trace_id=trace_id)
-        else:
-            await service.execute(run_id)
-        await record_usage_trace(run_id)
-        maybe_enqueue_skill_pattern_extract()
-        return True
-
-    stop = asyncio.Event()
-    lease_lost = asyncio.Event()
-    heartbeat = asyncio.create_task(
-        _heartbeat(runs, run_id, lease_owner, stop, lease_lost),
-        name=f"assistant-heartbeat-{run_id}",
-    )
     try:
-        execution = asyncio.create_task(
-            (
-                service.execute(run_id, trace_id=trace_id)
-                if isinstance(service, AutonomousAssistantLoopService)
-                else service.execute(run_id)
-            ),
-            name=f"assistant-execution-{run_id}",
+        if claimed.status in _TERMINAL:
+            await _emit_assistant_terminal_event(events, claimed)
+            return True
+        qa_repository = PostgresGroundedQARepository(database)
+        memory = GatewayMemoryRetriever(
+            repository=PostgresMemoryEntryRepository(database),
+            embedder=GatewayTextEmbedder(gateway),
         )
-        return await _wait_for_execution(execution, lease_lost, run_id=run_id)
+        context = ConversationContextService(data=qa_repository, runs=runs, memory=memory)
+        metrics = AssistantMetrics()
+        if claimed.run_kind is ConversationRunKind.CONTEXT_COMPACTION:
+            compaction = ConversationCompactionService(
+                context=context,
+                data=qa_repository,
+                runs=runs,
+                gateway=gateway,
+                metrics=metrics,
+            )
+            return await _run_compaction_with_lease(
+                compaction=compaction,
+                events=events,
+                runs=runs,
+                run_id=run_id,
+                lease_owner=lease_owner,
+            )
+
+        registry = assistant_skill_registry()
+        await _apply_skill_activations(registry)
+        service = await _autonomous_loop_service(
+            gateway=gateway,
+            registry=registry,
+            runs=runs,
+            qa_repository=qa_repository,
+            context=context,
+            metrics=metrics,
+            run_id=run_id,
+            trace_id=trace_id,
+        )
+        stop = asyncio.Event()
+        lease_lost = asyncio.Event()
+        heartbeat = asyncio.create_task(
+            _heartbeat(runs, run_id, lease_owner, stop, lease_lost),
+            name=f"assistant-heartbeat-{run_id}",
+        )
+        try:
+            execution = asyncio.create_task(
+                service.execute(run_id, trace_id=trace_id),
+                name=f"assistant-execution-{run_id}",
+            )
+            return await _wait_for_execution(execution, lease_lost, run_id=run_id)
+        finally:
+            stop.set()
+            await heartbeat
+            await runs.release_conversation_run_lease(run_id, lease_owner=lease_owner)
+    except Exception as error:
+        logger.error(
+            "assistant_run_failed",
+            extra={
+                "run_id": str(run_id),
+                "error_code": "RUN_ASSISTANT_RUNTIME_FAILED",
+                "error_type": type(error).__name__,
+            },
+        )
+        await _fail_claimed_assistant_run(runs, events, run_id)
+        return True
     finally:
-        stop.set()
-        await heartbeat
-        await runs.release_conversation_run_lease(run_id, lease_owner=lease_owner)
+        await _record_assistant_completion(run_id)
+
+
+async def _fail_claimed_assistant_run(
+    runs: ConversationRunRepository,
+    events: AssistantEventStore,
+    run_id: UUID,
+) -> None:
+    """Persist one terminal outcome so an actor exception cannot strand a Run."""
+    terminal = await runs.fail_conversation_run(
+        run_id,
+        error_code="RUN_ASSISTANT_RUNTIME_FAILED",
+    )
+    await _emit_assistant_terminal_event(events, terminal)
+
+
+async def _emit_assistant_terminal_event(
+    events: AssistantEventStore,
+    run: ConversationRun,
+) -> None:
+    """Project only an already-persisted terminal state into the Assistant event stream."""
+    status = run.status
+    run_id = run.run_id
+    if status in {ConversationRunStatus.COMPLETED, ConversationRunStatus.REFUSED}:
+        await events.append(
+            run_id,
+            AssistantEventType.COMPLETED,
+            {"status": status.value, "action": "agent_loop"},
+        )
+    elif status is ConversationRunStatus.CANCELLED:
+        await events.append(run_id, AssistantEventType.CANCELLED, {"status": status.value})
+    elif status in {ConversationRunStatus.FAILED, ConversationRunStatus.TIMED_OUT}:
+        await events.append(
+            run_id,
+            AssistantEventType.FAILED,
+            {"status": status.value, "error_code": run.error_code},
+        )
+
+
+async def _record_assistant_completion(run_id: UUID) -> None:
+    """Keep post-run telemetry best-effort so it cannot reopen a terminal Run."""
+    try:
         await record_usage_trace(run_id)
         maybe_enqueue_skill_pattern_extract()
+    except Exception as error:
+        logger.warning(
+            "assistant_run_completion_observability_failed",
+            extra={"run_id": str(run_id), "error_type": type(error).__name__},
+        )
 
 
 async def _autonomous_loop_service(
