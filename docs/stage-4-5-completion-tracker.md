@@ -1,5 +1,12 @@
 # 阶段 4/5 收尾看板
 
+## 2026-08-18 Skill Suite v2
+
+当前业务目录已收敛为 `knowledge_agent 1.0.0` 以及 `research_reading_workflow`、
+`exam_preparation_workflow`、`course_project_workflow 2.0.0`。后三者统一使用原生 Tool-use 和
+16/12/65536/16384/600 provisional 预算；旧 summary、compare、cards Skill 与新 Run 入口已删除。
+下方历史条目仅记录当时实现，不代表当前可调用契约。详见 ADR-022。
+
 ## 2026-08-13 Playwright web E2E core journey
 
 Web 核心旅程的浏览器级 E2E 已落地并本地实跑通过（`compose-smoke` job 扩展为 "Compose smoke + web E2E"）。

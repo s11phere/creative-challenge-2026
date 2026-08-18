@@ -1232,23 +1232,24 @@ class NativeToolUseAgentLoopExecutor:
         item = state.observations[-1]
         projection = self._model_observation_for(item, surface)
         context = self._model_context(state, surface)
+        event_payload: dict[str, JSONValue] = {
+            "status": status,
+            "iteration": state.iteration,
+            "tool_name": tool_name,
+            "tool_version": tool_version,
+            "input_summary": input_summary,
+            "output_summary": output_summary,
+            "retry_count": retry_count,
+            "duration_ms": duration_ms,
+            "tool_family": tool_family,
+            "decision_summary": decision_summary,
+            "visible_observation_bytes": _json_size(projection),
+            "context_digest": context.digest(),
+        }
         await self._emit(
             run,
             AgentRunEventType.TOOL_OUTPUT,
-            {
-                "status": status,
-                "iteration": state.iteration,
-                "tool_name": tool_name,
-                "tool_version": tool_version,
-                "input_summary": input_summary,
-                "output_summary": output_summary,
-                "retry_count": retry_count,
-                "duration_ms": duration_ms,
-                "tool_family": tool_family,
-                "decision_summary": decision_summary,
-                "visible_observation_bytes": _json_size(projection),
-                "context_digest": context.digest(),
-            },
+            event_payload,
             event_key=f"native:tool_output:{state.iteration}:{tool_name}:{tool_version}",
         )
 

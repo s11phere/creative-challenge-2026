@@ -173,9 +173,9 @@ fake/local 索引误判为缺少外部 Embedding revision。
 `RUN_LLM_DECISION_INVALID` 表示 Provider 没有返回严格的单个 JSON 决策；检查模型是否遵循
 `call_tool/complete/refuse` schema。`RUN_LLM_MAX_ITERATIONS` 表示模型在五轮内未终止；
 `TOOL_NOT_ALLOWED`、`TOOL_MODEL_OUTPUT_DENIED` 或 `TOOL_APPROVAL_REQUIRED` 表示服务端安全边界拒绝
-模型选择。默认 `knowledge_agent 1.0.0` 只允许受信的知识 Tool：`knowledge_search`、
-`knowledge_inspect`、`summarize_document`、`grounded_answer`、`verify_answer` 和 `finalize_answer`；文档 Tool 只有在资源
-解析器注册时可用，写 Tool 不可通过 prompt
+模型选择。默认 `knowledge_agent 1.0.0` 只允许受信的 `knowledge_retrieve` 和
+`knowledge_answer`；Research、Exam 与 Course Project 的 `2.0.0` Tool 只有在对应 adapter
+注册时可用，写 Tool 不可通过 prompt
 开启。旧版本和回退路径已删除；应直接修正当前 `1.0.0` Skill 的配置或实现。
 
 ### 开发环境记录完整 QA 运行轨迹
@@ -338,9 +338,7 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
   QA Runtime。若仍触发 `RUN_BUDGET_EXCEEDED`，
   Runtime error message 会列出具体超限项及实际值；优先检查 `input_tokens` 是否因长对话上下文累积。
 - `knowledge_agent 1.0.0` 通过 `fast_chat` 执行当前默认的受约束 LLM 决策，可在同一顶层 Loop 中串行调用
-  注册 Tool；可调用
-  `knowledge_search`、`knowledge_inspect`、`summarize_document`、`grounded_answer`、`verify_answer` 和
-  `finalize_answer`；
+  `knowledge_retrieve` 和 `knowledge_answer`；
   外层模型只看到 Tool 状态/计数，不看到
   回答或引用原文；Runtime checkpoint 快照与 append-only checkpoint 已持久化，
   当前恢复和最终结果仍以 QA PostgreSQL 状态为准。首个重复 Tool 请求会回传 `already_observed`
@@ -354,11 +352,11 @@ API、Worker 和 Web 的 Dockerfile 使用 AWS 公共只读缓存中的 Docker O
   事件、审批查询/撤销和旧版本引用清理均已提供。正式跨进程故障注入仍需独立环境验收。
 - 知识整理入口会把选中的 Source/Document/DocumentVersion 固定到 QA Run。若排队期间来源撤下、
   文档发布新版本或 selector 不再匹配，运行会以稳定范围错误失败，不会自动跟随新版本；重新确认
-  当前版本后创建新 Run。`compare_sources` 缺少两个来源的 Citation 时会拒答。
-- `create_review_cards` 默认先生成预览。`write.code=SKILL_WRITE_REQUIRES_APPROVAL` 且
+  当前版本后创建新 Run。Research 的确认范围恢复后不会自动扩大。
+- Exam 复习卡默认先生成预览。`write.code=SKILL_WRITE_REQUIRES_APPROVAL` 且
   `side_effects=0` 表示尚未获得持久化审批；审批后可通过
   `/api/v1/runs/{run_id}/derived-knowledge` 查询写入状态，撤销使用对应 DELETE 端点。
-- Web 展示真实健康状态、真实数据来源/摄入任务、五个 Skill 入口和 provisional QA 状态；QA 证据面板只对
+- Web 展示真实健康状态、真实数据来源/摄入任务、四个业务 Skill 入口和 provisional QA 状态；QA 证据面板只对
   服务端已发布的 Citation 按需请求原文，不接受客户端提供的 locator 或版本。若返回 `invalid`，
   先检查 Blob hash、parser 版本和 locator 是否仍与固定 DocumentVersion 一致，不要回退到相似文本。
 - 阶段 0 语料已按 `docs/stage-0-acceptance.md` 冻结为 `internal_team_only`；真实语料只可在
@@ -481,3 +479,8 @@ conflict.
 当前只运行 Assistant 主路径和固定 Skill `1.0.0`。不要设置已删除的 `AGENT_LOOP_V5_ENABLED`、
 `VITE_ASSISTANT_*` 或 `LegacyKnowledgeAgent` 参数，也不要调用 Skill 激活、回滚、清理接口。
 出现旧版本身份的持久化 Run 需要重新提交，不再尝试旧版本恢复。
+## 工作台仍显示已删除的 Skill
+
+如果命令面板仍出现 `/summarize`、`/compare` 或 `/cards`，当前 Web、API 或 Worker 至少有一个仍在
+运行旧镜像。保留命名卷，重新执行 `docker compose -f deploy/compose.yaml --env-file .env up --build
+--detach --wait`，然后强制刷新浏览器。不要通过重新启用旧 Skill 解决；历史 Run 只读保留。

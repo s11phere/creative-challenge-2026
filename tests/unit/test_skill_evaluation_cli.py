@@ -292,8 +292,8 @@ def test_runner_reports_database_required_for_qa_skill(tmp_path: Path) -> None:
     _write_fixture_skill(tmp_path, "fixture", cases='{"case_id":"a"}\n')
     # Rename the fixture to a QA-backed skill identity by overriding the manifest.
     manifest = _manifest()
-    manifest["name"] = "summarize_document"
-    manifest["version"] = "1.0.0"
+    manifest["name"] = "research_reading_workflow"
+    manifest["version"] = "2.0.0"
     package = _write_fixture_skill(tmp_path, "qa-skill", cases='{"case_id":"a"}\n')
     (package / "skill.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
     registry = FileSystemSkillRegistry(tmp_path)

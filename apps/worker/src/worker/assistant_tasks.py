@@ -53,7 +53,9 @@ from application.skills import (
     SkillCreatorTools,
     SkillDraftStore,
     SkillLifecycleService,
+    WorkflowNativeTools,
     register_skill_creator_tools,
+    workflow_tool_definitions,
 )
 from domain.agent_runtime import ToolPermission
 from domain.assistant_sse import AssistantEventStore, AssistantEventType
@@ -366,7 +368,9 @@ async def _autonomous_loop_service(
     assistant_pin = skill_registry.pin("assistant_agent", "1.0.0")
     assistant_package = skill_registry.validate_pin(assistant_pin)
     knowledge_pin = skill_registry.pin("knowledge_agent")
+    research_pin = skill_registry.pin("research_reading_workflow")
     exam_pin = skill_registry.pin("exam_preparation_workflow")
+    project_pin = skill_registry.pin("course_project_workflow")
     trace = QADebugTrace.from_settings(run_id=run_id, trace_id=trace_id, settings=settings)
     await trace.record(
         "run_started",
@@ -414,6 +418,11 @@ async def _autonomous_loop_service(
     )
     creator_tools = SkillCreatorTools(draft_store=creator_drafts)
     exam_definitions = exam_tool_definitions()
+    workflow_definitions = workflow_tool_definitions()
+    workflow_tools = WorkflowNativeTools(
+        search=DatabaseSearchService(database, gateway),
+        profile=qa_executor.profile.retrieval,
+    )
     exam_tools = ExamNativeTools(
         ExamPreparationService(
             PostgresExamSessionRepository(database),
@@ -432,6 +441,7 @@ async def _autonomous_loop_service(
     extra_handlers: dict[str, ToolHandler] = {
         **creator_tools.handlers(),
         **exam_tools.handlers(),
+        **workflow_tools.handlers(),
     }
     extra_permissions: frozenset[ToolPermission] = frozenset(
         {ToolPermission.READ_KNOWLEDGE, ToolPermission.WRITE_KNOWLEDGE}
@@ -443,7 +453,9 @@ async def _autonomous_loop_service(
         creator = register_skill_creator_tools(registry)
         for definition in exam_definitions:
             registry.register(definition)
-        return (*creator, *exam_definitions)
+        for definition in workflow_definitions:
+            registry.register(definition)
+        return (*creator, *exam_definitions, *workflow_definitions)
 
     extra_tool_registrar: Callable[[InMemoryToolRegistry], tuple[ToolDefinition, ...]] = (
         register_creator_tools
@@ -493,6 +505,7 @@ async def _autonomous_loop_service(
                 **side_effect_tools.handlers(),
                 **creator_tools.handlers(),
                 **exam_tools.handlers(),
+                **workflow_tools.handlers(),
             }
 
             def register_all_tools(
@@ -503,6 +516,7 @@ async def _autonomous_loop_service(
                     *register_side_effect_tools(registry),
                     *register_skill_creator_tools(registry),
                     *tuple(_register_tool(registry, item) for item in exam_definitions),
+                    *tuple(_register_tool(registry, item) for item in workflow_definitions),
                 )
 
             extra_tool_registrar = register_all_tools
@@ -603,8 +617,24 @@ async def _autonomous_loop_service(
         ),
         tool_adapters={
             ToolRef(knowledge_pin.name, knowledge_pin.version): native_allowed_tools,
+            ToolRef(research_pin.name, research_pin.version): (
+                *(
+                    definition.ref
+                    for definition in workflow_definitions
+                    if definition.name.startswith("research_")
+                ),
+                *native_knowledge.allowed_tools(),
+            ),
             ToolRef(exam_pin.name, exam_pin.version): tuple(
                 definition.ref for definition in exam_definitions
+            ),
+            ToolRef(project_pin.name, project_pin.version): (
+                *(
+                    definition.ref
+                    for definition in workflow_definitions
+                    if definition.name.startswith("project_")
+                ),
+                *native_knowledge.allowed_tools(),
             ),
         },
         prompt_overrides={

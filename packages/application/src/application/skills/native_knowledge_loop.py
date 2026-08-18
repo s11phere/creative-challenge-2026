@@ -324,17 +324,17 @@ class NativeKnowledgeTools(NativeServerToolCoordinator):
     async def _retrieve(
         self, run: AgentRun, state: NativeToolUseLoopState, call: NativeToolUseCall
     ) -> NativeServerToolResult:
-        del state
         query = _required_query(call.arguments)
         facts = self._facts_for(run.context.run_id)
+        retrieval_scope = _prepared_research_scope(state) or self._config.retrieval_scope
         result = await self._search.search(
             SearchRequest(
                 query=query,
                 space_id=run.context.space_id,
                 filters=SearchFilters(
-                    source_ids=self._config.retrieval_scope.source_ids,
-                    document_ids=self._config.retrieval_scope.document_ids,
-                    version_ids=self._config.retrieval_scope.version_ids,
+                    source_ids=retrieval_scope.source_ids,
+                    document_ids=retrieval_scope.document_ids,
+                    version_ids=retrieval_scope.version_ids,
                 ),
             ),
             self._config.profile.retrieval,
@@ -355,6 +355,7 @@ class NativeKnowledgeTools(NativeServerToolCoordinator):
     ) -> NativeServerToolResult:
         _require_empty(call.arguments)
         facts = self._restore_facts_from_state(run.context.run_id, state)
+        retrieval_scope = _prepared_research_scope(state) or self._config.retrieval_scope
         if _needs_retrieval(facts, self._config.max_search_observations):
             output = _pending_answer_observation("retrieval_required")
             return self._result(run, call, output, self.answer_tool)
@@ -364,7 +365,7 @@ class NativeKnowledgeTools(NativeServerToolCoordinator):
         if facts.answer_run is None and self._config.ensure_qa_run is not None:
             facts.answer_run = await self._config.ensure_qa_run(
                 ToolExecutionContext(run=run.context, idempotency_key=str(run.context.run_id)),
-                self._config.retrieval_scope,
+                retrieval_scope,
             )
         if facts.answer_run is None or facts.answer_run.status not in {
             QAStatus.COMPLETED,
@@ -625,6 +626,35 @@ def _required_query(arguments: Mapping[str, JSONValue]) -> str:
             "SKILL_INPUT_INVALID", RunErrorCategory.INPUT, "Knowledge retrieval query is invalid."
         )
     return query
+
+
+def _prepared_research_scope(state: NativeToolUseLoopState) -> QARetrievalScope | None:
+    """Restore the locked research scope from persisted Tool observations."""
+    for item in reversed(state.observations):
+        if item.call.tool_name != "research_prepare":
+            continue
+        raw = item.observation.get("source_versions")
+        if not isinstance(raw, list) or item.observation.get("scope_locked") is not True:
+            continue
+        source_ids: set[UUID] = set()
+        document_ids: set[UUID] = set()
+        version_ids: set[UUID] = set()
+        try:
+            for value in raw:
+                if not isinstance(value, dict):
+                    raise ValueError
+                source_ids.add(UUID(str(value["source_id"])))
+                document_ids.add(UUID(str(value["document_id"])))
+                version_ids.add(UUID(str(value["version_id"])))
+        except (KeyError, ValueError):
+            return None
+        if source_ids and document_ids and version_ids:
+            return QARetrievalScope(
+                source_ids=frozenset(source_ids),
+                document_ids=frozenset(document_ids),
+                version_ids=frozenset(version_ids),
+            )
+    return None
 
 
 def _require_empty(arguments: Mapping[str, JSONValue]) -> None:

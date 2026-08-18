@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
-from application.skills import OrganizationScopeError
 from domain.agent_runtime import AgentRunContext, ToolCallRecord, ToolPermission
 from domain.grounded_qa import CitationStatus, QAAttempt, QAEvent, QAStatus, normalize_question
 from domain.qa_persistence import (
@@ -27,7 +26,7 @@ from domain.qa_persistence import (
 from domain.qa_sse import QAEventStore, QAEventType
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from ..errors import AppError
 
@@ -53,38 +52,10 @@ class QuestionRequest(BaseModel):
 class RunCreateRequest(BaseModel):
     """Generic Run facade for every server-registered knowledge Skill."""
 
-    skill_name: Literal[
-        "knowledge_agent",
-        "summarize_document",
-        "compare_sources",
-        "create_review_cards",
-    ] = "knowledge_agent"
+    skill_name: Literal["knowledge_agent"] = "knowledge_agent"
     conversation_id: UUID
     question: str | None = Field(default=None, max_length=12000)
-    document_id: UUID | None = None
-    version_id: UUID | None = None
-    source_ids: list[UUID] | None = Field(default=None, min_length=2, max_length=8)
-    focus: str | None = Field(default=None, min_length=1, max_length=1000)
     idempotency_key: str = Field(min_length=1, max_length=200)
-
-    @field_validator("source_ids")
-    @classmethod
-    def unique_sources(cls, value: list[UUID] | None) -> list[UUID] | None:
-        if value is not None and len(value) != len(set(value)):
-            raise ValueError("source_ids must be unique")
-        return value
-
-    @model_validator(mode="after")
-    def validate_skill_input(self) -> RunCreateRequest:
-        if self.skill_name == "knowledge_agent":
-            if not self.question or not self.question.strip():
-                raise ValueError("question is required for this Skill")
-        elif self.skill_name in {"summarize_document", "create_review_cards"}:
-            if self.document_id is None or self.version_id is None:
-                raise ValueError("document_id and version_id are required for this Skill")
-        elif self.source_ids is None:
-            raise ValueError("source_ids are required for compare_sources")
-        return self
 
 
 class AnswerResultResponse(BaseModel):
@@ -273,26 +244,6 @@ class ApprovalRecordResponse(BaseModel):
     expires_at: datetime | None = None
     revoked_at: datetime | None = None
     revoked_by: str | None = None
-
-
-class DocumentSkillRequest(BaseModel):
-    document_id: UUID
-    version_id: UUID
-    focus: str | None = Field(default=None, min_length=1, max_length=1000)
-    idempotency_key: str = Field(min_length=1, max_length=200)
-
-
-class CompareSourcesRequest(BaseModel):
-    source_ids: list[UUID] = Field(min_length=2, max_length=8)
-    focus: str | None = Field(default=None, min_length=1, max_length=1000)
-    idempotency_key: str = Field(min_length=1, max_length=200)
-
-    @field_validator("source_ids")
-    @classmethod
-    def unique_sources(cls, value: list[UUID]) -> list[UUID]:
-        if len(value) != len(set(value)):
-            raise ValueError("source_ids must be unique")
-        return value
 
 
 def _state(request: Request) -> tuple[GroundedQARepository, QAEventStore]:
@@ -586,51 +537,6 @@ async def submit_question(
 async def create_run(body: RunCreateRequest, request: Request) -> RunResponse:
     """Create a Run through the same QA Application used by every Skill entry point."""
     conversation = await _conversation(request, body.conversation_id)
-    if body.skill_name in {"summarize_document", "create_review_cards"}:
-        assert body.document_id is not None and body.version_id is not None
-        try:
-            scope = await request.app.state.organization_scope.document_scope(
-                space_id=conversation.space_id,
-                document_id=body.document_id,
-                version_id=body.version_id,
-            )
-        except OrganizationScopeError as exc:
-            raise AppError(exc.code.value, str(exc), 409) from exc
-        prefix = (
-            "Summarize the selected fixed document version."
-            if body.skill_name == "summarize_document"
-            else "Create a citation-backed review-card preview from the selected version."
-        )
-        focus = f" Focus on: {body.focus}" if body.focus else ""
-        return await _submit_scoped_skill(
-            request,
-            conversation,
-            skill_name=body.skill_name,
-            question=f"{prefix}{focus}",
-            idempotency_key=body.idempotency_key,
-            scope=scope,
-        )
-    if body.skill_name == "compare_sources":
-        assert body.source_ids is not None
-        try:
-            scope = await request.app.state.organization_scope.sources_scope(
-                space_id=conversation.space_id,
-                source_ids=frozenset(body.source_ids),
-            )
-        except OrganizationScopeError as exc:
-            raise AppError(exc.code.value, str(exc), 409) from exc
-        focus = f" Focus on: {body.focus}" if body.focus else ""
-        return await _submit_scoped_skill(
-            request,
-            conversation,
-            skill_name=body.skill_name,
-            question=(
-                "Compare the selected fixed sources and distinguish agreement, conflict, and gaps."
-                f"{focus}"
-            ),
-            idempotency_key=body.idempotency_key,
-            scope=scope,
-        )
     return await _submit_scoped_skill(
         request,
         conversation,
@@ -657,92 +563,6 @@ async def run_knowledge_agent(
         question=normalize_question(body.question),
         idempotency_key=body.idempotency_key,
         scope=QARetrievalScope(),
-    )
-
-
-@router.post(
-    "/conversations/{conversation_id}/skills/summarize_document/runs",
-    response_model=RunResponse,
-    status_code=202,
-)
-async def summarize_document(
-    conversation_id: UUID, body: DocumentSkillRequest, request: Request
-) -> RunResponse:
-    conversation = await _conversation(request, conversation_id)
-    try:
-        scope = await request.app.state.organization_scope.document_scope(
-            space_id=conversation.space_id,
-            document_id=body.document_id,
-            version_id=body.version_id,
-        )
-    except OrganizationScopeError as exc:
-        raise AppError(exc.code.value, str(exc), 409) from exc
-    focus = f" Focus on: {body.focus}" if body.focus else ""
-    return await _submit_scoped_skill(
-        request,
-        conversation,
-        skill_name="summarize_document",
-        question=f"Summarize the selected fixed document version.{focus}",
-        idempotency_key=body.idempotency_key,
-        scope=scope,
-    )
-
-
-@router.post(
-    "/conversations/{conversation_id}/skills/compare_sources/runs",
-    response_model=RunResponse,
-    status_code=202,
-)
-async def compare_sources(
-    conversation_id: UUID, body: CompareSourcesRequest, request: Request
-) -> RunResponse:
-    conversation = await _conversation(request, conversation_id)
-    try:
-        scope = await request.app.state.organization_scope.sources_scope(
-            space_id=conversation.space_id,
-            source_ids=frozenset(body.source_ids),
-        )
-    except OrganizationScopeError as exc:
-        raise AppError(exc.code.value, str(exc), 409) from exc
-    focus = f" Focus on: {body.focus}" if body.focus else ""
-    return await _submit_scoped_skill(
-        request,
-        conversation,
-        skill_name="compare_sources",
-        question=(
-            "Compare the selected fixed sources and distinguish agreement, conflict, and gaps."
-            f"{focus}"
-        ),
-        idempotency_key=body.idempotency_key,
-        scope=scope,
-    )
-
-
-@router.post(
-    "/conversations/{conversation_id}/skills/create_review_cards/runs",
-    response_model=RunResponse,
-    status_code=202,
-)
-async def create_review_cards(
-    conversation_id: UUID, body: DocumentSkillRequest, request: Request
-) -> RunResponse:
-    conversation = await _conversation(request, conversation_id)
-    try:
-        scope = await request.app.state.organization_scope.document_scope(
-            space_id=conversation.space_id,
-            document_id=body.document_id,
-            version_id=body.version_id,
-        )
-    except OrganizationScopeError as exc:
-        raise AppError(exc.code.value, str(exc), 409) from exc
-    focus = f" Focus on: {body.focus}" if body.focus else ""
-    return await _submit_scoped_skill(
-        request,
-        conversation,
-        skill_name="create_review_cards",
-        question=f"Create a citation-backed review-card preview from the selected version.{focus}",
-        idempotency_key=body.idempotency_key,
-        scope=scope,
     )
 
 

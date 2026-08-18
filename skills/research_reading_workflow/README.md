@@ -1,4 +1,4 @@
-# research_reading_workflow 1.1.0
+# research_reading_workflow 2.0.0
 
 Active provisional manifest-v2 RAG workflow. `deep_read` pins one current published document and
 combines paper-structure analysis with undergraduate teaching explanations. `literature_review`

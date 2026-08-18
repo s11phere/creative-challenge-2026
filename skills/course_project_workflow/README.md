@@ -1,4 +1,4 @@
-# course_project_workflow 1.0.0
+# course_project_workflow 2.0.0
 
 Provisional inactive manifest-v2 package. It freezes a resumable contract for requirement and rubric
 mapping, baseline assessment, prerequisite learning, architecture decisions, milestones, checkpoints,

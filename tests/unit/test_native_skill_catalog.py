@@ -106,12 +106,11 @@ def test_native_catalog_lists_thin_route_and_selects_hash_pinned_instructions(
     assert catalog.resolve(route.pin) == selection
 
 
-def test_native_catalog_lists_but_rejects_routes_without_runtime_adapter(tmp_path: Path) -> None:
+def test_native_catalog_rejects_native_route_without_runtime_adapter(tmp_path: Path) -> None:
     catalog, _package = _catalog(tmp_path, adapted=False)
 
-    assert catalog.list_routes()[0].adapter_available is False
-    with pytest.raises(ValueError):
-        catalog.select("native_fixture")
+    with pytest.raises(ValueError, match="has no Runtime adapter"):
+        catalog.list_routes()
 
 
 def test_native_catalog_rejects_a_tampered_selected_pin(tmp_path: Path) -> None:

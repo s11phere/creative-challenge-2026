@@ -76,6 +76,7 @@ from .personal import (
     PersonalSkillView,
 )
 from .suggestions import SkillSuggestionService, SkillSuggestionView
+from .workflow_native_tools import WorkflowNativeTools, workflow_tool_definitions
 
 __all__ = [
     "AggregateSkillEvalReport",
@@ -88,6 +89,7 @@ __all__ = [
     "DerivedKnowledgeWriter",
     "NativeKnowledgeTools",
     "NativeKnowledgeToolsConfig",
+    "WorkflowNativeTools",
     "NATIVE_KNOWLEDGE_AGENT_V2_INSTRUCTIONS",
     "KnowledgeOrganizationScopeService",
     "OrganizationScopeError",
@@ -139,4 +141,5 @@ __all__ = [
     "PatternRejection",
     "candidate_name",
     "dual_gate_passed",
+    "workflow_tool_definitions",
 ]

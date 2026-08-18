@@ -1,15 +1,17 @@
 manifest_version: "2"
 name: course_project_workflow
-version: 1.0.0
-description: Provisional end-to-end course-project workflow from rubric mapping and technical design through checkpoints, validation, submission, demonstration, defense, and retrospective.
+version: 2.0.0
+description: Native course-project coach that advances one verified stage from requirements mapping through delivery and defense.
 input_schema: schemas/input.json
 output_schema: schemas/output.json
 required_tools:
-  - name: grounded_qa
-    version: 1.0.0
+  - {name: project_analyze, version: 2.0.0}
+  - {name: project_checkpoint, version: 2.0.0}
+  - {name: knowledge_retrieve, version: 1.0.0}
+  - {name: knowledge_answer, version: 1.0.0}
 required_capabilities: [fast_chat]
 permissions: [read_knowledge, model]
-budgets: {max_steps: 14, max_tool_calls: 14, max_input_tokens: 65536, max_output_tokens: 16384, timeout_seconds: 600}
+budgets: {max_steps: 16, max_tool_calls: 12, max_input_tokens: 65536, max_output_tokens: 16384, timeout_seconds: 600}
 entrypoint: workflow.yaml
 compatibility: {runtime: ">=0.1.0,<1.0.0", checkpoint_schema_versions: [2]}
 prompts: [prompts/boundary.md]
@@ -29,3 +31,4 @@ invocation:
     examples:
       - "根据数据库课程项目要求，帮我从架构设计推进到最终答辩"
   input_mode: sources
+  execution_mode: native_tool_use

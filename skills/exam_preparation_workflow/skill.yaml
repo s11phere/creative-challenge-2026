@@ -1,20 +1,20 @@
 manifest_version: "2"
 name: exam_preparation_workflow
-version: 1.2.1
-description: Provisional interactive exam-preparation Skill for course mapping, adaptive diagnostics, structured study materials, approval-gated review cards, and answer-hidden mock exams. Use when a student wants a guided midterm, final, or custom-exam preparation workflow rather than a one-off factual answer.
+version: 2.0.0
+description: Native diagnostic-first exam coach for short assessment, targeted review, retesting, and optional study artifacts.
 input_schema: schemas/input.json
 output_schema: schemas/output.json
 required_tools:
-  - {name: exam_prepare, version: 1.2.1}
-  - {name: exam_submit, version: 1.2.1}
-  - {name: exam_review_cards, version: 1.2.1}
+  - {name: exam_prepare, version: 2.0.0}
+  - {name: exam_submit, version: 2.0.0}
+  - {name: exam_review_cards, version: 2.0.0}
 required_capabilities: [fast_chat]
 permissions: [read_knowledge, model]
 budgets:
-  max_steps: 20
-  max_tool_calls: 16
+  max_steps: 16
+  max_tool_calls: 12
   max_input_tokens: 65536
-  max_output_tokens: 24576
+  max_output_tokens: 16384
   timeout_seconds: 600
 entrypoint: workflow.yaml
 compatibility:

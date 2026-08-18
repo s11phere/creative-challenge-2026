@@ -179,14 +179,14 @@ async def test_fixed_skill_toggle_updates_the_next_assistant_catalog(app) -> Non
 async def test_disabled_skill_is_omitted_from_commands_and_skills_status(app) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         disabled = await client.patch(
-            "/api/v1/skills/compare_sources/activation", json={"active": False}
+            "/api/v1/skills/research_reading_workflow/activation", json={"active": False}
         )
         assert disabled.status_code == 200
         assert disabled.json()["active"] is False
 
         commands = await client.get("/api/v2/commands")
         assert commands.status_code == 200
-        assert "compare" not in {item["name"] for item in commands.json()["commands"]}
+        assert "research" not in {item["name"] for item in commands.json()["commands"]}
 
         skills = await client.post(
             "/api/v2/conversations/00000000-0000-0000-0000-000000000064/turns",
@@ -194,7 +194,7 @@ async def test_disabled_skill_is_omitted_from_commands_and_skills_status(app) ->
         )
         assert skills.status_code == 202
         statuses = {item["name"]: item for item in skills.json()["skills"]}
-        assert statuses["compare_sources"]["active"] is False
+        assert statuses["research_reading_workflow"]["active"] is False
         assert "assistant_agent" not in statuses
 
 
