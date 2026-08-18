@@ -15,7 +15,7 @@ const conversation = {
 const commands = [
   { name: 'effort', aliases: [], kind: 'base', description: 'Set reasoning effort', argument_hint: '[low|medium|high|xhigh|max]', input_mode: 'optional_effort' },
   { name: 'help', aliases: [], kind: 'base', description: 'Show active Skills and commands', argument_hint: '', input_mode: 'none' },
-  { name: 'summarize', aliases: ['summary'], kind: 'skill', description: 'Summarize one document', argument_hint: '<document>', input_mode: 'document' },
+  { name: 'research', aliases: ['literature'], kind: 'skill', description: 'Research confirmed papers', argument_hint: '<papers or topic>', input_mode: 'question' },
 ]
 
 const commandsWithAsk = [
@@ -88,14 +88,14 @@ describe('assistant conversation workspace', () => {
     renderWorkspace()
 
     const composer = await screen.findByRole('combobox', { name: '消息' })
-    fireEvent.change(composer, { target: { value: '/su' } })
+    fireEvent.change(composer, { target: { value: '/re' } })
 
     expect(await screen.findByRole('listbox', { name: '指令与技能' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: /\/summarize/ })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /\/research/ })).toBeInTheDocument()
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' })
 
     expect(composer).toHaveValue('')
-    expect(screen.getByLabelText('已选择技能 summarize')).toBeInTheDocument()
+    expect(screen.getByLabelText('已选择技能 research')).toBeInTheDocument()
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'LLM Agent' })).not.toBeInTheDocument()
   })
@@ -115,9 +115,9 @@ describe('assistant conversation workspace', () => {
     expect(screen.getByText('查看或调整当前会话的默认思考强度。')).toBeInTheDocument()
     expect(screen.queryByText('别名：/summary', { exact: false })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('option', { name: /\/summarize/ }))
+    fireEvent.click(screen.getByRole('option', { name: /\/research/ }))
     expect(composer).toHaveValue('')
-    expect(screen.getByLabelText('已选择技能 summarize')).toBeInTheDocument()
+    expect(screen.getByLabelText('已选择技能 research')).toBeInTheDocument()
     await waitFor(() => expect(composer).toHaveFocus())
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalledWith(
@@ -140,7 +140,7 @@ describe('assistant conversation workspace', () => {
         submittedBodies.push(JSON.parse(String(init?.body)))
         return Promise.resolve(response(assistantRun({
           run_kind: 'skill',
-          selection: { source: 'command', skill: { name: 'summarize_document', version: '1.0.0', content_sha256: 'a'.repeat(64) } },
+          selection: { source: 'command', skill: { name: 'research_reading_workflow', version: '2.0.0', content_sha256: 'a'.repeat(64) } },
         }), 202))
       }
       return Promise.resolve(response({}))
@@ -151,12 +151,12 @@ describe('assistant conversation workspace', () => {
 
     const composer = await screen.findByRole('combobox', { name: '消息' })
     fireEvent.click(screen.getByRole('button', { name: '指令与技能' }))
-    fireEvent.click(screen.getByRole('option', { name: /\/summarize/ }))
+    fireEvent.click(screen.getByRole('option', { name: /\/research/ }))
     fireEvent.change(composer, { target: { value: '总结这篇论文的关键贡献' } })
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
 
     await waitFor(() => expect(submittedBodies).toEqual([{
-      content: '/summarize 总结这篇论文的关键贡献',
+      content: '/research 总结这篇论文的关键贡献',
       idempotency_key: 'visual-skill-idempotency',
     }]))
   })
@@ -183,7 +183,7 @@ describe('assistant conversation workspace', () => {
     const composer = await screen.findByRole('combobox', { name: '消息' })
     fireEvent.click(screen.getByRole('button', { name: '指令与技能' }))
     fireEvent.keyDown(composer, { key: 'ArrowUp' })
-    expect(screen.getByRole('option', { name: /\/summarize/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('option', { name: /\/research/ })).toHaveAttribute('aria-selected', 'true')
     fireEvent.keyDown(composer, { key: 'Escape' })
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
 
@@ -198,9 +198,9 @@ describe('assistant conversation workspace', () => {
     renderWorkspace()
 
     const composer = await screen.findByRole('combobox', { name: '消息' })
-    fireEvent.change(composer, { target: { value: '/s' } })
+    fireEvent.change(composer, { target: { value: '/r' } })
 
-    expect(await screen.findByRole('option', { name: /\/summarize/ })).toBeInTheDocument()
+    expect(await screen.findByRole('option', { name: /\/research/ })).toBeInTheDocument()
     expect(screen.queryByRole('option', { name: /\/help/ })).not.toBeInTheDocument()
   })
 
@@ -743,15 +743,15 @@ describe('assistant conversation workspace', () => {
           commands: [],
           skills: [
             {
-              name: 'summarize_document',
-              version: '1.0.0',
-              description: 'Summarize one document',
+              name: 'research_reading_workflow',
+              version: '2.0.0',
+              description: 'Research confirmed papers',
               active: true,
             },
             {
-              name: 'compare_sources',
-              version: '1.0.0',
-              description: 'Compare published sources',
+              name: 'course_project_workflow',
+              version: '2.0.0',
+              description: 'Advance a course project',
               active: false,
             },
           ],
@@ -770,8 +770,8 @@ describe('assistant conversation workspace', () => {
     fireEvent.click(sendButton)
 
     expect(await screen.findByText('Installed Skills and their activation status.')).toBeInTheDocument()
-    expect(screen.getByText('summarize_document')).toBeInTheDocument()
-    expect(screen.getByText('Summarize one document')).toBeInTheDocument()
+    expect(screen.getByText('research_reading_workflow')).toBeInTheDocument()
+    expect(screen.getByText('Research confirmed papers')).toBeInTheDocument()
     expect(screen.getByText('已激活')).toBeInTheDocument()
     expect(screen.getByText('未激活')).toBeInTheDocument()
   })
@@ -861,7 +861,7 @@ describe('assistant conversation workspace', () => {
     const fetchMock = baseFetch({
       conversations: [{
         ...conversation,
-        messages: [{ message_id: 'message-1', role: 'user', content: '/summarize Architecture', run_id: null, created_at: '2026-08-06T10:01:00Z' }],
+        messages: [{ message_id: 'message-1', role: 'user', content: '/research Architecture', run_id: null, created_at: '2026-08-06T10:01:00Z' }],
         runs: [],
       }],
     })
@@ -869,7 +869,7 @@ describe('assistant conversation workspace', () => {
       const url = String(input)
       if (url.endsWith('/api/v2/commands')) return Promise.resolve(response({ commands }))
       if (url.includes('/api/v1/spaces/') && url.includes('/conversations?')) {
-        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [{ message_id: 'message-1', role: 'user', content: '/summarize Architecture', run_id: null, created_at: '2026-08-06T10:01:00Z' }], runs: [] }] }))
+        return Promise.resolve(response({ conversations: [{ ...conversation, messages: [{ message_id: 'message-1', role: 'user', content: '/research Architecture', run_id: null, created_at: '2026-08-06T10:01:00Z' }], runs: [] }] }))
       }
       if (url.endsWith('/api/v2/conversations/conversation-1/runs')) return Promise.resolve(response({ runs: [waiting] }))
       if (url.endsWith('/clarifications/clarify-1') && init?.method === 'POST') return Promise.resolve(response(assistantRun({ run_kind: 'skill', assistant_message: null }), 202))

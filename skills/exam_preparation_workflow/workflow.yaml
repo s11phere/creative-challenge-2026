@@ -7,4 +7,4 @@ nodes:
     next: null
     max_retries: 1
     required_permissions: [read_knowledge, model]
-    reserve: {tool_calls: 16, input_tokens: 65536, output_tokens: 24576}
+    reserve: {tool_calls: 12, input_tokens: 65536, output_tokens: 16384}

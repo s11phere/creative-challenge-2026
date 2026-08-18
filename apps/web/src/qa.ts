@@ -342,19 +342,6 @@ export function deleteConversation(
   )
 }
 
-export function createReviewCards(
-  conversationId: string,
-  documentId: string,
-  versionId: string,
-  focus: string | undefined,
-  idempotencyKey: string,
-): Promise<QARun> {
-  return request(`/api/v1/conversations/${conversationId}/skills/create_review_cards/runs`, {
-    method: 'POST',
-    body: JSON.stringify({ document_id: documentId, version_id: versionId, focus, idempotency_key: idempotencyKey }),
-  })
-}
-
 export function resumeRun(runId: string): Promise<QARun> {
   return request(`/api/v1/qa/runs/${runId}/resume`, { method: 'POST', body: JSON.stringify({}) })
 }
@@ -556,31 +543,6 @@ export function fetchCitationExcerpt(
   signal?: AbortSignal,
 ): Promise<CitationExcerpt> {
   return request(`/api/v1/qa/runs/${runId}/citations/${evidenceId}`, { signal })
-}
-
-export function submitOrganizationSkill(
-  conversationId: string,
-  skillName: 'summarize_document' | 'compare_sources',
-  options: {
-    focus?: string
-    documentId?: string
-    versionId?: string
-    sourceIds?: string[]
-    idempotencyKey: string
-  },
-): Promise<QARun> {
-  return request('/api/v1/runs', {
-    method: 'POST',
-    body: JSON.stringify({
-      conversation_id: conversationId,
-      skill_name: skillName,
-      focus: options.focus,
-      document_id: options.documentId,
-      version_id: options.versionId,
-      source_ids: options.sourceIds,
-      idempotency_key: options.idempotencyKey,
-    }),
-  })
 }
 
 export function submitFeedback(

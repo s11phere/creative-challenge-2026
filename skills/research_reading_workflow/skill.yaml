@@ -1,15 +1,14 @@
 manifest_version: "2"
 name: research_reading_workflow
-version: 1.1.0
-description: Provisional RAG workflow for one-paper deep reading or evidence-grounded review of two to eight papers.
+version: 2.0.0
+description: Native research agent for one-paper deep reading or a question-driven review of two to eight confirmed papers.
 input_schema: schemas/input.json
 output_schema: schemas/output.json
 required_tools:
-  - {name: research_discover, version: 1.1.0}
-  - {name: research_prepare, version: 1.1.0}
-  - {name: grounded_answer, version: 1.1.0}
-  - {name: verify_answer, version: 1.1.0}
-  - {name: finalize_answer, version: 1.1.0}
+  - {name: research_discover, version: 2.0.0}
+  - {name: research_prepare, version: 2.0.0}
+  - {name: knowledge_retrieve, version: 1.0.0}
+  - {name: knowledge_answer, version: 1.0.0}
 required_capabilities: [fast_chat]
 permissions: [read_knowledge, model]
 budgets:
@@ -40,4 +39,4 @@ invocation:
       - "精读 Transformer 论文，并用本科生能理解的方式解释核心方法"
       - "综合这四篇图神经网络论文，给出证据矩阵和主题综述"
   input_mode: question
-  execution_mode: projected
+  execution_mode: native_tool_use

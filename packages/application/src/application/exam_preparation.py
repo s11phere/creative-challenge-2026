@@ -386,7 +386,9 @@ def parse_objective_answers(value: str) -> list[dict[str, object]]:
 def _tool_answers(arguments: dict[str, JSONValue]) -> list[dict[str, object]]:
     raw = arguments.get("answers")
     if isinstance(raw, list) and raw:
-        return [cast(dict[str, object], dict(item)) for item in raw if isinstance(item, dict)]
+        answers = [cast(dict[str, object], dict(item)) for item in raw if isinstance(item, dict)]
+        if answers and all(str(item.get("question_id", "")).strip() for item in answers):
+            return answers
     text = arguments.get("response_text")
     if isinstance(text, str):
         return parse_objective_answers(text)
@@ -691,6 +693,8 @@ class ExamPreparationService:
         run_id: UUID,
     ) -> ExamSession:
         """Grade the active paper without forcing the next preparation capability."""
+        if not answers:
+            raise ExamPreparationError("EXAM_ANSWERS_INVALID", "Exam answers are required")
         session = await self._repository.get(session_id)
         if session is None or session.owner_id != owner_id:
             raise ExamPreparationError("EXAM_SESSION_NOT_FOUND", "Exam Session was not found")
@@ -1550,7 +1554,7 @@ class ExamNativeTools:
             context.run,
             ToolCallRecord(
                 tool_name="exam_review_cards",
-                tool_version="1.2.1",
+                tool_version=self.skill_version,
                 permissions=frozenset({ToolPermission.WRITE_KNOWLEDGE}),
                 idempotency_key=context.idempotency_key,
                 input_summary="exam_review_cards_preview",
@@ -1583,7 +1587,7 @@ def exam_tool_definitions() -> tuple[ToolDefinition, ...]:
         ToolDefinition(
             name="exam_prepare",
             timeout_seconds=90.0,
-            version="1.2.1",
+            version="2.0.0",
             description=(
                 "Create or recover an interactive exam preparation Session "
                 "and prepare its next interaction."
@@ -1614,7 +1618,7 @@ def exam_tool_definitions() -> tuple[ToolDefinition, ...]:
         ToolDefinition(
             name="exam_submit",
             timeout_seconds=60.0,
-            version="1.2.1",
+            version="2.0.0",
             description="Continue an exam Session through the server-owned interaction API.",
             input_schema={
                 "type": "object",
@@ -1622,7 +1626,7 @@ def exam_tool_definitions() -> tuple[ToolDefinition, ...]:
                 "properties": {
                     "response_text": {"type": "string"},
                     "submission_id": {"type": "string"},
-                    "answers": {"type": "array", "items": {"type": "object"}},
+                    "answers": {"type": "array", "minItems": 1, "items": {"type": "object"}},
                 },
                 "anyOf": [{"required": ["response_text"]}, {"required": ["answers"]}],
             },
@@ -1634,7 +1638,7 @@ def exam_tool_definitions() -> tuple[ToolDefinition, ...]:
         ),
         ToolDefinition(
             name="exam_review_cards",
-            version="1.2.1",
+            version="2.0.0",
             description="Preview approval-gated exam review cards without writing them.",
             input_schema={"type": "object", "additionalProperties": False},
             output_schema=common_output,

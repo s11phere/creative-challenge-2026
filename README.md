@@ -60,16 +60,12 @@ Assistant 的可用目录（ADR-021）。
 `/skills` 会列出全部已安装 Skill 及其激活状态；输入框的指令面板仅列出激活 Skill 的命令。
 阶段 5 工程功能已完成；正式 Skill 评测和阶段退出仍受阶段 3/4 质量门禁约束，不能把临时
 结果写成正式质量通过。
-`summarize_document`、`compare_sources` 和 `create_review_cards` 也已提供临时 HTTP
-入口并固定提交时的 Source/Document/DocumentVersion 范围；版本变更、撤下或跨 Space 选择不会
-扩大检索范围。比较结果必须引用至少两个来源，否则按证据不足拒答。复习卡当前只返回带引用预览，
-并以 `SKILL_WRITE_REQUIRES_APPROVAL` 明确报告审批前 `side_effects=0`；批准后通过持久化
-Derived Knowledge Port 幂等写入，并可查询或撤销。
+`summarize_document`、`compare_sources` 和 `create_review_cards` 已从当前目录和新 Run API 删除。
+普通摘要与比较由未改动的 `knowledge_agent 1.0.0` 处理；复习卡属于审批式 Exam 能力。既有 Run、
+引用和派生知识仍可只读访问。Research、Exam 与 Course Project 当前均为 `2.0.0` 原生 Tool-use
+Skill，共享 16 步、12 次 Tool 调用和 600 秒的 provisional 运行预算。
 `knowledge_agent 1.0.0` 提供当前默认的受约束 LLM/Tool 循环：顶层 Agent 会在每轮观察 Tool
-结果后自主选择下一步；模型仅可调用服务端注册的
-`knowledge_search`、`knowledge_inspect`、`summarize_document`、`grounded_answer`、`verify_answer` 和
-`finalize_answer`。`summarize_document` 只在服务端资源解析器可用时注册，先固定当前 Space 的已发布
-DocumentVersion，再回到同一 Grounded QA Run；复合请求可在一个 Loop 中串行组合这些 Tool。
+结果后自主选择下一步；模型仅可调用服务端注册的 `knowledge_retrieve` 与 `knowledge_answer`。
 `grounded_answer` 继续通过现有 QA Run、Worker、SSE、Grounded QA Port 和 Citation 链路完成问答。
 动态数值由服务端 profile 封顶，Space/版本边界不能由模型扩大；规划失败会降级到原问题的
 Grounded QA，而不是把 Run 变成基础设施失败。Tool 仅向外层模型返回状态和覆盖计数，不返回回答
@@ -77,9 +73,9 @@ Grounded QA，而不是把 Run 变成基础设施失败。Tool 仅向外层模�
 `RUN_LLM_NO_PROGRESS` 停止。旧 Agent 版本、`knowledge_qa` 适配器和回退开关已删除。默认 fake 可跑通流程，配置允许的
 OpenAI-compatible `fast_chat` Provider 会执行真实模型决策。非 fake Provider 仍不会注册本地工作区
 读写或命令 Tool；仅 fake Provider 的已选工作区可使用这些 Tool，且写入和命令必须经过持久审批。
-Assistant v2 使用独立的活动调用目录，包含 `/ask`、`/summarize`、`/compare`、`/cards`
-对应的 v2 Skill 元数据；模型只能返回 Skill 意图，服务端负责当前 Space 资源解析、版本 pin、
-权限和 QA Worker 投影。历史固定 Skill 身份仍可恢复旧 Run。普通聊天不会强制进入
+Assistant v2 使用独立的活动调用目录，包含 `/ask`、`/research`、`/prepare-exam` 和
+`/course-project`；模型只能返回 Skill 意图，服务端负责当前 Space 资源解析、版本 pin、权限和
+原生 Tool 执行。已删除的历史固定 Skill 身份不再恢复。普通聊天不会强制进入
 
 Assistant 对话演进 Step 5 增加有界多轮上下文。原始消息保持追加写入；版本化滚动摘要保留其覆盖范围、
 摘要指纹、prompt/模型版本和敏感度。路由、直接回答和 Skill 交接共享一个有界快照，而 QA 仍保持证据隔离。
@@ -276,8 +272,7 @@ Qwen3-Embedding-0.6B（约 400 MB，缓存到命名卷，中国用户可参考
 
 - 新知识请求统一固定为 `knowledge_agent 1.0.0`：API 与 Assistant 主路径只会创建该 Skill 的 Run，
   提交时固定名称/版本/内容摘要，Worker 恢复时按固定身份校验。
-- 模型仅可调用服务端注册的工具：`knowledge_search`、`knowledge_inspect`、`summarize_document`、
-  `grounded_answer`、`verify_answer`、`finalize_answer`。规划失败会降级到原问题的 Grounded QA，
+- 模型仅可调用服务端注册的 `knowledge_retrieve` 与 `knowledge_answer`。规划失败会降级到原问题的 Grounded QA，
   而不是把 Run 变成基础设施失败；Tool 只返回状态与覆盖计数，不返回回答或原文。
 - 服务端 `research-grounded-answer-v2` 契约：单篇精读和多篇综述不再只依靠格式提示，多篇综述必须
   包含逐篇摘要、带引用证据矩阵、主题综合段，以及共识、条件差异、冲突、证据空白与局限。
@@ -290,8 +285,10 @@ Qwen3-Embedding-0.6B（约 400 MB，缓存到命名卷，中国用户可参考
 
 | 命令 | 作用 |
 | --- | --- |
-| `/ask`、`/summarize`、`/compare`、`/cards` | 显式调用对应 v2 Skill（固定当前 Space 资源、版本 pin、权限） |
-| `/research` | `research_reading_workflow 1.1.0`（provisional）论文精读/文献综述 |
+| `/ask` | `knowledge_agent 1.0.0`：知识问答、普通摘要与比较 |
+| `/research` | `research_reading_workflow 2.0.0`：论文精读与确认范围后的文献综述 |
+| `/prepare-exam` | `exam_preparation_workflow 2.0.0`：诊断、针对性复习与复测 |
+| `/course-project` | `course_project_workflow 2.0.0`：按当前阶段推进课程项目 |
 | `/create-skill`（别名 `/skill`） | 进入 Skill Creator 引导流程，经草稿→校验→eval 门禁→审批→激活 |
 | `/effort` | 读取/设置后续 Run 的 reasoning effort（`low|medium|high|xhigh|max`，菜单只提供这五个值） |
 | `/compact` | 通过 Worker 队列创建可持久化的上下文压缩 Run |
@@ -574,8 +571,8 @@ See
 security constraints.
 # 当前实现说明（2026-08-11）
 
-当前运行时只支持 Assistant 主路径和每个 Skill 的唯一固定版本。既有 Skill 保持 `1.0.0`，
-`research_reading_workflow` 为 `1.1.0`。知识请求固定使用 `knowledge_agent 1.0.0`；旧 Skill 目录、
+当前运行时只支持 Assistant 主路径和每个 Skill 的唯一固定版本。知识请求固定使用
+`knowledge_agent 1.0.0`；Research、Exam 与 Course Project 为 `2.0.0`。旧 Skill 目录、
 旧 Prompt、`knowledge_qa` 恢复适配器、Skill 的版本激活/回滚/清理 API 以及 Web 的兼容问答模式均已移除。
 `GET /api/v1/skills` 返回安装目录及即时激活状态；关闭的 Skill 不会进入下一轮 Assistant 上下文。
 

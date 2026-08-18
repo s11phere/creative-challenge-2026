@@ -7,6 +7,7 @@ import json
 import logging
 import re
 from pathlib import Path
+from typing import cast
 from uuid import UUID
 
 from agent_runtime import (
@@ -486,6 +487,35 @@ def _native_assistant_decision(
                     "",
                 )
         return None, {}, "fake-response-autonomous"
+    if "research_reading_workflow" in selected_names:
+        if last_tool in {None, "invoke_skill"}:
+            request_data = _fake_research_request(goal)
+            if request_data is None:
+                return None, {}, "请补充研究主题或论文名称。"
+            return (
+                str(request_data["tool_name"]),
+                cast(dict[str, JSONValue], request_data["arguments"]),
+                "",
+            )
+        if last_tool == "research_discover":
+            return None, {}, "已找到当前 Space 中的候选资料，请确认要纳入研究范围的 2–8 篇资料。"
+        if last_tool == "research_prepare" and "knowledge_retrieve" in tool_names:
+            return "knowledge_retrieve", {"query": _fake_knowledge_query(goal)}, ""
+        if last_tool == "knowledge_retrieve" and "knowledge_answer" in tool_names:
+            return "knowledge_answer", {}, ""
+        return None, {}, "研究流程已完成当前阶段。"
+    if "exam_preparation_workflow" in selected_names:
+        if last_tool in {None, "invoke_skill"} and "exam_prepare" in tool_names:
+            return "exam_prepare", {"intent": "resume", "capability": "diagnose"}, ""
+        return None, {}, "诊断已准备，请在考试卡片中完成作答后继续。"
+    if "course_project_workflow" in selected_names:
+        if last_tool in {None, "invoke_skill"} and "project_analyze" in tool_names:
+            return "project_analyze", {"goal": goal[:2000] or "课程项目要求"}, ""
+        if last_tool == "project_analyze" and "knowledge_retrieve" in tool_names:
+            return "knowledge_retrieve", {"query": _fake_knowledge_query(goal)}, ""
+        if last_tool == "knowledge_retrieve" and "knowledge_answer" in tool_names:
+            return "knowledge_answer", {}, ""
+        return None, {}, "项目当前阶段已分析，请确认事实后再保存检查点。"
     return None, {}, "fake-response-autonomous"
 
 
@@ -522,20 +552,20 @@ def _fake_research_request(question: object) -> dict[str, object] | None:
             "tool_name": "research_prepare",
             "arguments": {
                 "mode": "literature_review",
-                "document_references": list(references[:8]),
+                "question": question[:2000],
             },
         }
     if len(references) == 1:
         return {
             "action": "call_tool",
             "tool_name": "research_prepare",
-            "arguments": {"mode": "deep_read", "document_references": list(references)},
+            "arguments": {"mode": "deep_read", "question": question[:2000]},
         }
     topic = re.sub(r"^\s*/(?:research|literature)\s*", "", question, flags=re.I).strip()
     return {
         "action": "call_tool",
         "tool_name": "research_discover",
-        "arguments": {"topic": topic[:512] or "research topic"},
+        "arguments": {"query": topic[:512] or "research topic"},
     }
 
 

@@ -39,12 +39,8 @@ from agent_runtime import (
     SkillPackage,
 )
 from application.exam_preparation import (
-    _diagnosis,
     _diagnostic_paper,
     _mock_paper,
-    _review_cards,
-    _review_plan,
-    _study_guide,
 )
 from application.skills import (
     GroundedQASkillAdapter,
@@ -70,17 +66,13 @@ _EVAL_SPACE_ID = uuid5(_EVAL_NAMESPACE, "skill-evaluation")
 _QA_BACKED_SKILLS = frozenset(
     {
         "knowledge_agent",
-        "summarize_document",
-        "compare_sources",
-        "create_review_cards",
         "research_reading_workflow",
+        "course_project_workflow",
     }
 )
 _QA_OUTPUT_SCHEMA_VERSIONS = {
-    "summarize_document": "summarize-document-skill-output-v1",
-    "compare_sources": "compare-sources-skill-output-v1",
-    "create_review_cards": "review-cards-skill-output-v1",
-    "research_reading_workflow": "research-reading-workflow-output-v2",
+    "research_reading_workflow": "research-reading-workflow-output-v3",
+    "course_project_workflow": "course-project-workflow-output-v2",
 }
 _FORBIDDEN_REPORT_KEYS = frozenset(
     {
@@ -317,72 +309,23 @@ def _exam_observation(case: SkillEvalCase, started: float) -> SkillEvalObservati
         },
         "paper": paper.public_payload,
     }
+    del interaction, evidence_id
     output: dict[str, object] = {
         "schema_version": "exam-preparation-workflow-output-v3",
         "status": "in_progress",
-        "capability": "mock_exam"
-        if paper.kind == "mock"
-        else ("adaptive_check" if paper.kind == "adaptive" else "diagnose"),
-        "interaction_model": interaction,
-        "course_map": [
-            {
-                "chapter": "综合",
-                "topics": ["合成知识点"],
-                "prerequisites": [],
-                "coverage": "covered",
-                "weight_basis": "historical_inference",
-                "citation_ids": [evidence_id],
-            }
-        ],
-        "diagnostic_result": [{**item, "citation_ids": [evidence_id]} for item in _diagnosis()],
-        "review_plan": _review_plan(),
-        "study_guide": _study_guide(),
-        "review_card_preview": [
-            {**item, "citation_ids": [evidence_id]} for item in _review_cards()
-        ],
-        "write": {"status": "blocked", "code": "SKILL_WRITE_REQUIRES_APPROVAL", "side_effects": 0},
-        "review": {
-            "paper_id": str(paper.paper_id),
-            "paper_version": 1,
-            "submission_id": f"submission-{case.case_id}",
-            "suggested_score": 5,
-            "max_score": 10,
-            "items": [
-                {
-                    "question_id": "Q1",
-                    "kind": "short_answer",
-                    "reference_answer": "合成参考答案",
-                    "explanation": "合成解析",
-                    "rubric": [
-                        {
-                            "criterion": "正确性",
-                            "max_points": 10,
-                            "awarded_points": 5,
-                            "feedback": "需要人工复核",
-                        }
-                    ],
-                    "suggested_score": 5,
-                    "max_score": 10,
-                    "grading_confidence": "low",
-                    "requires_human_review": True,
-                    "citation_ids": [evidence_id],
-                }
-            ],
-            "chapter_performance": [{**_diagnosis()[0], "citation_ids": [evidence_id]}],
-        },
-        "citations": [{"citation_id": "C1", "evidence_id": evidence_id}],
+        "outcome": "study_artifact" if paper.kind == "mock" else "diagnostic",
+        "publication": "interaction",
         "next_action": action,
+        "artifact_refs": [str(paper.paper_id)],
     }
     if "insufficient-evidence" in scenario:
         output.update(
             {
                 "status": "refused",
-                "capability": "diagnose",
+                "outcome": "refuse",
+                "publication": "clarification",
                 "next_action": "provide_setup",
-                "refusal": {
-                    "code": "SKILL_EVIDENCE_INSUFFICIENT",
-                    "message": "Synthetic evidence is insufficient.",
-                },
+                "artifact_refs": [],
             }
         )
     return SkillEvalObservation(

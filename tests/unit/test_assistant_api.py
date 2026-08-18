@@ -5,16 +5,10 @@ from uuid import UUID
 import pytest
 from api.assistant_runtime import AssistantWorkerDispatcher
 from api.main import create_app
-from application.assistant import (
-    ResolvedResource,
-    ResourceResolutionError,
-    ResourceResolutionErrorCode,
-)
 from application.qa import InMemoryGroundedQARepository
 from domain.agent_sse import AgentRunEventLog, AgentRunEventType
 from domain.assistant_sse import AssistantEventLog, AssistantEventType
-from domain.conversation_run import ConversationRunStatus, ResourceCandidate
-from domain.qa_persistence import QARetrievalScope
+from domain.conversation_run import ConversationRunStatus
 from domain.qa_sse import QAEventLog
 from httpx import ASGITransport, AsyncClient
 from infrastructure.config import settings
@@ -352,9 +346,9 @@ async def test_v2_command_catalog_and_base_commands_do_not_create_business_runs(
         "compact",
         "stop",
         "ask",
-        "summarize",
-        "compare",
-        "cards",
+        "research",
+        "prepare-exam",
+        "course-project",
     } <= names
     assert all(
         "content_sha256" not in item and "budget" not in item for item in catalog.json()["commands"]
@@ -404,34 +398,7 @@ async def test_v2_stop_and_escaped_slash_reuse_the_existing_turn_lifecycle() -> 
 
 
 @pytest.mark.asyncio
-async def test_v2_resource_clarification_resumes_the_same_run() -> None:
-    class Resolver:
-        candidate = ResourceCandidate(
-            candidate_id="candidate:synthetic-document",
-            resource_type="document",
-            label="Architecture notes",
-            source_label="notes.md",
-            version_label="published",
-        )
-
-        async def resolve(self, **_kwargs: object) -> ResolvedResource:
-            raise ResourceResolutionError(
-                ResourceResolutionErrorCode.CONFLICT,
-                "Several resources matched.",
-                (self.candidate,),
-            )
-
-        async def select_candidate(self, **kwargs: object) -> ResolvedResource:
-            if kwargs.get("candidate_id") != self.candidate.candidate_id:
-                raise ResourceResolutionError(
-                    ResourceResolutionErrorCode.NOT_FOUND,
-                    "Candidate is unavailable.",
-                )
-            return ResolvedResource(
-                candidate=self.candidate,
-                scope=QARetrievalScope(),
-            )
-
+async def test_removed_skill_command_is_rejected_without_creating_a_run() -> None:
     repository = InMemoryGroundedQARepository()
     app = create_app(
         model_gateway=FakeModelGateway(),
@@ -441,38 +408,18 @@ async def test_v2_resource_clarification_resumes_the_same_run() -> None:
         assistant_event_store=AssistantEventLog(),
         skill_activation_store=InMemorySkillActivationStore(),
     )
-    app.state.assistant_skill_invoker._resources = Resolver()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         conversation = await client.post(
             f"/api/v1/spaces/{UUID(int=237)}/conversations", json={"owner_id": "local-user"}
         )
         conversation_id = conversation.json()["conversation_id"]
-        clarified = await client.post(
+        rejected = await client.post(
             f"/api/v2/conversations/{conversation_id}/turns",
-            json={"content": "/summarize Architecture", "idempotency_key": "clarify-1"},
+            json={"content": "/summarize Architecture", "idempotency_key": "removed-1"},
         )
-        run_id = clarified.json()["run"]["run_id"]
-        clarification_id = clarified.json()["run"]["clarification"]["clarification_id"]
         listed = await client.get(f"/api/v2/conversations/{conversation_id}/runs")
-        invalid = await client.post(
-            f"/api/v2/runs/{run_id}/clarifications/{clarification_id}",
-            json={"candidate_id": "candidate:forged"},
-        )
-        resumed = await client.post(
-            f"/api/v2/runs/{run_id}/clarifications/{clarification_id}",
-            json={"candidate_id": Resolver.candidate.candidate_id},
-        )
-
-    assert clarified.status_code == 202
-    assert clarified.json()["run"]["status"] == ConversationRunStatus.WAITING_CLARIFICATION.value
-    assert listed.status_code == 200
-    assert [item["run_id"] for item in listed.json()["runs"]] == [run_id]
-    assert "continuation" not in json.dumps(listed.json())
-    assert invalid.status_code == 409
-    assert resumed.status_code == 202
-    assert resumed.json()["run_id"] == run_id
-    assert resumed.json()["run_kind"] == "skill"
-    assert resumed.json()["selection"]["skill"]["name"] == "summarize_document"
+    assert rejected.status_code == 400
+    assert listed.json()["runs"] == []
 
 
 @pytest.mark.asyncio

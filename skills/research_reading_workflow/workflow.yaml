@@ -1,9 +1,9 @@
 workflow_version: "1"
-start: projected_skill
+start: native_tool_use
 nodes:
-  - id: projected_skill
+  - id: native_tool_use
     step: executing
-    handler: projected_skill
+    handler: native_tool_use
     next: null
     max_retries: 1
     required_permissions: [read_knowledge, model]

@@ -2,7 +2,7 @@
 
 ## Exam Preparation vertical slice (2026-08-13)
 
-`exam_preparation_workflow 1.2.1` is an active native Tool-use Skill. One durable `ExamSession`
+`exam_preparation_workflow 2.0.0` is an active native Tool-use Skill. One durable `ExamSession`
 spans multiple short `ConversationRun` actions; the Runtime does not add a generic
 `waiting_user_input` state. Public interactions and private answer keys are separate database
 columns and separate API projections. `exam_actions` stores only a body-free recovery summary,
@@ -274,12 +274,9 @@ Agent Runtime → Domain + ModelGateway
 │   ├── _template/                  # 声明式 Skill 开发模板（不参与批量注册）
 │   ├── assistant_agent/             # 顶层自主 Assistant Loop (1.0.0)
 │   ├── knowledge_agent/             # 知识检索和回答 Loop (1.0.0)
-│   ├── research_reading_workflow/   # active provisional RAG Workflow (1.1.0)
-│   ├── exam_preparation_workflow/   # 未激活的备考 Workflow 契约 (1.0.0)
-│   ├── course_project_workflow/     # 未激活的课程项目 Workflow 契约 (1.0.0)
-│   ├── summarize_document/         # 固定单文档版本的引用摘要
-│   ├── compare_sources/            # 固定多来源的引用比较
-│   └── create_review_cards/        # 带引用预览与审批后的派生知识写入
+│   ├── research_reading_workflow/   # 原生论文精读与综述 Agent (2.0.0)
+│   ├── exam_preparation_workflow/   # 原生诊断式备考 Agent (2.0.0)
+│   └── course_project_workflow/     # 原生课程项目 Agent (2.0.0)
 │
 ├── scripts/                        # OpenAPI 导出、Embedding 重建和检索评测 CLI
 │

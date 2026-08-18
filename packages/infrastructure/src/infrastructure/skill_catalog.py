@@ -209,6 +209,11 @@ class FileSystemNativeSkillCatalog(NativeSkillCatalog):
         return self._selection(route)
 
     def _route(self, item: SkillInvocationView) -> NativeSkillRoute:
+        ref = ToolRef(item.name, item.version)
+        if item.execution_mode == "native_tool_use" and ref not in self._tool_adapters:
+            raise ValueError(
+                f"Active native Skill {item.name} {item.version} has no Runtime adapter"
+            )
         return NativeSkillRoute(
             pin=NativeSkillPin(
                 name=item.name,
@@ -217,7 +222,7 @@ class FileSystemNativeSkillCatalog(NativeSkillCatalog):
             ),
             description=item.description,
             command=item.command,
-            adapter_available=ToolRef(item.name, item.version) in self._tool_adapters,
+            adapter_available=ref in self._tool_adapters,
         )
 
     def _selection(self, route: NativeSkillRoute) -> NativeSkillSelection:

@@ -59,12 +59,9 @@ def enable_current_agent_loop(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_user_manageable_skill_versions_exclude_internal_runtime_package() -> None:
     assert user_manageable_skill_versions(qa_skill_registry()) == {
         "knowledge_agent": "1.0.0",
-        "summarize_document": "1.0.0",
-        "compare_sources": "1.0.0",
-        "create_review_cards": "1.0.0",
-        "exam_preparation_workflow": "1.2.1",
-        "research_reading_workflow": "1.1.0",
-        "course_project_workflow": "1.0.0",
+        "exam_preparation_workflow": "2.0.0",
+        "research_reading_workflow": "2.0.0",
+        "course_project_workflow": "2.0.0",
         "skill_creator": "1.0.0",
     }
 
@@ -232,12 +229,9 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
 
     assert listed.status_code == 200
     assert {item["name"] for item in listed.json()} == {
-        "compare_sources",
         "course_project_workflow",
-        "create_review_cards",
         "exam_preparation_workflow",
         "knowledge_agent",
-        "summarize_document",
         "research_reading_workflow",
         "skill_creator",
     }
@@ -255,7 +249,7 @@ async def test_skill_catalog_exposes_only_installed_versions_and_fixed_budget() 
 
 
 @pytest.mark.asyncio
-async def test_document_organization_skill_fixes_scope_on_the_shared_qa_run() -> None:
+async def test_removed_organization_skill_routes_are_not_available() -> None:
     app = create_app(
         model_gateway=FakeModelGateway(),
         enable_qa_execution=False,
@@ -289,24 +283,12 @@ async def test_document_organization_skill_fixes_scope_on_the_shared_qa_run() ->
             },
         )
 
-    assert submitted.status_code == 202
-    assert submitted.json()["skill"]["name"] == "summarize_document"
-    assert submitted.json()["skill"]["version"] == "1.0.0"
-    assert submitted.json()["fixed_scope"] == {
-        "source_ids": [str(UUID(int=30))],
-        "document_ids": [str(UUID(int=31))],
-        "version_ids": [str(UUID(int=32))],
-    }
-    assert preview.status_code == 202
-    assert preview.json()["write"] == {
-        "status": "blocked",
-        "code": "SKILL_WRITE_REQUIRES_APPROVAL",
-        "side_effects": 0,
-    }
+    assert submitted.status_code == 404
+    assert preview.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_generic_run_facade_accepts_organization_skill_inputs() -> None:
+async def test_generic_run_facade_rejects_removed_skill_inputs() -> None:
     app = create_app(
         model_gateway=FakeModelGateway(),
         enable_qa_execution=False,
@@ -341,15 +323,8 @@ async def test_generic_run_facade_accepts_organization_skill_inputs() -> None:
             },
         )
 
-    assert summary.status_code == 202
-    assert summary.json()["skill"]["name"] == "summarize_document"
-    assert summary.json()["fixed_scope"]["document_ids"] == [str(UUID(int=31))]
-    assert comparison.status_code == 202
-    assert comparison.json()["skill"]["name"] == "compare_sources"
-    assert comparison.json()["fixed_scope"]["source_ids"] == [
-        str(UUID(int=41)),
-        str(UUID(int=42)),
-    ]
+    assert summary.status_code == 422
+    assert comparison.status_code == 422
 
 
 @pytest.mark.asyncio
