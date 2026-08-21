@@ -43,19 +43,19 @@
 }
 
 .brand-mark {
-  width: 36px;
-  height: 36px;
+  width: 35px;
+  height: 35px;
   display: grid;
   place-items: center;
-  color: #d8f3e9;
-  background: #285448;
-  border: 1px solid #3f6c60;
-  border-radius: 6px;
+  color: #e7f7f0;
+  background: #21604f;
+  border: 1px solid #4c806f;
+  border-radius: 9px;
   flex: 0 0 auto;
 }
 
 .brand strong,
-.brand span,
+.brand > div > span,
 .local-mode strong,
 .local-mode span {
   display: block;
@@ -67,7 +67,7 @@
   font-weight: 650;
 }
 
-.brand span,
+.brand > div > span,
 .local-mode span {
   color: #9fb0aa;
   font-size: 12px;
@@ -834,7 +834,7 @@
 }
 
 @media (max-width: 480px) {
-  .brand span {
+  .brand > div > span {
     display: none;
   }
 

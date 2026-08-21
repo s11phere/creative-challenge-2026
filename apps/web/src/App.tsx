@@ -8,7 +8,7 @@ import {
   Clock3,
   Database,
   HardDrive,
-  LibraryBig,
+  BookOpen,
   LoaderCircle,
   MessageSquareText,
   RefreshCw,
@@ -241,7 +241,7 @@ function App() {
       <aside className="sidebar" aria-label="主导航">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
-            <LibraryBig size={21} strokeWidth={1.8} />
+            <BookOpen size={24} strokeWidth={2.1} />
           </span>
           <div>
             <strong>知识工作台</strong>
