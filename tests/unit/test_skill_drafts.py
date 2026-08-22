@@ -169,6 +169,31 @@ class TestRegistryDrafts:
         files = registry.read_draft_files("my_skill")
         assert "skill.yaml" in files and "workflow.yaml" in files
 
+
+class TestDraftExecutionModeNormalization:
+    def test_creator_draft_native_mode_is_normalized_before_validation(
+        self, store: SkillDraftStore
+    ) -> None:
+        files = scaffold_files()
+        manifest_data = yaml.safe_load(files["skill.yaml"])
+        manifest_data["manifest_version"] = "2"
+        manifest_data["invocation"] = {
+            "command": "my-skill",
+            "aliases": [],
+            "argument_hint": "<question>",
+            "trigger": {"summary": "My Skill", "when": [], "avoid_when": [], "examples": []},
+            "input_mode": "question",
+            "execution_mode": "native_tool_use",
+        }
+        files["skill.yaml"] = yaml.safe_dump(manifest_data, sort_keys=False)
+
+        view = store.create("my_skill", files)
+
+        assert view.valid is True
+        stored = store.read_files("my_skill")
+        stored_manifest = yaml.safe_load(stored["skill.yaml"])
+        assert stored_manifest["invocation"]["execution_mode"] == "projected"
+
     def test_rejects_builtin_name(self, registry: PersonalSkillRegistry) -> None:
         with pytest.raises(SkillRegistryError) as excinfo:
             registry.create_draft("builtin_skill", scaffold_files(name="builtin_skill"))

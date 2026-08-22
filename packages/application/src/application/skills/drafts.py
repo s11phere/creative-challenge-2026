@@ -11,6 +11,7 @@ is the durable, user-confirmed transition and is persisted through the shared
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -73,6 +74,7 @@ class SkillDraftStore:
         self._eval_runner = eval_runner
 
     def create(self, name: str, files: Mapping[str, str]) -> SkillDraftView:
+        files = _normalize_draft_files(files)
         try:
             self._registry.create_draft(name, dict(files))
         except SkillRegistryError as exc:
@@ -80,6 +82,7 @@ class SkillDraftStore:
         return self.get(name)
 
     def update(self, name: str, files: Mapping[str, str]) -> SkillDraftView:
+        files = _normalize_draft_files(files)
         try:
             self._registry.update_draft(name, dict(files))
         except SkillRegistryError as exc:
@@ -90,6 +93,7 @@ class SkillDraftStore:
         return tuple(self.get(name) for name in self._registry.draft_names())
 
     def get(self, name: str) -> SkillDraftView:
+        self._normalize_existing_draft(name)
         try:
             files = self._registry.read_draft_files(name)
         except SkillRegistryError as exc:
@@ -98,6 +102,7 @@ class SkillDraftStore:
 
     def read_files(self, name: str) -> dict[str, str]:
         """Return the draft package files (path → content) for editing."""
+        self._normalize_existing_draft(name)
         try:
             return self._registry.read_draft_files(name)
         except SkillRegistryError as exc:
@@ -110,6 +115,7 @@ class SkillDraftStore:
             raise _draft_error(exc) from exc
 
     def validate(self, name: str) -> SkillDraftValidationResult:
+        self._normalize_existing_draft(name)
         try:
             package = self._registry.validate_draft(name)
         except SkillRegistryError as exc:
@@ -125,6 +131,7 @@ class SkillDraftStore:
         )
 
     async def run_eval(self, name: str) -> SkillEvalSkillReport:
+        self._normalize_existing_draft(name)
         try:
             return await self._eval_runner.evaluate(name)
         except SkillRegistryError as exc:
@@ -169,6 +176,16 @@ class SkillDraftStore:
             files=tuple(sorted(files)),
         )
 
+    def _normalize_existing_draft(self, name: str) -> None:
+        """Repair old Creator drafts before any UI or gate operation reads them."""
+        try:
+            files = self._registry.read_draft_files(name)
+        except SkillRegistryError:
+            return
+        normalized = _normalize_draft_files(files)
+        if normalized != files:
+            self._registry.update_draft(name, normalized)
+
 
 def _eval_gate_passed(report: SkillEvalSkillReport) -> bool:
     metrics = report.metrics
@@ -204,6 +221,85 @@ def _description(files: Mapping[str, str]) -> str:
         return ""
     description = data.get("description")
     return description if isinstance(description, str) else ""
+
+
+def _normalize_draft_files(files: Mapping[str, str]) -> dict[str, str]:
+    """Keep personal drafts compatible with the deterministic structural gate.
+
+    ``native_tool_use`` belongs to the Creator runtime itself. Personal Skills
+    created by it are declarative workflows and must remain ``projected`` so
+    their structural eval can run without a model-driven Tool loop.
+    """
+    normalized = dict(files)
+    raw_manifest = normalized.get("skill.yaml")
+    if raw_manifest is None:
+        return normalized
+    try:
+        manifest = yaml.safe_load(raw_manifest)
+    except (yaml.YAMLError, ValueError):
+        return normalized
+    if not isinstance(manifest, dict):
+        return normalized
+    _normalize_legacy_scaffold_cases(normalized)
+    invocation = manifest.get("invocation")
+    if not isinstance(invocation, dict) or invocation.get("execution_mode") != "native_tool_use":
+        return normalized
+    fixed_invocation = dict(invocation)
+    fixed_invocation["execution_mode"] = "projected"
+    fixed_manifest = dict(manifest)
+    fixed_manifest["invocation"] = fixed_invocation
+    normalized["skill.yaml"] = yaml.safe_dump(fixed_manifest, sort_keys=False)
+    return normalized
+
+
+def _normalize_legacy_scaffold_cases(files: dict[str, str]) -> None:
+    """Repair old scaffold checks after a custom output schema was introduced."""
+    raw_schema = files.get("schemas/output.json")
+    raw_cases = files.get("evals/cases.jsonl")
+    if raw_schema is None or raw_cases is None:
+        return
+    try:
+        schema = json.loads(raw_schema)
+    except json.JSONDecodeError:
+        return
+    if not isinstance(schema, dict):
+        return
+    properties = schema.get("properties")
+    required = schema.get("required")
+    keys = [key for key in required if isinstance(key, str)] if isinstance(required, list) else []
+    if not keys and isinstance(properties, dict):
+        keys = [key for key in properties if isinstance(key, str)]
+    if not keys:
+        return
+    changed = False
+    lines: list[str] = []
+    for line in raw_cases.splitlines(keepends=True):
+        try:
+            case = json.loads(line)
+        except json.JSONDecodeError:
+            lines.append(line)
+            continue
+        checks = case.get("checks") if isinstance(case, dict) else None
+        check_keys = (
+            [item.get("key") for item in checks if isinstance(item, dict)]
+            if isinstance(checks, list)
+            else []
+        )
+        if (
+            isinstance(case, dict)
+            and case.get("case_id") == "scaffold-001"
+            and {"status", "result"}.issubset(set(check_keys))
+            and not {"status", "result"}.issubset(set(keys))
+        ):
+            case["checks"] = [
+                *({"type": "output_has_key", "key": key} for key in keys),
+                {"type": "finalized"},
+            ]
+            line = json.dumps(case, ensure_ascii=False) + "\n"
+            changed = True
+        lines.append(line)
+    if changed:
+        files["evals/cases.jsonl"] = "".join(lines)
 
 
 def _draft_error(exc: SkillRegistryError) -> SkillDraftError:

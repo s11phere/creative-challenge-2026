@@ -617,6 +617,11 @@ async def _autonomous_loop_service(
         ),
         tool_adapters={
             ToolRef(knowledge_pin.name, knowledge_pin.version): native_allowed_tools,
+            ToolRef("skill_creator", "1.0.0"): tuple(
+                definition.ref
+                for definition in extra_native_tools
+                if definition.name.startswith("skill_")
+            ),
             ToolRef(research_pin.name, research_pin.version): (
                 *(
                     definition.ref

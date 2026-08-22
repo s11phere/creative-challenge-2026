@@ -72,6 +72,12 @@ class TestScaffoldFiles:
         output = json.loads(files["schemas/output.json"])
         assert "status" in output["properties"] and "result" in output["properties"]
 
+    def test_creator_manifest_uses_native_tool_runtime(self) -> None:
+        manifest = yaml.safe_load(
+            Path("skills/skill_creator/skill.yaml").read_text(encoding="utf-8")
+        )
+        assert manifest["invocation"]["execution_mode"] == "native_tool_use"
+
     def test_merges_user_input_schema_with_question(self) -> None:
         files = scaffold_skill_files(
             name="my_skill",
@@ -156,6 +162,25 @@ class TestSkillRunEvalTool:
         payload = await creator.skill_run_eval({"name": "my_skill"}, _context())
         assert payload["ok"] is True
         assert payload["total"] == 1
+        assert payload["passed"] == 1
+        assert payload["gate_passed"] is True
+
+    async def test_custom_output_schema_generates_matching_eval_checks(
+        self, creator: SkillCreatorTools
+    ) -> None:
+        await creator.skill_scaffold(
+            {
+                "name": "knowledge_outline",
+                "description": "Create a knowledge outline.",
+                "output_schema": {
+                    "type": "object",
+                    "properties": {"outline": {"type": "string"}},
+                    "required": ["outline"],
+                },
+            },
+            _context(),
+        )
+        payload = await creator.skill_run_eval({"name": "knowledge_outline"}, _context())
         assert payload["passed"] == 1
         assert payload["gate_passed"] is True
 

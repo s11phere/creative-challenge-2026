@@ -17,6 +17,9 @@ draft 状态与显式晋升路径。
 - 草稿存放在 `PERSONAL_SKILLS_DIR/_drafts/<name>/`。下划线前缀使 `reload()` 的目录扫描跳过它，
   因此草稿永不被当作受信包加载；draft 文件名仍走同一套路径安全校验（无符号链接 / 父路径穿越）。
 - `create_draft` / `update_draft` 只做路径安全校验，**不做全量包校验**（草稿允许不完整）。
+- Creator 生成的个人 Skill 草稿统一使用 `invocation.execution_mode: projected`。`native_tool_use`
+  只保留给内置 `skill_creator` 本身；`SkillDraftStore` 在创建、更新、读取、校验和评测时都会
+  自动修正历史或模型误写的个人草稿，用户不需要手动编辑 `skill.yaml`。
 - `validate_draft` 运行与内置包完全一致的信任校验（manifest / schema / workflow / eval case），
   并把结果**临时注册**进内存 registry，供确定性 eval 的执行器 pin 与运行；promote 前会清掉
   这些临时注册，保证发布的个人包拥有该 (name, version) 槽位并指向个人根。
@@ -28,9 +31,11 @@ draft 状态与显式晋升路径。
 - 激活前必须重跑 Phase 1 确定性 eval：`total > 0` 且全部 case passed、零 errored。
 - 门禁执行器 `DraftSkillEvalRunner` 复用 `StructuralSkillEvalJudge` 与 case/check/报告类型，
   以确定性 fixture handler（VERIFYING 节点产出符合 output schema 的输出，其余节点 no-op）跑
-  `DeterministicWorkflowExecutor`：无模型、无数据库、不序列化正文。agent_loop 草稿不支持
-  确定性门禁，如实报告 `SKILL_EVAL_DRAFT_AGENT_LOOP`。
-- eval 只验证"包可加载、workflow 可跑到终态、声明 checks 成立"，是结构闸而非语义闸。
+  `DeterministicWorkflowExecutor`：无模型、无数据库、不序列化正文。若外部输入仍声明
+  `agent_loop` / `native_tool_use`，确定性门禁会拒绝它；正常 Creator 写入路径会在草稿存储层
+  自动规范为 `projected`。
+- eval 只验证"包可加载、workflow 可跑到终态、声明 checks 成立"，是结构闸而非语义闸；个人草稿
+  不进入模型驱动的 Tool loop。
 
 ### Creator 工具与审批
 
@@ -39,7 +44,7 @@ draft 状态与显式晋升路径。
 - 工具始终注册进 assistant 循环（与 workspace 工具并存），handler 返回结构化、body-free
   payload，便于 agent 迭代而不暴露 Prompt/正文。
 - `skills/skill_creator/` 是 manifest v2 + `invocation`（`command: create-skill`，别名 `skill`，
-  `execution_mode: agent_loop`）。激活后其指令进入 assistant 循环 active contexts，且
+  `execution_mode: native_tool_use`）。激活后其指令进入 assistant 循环 active contexts，且
   `/create-skill` 命令提交的 turn 由 assistant 循环驱动（与 `/research` 同路径），用六个
   creator 工具完成 scaffold → write → validate → eval → activate。
 
@@ -54,8 +59,8 @@ draft 状态与显式晋升路径。
 - draft 直接复用 `create_personal`：被拒，不完整包无法通过全量校验，且缺独立状态。
 - eval 状态持久化到 DB：被拒，门禁确定性可重放，落库反而引入陈旧状态；激活时重跑即可。
 - skill_creator 走 `projected` 执行模式：被拒，`_execute_skill` 对非 QA 技能会误路由到
-  Grounded QA 适配器；`agent_loop` 让 `/create-skill` 提交的 turn 直接由 assistant 循环
-  驱动，不会进入 `_execute_skill`。
+  Grounded QA 适配器；改用 `native_tool_use` 让 `/create-skill` 提交的 turn 直接由 assistant
+  循环驱动，并将六个 Creator 工具绑定到该运行时路由。
 
 ## 后果
 

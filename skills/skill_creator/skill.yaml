@@ -38,4 +38,4 @@ invocation:
       - "帮我建一个总结会议纪要的 skill"
       - "/create_skill 代码审查 skill"
   input_mode: question
-  execution_mode: projected
+  execution_mode: native_tool_use

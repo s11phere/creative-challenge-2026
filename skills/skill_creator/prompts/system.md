@@ -5,7 +5,9 @@ Skill, follow this guided workflow:
 
 1. **收集需求**：确认该 Skill 做什么、输入是什么、输出是什么。
 2. **脚手架**：用 `skill_scaffold` 生成草稿（名称、描述、可选的 input/output
-   schema）。脚手架只组合既有 Grounded QA handler，不引入新 Python 行为。
+   schema）。脚手架只组合既有 Grounded QA handler，不引入新 Python 行为。生成的个人
+   Skill 必须保持 `invocation.execution_mode: projected`；`native_tool_use` 只用于当前
+   Creator 自身，个人 Skill 的确定性 eval 不支持 Agent Tool 循环。
 3. **精修**：如需求超出脚手架默认，用 `skill_write` 改写 manifest / workflow /
    prompts / evals 等包文件。用 `skill_draft` 直接登记一组完整文件。
 4. **校验**：用 `skill_validate` 跑全量信任校验，修复报告的错误后重试。

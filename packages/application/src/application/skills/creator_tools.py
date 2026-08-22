@@ -71,14 +71,6 @@ SCAFFOLD_PROMPT = (
     "that the delegate returns.\n"
 )
 
-SCAFFOLD_CASES = (
-    '{"case_id":"scaffold-001","input":{"question":"fixture question"},'
-    '"expected":"complete","checks":['
-    '{"type":"output_has_key","key":"status"},'
-    '{"type":"output_has_key","key":"result"},'
-    '{"type":"finalized"}]}\n'
-)
-
 _DEFAULT_INPUT_SCHEMA: dict[str, JSONValue] = {
     "type": "object",
     "additionalProperties": False,
@@ -122,7 +114,7 @@ def scaffold_skill_files(
         "schemas/input.json": json.dumps(merged_input),
         "schemas/output.json": json.dumps(merged_output),
         "prompts/system.md": SCAFFOLD_PROMPT,
-        "evals/cases.jsonl": SCAFFOLD_CASES,
+        "evals/cases.jsonl": _scaffold_cases(merged_output),
     }
 
 
@@ -185,6 +177,24 @@ def _merge_output_schema(value: Mapping[str, object] | None) -> dict[str, JSONVa
     if value is None or not isinstance(value.get("type"), str):
         return dict(_DEFAULT_OUTPUT_SCHEMA)
     return cast(dict[str, JSONValue], dict(value))
+
+
+def _scaffold_cases(output_schema: Mapping[str, object]) -> str:
+    """Generate structural checks that match the requested output contract."""
+    properties = output_schema.get("properties")
+    required = output_schema.get("required")
+    keys = [key for key in required if isinstance(key, str)] if isinstance(required, list) else []
+    if not keys and isinstance(properties, dict):
+        keys = [key for key in properties if isinstance(key, str)]
+    checks: list[dict[str, str]] = [{"type": "output_has_key", "key": key} for key in keys]
+    checks.append({"type": "finalized"})
+    case = {
+        "case_id": "scaffold-001",
+        "input": {"question": "fixture question"},
+        "expected": "complete",
+        "checks": checks,
+    }
+    return json.dumps(case, ensure_ascii=False) + "\n"
 
 
 def _command_slug(name: str) -> str:
