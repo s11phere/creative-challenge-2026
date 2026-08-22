@@ -241,6 +241,15 @@ def _normalize_draft_files(files: Mapping[str, str]) -> dict[str, str]:
     if not isinstance(manifest, dict):
         return normalized
     _normalize_legacy_scaffold_cases(normalized)
+    compatibility = manifest.get("compatibility")
+    if isinstance(compatibility, dict):
+        checkpoint_versions = compatibility.get("checkpoint_schema_versions")
+        if checkpoint_versions == [1]:
+            fixed_compatibility = dict(compatibility)
+            fixed_compatibility["checkpoint_schema_versions"] = [2]
+            manifest = dict(manifest)
+            manifest["compatibility"] = fixed_compatibility
+            normalized["skill.yaml"] = yaml.safe_dump(manifest, sort_keys=False)
     invocation = manifest.get("invocation")
     if not isinstance(invocation, dict) or invocation.get("execution_mode") != "native_tool_use":
         return normalized

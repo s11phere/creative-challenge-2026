@@ -194,6 +194,19 @@ class TestDraftExecutionModeNormalization:
         stored_manifest = yaml.safe_load(stored["skill.yaml"])
         assert stored_manifest["invocation"]["execution_mode"] == "projected"
 
+    def test_legacy_checkpoint_version_is_normalized(self, store: SkillDraftStore) -> None:
+        files = scaffold_files()
+        manifest_data = yaml.safe_load(files["skill.yaml"])
+        manifest_data["compatibility"]["checkpoint_schema_versions"] = [1]
+        files["skill.yaml"] = yaml.safe_dump(manifest_data, sort_keys=False)
+
+        view = store.create("legacy_skill", files)
+
+        assert view.valid is True
+        stored = store.read_files("legacy_skill")
+        stored_manifest = yaml.safe_load(stored["skill.yaml"])
+        assert stored_manifest["compatibility"]["checkpoint_schema_versions"] == [2]
+
     def test_rejects_builtin_name(self, registry: PersonalSkillRegistry) -> None:
         with pytest.raises(SkillRegistryError) as excinfo:
             registry.create_draft("builtin_skill", scaffold_files(name="builtin_skill"))

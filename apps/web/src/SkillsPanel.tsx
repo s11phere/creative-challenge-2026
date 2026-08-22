@@ -627,7 +627,7 @@ function defaultScaffold(name: string, description: string): Record<string, stri
     permissions: ['read_knowledge', 'model'],
     budgets: { max_steps: 8, max_tool_calls: 4, max_input_tokens: 8192, max_output_tokens: 4096, timeout_seconds: 60 },
     entrypoint: 'workflow.yaml',
-    compatibility: { runtime: '>=0.1.0,<1.0.0', checkpoint_schema_versions: [1] },
+    compatibility: { runtime: '>=0.1.0,<1.0.0', checkpoint_schema_versions: [2] },
     prompts: ['prompts/system.md'],
     evals: ['evals/cases.jsonl'],
   }

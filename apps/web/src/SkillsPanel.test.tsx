@@ -215,7 +215,10 @@ it('shows a suggestion only from usage evidence and scaffolds a draft on click',
   expect(await screen.findByDisplayValue('summarize_workflow')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '创建草稿' })).toBeInTheDocument()
   // The editor is prefilled with a valid scaffold the user can submit.
-  expect(screen.getByPlaceholderText(/"skill\.yaml"/)).toBeInTheDocument()
+  const filesEditor = screen.getByPlaceholderText(/"skill\.yaml"/)
+  expect(filesEditor).toBeInTheDocument()
+  const files = JSON.parse(filesEditor.textContent ?? '{}') as Record<string, string>
+  expect(files['skill.yaml']).toContain('"checkpoint_schema_versions": [\n      2\n    ]')
 })
 
 it('shows pattern-extraction evidence on candidate drafts', async () => {
