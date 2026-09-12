@@ -28,12 +28,15 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
+from ..authz import require_owner, require_space_access
 from ..errors import AppError
+from ..service_auth import app_user_id_from_scope, authenticated_app_user_id
 
 router = APIRouter(prefix="/api/v1")
 
 
 class ConversationCreate(BaseModel):
+    # Kept for standalone local clients; service-auth mode ignores this field.
     owner_id: str = Field(default="local", min_length=1, max_length=128)
 
 
@@ -406,8 +409,10 @@ async def create_conversation(
     space_id: UUID, body: ConversationCreate, request: Request
 ) -> ConversationResponse:
     repo, _ = _state(request)
+    await require_space_access(request, space_id)
+    owner_id = app_user_id_from_scope(request.scope, fallback=body.owner_id)
     record = await repo.create_conversation(
-        ConversationRecord(space_id=space_id, owner_id=body.owner_id)
+        ConversationRecord(space_id=space_id, owner_id=owner_id)
     )
     return ConversationResponse(
         conversation_id=record.conversation_id,
@@ -427,6 +432,8 @@ async def list_conversations(
     owner_id: str = Query(default="local", min_length=1, max_length=128),
 ) -> ConversationHistoryResponse:
     repo, _ = _state(request)
+    owner_id = app_user_id_from_scope(request.scope, fallback=owner_id)
+    await require_space_access(request, space_id)
     conversations = await repo.list_conversations(space_id, owner_id)
     history: list[ConversationHistoryItem] = []
     for conversation in conversations:
@@ -475,6 +482,7 @@ async def delete_conversation(
     owner_id: str = Query(default="local", min_length=1, max_length=128),
 ) -> ConversationDeleteResponse:
     repo, _ = _state(request)
+    owner_id = app_user_id_from_scope(request.scope, fallback=owner_id)
     conversation = await repo.get_conversation(conversation_id)
     if (
         conversation is None
@@ -500,6 +508,7 @@ async def submit_question(
     conversation = await repo.get_conversation(conversation_id)
     if conversation is None or conversation.archived_at is not None:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    require_owner(request, conversation.owner_id)
     try:
         question = normalize_question(body.question)
         message = await repo.append_message(
@@ -571,6 +580,7 @@ async def _conversation(request: Request, conversation_id: UUID) -> Conversation
     conversation = await repo.get_conversation(conversation_id)
     if conversation is None or conversation.archived_at is not None:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    require_owner(request, conversation.owner_id)
     return conversation
 
 
@@ -623,7 +633,8 @@ async def _submit_scoped_skill(
 async def get_run(run_id: UUID, request: Request) -> RunResponse:
     repo, _ = _state(request)
     run = await repo.get_run(run_id)
-    if run is None:
+    owner_id = authenticated_app_user_id(request.scope)
+    if run is None or (owner_id is not None and run.caller_id != owner_id):
         raise HTTPException(status_code=404, detail="Run not found")
     return await _run_response_with_write(run, request)
 
@@ -642,6 +653,11 @@ async def resolve_citation(
     evidence_id: UUID,
     request: Request,
 ) -> CitationExcerptResponse:
+    if authenticated_app_user_id(request.scope) is not None:
+        run = await request.app.state.qa_repository.get_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        require_owner(request, run.caller_id)
     resolution = await request.app.state.qa_citation_service.resolve(run_id, evidence_id)
     if resolution is None:
         raise HTTPException(status_code=404, detail="Citation not found")
@@ -677,6 +693,10 @@ async def resolve_generic_citation(
 @router.post("/qa/runs/{run_id}/cancel", response_model=RunResponse)
 async def cancel_run(run_id: UUID, request: Request) -> RunResponse:
     repo, events = _state(request)
+    current = await repo.get_run(run_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    require_owner(request, current.caller_id)
     try:
         run = await repo.request_cancel(run_id)
     except Exception as exc:
@@ -698,6 +718,7 @@ async def request_approval(
     run = await repo.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_owner(request, run.caller_id)
     if run.versions.skill_name != "create_review_cards":
         raise HTTPException(status_code=409, detail="This Run has no writable Skill action")
     context = AgentRunContext(
@@ -740,6 +761,7 @@ async def list_approvals(run_id: UUID, request: Request) -> list[ApprovalRecordR
     run = await request.app.state.qa_repository.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_owner(request, run.caller_id)
     records = await request.app.state.approval_port.list_for_run(run_id)
     return [_approval_response(record, run_id=run_id) for record in records]
 
@@ -752,6 +774,7 @@ async def get_approval(run_id: UUID, approval_id: UUID, request: Request) -> App
     run = await request.app.state.qa_repository.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_owner(request, run.caller_id)
     record = await request.app.state.approval_port.get(str(approval_id), run_id=run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Approval not found")
@@ -782,6 +805,7 @@ async def decide_approval(
     run = await repo.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_owner(request, run.caller_id)
     decided = await request.app.state.approval_port.decide(
         str(approval_id),
         approved=body.approved,
@@ -839,6 +863,7 @@ async def revoke_approval(
     run = await request.app.state.qa_repository.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_owner(request, run.caller_id)
     record = await request.app.state.approval_port.get(str(approval_id), run_id=run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Approval not found")
@@ -892,6 +917,7 @@ async def resume_run(run_id: UUID, request: Request) -> RunResponse:
     run = await repo.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_owner(request, run.caller_id)
     if run.status in {
         QAStatus.COMPLETED,
         QAStatus.REFUSED,
@@ -923,6 +949,7 @@ async def retry_run(run_id: UUID, request: Request) -> RunResponse:
     current = await repo.get_run(run_id)
     if current is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_owner(request, current.caller_id)
     if current.status not in {QAStatus.FAILED, QAStatus.TIMED_OUT}:
         raise HTTPException(status_code=409, detail="Only failed or timed-out Runs can be retried")
     retry = QARunRecord(
@@ -965,6 +992,7 @@ async def list_derived_knowledge(run_id: UUID, request: Request) -> list[Derived
     run = await request.app.state.qa_repository.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_owner(request, run.caller_id)
     records = await request.app.state.derived_knowledge_store.list_for_run(run_id)
     return [_derived_response(record) for record in records]
 
@@ -982,6 +1010,7 @@ async def revoke_derived_knowledge(
     run = await request.app.state.qa_repository.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_owner(request, run.caller_id)
     record = await request.app.state.derived_knowledge_store.revoke(
         item_id,
         run_id=run_id,
@@ -1021,6 +1050,7 @@ async def submit_feedback(
     run = await repo.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_owner(request, run.caller_id)
     if run.answer_message_id is None:
         raise HTTPException(status_code=409, detail="Run has no published answer to review")
     try:
@@ -1055,6 +1085,7 @@ async def list_feedback(
     request: Request,
     review_status: Literal["pending_review", "accepted", "rejected"] | None = Query(default=None),
 ) -> list[FeedbackResponse]:
+    await require_space_access(request, space_id)
     repo, _ = _state(request)
     try:
         status = FeedbackReviewStatus(review_status) if review_status else None
@@ -1066,6 +1097,7 @@ async def list_feedback(
 
 @router.get("/spaces/{space_id}/feedback/{feedback_id}", response_model=FeedbackResponse)
 async def get_feedback(space_id: UUID, feedback_id: UUID, request: Request) -> FeedbackResponse:
+    await require_space_access(request, space_id)
     repo, _ = _state(request)
     feedback = await repo.get_feedback(feedback_id)
     if feedback is None or feedback.space_id != space_id:
@@ -1083,6 +1115,7 @@ async def review_feedback(
     body: FeedbackReviewRequest,
     request: Request,
 ) -> FeedbackResponse:
+    await require_space_access(request, space_id)
     repo, _ = _state(request)
     try:
         reviewed = await repo.review_feedback(
@@ -1113,6 +1146,10 @@ async def stream_events(
     request: Request,
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
+    run = await request.app.state.qa_repository.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    require_owner(request, run.caller_id)
     _, events = _state(request)
     try:
         cursor = int(last_event_id or 0)

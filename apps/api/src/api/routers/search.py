@@ -35,6 +35,7 @@ from infrastructure.repositories import DocumentRepository, SourceRepository, Sp
 from infrastructure.retrieval import PostgresRetrievalStore
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ..authz import require_space_access
 from ..errors import AppError, ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -172,6 +173,7 @@ async def search_space(
     request: Request,
 ) -> SearchApiResponse:
     """Execute one bounded retrieval request inside a single Space."""
+    await require_space_access(request, space_id)
     database: Database = request.app.state.database
     gateway = request.app.state.model_gateway
     try:

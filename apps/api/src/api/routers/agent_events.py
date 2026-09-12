@@ -19,6 +19,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ..authz import require_owner
 from ..errors import AppError, ErrorResponse
 
 router = APIRouter(prefix="/api/v3")
@@ -102,6 +103,7 @@ async def _page(
     run = await request.app.state.assistant_turn_service.get(run_id)
     if run is None:
         raise AppError("RUN_NOT_FOUND", "Run not found", 404)
+    require_owner(request, run.caller_id)
     events: AgentRunEventStore = request.app.state.agent_event_log
     try:
         return await events.page(run_id, after_sequence=after_sequence, limit=limit)

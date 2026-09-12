@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = 8000
 
+    # Website gateway integration.  Keep disabled for the standalone local
+    # demo; production Compose must enable it and inject the shared secret.
+    service_auth_required: bool = False
+    internal_service_token: SecretStr | None = None
+    public_mode: bool = False
+
     # --- PostgreSQL ---
     postgres_host: str = "localhost"
     postgres_port: int = 5432
@@ -205,6 +211,11 @@ class Settings(BaseSettings):
             missing.append("APP_SECRET_KEY")
         if not self.postgres_password:
             missing.append("POSTGRES_PASSWORD")
+        if self.service_auth_required and (
+            self.internal_service_token is None
+            or not self.internal_service_token.get_secret_value().strip()
+        ):
+            missing.append("INTERNAL_SERVICE_TOKEN")
         if missing:
             raise ValueError(
                 f"Required configuration values are missing: {', '.join(missing)}. "

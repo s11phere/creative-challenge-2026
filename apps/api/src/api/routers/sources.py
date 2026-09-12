@@ -48,6 +48,8 @@ from infrastructure.repositories import (
 from infrastructure.telemetry_context import normalize_request_id
 from pydantic import BaseModel
 
+from ..authz import require_space_access
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1")
@@ -332,6 +334,7 @@ async def create_source(
     Folder sources (``source_type="folder"``) require a non-empty, space-unique
     ``name`` — the folder label the user chose.
     """
+    await require_space_access(request, space_id)
     db = _db(request)
 
     name = body.name.strip()
@@ -385,6 +388,7 @@ async def delete_source(
     Sources that already hold documents are refused so content is never
     removed through this endpoint; callers must delete documents first.
     """
+    await require_space_access(request, space_id)
     db = _db(request)
 
     async with db.session() as session:
@@ -417,6 +421,7 @@ async def rename_source(
     request: Request,
 ) -> RenameSourceResponse:
     """Rename a source (a user-facing folder label)."""
+    await require_space_access(request, space_id)
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="文件夹名称不能为空")
@@ -457,6 +462,7 @@ async def clear_source(
     files on disk are removed inline; their storage keys embed the source id
     so they are never shared with another source.
     """
+    await require_space_access(request, space_id)
     db = _db(request)
     async with db.session() as session:
         source_repo = SourceRepository(session)
@@ -496,6 +502,7 @@ async def list_sources(space_id: UUID, request: Request) -> SourceListResponse:
     UI can render counts and a primary document name without expanding a
     source first.
     """
+    await require_space_access(request, space_id)
     db = _db(request)
 
     async with db.session() as session:
@@ -549,6 +556,7 @@ async def get_source_detail(
     request: Request,
 ) -> SourceDetailResponse:
     """Get a source with its documents."""
+    await require_space_access(request, space_id)
     db = _db(request)
 
     async with db.session() as session:
@@ -627,6 +635,7 @@ async def delete_document(
     request: Request,
 ) -> DeleteDocumentResponse:
     """Tombstone one document and enqueue cleanup of its derived artifacts."""
+    await require_space_access(request, space_id)
     db = _db(request)
 
     async with db.session() as session:
@@ -668,6 +677,7 @@ async def upload_file(
     file: UploadFile = File(...),  # noqa: B008
 ) -> UploadResponse:
     """Upload a file, register it under *source_id*, and return the result."""
+    await require_space_access(request, space_id)
     db = _db(request)
     blob_store = LocalFileBlobStore()
 
@@ -759,6 +769,7 @@ async def trigger_ingestion(
     multi-document source. It now enqueues one task per live document, reusing
     any reusable active task already targeting the same version.
     """
+    await require_space_access(request, space_id)
     db = _db(request)
 
     async with db.session() as session:
@@ -829,6 +840,10 @@ async def get_task_status(task_id: UUID, request: Request) -> TaskStatusResponse
         task = await repo.get(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
+        source = await SourceRepository(session).get(task.source_id)
+        if source is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        await require_space_access(request, source.space_id)
 
         return _task_response(task)
 
@@ -868,6 +883,10 @@ async def cancel_task_endpoint(
         task = await task_repo.get(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
+        source = await SourceRepository(session).get(task.source_id)
+        if source is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        await require_space_access(request, source.space_id)
 
         # Cancellation is idempotent. The worker can finish between the UI's
         # last poll and this request; returning the authoritative terminal
@@ -919,6 +938,10 @@ async def retry_task_endpoint(
         old = await task_repo.get(task_id)
         if old is None:
             raise HTTPException(status_code=404, detail="Task not found")
+        source = await SourceRepository(session).get(old.source_id)
+        if source is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        await require_space_access(request, source.space_id)
 
         if old.status not in {TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.DEAD_LETTER}:
             raise HTTPException(

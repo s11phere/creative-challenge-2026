@@ -27,9 +27,11 @@ from domain.grounded_qa import QAContractError
 from domain.qa_persistence import MessageRole
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from infrastructure.config import settings
 from model_gateway import ReasoningMappingError
 from pydantic import BaseModel, Field
 
+from ..authz import require_owner
 from ..errors import AppError, ErrorResponse
 
 router = APIRouter(prefix="/api/v2")
@@ -184,6 +186,10 @@ async def submit_turn(
     conversation_id: UUID, body: AssistantTurnRequest, request: Request
 ) -> ConversationRunResponse | CommandExecutionResponse:
     """Durably accept a user turn without synchronously selecting or calling a model."""
+    conversation = await request.app.state.qa_repository.get_conversation(conversation_id)
+    if conversation is None or conversation.archived_at is not None:
+        raise AppError("CONVERSATION_NOT_FOUND", "Conversation not found", 404)
+    require_owner(request, conversation.owner_id)
     commands = request.app.state.assistant_command_service
     try:
         parsed = commands.parser.parse(body.content, declared_command=body.command)
@@ -206,6 +212,18 @@ async def submit_turn(
                         content=body.content,
                     )
         if parsed.descriptor is not None:
+            if settings.public_mode and parsed.descriptor.name in {
+                "workspace",
+                "ws",
+                "create-skill",
+                "skill",
+                "compact",
+            }:
+                raise AppError(
+                    "CAPABILITY_NOT_EXPOSED",
+                    "This capability is disabled in the website deployment.",
+                    404,
+                )
             if parsed.descriptor.kind is AssistantCommandKind.SKILL:
                 executed = await commands.invoke_skill(
                     conversation_id, parsed, idempotency_key=body.idempotency_key
@@ -301,6 +319,10 @@ async def submit_turn(
     responses=_ERROR_RESPONSES,
 )
 async def get_workspace(conversation_id: UUID, request: Request) -> WorkspaceSelectionResponse:
+    conversation = await request.app.state.qa_repository.get_conversation(conversation_id)
+    if conversation is None:
+        raise AppError("CONVERSATION_NOT_FOUND", "Conversation not found", 404)
+    require_owner(request, conversation.owner_id)
     try:
         selected = await request.app.state.workspace_service.get(conversation_id)
     except ConversationWorkspaceError as exc:
@@ -318,6 +340,10 @@ async def select_workspace(
     body: WorkspaceSelectionRequest,
     request: Request,
 ) -> WorkspaceSelectionResponse:
+    conversation = await request.app.state.qa_repository.get_conversation(conversation_id)
+    if conversation is None:
+        raise AppError("CONVERSATION_NOT_FOUND", "Conversation not found", 404)
+    require_owner(request, conversation.owner_id)
     try:
         selected = await request.app.state.workspace_service.select(conversation_id, body.path)
     except ConversationWorkspaceError as exc:
@@ -342,6 +368,7 @@ async def list_agent_approvals(run_id: UUID, request: Request) -> list[AgentAppr
     run = await request.app.state.conversation_run_repository.get_conversation_run(run_id)
     if run is None:
         raise AppError("RUN_NOT_FOUND", "Run not found", 404)
+    require_owner(request, run.caller_id)
     records = await request.app.state.approval_port.list_for_run(run_id)
     return [
         AgentApprovalResponse(
@@ -369,6 +396,7 @@ async def decide_agent_approval(
     run = await request.app.state.conversation_run_repository.get_conversation_run(run_id)
     if run is None:
         raise AppError("RUN_NOT_FOUND", "Run not found", 404)
+    require_owner(request, run.caller_id)
     existing = await request.app.state.approval_port.get(str(approval_id), run_id=run_id)
     if existing is None:
         raise AppError("APPROVAL_NOT_FOUND", "Approval not found", 404)
@@ -415,6 +443,7 @@ async def list_conversation_runs(
     conversation = await request.app.state.qa_repository.get_conversation(conversation_id)
     if conversation is None or conversation.archived_at is not None:
         raise AppError("CONVERSATION_NOT_FOUND", "Conversation not found", 404)
+    require_owner(request, conversation.owner_id)
     runs = await request.app.state.conversation_run_repository.list_conversation_runs(
         conversation_id
     )
@@ -426,6 +455,7 @@ async def get_run(run_id: UUID, request: Request) -> ConversationRunResponse:
     run = await request.app.state.assistant_turn_service.get(run_id)
     if run is None:
         raise AppError("RUN_NOT_FOUND", "Run not found", 404)
+    require_owner(request, run.caller_id)
     return await _response(run, request)
 
 
@@ -444,6 +474,7 @@ async def select_clarification_resource(
     run = await request.app.state.assistant_turn_service.get(run_id)
     if run is None:
         raise AppError("RUN_NOT_FOUND", "Run not found", 404)
+    require_owner(request, run.caller_id)
     try:
         resumed = await request.app.state.assistant_skill_invoker.resume_resource_clarification(
             run,
@@ -482,6 +513,8 @@ async def select_clarification_resource(
 async def cancel_run(run_id: UUID, request: Request) -> ConversationRunResponse:
     try:
         existing = await request.app.state.assistant_turn_service.get(run_id)
+        if existing is not None:
+            require_owner(request, existing.caller_id)
         if existing is not None and existing.run_kind.value in {"skill", "grounded_qa"}:
             await request.app.state.qa_repository.request_cancel(run_id)
             run = await request.app.state.assistant_turn_service.get(run_id)
@@ -505,6 +538,10 @@ async def stream_events(
     request: Request,
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
+    run = await request.app.state.assistant_turn_service.get(run_id)
+    if run is None:
+        raise AppError("RUN_NOT_FOUND", "Run not found", 404)
+    require_owner(request, run.caller_id)
     try:
         cursor = int(last_event_id or 0)
     except ValueError as exc:

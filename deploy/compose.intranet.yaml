@@ -1,0 +1,37 @@
+# Production website integration override.
+#
+# The Next.js gateway is the only public edge.  API, Worker, PostgreSQL and
+# Redis stay on the private Compose network and receive the gateway credential
+# through the deployment secret manager.  Use this file in addition to
+# compose.yaml (and compose.cpu.yaml when appropriate).
+services:
+  postgres:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  api:
+    ports: !reset []
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      SERVICE_AUTH_REQUIRED: "true"
+      PUBLIC_MODE: "true"
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set}
+  worker:
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+  tei:
+    ports: !reset []
+  tei-reranker:
+    ports: !reset []
+  otel-collector:
+    ports: !reset []
+  web:
+    # The website gateway is the only service published by this stack.
+    networks:
+      - default
+
+networks:
+  default:
+    internal: true

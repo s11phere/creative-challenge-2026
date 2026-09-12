@@ -104,7 +104,9 @@ from .routers import (
     skill_drafts,
     skills,
     sources,
+    spaces,
 )
+from .service_auth import ServiceAuthMiddleware
 
 
 class LiveResponse(BaseModel):
@@ -382,6 +384,11 @@ def create_app(
         database
     )
 
+    # The website gateway is the only public identity boundary.  In production
+    # this middleware requires its internal token and app-scoped user id before
+    # any application router executes.
+    app.add_middleware(ServiceAuthMiddleware)
+    # Keep request/trace correlation on both successful and rejected calls.
     app.add_middleware(TraceMiddleware)
     register_error_handlers(app)
     _register_routes(app)
@@ -391,6 +398,7 @@ def create_app(
 def _register_routes(app: FastAPI) -> None:
     app.include_router(sources.router)
     app.include_router(search.router)
+    app.include_router(spaces.router)
     app.include_router(qa.router)
     app.include_router(assistant.router)
     app.include_router(agent_events.router)

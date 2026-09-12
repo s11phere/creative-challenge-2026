@@ -3817,6 +3817,45 @@
         "title": "SourceListResponse",
         "type": "object"
       },
+      "SpaceCreateRequest": {
+        "properties": {
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SpaceCreateRequest",
+        "type": "object"
+      },
+      "SpaceResponse": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_id": {
+            "title": "Owner Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "owner_id"
+        ],
+        "title": "SpaceResponse",
+        "type": "object"
+      },
       "StageTimingResponse": {
         "properties": {
           "latency_ms": {
@@ -6474,6 +6513,106 @@
         "summary": "Set Skill Activation",
         "tags": [
           "skills"
+        ]
+      }
+    },
+    "/api/v1/spaces": {
+      "get": {
+        "operationId": "list_spaces_api_v1_spaces_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SpaceResponse"
+                  },
+                  "title": "Response List Spaces Api V1 Spaces Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Spaces",
+        "tags": [
+          "spaces"
+        ]
+      },
+      "post": {
+        "operationId": "create_space_api_v1_spaces_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpaceCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Space",
+        "tags": [
+          "spaces"
+        ]
+      }
+    },
+    "/api/v1/spaces/{space_id}": {
+      "delete": {
+        "operationId": "delete_space_api_v1_spaces__space_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Space Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Space",
+        "tags": [
+          "spaces"
         ]
       }
     },
