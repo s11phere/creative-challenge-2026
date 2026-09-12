@@ -119,6 +119,9 @@ class Settings(BaseSettings):
     embedding_normalization: str = "none"
     embedding_precision: str = "float32"
     model_allow_external: bool = False
+    # Website (PUBLIC_MODE) deployments must not ship knowledge content to
+    # external providers unless the data-usage review explicitly allows it.
+    public_mode_allow_external_model: bool = False
     # Explicit opt-in for sending selected workspace content to a non-fake Chat provider.
     agent_workspace_model_visibility_consent: bool = False
     model_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
@@ -203,7 +206,16 @@ class Settings(BaseSettings):
     otel_export_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
 
     def validate_secrets(self) -> None:
-        """Raise ValueError if required secrets are not set (production only)."""
+        """Validate deployment-critical configuration and fail fast.
+
+        Runs at process start (API lifespan and worker bootstrap).  Secret
+        requirements only apply to ``APP_ENV=production``; the website-profile
+        guards below apply whenever ``PUBLIC_MODE`` is enabled, because that
+        profile is an internet-facing deployment regardless of the environment
+        label.
+        """
+
+        self.validate_public_mode()
         if self.app_env != "production":
             return
         missing: list[str] = []
@@ -220,6 +232,39 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"Required configuration values are missing: {', '.join(missing)}. "
                 "Set them via environment variables or .env file."
+            )
+
+    def validate_public_mode(self) -> None:
+        """Reject website deployments that would run without their guards.
+
+        ``PUBLIC_MODE`` removes capability paths but is not itself an
+        authentication boundary: without the gateway service auth the remaining
+        knowledge workflow would be reachable unauthenticated with every object
+        falling back to ``owner_id="local"``.  It likewise must not silently
+        ship knowledge content to an external model provider.
+        """
+
+        if not self.public_mode:
+            return
+        if not self.service_auth_required:
+            raise ValueError(
+                "PUBLIC_MODE requires SERVICE_AUTH_REQUIRED=true and a non-empty "
+                "INTERNAL_SERVICE_TOKEN: the website profile must never serve "
+                "unauthenticated requests."
+            )
+        if self.internal_service_token is None or not (
+            self.internal_service_token.get_secret_value().strip()
+        ):
+            raise ValueError(
+                "PUBLIC_MODE requires a non-empty INTERNAL_SERVICE_TOKEN so the "
+                "website gateway can authenticate every request."
+            )
+        if self.model_allow_external and not self.public_mode_allow_external_model:
+            raise ValueError(
+                "MODEL_ALLOW_EXTERNAL=true is not allowed with PUBLIC_MODE: "
+                "private_local/restricted knowledge must not be sent to external "
+                "model providers. Set PUBLIC_MODE_ALLOW_EXTERNAL_MODEL=true only "
+                "after an explicit data-usage review."
             )
 
 

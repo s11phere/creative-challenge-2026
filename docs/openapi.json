@@ -1159,6 +1159,10 @@
           },
           "source_type": {
             "default": "upload",
+            "enum": [
+              "upload",
+              "folder"
+            ],
             "title": "Source Type",
             "type": "string"
           },

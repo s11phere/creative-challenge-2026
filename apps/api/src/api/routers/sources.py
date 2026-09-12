@@ -52,6 +52,12 @@ from ..authz import require_space_access
 
 logger = logging.getLogger(__name__)
 
+# Multipart framing (boundary, part headers, filename) rides along in the
+# request Content-Length, so the early 413 guard allows this much envelope
+# before declaring the request too large.  The exact per-file limit is still
+# enforced on the decoded bytes below.
+_MULTIPART_ENVELOPE_SLACK_BYTES = 64 * 1024
+
 router = APIRouter(prefix="/api/v1")
 
 
@@ -61,7 +67,9 @@ router = APIRouter(prefix="/api/v1")
 
 
 class CreateSourceRequest(BaseModel):
-    source_type: str = "upload"
+    # Constrained at the request boundary so an unknown value is a 422 field
+    # error instead of a ValueError escaping from `SourceType(...)`.
+    source_type: Literal["upload", "folder"] = "upload"
     uri: str = ""
     name: str = ""
 
@@ -681,8 +689,23 @@ async def upload_file(
     db = _db(request)
     blob_store = LocalFileBlobStore()
 
-    raw_bytes = await file.read()
     max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    # Reject an oversized body before buffering it: `file.read()` loads the
+    # whole upload into memory, so the Content-Length check is what keeps a
+    # declared-oversize request from consuming the worker's memory.
+    declared_length = request.headers.get("content-length")
+    if declared_length is not None:
+        try:
+            declared_bytes = int(declared_length)
+        except ValueError:
+            declared_bytes = -1
+        if declared_bytes > max_bytes + _MULTIPART_ENVELOPE_SLACK_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds maximum size of {settings.max_upload_size_mb} MB",
+            )
+
+    raw_bytes = await file.read()
     if len(raw_bytes) > max_bytes:
         raise HTTPException(
             status_code=413,

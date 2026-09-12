@@ -7,12 +7,14 @@
 
 - 项目：易知（`creative-challenge-2026`）
 - 适配分支：`codex/cc2026-delivery-compliance`
-- 适配提交：`f67f38e`
+- 适配提交：交付 tag `cc2026-yizhi-v1`（等价于 `git rev-list -n1 cc2026-yizhi-v1`，请勿使用分支尖端）
 - 服务容器：`api`、`worker`、`postgres`、`redis`，可选 `tei`、`tei-reranker`
 - API 监听：容器内 `api:8000`
 - 健康检查：`GET /api/v1/health/live`、`GET /api/v1/health/ready`
 
-官网接入应固定到一个 commit 或镜像 digest；不要直接跟随分支尖端部署。
+官网接入应固定到该 tag 指向的 commit 或对应镜像 digest；不要直接跟随分支尖端部署。
+该 tag 已通过 CI 的 `Backend quality`、`Backend tests`、`Migrations and integration`、
+`Frontend`、`Compose smoke + web E2E` 和 `Website profile smoke` 六个作业。
 
 ## 2. 网络和身份边界
 
@@ -97,11 +99,16 @@ OpenAPI 中的 Agent、考试、个人 Skill、审核、反馈或派生知识接
 | HTTP | code/场景 | 官网处理 |
 | --- | --- | --- |
 | `401` | `SERVICE_AUTH_REQUIRED` | 网关配置或 secret 失效；不要让浏览器重试内部令牌 |
-| `404` | Space、来源、任务、Run 不属于当前用户或已删除 | 清除本地对象缓存并回到列表；不要显示“无权限”以外的对象信息 |
-| `409` | 幂等冲突、状态不允许重试或当前配置冲突 | 重新读取对象状态，避免盲目重复提交 |
-| `413` | 上传超过当前限制 | 重新读取 `/config/limits`，在页面提示大小限制 |
-| `422` | 请求字段、UUID、查询或文件校验失败 | 展示字段级错误，不重试原请求 |
-| `502/503/504` | Provider、数据库、队列或依赖暂时不可用 | 保留任务 ID，按退避策略重新读取；不要创建新任务替代原任务 |
+| `404` | Space、来源、任务、Run 不属于当前用户或已删除；公开模式下被隐藏的能力（`CAPABILITY_NOT_EXPOSED`） | 清除本地对象缓存并回到列表；不要显示“无权限”以外的对象信息 |
+| `409` | 幂等冲突或状态不允许重试 | 重新读取对象状态，避免盲目重复提交 |
+| `413` | 上传超过当前限制（先按 `Content-Length` 拒绝，再校验实际字节） | 重新读取 `/config/limits`，在页面提示大小限制 |
+| `422` | 请求字段、UUID、查询或文件校验失败（含未知 `source_type`） | 展示字段级错误，不重试原请求 |
+| `503` | 就绪探针 `GET /api/v1/health/ready` 报告依赖不可用 | 暂停新建任务并按退避重试，恢复后再放量 |
+| 任务/Run 的 `error_code` | 超时、上游模型失败、结构化输出非法等（`MODEL_TIMEOUT`、`MODEL_UNAVAILABLE`、`QA_STRUCTURED_RESPONSE_INVALID`） | 以任务或 Run 状态为准，保留 ID 后重试；不要创建新任务替代原任务 |
+
+异步链路不用 HTTP 状态码表达上游失败：提交类接口先返回 `202`，最终结果落在
+`GET /api/v1/tasks/{task_id}` 与 `GET /api/v1/qa/runs/{run_id}` 的 `status` / `error_code` 上；
+服务本身不返回 `502/504`。
 
 标准错误响应包含 `code`、`message`、`trace_id`；将 `X-Trace-ID` 和 `X-Request-ID` 记录到
 官网服务日志中，但不得记录文件正文、问题、回答、凭据或 Provider 响应。
@@ -121,6 +128,7 @@ INTERNAL_SERVICE_TOKEN=<gateway-api-secret>
 SERVICE_AUTH_REQUIRED=true
 PUBLIC_MODE=true
 MODEL_ALLOW_EXTERNAL=false
+# PUBLIC_MODE_ALLOW_EXTERNAL_MODEL=true   # 仅在完成数据使用评审后设置
 ```
 
 如果要启用外部 Chat Provider，必须经过官网维护侧的数据使用、预算和来源策略评审，再
@@ -139,7 +147,9 @@ docker compose -f deploy/compose.yaml \
   up --build --detach --wait
 ```
 
-只使用 fake Embedding/Reranker 做流程联调时可以不启用两个 profile。`migrate` 服务负责
+只使用 fake Embedding/Reranker 做流程联调时可以不启用两个 profile。已实测的 CPU 模式
+内存、磁盘、时延和并发基线见 [CPU 资源基线](cc2026-cpu-baseline.md)；启用 TEI 后必须按该
+文档第 6 节在目标机复测。`migrate` 服务负责
 执行 `alembic upgrade head`；`pgdata`、`redisdata`、`blobdata` 和模型卷必须保留，不能用
 `docker compose down --volumes` 作为普通发布步骤。
 
@@ -173,6 +183,18 @@ corepack pnpm@10.20.0 --dir apps/web test
 corepack pnpm@10.20.0 --dir apps/web build
 ```
 
+生产 profile 的可执行验收脚本是 [`examples/first_phase_smoke.py`](../examples/first_phase_smoke.py)，
+CI 的 `Website profile smoke` 作业在干净卷上运行它（含上传、摄入、问答、引用、租户隔离与
+能力边界）：
+
+```bash
+docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml --env-file .env \
+  up --build --detach --wait postgres redis migrate api worker
+docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml --env-file .env \
+  exec -T -e SMOKE_TOKEN="$INTERNAL_SERVICE_TOKEN" api \
+  python - < examples/first_phase_smoke.py
+```
+
 真实 PostgreSQL/Redis 集成测试需要隔离依赖并设置 `RUN_INTEGRATION=1`。当前适配提交已在
 本地通过后端 format/lint/mypy、定向服务认证/OpenAPI 测试和 OpenAPI 确定性检查；完整 CI
 还必须在 GitHub Actions 的 Linux/Docker 环境跑完，不能把本地定向测试当作 CI 通过证据。
@@ -185,7 +207,8 @@ corepack pnpm@10.20.0 --dir apps/web build
 - Convex session、成员角色、配额和审计查询；
 - R2 输入/输出对象用途、预签名上传、HEAD 校验、生命周期和受控下载；
 - 官网服务到 `api:8000` 的内部 DNS/网络连通和令牌 secret rotation；
-- CPU Compose 目标机器的内存、磁盘、首次模型下载、索引时延和并发记录；
+- CPU Compose 目标机器的内存、磁盘、首次模型下载、索引时延和并发记录（仓库已提供 fake
+  provider 基线：`docs/cc2026-cpu-baseline.md`；启用 TEI 后仍需目标机数据）；
 - 页面刷新、服务重启、任务失败/重试、跨用户访问和未登录访问的端到端报告。
 
 完成上述事项后，才能把本项目从“服务适配完成”标记为“官网上线验收通过”。

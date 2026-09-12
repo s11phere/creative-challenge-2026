@@ -31,7 +31,9 @@ WORKDIR /app
 
 COPY --from=builder /app /app
 
-RUN mkdir -p /app/data && chown -R app:app /app
+# Keep the Compose blob mount point in the image so a fresh named volume
+# inherits `app:app` ownership (see deploy/Dockerfile.api).
+RUN mkdir -p /app/data/blobs && chown -R app:app /app
 
 ENV PATH="/app/.venv/bin:$PATH"
 

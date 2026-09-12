@@ -19,6 +19,7 @@
   - [运行状态](#运行状态)
   - [停止与清理](#停止与清理)
   - [服务与端口](#服务与端口)
+  - [开发与质量门禁](#开发与质量门禁)
   - [安全与数据边界](#安全与数据边界)
   - [故障排查](#故障排查)
 
@@ -157,6 +158,38 @@ docker compose -f deploy/compose.yaml --env-file .env down --volumes --remove-or
 
 端口可通过 `.env` 中的 `WEB_PORT`、`API_PORT`、`POSTGRES_PORT`、`REDIS_PORT`、`EMBEDDING_PORT` 和 `RERANKER_PORT` 覆盖。
 
+面向官网的生产（内网）profile 使用 `deploy/compose.intranet.yaml`：项目服务不发布公网端口，
+API 要求网关令牌，并只开放首期知识工作流。部署、卷、备份与回滚见[运维手册](docs/operations.md)。
+
+## 开发与质量门禁
+
+```bash
+uv sync --frozen
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy apps packages
+uv run pytest tests/unit tests/contract
+uv run python scripts/export_openapi.py
+git diff --exit-code -- docs/openapi.json
+corepack pnpm@10.20.0 --dir apps/web lint
+corepack pnpm@10.20.0 --dir apps/web typecheck
+corepack pnpm@10.20.0 --dir apps/web test
+```
+
+真实 PostgreSQL/Redis 集成测试需要隔离依赖并显式设置 `RUN_INTEGRATION=1`：
+
+```bash
+RUN_INTEGRATION=1 uv run pytest tests/integration
+```
+
+网站 profile 的端到端 smoke（在 API 容器内执行，覆盖上传、摄入、问答、引用和租户隔离）：
+
+```bash
+docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml \
+  exec -T -e SMOKE_TOKEN="$INTERNAL_SERVICE_TOKEN" api \
+  python - < examples/first_phase_smoke.py
+```
+
 ## 安全与数据边界
 
 - 密钥只从环境变量或被 Git 忽略的 `.env` 读取，不要提交或写入日志、trace、评估报告。
@@ -167,8 +200,11 @@ docker compose -f deploy/compose.yaml --env-file .env down --volumes --remove-or
 
 ## 故障排查
 
-常见启动、模型下载、Provider 配置和数据恢复问题见[故障排查文档](docs/troubleshooting.md)。
+常见启动、模型下载、Provider 配置和数据恢复问题见[故障排查文档](docs/troubleshooting.md)；
+部署、持久卷、备份恢复、升级回滚和临时文件清理见[运维手册](docs/operations.md)；
+第三方模型、依赖、数据、字体与素材许可见[数据与许可说明](docs/data-and-licenses.md)。
 
 CC2026 官网接入的服务认证、生产内网 Compose 覆盖和首期能力边界见
 [官网接入交付说明](docs/cc2026-delivery.md)；面向网站负责人的接口、部署和验收步骤见
-[易知官网适配交付手册](docs/cc2026-yizhi-handoff.md)。
+[易知官网适配交付手册](docs/cc2026-yizhi-handoff.md)；可执行的端到端验收脚本见
+[`examples/first_phase_smoke.py`](examples/first_phase_smoke.py)。

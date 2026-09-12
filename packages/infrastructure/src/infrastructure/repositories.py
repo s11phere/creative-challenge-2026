@@ -256,6 +256,15 @@ class SpaceRepository:
         result = await self._session.get(SpaceModel, space_id)
         return _space_to_domain(result) if result else None
 
+    # Declared before `list` so the `list[...]` annotation below still resolves
+    # to the builtin instead of this class's `list` method.
+    async def list_by_owner(self, owner_id: str) -> list[Space]:
+        """Return only the Spaces owned by *owner_id* (tenant-scoped list)."""
+        result = await self._session.execute(
+            select(SpaceModel).where(SpaceModel.owner_id == owner_id)
+        )
+        return [_space_to_domain(row) for row in result.scalars()]
+
     async def list(self) -> list[Space]:
         result = await self._session.execute(select(SpaceModel))
         return [_space_to_domain(row) for row in result.scalars()]

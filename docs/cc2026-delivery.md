@@ -14,6 +14,11 @@ API、数据库、Redis 或模型服务。
 - API 在 `SERVICE_AUTH_REQUIRED=true` 时拒绝缺少或不匹配凭据的请求（健康检查除外），
   并把匿名标识写入 Space、Conversation 和 Run 的 owner/caller 字段。
 - API 不接受浏览器 session token，也不会把内部令牌转发给模型或 Worker。
+- 该边界不是可选项：启动时 `validate_public_mode()` 要求 `PUBLIC_MODE=true` 必须同时设置
+  `SERVICE_AUTH_REQUIRED=true` 与非空 `INTERNAL_SERVICE_TOKEN`，否则进程拒绝启动。
+- 公开模式下 `MODEL_ALLOW_EXTERNAL=true` 同样被拒绝，只有显式设置
+  `PUBLIC_MODE_ALLOW_EXTERNAL_MODEL=true`（记录数据使用评审结论）才允许外部模型出口，
+  避免把 `private_local`/`restricted` 内容静默发给第三方 Provider。
 
 ## 首期公开能力
 
@@ -51,6 +56,11 @@ docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml \
 `INTERNAL_SERVICE_TOKEN`。镜像以 uid/gid `10001` 的非 root 用户运行；日志写 stdout/stderr，
 请求关联使用 `X-Request-ID`，不得记录正文、凭据或模型响应。
 
+非 root 运行要求镜像内预建挂载点：`/app/data/blobs` 已在 `deploy/Dockerfile.api` 和
+`deploy/Dockerfile.worker` 中创建并 chown 给 `app`，这样全新的 `blobdata` 命名卷才会继承
+可写属主。缺少这一步时上传会返回 500（`PermissionError`），CI 的
+`Website profile smoke` 作业与 `examples/first_phase_smoke.py` 都会覆盖该回归。
+
 本仓库不包含官网 Next.js/Convex 实现、R2 签名存储、招生画像、Tongpaper 或 TongMark
 业务表。这些属于官网维护侧和对应项目服务的后续交付，不能用本服务的 JSON 或 localStorage
 替代。易知首期也不开放本地 Agent、命令执行、自定义 Skill、长期记忆自动提炼或外部
@@ -69,7 +79,24 @@ Provider 切换。
 uv run ruff format --check apps packages
 uv run ruff check apps packages
 uv run mypy apps packages
+uv run pytest tests/unit tests/contract -q
 uv run pytest tests/unit/test_service_auth.py tests/unit/test_openapi.py -q
 uv run python scripts/export_openapi.py
 git diff --exit-code -- docs/openapi.json
+
+# 生产 profile 的端到端验收（干净卷上真实上传、摄入、问答、引用与租户隔离）
+docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml \
+  --env-file .env up --build --detach --wait postgres redis migrate api worker
+docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml \
+  --env-file .env exec -T -e SMOKE_TOKEN="$INTERNAL_SERVICE_TOKEN" api \
+  python - < examples/first_phase_smoke.py
 ```
+
+真实 PostgreSQL/Redis 集成测试（含 Space 删除的 blob 清理）需要显式启用：
+
+```bash
+RUN_INTEGRATION=1 uv run pytest tests/integration
+```
+
+资源基线、卷、备份与回滚见[运维手册](operations.md)与
+[CPU 基线记录](cc2026-cpu-baseline.md)。

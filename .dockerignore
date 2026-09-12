@@ -20,6 +20,9 @@ cases/evals/prompts/*
 !cases/evals/prompts/grounded-qa-v1-provisional.txt
 !cases/evals/prompts/grounded-qa-v2-provisional.txt
 tmp
+# Local runtime state (ignored by Git, but it would otherwise be shipped to the
+# Docker daemon as build context): working areas, personal Skills, dev blobs.
+data
 **/__pycache__
 **/*.py[cod]
 **/.pytest_cache

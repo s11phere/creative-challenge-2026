@@ -119,20 +119,15 @@ class StructuredFakeGateway:
             raw_text = matches[0].group("text")
             claim = " ".join(raw_text.split())[:1200]
             instructions = "\n".join(item.content for item in request.messages).casefold()
-            document_ids = {
-                document_match.group(1)
-                for item in matches
-                if (
-                    document_match := re.search(
-                        r'document_id="([0-9a-f-]+)"', item.group("attributes")
-                    )
-                )
-            }
-            if len(document_ids) >= 2 or "evidence matrix" in instructions:
+            if "evidence matrix" in instructions:
                 payload = _fake_research_answer(matches, mode="literature_review")
             elif "common misconceptions" in instructions:
                 payload = _fake_research_answer(matches, mode="deep_read")
             else:
+                # Knowledge runs always expect grounded-answer-v1, even when the
+                # retrieved passages span several documents.  Emitting the
+                # research payload here used to fail schema validation with
+                # QA_STRUCTURED_RESPONSE_INVALID for multi-document Spaces.
                 payload = {
                     "schema_version": "grounded-answer-v1",
                     "result_type": "answer",

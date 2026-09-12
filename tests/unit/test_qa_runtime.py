@@ -116,6 +116,39 @@ async def test_structured_fake_gateway_returns_readable_research_review() -> Non
 
 
 @pytest.mark.asyncio
+async def test_structured_fake_gateway_keeps_knowledge_schema_for_multi_document_evidence() -> None:
+    """A wide retrieval window must not switch the Knowledge run to the research schema.
+
+    Multi-document Spaces previously produced a `research-grounded-answer-v2`
+    payload for a `grounded-answer-v1` run, which failed validation with
+    QA_STRUCTURED_RESPONSE_INVALID.
+    """
+
+    gateway = StructuredFakeGateway(FakeModelGateway())
+    evidence = "\n".join(
+        f'<evidence id="{UUID(int=index)}" trust="untrusted_document" '
+        f'source_id="{UUID(int=index + 10)}" document_id="{UUID(int=index + 20)}">\n'
+        "<<<UNTRUSTED_EVIDENCE>>>\n"
+        f"Synthetic passage {index}.\n"
+        "<<<END_UNTRUSTED_EVIDENCE>>>\n</evidence>"
+        for index in (1, 2, 3)
+    )
+    response = await gateway.chat(
+        ChatRequest(
+            messages=(
+                ChatMessage(ChatRole.SYSTEM, "Answer with citations from the evidence."),
+                ChatMessage(ChatRole.USER, evidence),
+            )
+        )
+    )
+
+    payload = json.loads(response.text)
+    assert payload["schema_version"] == "grounded-answer-v1"
+    assert payload["result_type"] == "answer"
+    assert payload["claims"][0]["evidence_ids"] == [str(UUID(int=1))]
+
+
+@pytest.mark.asyncio
 async def test_native_fake_gateway_selects_knowledge_skill_for_space_question() -> None:
     gateway = StructuredNativeAssistantLoopGateway(FakeModelGateway())
     response = await gateway.chat(

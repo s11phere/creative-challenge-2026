@@ -214,3 +214,46 @@ jobs:
       - name: Stop stack
         if: always()
         run: docker compose -f deploy/compose.yaml down --volumes --remove-orphans
+
+  # The website profile runs with PUBLIC_MODE + gateway service auth and no
+  # published project ports, which the local smoke above never exercises.
+  # This job is what catches non-root volume ownership regressions: a fresh
+  # `blobdata` volume must still accept uploads from uid 10001.
+  intranet-smoke:
+    name: Website profile smoke
+    runs-on: ubuntu-latest
+    env:
+      APP_SECRET_KEY: ci-test-only
+      POSTGRES_PASSWORD: ci-test-only
+      INTERNAL_SERVICE_TOKEN: ci-test-only-gateway-token
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Validate production Compose overrides
+        run: |
+          docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml config --quiet
+          docker compose -f deploy/compose.yaml -f deploy/compose.cpu.yaml \
+            -f deploy/compose.intranet.yaml --profile embedding --profile reranker config --quiet
+      - name: Assert no project port is published in the website profile
+        run: |
+          ! docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml config \
+            | grep -q 'published:'
+      - name: Build and start the website profile
+        run: |
+          docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml \
+            up --build --detach --wait --wait-timeout 300 \
+            postgres redis migrate api worker
+      - name: Run the first-release smoke test
+        run: |
+          docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml \
+            exec -T -e SMOKE_TOKEN="$INTERNAL_SERVICE_TOKEN" api \
+            python - < examples/first_phase_smoke.py
+      - name: Assert gateway credentials never reach the logs
+        run: |
+          ! docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml \
+            logs --no-color | grep -F "$INTERNAL_SERVICE_TOKEN"
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml logs --no-color
+      - name: Stop stack
+        if: always()
+        run: docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml down --remove-orphans

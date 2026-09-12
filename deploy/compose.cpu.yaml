@@ -25,6 +25,9 @@ services:
     command:
       - --model-id
       - BAAI/bge-reranker-v2-m3
+      # Same pinned revision as deploy/compose.yaml.
+      - --revision
+      - 953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e
       - --max-batch-tokens
       - "512"
       - --max-client-batch-size

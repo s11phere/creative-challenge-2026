@@ -1,4 +1,4 @@
-# ADR-021: Website Gateway Service Authentication
+# ADR-023: Website Gateway Service Authentication
 
 ## 背景
 
@@ -18,6 +18,17 @@ API 增加可配置的服务认证中间件。生产部署设置 `SERVICE_AUTH_R
 启用。生产 Compose 覆盖文件撤掉项目服务和独立 Vite UI 的公网端口，镜像使用非 root 用户运行。
 Compose 网络不使用 Docker 的 `internal` 标志，以保留受控的模型下载/上游 Provider 出站能力；
 私有性由不发布端口和官网网关边界保证。
+
+路径黑名单只是能力开关而不是认证边界，因此启动时增加 `validate_public_mode()` 守卫：
+`PUBLIC_MODE=true` 必须同时满足 `SERVICE_AUTH_REQUIRED=true` 和非空
+`INTERNAL_SERVICE_TOKEN`，否则进程拒绝启动；`MODEL_ALLOW_EXTERNAL=true` 在公开模式下一律
+拒绝，除非显式设置 `PUBLIC_MODE_ALLOW_EXTERNAL_MODEL=true` 记录已完成的数据使用评审。该守卫
+在 API lifespan 和 Worker 启动时都会执行，且不受 `APP_ENV` 影响，因为公开模式本身就是面向
+公网的部署形态。
+
+非 root 运行带来一个部署约束：Compose 命名卷在容器内路径不存在时会以 `root:root` 创建，
+uid 10001 无法写入。因此 API/Worker 镜像必须预建 `/app/data/blobs` 并 chown 给 `app`，
+让全新命名卷继承属主；否则上传会在干净部署上返回 500。
 
 ## 备选方案
 

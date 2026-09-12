@@ -36,4 +36,11 @@ provider-neutral native Tool-use, service-owned knowledge gates, bounded decisio
 body-free synthetic development baselines. It preserves v1 Run recovery and the ADR-010/011
 provisional-quality boundary.
 ADR-021 records durable, live Skill activation: default-enabled packages, immediate registry
-updates, and the fixed/personal catalog toggle controls.
+updates, and the fixed/personal catalog toggle controls. ADR-021 is also used by
+`021-exam-session-interaction-boundary.md`, which records the exam-session interaction and
+answer-isolation boundary; the number was allocated twice before this index existed, so the
+files are listed explicitly instead of pretending the collision did not happen.
+ADR-022 records the native student Skill suite v2 and its validation boundaries.
+ADR-023 records website gateway service authentication: the `X-Internal-Service-Token` /
+`X-App-Scoped-User-Id` boundary, PUBLIC_MODE capability gating, the `PUBLIC_MODE =>
+SERVICE_AUTH_REQUIRED` startup guard, and the private/non-root Compose profile.

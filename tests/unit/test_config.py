@@ -137,3 +137,83 @@ async def test_application_lifespan_rejects_missing_production_secrets(
     with pytest.raises(ValueError, match="APP_SECRET_KEY"):
         async with app.router.lifespan_context(app):
             pass
+
+
+# ---------------------------------------------------------------------------
+# Website (PUBLIC_MODE) deployment guards
+# ---------------------------------------------------------------------------
+
+
+def test_public_mode_requires_service_auth() -> None:
+    """PUBLIC_MODE without the gateway boundary would serve anonymous tenants."""
+
+    s = Settings(_env_file=None, public_mode=True, service_auth_required=False)
+
+    with pytest.raises(ValueError, match="PUBLIC_MODE requires SERVICE_AUTH_REQUIRED"):
+        s.validate_secrets()
+
+
+def test_public_mode_requires_internal_service_token() -> None:
+    s = Settings(
+        _env_file=None,
+        public_mode=True,
+        service_auth_required=True,
+        internal_service_token="   ",
+    )
+
+    with pytest.raises(ValueError, match="INTERNAL_SERVICE_TOKEN"):
+        s.validate_secrets()
+
+
+def test_public_mode_rejects_external_model_provider() -> None:
+    """private_local/restricted knowledge must not reach external providers."""
+
+    s = Settings(
+        _env_file=None,
+        public_mode=True,
+        service_auth_required=True,
+        internal_service_token="gateway-secret",
+        model_allow_external=True,
+    )
+
+    with pytest.raises(ValueError, match="MODEL_ALLOW_EXTERNAL"):
+        s.validate_secrets()
+
+
+def test_public_mode_allows_reviewed_external_provider_opt_in() -> None:
+    s = Settings(
+        _env_file=None,
+        public_mode=True,
+        service_auth_required=True,
+        internal_service_token="gateway-secret",
+        model_allow_external=True,
+        public_mode_allow_external_model=True,
+    )
+
+    s.validate_secrets()  # should not raise
+
+
+def test_public_mode_accepts_reviewed_gateway_configuration() -> None:
+    s = Settings(
+        _env_file=None,
+        app_env="production",
+        app_secret_key="real-key",
+        postgres_password="real-pw",
+        public_mode=True,
+        service_auth_required=True,
+        internal_service_token="gateway-secret",
+    )
+
+    s.validate_secrets()  # should not raise
+
+
+async def test_lifespan_rejects_public_mode_without_service_auth(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "public_mode", True)
+    monkeypatch.setattr(settings, "service_auth_required", False)
+    app = create_app()
+
+    with pytest.raises(ValueError, match="PUBLIC_MODE requires SERVICE_AUTH_REQUIRED"):
+        async with app.router.lifespan_context(app):
+            pass
