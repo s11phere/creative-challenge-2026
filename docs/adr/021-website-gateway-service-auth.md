@@ -10,10 +10,14 @@ CC2026 官网使用浏览器 session 认证，但本仓库的 API/Worker 是独�
 API 增加可配置的服务认证中间件。生产部署设置 `SERVICE_AUTH_REQUIRED=true`，要求官网网关
 发送 `X-Internal-Service-Token` 和不含个人信息的 `X-App-Scoped-User-Id`。API 将匿名标识
 作为 Space/Conversation/Run 的租户边界，并对跨租户读取返回 404。健康检查保持匿名，便于
-容器编排探活。`PUBLIC_MODE=true` 时禁用本地 Agent、工作区和个人 Skill 路由。
+容器编排探活。`PUBLIC_MODE=true` 时只保留首期知识工作流，阻断全部 `/api/v2`、`/api/v3`、
+`/api/v4`、Skill 管理、考试、审核、反馈和派生知识路由；新增生产路由必须显式加入审核后的
+公开清单。
 
 开发模式继续兼容原有 `owner_id=local` 客户端，以便本地 smoke test；该兼容路径不应在生产
-启用。生产 Compose 覆盖文件撤掉内部服务的公网端口，镜像使用非 root 用户运行。
+启用。生产 Compose 覆盖文件撤掉项目服务和独立 Vite UI 的公网端口，镜像使用非 root 用户运行。
+Compose 网络不使用 Docker 的 `internal` 标志，以保留受控的模型下载/上游 Provider 出站能力；
+私有性由不发布端口和官网网关边界保证。
 
 ## 备选方案
 

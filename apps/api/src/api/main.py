@@ -106,7 +106,11 @@ from .routers import (
     sources,
     spaces,
 )
-from .service_auth import ServiceAuthMiddleware
+from .service_auth import (
+    APP_USER_HEADER,
+    SERVICE_TOKEN_HEADER,
+    ServiceAuthMiddleware,
+)
 
 
 class LiveResponse(BaseModel):
@@ -392,7 +396,57 @@ def create_app(
     app.add_middleware(TraceMiddleware)
     register_error_handlers(app)
     _register_routes(app)
+    _add_gateway_openapi_contract(app.openapi())
     return app
+
+
+def _add_gateway_openapi_contract(schema: dict[str, Any]) -> None:
+    """Publish the website gateway contract without coupling routers to auth.
+
+    Authentication is enforced by ASGI middleware, so adding a FastAPI
+    dependency to every route would duplicate the runtime boundary.  The
+    generated schema still needs to tell the website which headers are
+    required and which endpoints remain public for health probes.
+    """
+
+    components = schema.setdefault("components", {})
+    security_schemes = components.setdefault("securitySchemes", {})
+    security_schemes.update(
+        {
+            "InternalServiceToken": {
+                "type": "apiKey",
+                "in": "header",
+                "name": SERVICE_TOKEN_HEADER,
+                "description": "Shared secret sent only by the authenticated website gateway.",
+            },
+            "AppScopedUserId": {
+                "type": "apiKey",
+                "in": "header",
+                "name": APP_USER_HEADER,
+                "description": "Opaque, non-PII user id minted by the website gateway.",
+            },
+        }
+    )
+    health_paths = {"/api/v1/health/live", "/api/v1/health/ready"}
+    for path, path_item in schema.get("paths", {}).items():
+        if path in health_paths or not isinstance(path_item, dict):
+            continue
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            operation["security"] = [{"InternalServiceToken": [], "AppScopedUserId": []}]
+            responses = operation.setdefault("responses", {})
+            responses.setdefault(
+                "401",
+                {
+                    "description": "Missing or invalid website gateway credentials",
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+                        }
+                    },
+                },
+            )
 
 
 def _register_routes(app: FastAPI) -> None:

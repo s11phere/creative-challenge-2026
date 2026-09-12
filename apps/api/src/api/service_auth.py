@@ -22,6 +22,7 @@ from hmac import compare_digest
 from typing import Final
 
 from infrastructure.config import settings
+from infrastructure.telemetry_context import new_trace_id
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -88,7 +89,7 @@ class ServiceAuthMiddleware:
         if settings.public_mode and _is_restricted_public_path(
             path, str(scope.get("method", "GET"))
         ):
-            await _not_available(send)
+            await _not_available(scope, send)
             return
 
         if not settings.service_auth_required:
@@ -104,7 +105,7 @@ class ServiceAuthMiddleware:
         supplied = headers.get(SERVICE_TOKEN_HEADER, "")
         user_id = headers.get(APP_USER_HEADER)
         if not expected or not compare_digest(supplied, expected) or not valid_app_user_id(user_id):
-            await _unauthorized(send)
+            await _unauthorized(scope, send)
             return
 
         # Scope values are internal and never echoed to the client or logs.
@@ -112,22 +113,23 @@ class ServiceAuthMiddleware:
         await self.app(scope, receive, send)
 
 
-async def _unauthorized(send: Send) -> None:
+async def _unauthorized(scope: Scope, send: Send) -> None:
+    trace_id = _trace_id(scope)
     payload = json.dumps(
         {
             "code": "SERVICE_AUTH_REQUIRED",
             "message": "A valid website service credential is required.",
+            "trace_id": trace_id,
         },
         separators=(",", ":"),
-    ).encode("utf-8")
+    ).encode()
     await send(
         {
             "type": "http.response.start",
             "status": 401,
             "headers": [
-                (b"content-type", b"application/json"),
+                *_response_headers(scope, trace_id),
                 (b"content-length", str(len(payload)).encode("ascii")),
-                (b"cache-control", b"no-store"),
             ],
         }
     )
@@ -142,30 +144,59 @@ def _is_restricted_public_path(path: str, method: str) -> bool:
     production website profile.
     """
 
-    if path.startswith("/api/v1/skills/personal"):
+    # The website first release is the published-knowledge workflow.  Keep
+    # every versioned Agent, exam, and Skill-management surface out of that
+    # deployment; future routes must be explicitly reviewed before being
+    # added to the public surface.
+    if path in {"/api/v2", "/api/v3", "/api/v4"} or path.startswith(
+        ("/api/v2/", "/api/v3/", "/api/v4/")
+    ):
         return True
-    if path.startswith("/api/v3/runs/"):
+    if path.startswith("/api/v1/skills"):
         return True
-    if path in {"/api/v2/commands"}:
+    if path.startswith("/api/v1/exam"):
         return True
-    if path.startswith("/api/v2/conversations/") and path.endswith("/workspace"):
+    if "/approvals" in path or "/derived-knowledge" in path or "/feedback" in path:
         return True
-    return path.startswith("/api/v1/skills/") and method != "GET"
+    if "/skills/" in path and path.startswith("/api/v1/conversations/"):
+        return True
+    # Retain the method argument for callers that use this helper directly;
+    # all Skill paths above are blocked regardless of method in public mode.
+    _ = method
+    return False
 
 
-async def _not_available(send: Send) -> None:
+def _trace_id(scope: Scope) -> str:
+    value = scope.get("trace_id")
+    return value if isinstance(value, str) and value else new_trace_id()
+
+
+def _response_headers(scope: Scope, trace_id: str) -> list[tuple[bytes, bytes]]:
+    headers = [
+        (b"content-type", b"application/json"),
+        (b"cache-control", b"no-store"),
+        (b"x-trace-id", trace_id.encode("ascii")),
+    ]
+    request_id = scope.get("request_id")
+    if isinstance(request_id, str) and request_id:
+        headers.append((b"x-request-id", request_id.encode("ascii")))
+    return headers
+
+
+async def _not_available(scope: Scope, send: Send) -> None:
+    trace_id = _trace_id(scope)
     payload = (
-        b'{"code":"CAPABILITY_NOT_EXPOSED",'
-        b'"message":"This capability is disabled in the website deployment."}'
-    )
+        '{"code":"CAPABILITY_NOT_EXPOSED",'
+        '"message":"This capability is disabled in the website deployment.",'
+        f'"trace_id":"{trace_id}"}}'
+    ).encode()
     await send(
         {
             "type": "http.response.start",
             "status": 404,
             "headers": [
-                (b"content-type", b"application/json"),
+                *_response_headers(scope, trace_id),
                 (b"content-length", str(len(payload)).encode("ascii")),
-                (b"cache-control", b"no-store"),
             ],
         }
     )

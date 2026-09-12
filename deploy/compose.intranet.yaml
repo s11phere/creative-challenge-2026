@@ -28,10 +28,15 @@ services:
   otel-collector:
     ports: !reset []
   web:
-    # The website gateway is the only service published by this stack.
+    # The standalone Vite UI is for local development only.  The official
+    # website owns the public edge, so this project stack must not publish it.
+    ports: !reset []
     networks:
       - default
 
 networks:
   default:
-    internal: true
+    # `internal: true` also blocks controlled egress needed for model
+    # downloads and explicitly configured upstream providers.  Services stay
+    # private because no project ports are published in this override.
+    internal: false

@@ -26,6 +26,20 @@ async def test_openapi_includes_health_endpoints() -> None:
     assert "/api/v2/runs/{run_id}/events" in paths
     assert "/api/v2/runs/{run_id}/cancel" in paths
 
+    security_schemes = schema["components"]["securitySchemes"]
+    assert security_schemes["InternalServiceToken"] == {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Internal-Service-Token",
+        "description": "Shared secret sent only by the authenticated website gateway.",
+    }
+    assert security_schemes["AppScopedUserId"]["name"] == "X-App-Scoped-User-Id"
+    assert paths["/api/v1/health/live"]["get"].get("security") is None
+    assert paths["/api/v1/spaces"]["post"]["security"] == [
+        {"InternalServiceToken": [], "AppScopedUserId": []}
+    ]
+    assert "401" in paths["/api/v1/spaces"]["post"]["responses"]
+
     schemas = schema["components"]["schemas"]
     assert "LiveResponse" in schemas
     assert "ReadyResponse" in schemas
