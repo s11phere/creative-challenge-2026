@@ -182,6 +182,14 @@ corepack pnpm@10.20.0 --dir apps/web test
 RUN_INTEGRATION=1 uv run pytest tests/integration
 ```
 
+CI 的单元/契约测试运行在没有任何本地数据库的机器上。本地若同时跑着 Compose 栈，个别用例
+可能因为“恰好能连上数据库”而走上不同分支，因此提交前建议用不可达端口复现 CI 条件：
+
+```bash
+POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=59999 REDIS_HOST=127.0.0.1 REDIS_PORT=59998 \
+  uv run pytest tests/unit tests/contract
+```
+
 网站 profile 的端到端 smoke（在 API 容器内执行，覆盖上传、摄入、问答、引用和租户隔离）：
 
 ```bash

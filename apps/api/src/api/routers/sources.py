@@ -58,6 +58,25 @@ logger = logging.getLogger(__name__)
 # enforced on the decoded bytes below.
 _MULTIPART_ENVELOPE_SLACK_BYTES = 64 * 1024
 
+
+def _declared_upload_exceeds_limit(content_length: str | None, max_bytes: int) -> bool:
+    """Whether the declared request body is too large to even buffer.
+
+    Multipart framing (boundary, part headers, filename) rides along in the
+    request ``Content-Length``, so the guard allows
+    ``_MULTIPART_ENVELOPE_SLACK_BYTES`` of envelope before refusing.  The exact
+    per-file limit is still enforced on the decoded bytes.
+    """
+
+    if content_length is None:
+        return False
+    try:
+        declared_bytes = int(content_length)
+    except ValueError:
+        return False
+    return declared_bytes > max_bytes + _MULTIPART_ENVELOPE_SLACK_BYTES
+
+
 router = APIRouter(prefix="/api/v1")
 
 
@@ -693,17 +712,11 @@ async def upload_file(
     # Reject an oversized body before buffering it: `file.read()` loads the
     # whole upload into memory, so the Content-Length check is what keeps a
     # declared-oversize request from consuming the worker's memory.
-    declared_length = request.headers.get("content-length")
-    if declared_length is not None:
-        try:
-            declared_bytes = int(declared_length)
-        except ValueError:
-            declared_bytes = -1
-        if declared_bytes > max_bytes + _MULTIPART_ENVELOPE_SLACK_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"File exceeds maximum size of {settings.max_upload_size_mb} MB",
-            )
+    if _declared_upload_exceeds_limit(request.headers.get("content-length"), max_bytes):
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds maximum size of {settings.max_upload_size_mb} MB",
+        )
 
     raw_bytes = await file.read()
     if len(raw_bytes) > max_bytes:

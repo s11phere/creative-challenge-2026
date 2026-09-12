@@ -7,14 +7,19 @@
 
 - 项目：易知（`creative-challenge-2026`）
 - 适配分支：`codex/cc2026-delivery-compliance`
-- 适配提交：交付 tag `cc2026-yizhi-v1`（等价于 `git rev-list -n1 cc2026-yizhi-v1`，请勿使用分支尖端）
+- 适配提交：交付 tag `cc2026-yizhi-v2`（等价于 `git rev-list -n1 cc2026-yizhi-v2`，请勿使用分支尖端）
 - 服务容器：`api`、`worker`、`postgres`、`redis`，可选 `tei`、`tei-reranker`
 - API 监听：容器内 `api:8000`
 - 健康检查：`GET /api/v1/health/live`、`GET /api/v1/health/ready`
 
 官网接入应固定到该 tag 指向的 commit 或对应镜像 digest；不要直接跟随分支尖端部署。
-该 tag 已通过 CI 的 `Backend quality`、`Backend tests`、`Migrations and integration`、
-`Frontend`、`Compose smoke + web E2E` 和 `Website profile smoke` 六个作业。
+官网接入请固定到 CI 六个作业（`Backend quality`、`Backend tests`、
+`Migrations and integration`、`Frontend`、`Compose smoke + web E2E`、`Website profile smoke`）
+在该 tag 上全部通过后的 commit 或镜像 digest。
+
+> 版本说明：`cc2026-yizhi-v1` 的 `Backend tests` 在无本地数据库的 CI 环境失败
+> （一个上传大小守卫用例依赖了本机可连的 PostgreSQL），已在该版本修复并改用不依赖
+> 数据库的边界用例；请使用 `cc2026-yizhi-v2`。
 
 ## 2. 网络和身份边界
 

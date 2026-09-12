@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 from api.main import create_app
+from api.routers.sources import _declared_upload_exceeds_limit
 from httpx import ASGITransport, AsyncClient
 from infrastructure.config import settings
 from model_gateway import FakeModelGateway
@@ -62,20 +63,22 @@ async def test_oversized_upload_is_rejected_before_buffering(
     assert "maximum size" in response.json()["message"]
 
 
-@pytest.mark.asyncio
-async def test_upload_below_the_limit_is_not_rejected_by_the_guard(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("content_length", "expected"),
+    [
+        (None, False),
+        ("not-a-number", False),
+        ("0", False),
+        # A file at the limit plus multipart framing must still be accepted.
+        (str(1024 * 1024 + 400), False),
+        (str(1024 * 1024 + 63 * 1024), False),
+        (str(1024 * 1024 + 65 * 1024), True),
+        (str(2 * 1024 * 1024), True),
+    ],
+)
+def test_declared_length_guard_allows_the_multipart_envelope(
+    content_length: str | None, expected: bool
 ) -> None:
-    """The multipart envelope must not push an allowed file over the limit."""
+    """The envelope allowance must not turn an allowed file into a 413."""
 
-    monkeypatch.setattr(settings, "max_upload_size_mb", 1)
-    payload = b"y" * (1024 * 1024 - 4096)
-
-    async with _client() as client:
-        response = await client.post(
-            f"/api/v1/spaces/{uuid4()}/sources/{uuid4()}/upload",
-            files={"file": ("ok.md", payload)},
-        )
-
-    # The guard passes; the request then fails on the missing Space instead.
-    assert response.status_code != 413, response.text
+    assert _declared_upload_exceeds_limit(content_length, 1024 * 1024) is expected
