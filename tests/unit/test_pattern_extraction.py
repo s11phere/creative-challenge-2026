@@ -24,6 +24,7 @@ from tests.unit.test_pattern_mining import InMemoryUsageTraceRepository
 from tests.unit.test_skill_drafts import write_builtin_package
 
 _BASE = datetime(2026, 8, 1, tzinfo=UTC)
+_NOW = _BASE + timedelta(days=4)
 
 
 def _trace(*, index: int, conversation: int) -> UsageTrace:
@@ -96,7 +97,7 @@ def _service(draft_store: SkillDraftStore) -> PatternExtractionService:
 class TestPatternExtractionService:
     async def test_creates_draft_when_dual_gate_passes(self, draft_store: SkillDraftStore) -> None:
         service = _service(draft_store)
-        result = await service.extract()
+        result = await service.extract(now=_NOW)
 
         assert result.created_drafts == ("summarize_workflow",)
         assert result.rejected == ()
@@ -108,7 +109,7 @@ class TestPatternExtractionService:
 
     async def test_never_activates_automatically(self, draft_store: SkillDraftStore) -> None:
         service = _service(draft_store)
-        await service.extract()
+        await service.extract(now=_NOW)
 
         # The candidate stays a draft: never promoted to a personal Skill,
         # so the user approval (activate) step is still required.
@@ -128,7 +129,7 @@ class TestPatternExtractionService:
                 frozenset(registry.names())
             ),
         )
-        result = await service.extract()
+        result = await service.extract(now=_NOW)
         assert result.skipped == ("summarize_workflow",)
         assert result.created_drafts == ()
 
@@ -145,7 +146,7 @@ class TestPatternExtractionService:
             ),
         )
         service = _service(store)
-        result = await service.extract()
+        result = await service.extract(now=_NOW)
 
         assert result.created_drafts == ()
         assert len(result.rejected) == 1

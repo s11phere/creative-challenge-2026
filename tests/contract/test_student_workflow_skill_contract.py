@@ -18,7 +18,8 @@ WORKFLOW_SKILLS = {
 
 def _schema(package: str) -> dict[str, object]:
     return cast(
-        dict[str, object], json.loads((SKILL_ROOT / package / "schemas/output.json").read_text())
+        dict[str, object],
+        json.loads((SKILL_ROOT / package / "schemas/output.json").read_text(encoding="utf-8")),
     )
 
 
@@ -59,8 +60,12 @@ def test_upgraded_workflow_outputs_use_small_terminal_envelope() -> None:
 
 
 def test_security_boundaries_remain_in_skill_prompts() -> None:
-    exam = (SKILL_ROOT / "exam_preparation_workflow/prompts/boundary.md").read_text()
-    project = (SKILL_ROOT / "course_project_workflow/prompts/boundary.md").read_text()
+    exam = (SKILL_ROOT / "exam_preparation_workflow/prompts/boundary.md").read_text(
+        encoding="utf-8"
+    )
+    project = (SKILL_ROOT / "course_project_workflow/prompts/boundary.md").read_text(
+        encoding="utf-8"
+    )
     assert "never expose correct options" in exam
     assert "Never fabricate results" in project
 
@@ -69,7 +74,9 @@ def test_eval_cases_are_synthetic_only() -> None:
     for name in WORKFLOW_SKILLS:
         cases = [
             json.loads(line)
-            for line in (SKILL_ROOT / name / "evals/cases.jsonl").read_text().splitlines()
+            for line in (SKILL_ROOT / name / "evals/cases.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
             if line.strip()
         ]
         assert cases and all(case.get("fixture") == "synthetic_only" for case in cases)

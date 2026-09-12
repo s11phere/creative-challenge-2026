@@ -170,4 +170,5 @@ docker compose -f deploy/compose.yaml --env-file .env down --volumes --remove-or
 常见启动、模型下载、Provider 配置和数据恢复问题见[故障排查文档](docs/troubleshooting.md)。
 
 CC2026 官网接入的服务认证、生产内网 Compose 覆盖和首期能力边界见
-[官网接入交付说明](docs/cc2026-delivery.md)。
+[官网接入交付说明](docs/cc2026-delivery.md)；面向网站负责人的接口、部署和验收步骤见
+[易知官网适配交付手册](docs/cc2026-yizhi-handoff.md)。

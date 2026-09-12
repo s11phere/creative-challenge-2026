@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 import yaml
@@ -9,6 +10,7 @@ from api.main import create_app
 from application.qa import InMemoryGroundedQARepository
 from domain.agent_sse import AgentRunEventLog
 from domain.assistant_sse import AssistantEventLog
+from domain.qa_persistence import ConversationRecord
 from domain.qa_sse import QAEventLog
 from httpx import ASGITransport, AsyncClient
 from infrastructure.config import settings
@@ -17,6 +19,16 @@ from model_gateway import FakeModelGateway
 
 INPUT_SCHEMA = {"type": "object", "properties": {"value": {"type": "string"}}}
 OUTPUT_SCHEMA = {"type": "object", "properties": {"status": {"type": "string"}}}
+
+
+async def create_test_conversation(app, conversation_id: UUID) -> None:
+    await app.state.qa_repository.create_conversation(
+        ConversationRecord(
+            conversation_id=conversation_id,
+            space_id=UUID(int=62),
+            owner_id="local",
+        )
+    )
 
 
 def package_files(*, name: str = "my_skill", **overrides: object) -> dict[str, str]:
@@ -56,6 +68,8 @@ def package_files(*, name: str = "my_skill", **overrides: object) -> dict[str, s
 @pytest.fixture
 def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "personal_skills_dir", str(tmp_path / "personal"))
+    monkeypatch.setattr(settings, "public_mode", False)
+    monkeypatch.setattr(settings, "service_auth_required", False)
     return create_app(
         model_gateway=FakeModelGateway(),
         enable_qa_execution=False,
@@ -128,6 +142,7 @@ async def test_personal_skill_crud_and_activation(app) -> None:
 
 @pytest.mark.asyncio
 async def test_fixed_skill_toggle_updates_the_next_assistant_catalog(app) -> None:
+    await create_test_conversation(app, UUID("00000000-0000-0000-0000-000000000063"))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         initial = await client.get("/api/v1/skills")
         assert initial.status_code == 200
@@ -177,6 +192,7 @@ async def test_fixed_skill_toggle_updates_the_next_assistant_catalog(app) -> Non
 
 @pytest.mark.asyncio
 async def test_disabled_skill_is_omitted_from_commands_and_skills_status(app) -> None:
+    await create_test_conversation(app, UUID("00000000-0000-0000-0000-000000000064"))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         disabled = await client.patch(
             "/api/v1/skills/research_reading_workflow/activation", json={"active": False}

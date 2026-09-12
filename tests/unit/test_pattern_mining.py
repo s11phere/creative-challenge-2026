@@ -21,6 +21,7 @@ from domain.conversation_context import ConversationSensitivity
 from domain.usage_traces import UsageOutcome, UsageTrace
 
 _BASE = datetime(2026, 8, 1, tzinfo=UTC)
+_NOW = _BASE + timedelta(days=3)
 
 
 class InMemoryUsageTraceRepository:
@@ -110,7 +111,7 @@ class TestPatternMiningService:
             min_frequency=3,
             min_conversations=2,
         )
-        candidates = await service.mine()
+        candidates = await service.mine(now=_NOW)
         assert len(candidates) == 1
         candidate = candidates[0]
         assert candidate.task_category == "summarize"
@@ -129,7 +130,7 @@ class TestPatternMiningService:
             min_frequency=3,
             min_conversations=2,
         )
-        assert await service.mine() == ()
+        assert await service.mine(now=_NOW) == ()
 
     async def test_single_session_is_overfitting_and_excluded(self) -> None:
         traces = (
@@ -142,7 +143,7 @@ class TestPatternMiningService:
             min_frequency=3,
             min_conversations=2,
         )
-        assert await service.mine() == ()
+        assert await service.mine(now=_NOW) == ()
 
     async def test_ignores_general_category(self) -> None:
         traces = (
@@ -155,7 +156,7 @@ class TestPatternMiningService:
             min_frequency=3,
             min_conversations=2,
         )
-        assert await service.mine() == ()
+        assert await service.mine(now=_NOW) == ()
 
     async def test_ignores_chat_without_tools(self) -> None:
         traces = (
@@ -168,7 +169,7 @@ class TestPatternMiningService:
             min_frequency=3,
             min_conversations=2,
         )
-        assert await service.mine() == ()
+        assert await service.mine(now=_NOW) == ()
 
     async def test_ignores_skill_bound_patterns(self) -> None:
         traces = (
@@ -196,7 +197,7 @@ class TestPatternMiningService:
             min_frequency=3,
             min_conversations=2,
         )
-        assert await service.mine() == ()
+        assert await service.mine(now=_NOW) == ()
 
     async def test_window_filters_old_traces(self) -> None:
         old = _trace(
@@ -245,7 +246,7 @@ class TestPatternMiningService:
             min_conversations=2,
             max_candidates=2,
         )
-        candidates = await service.mine()
+        candidates = await service.mine(now=_NOW)
         assert len(candidates) == 2
         assert candidates[0].frequency >= candidates[1].frequency
 
