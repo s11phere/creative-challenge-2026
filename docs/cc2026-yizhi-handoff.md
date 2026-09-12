@@ -12,14 +12,15 @@
 - API 监听：容器内 `api:8000`
 - 健康检查：`GET /api/v1/health/live`、`GET /api/v1/health/ready`
 
-官网接入应固定到该 tag 指向的 commit 或对应镜像 digest；不要直接跟随分支尖端部署。
-官网接入请固定到 CI 六个作业（`Backend quality`、`Backend tests`、
-`Migrations and integration`、`Frontend`、`Compose smoke + web E2E`、`Website profile smoke`）
-在该 tag 上全部通过后的 commit 或镜像 digest。
+官网接入应固定到该 tag 指向的 commit；不要直接跟随分支尖端部署。CI 六个作业
+（`Backend quality`、`Backend tests`、`Migrations and integration`、`Frontend`、
+`Compose smoke + web E2E`、`Website profile smoke`）已在代码冻结提交 `958c186` 上全部通过；
+本 tag 在其之后只追加了本文档的修订，未改动任何代码。若官网把镜像推入自有 registry，再以
+该 registry 的 image digest 固定。
 
 > 版本说明：`cc2026-yizhi-v1` 的 `Backend tests` 在无本地数据库的 CI 环境失败
-> （一个上传大小守卫用例依赖了本机可连的 PostgreSQL），已在该版本修复并改用不依赖
-> 数据库的边界用例；请使用 `cc2026-yizhi-v2`。
+> （一个上传大小守卫用例依赖了本机可连的 PostgreSQL），已修复并改用不依赖数据库的边界
+> 用例；请使用 `cc2026-yizhi-v2`（代码提交 `958c186`）。
 
 ## 2. 网络和身份边界
 
@@ -66,18 +67,23 @@ OpenAPI 中的 Agent、考试、个人 Skill、审核、反馈或派生知识接
 | 用途 | 方法和路径 |
 | --- | --- |
 | Space | `POST /api/v1/spaces`、`GET /api/v1/spaces`、`DELETE /api/v1/spaces/{space_id}` |
-| 来源 | `POST /api/v1/spaces/{space_id}/sources`、`GET /api/v1/spaces/{space_id}/sources` |
+| 来源 | `POST` / `GET /api/v1/spaces/{space_id}/sources`；`PATCH` / `DELETE /api/v1/spaces/{space_id}/sources/{source_id}`（重命名 / 删除空来源） |
 | 上传 | `POST /api/v1/spaces/{space_id}/sources/{source_id}/upload`，multipart 字段名为 `file` |
 | 来源详情 | `GET /api/v1/spaces/{space_id}/sources/{source_id}/detail` |
 | 摄入 | `POST /api/v1/spaces/{space_id}/sources/{source_id}/ingest` |
-| 文档删除 | `DELETE /api/v1/spaces/{space_id}/sources/{source_id}/documents/{document_id}` |
+| 资料删除 | `DELETE /api/v1/spaces/{space_id}/sources/{source_id}/documents/{document_id}`（单篇）、`DELETE /api/v1/spaces/{space_id}/sources/{source_id}/contents`（清空来源） |
+| 检索 | `POST /api/v1/spaces/{space_id}/search`（只返回已发布内容，供页面预览或调试） |
 | 任务 | `GET /api/v1/tasks/{task_id}`、`POST /api/v1/tasks/{task_id}/cancel`、`POST /api/v1/tasks/{task_id}/retry` |
 | 会话 | `POST/GET /api/v1/spaces/{space_id}/conversations`、`DELETE /api/v1/spaces/{space_id}/conversations/{conversation_id}` |
 | 问答 | `POST /api/v1/conversations/{conversation_id}/questions` |
-| Run | `GET /api/v1/qa/runs/{run_id}`、`POST /api/v1/qa/runs/{run_id}/cancel`、`POST /api/v1/qa/runs/{run_id}/retry` |
+| Run | `GET /api/v1/qa/runs/{run_id}`、`POST /api/v1/qa/runs/{run_id}/cancel`、`POST /api/v1/qa/runs/{run_id}/retry`、`POST /api/v1/qa/runs/{run_id}/resume` |
 | 引用 | `GET /api/v1/qa/runs/{run_id}/citations/{evidence_id}` |
-| 事件 | `GET /api/v1/qa/runs/{run_id}/events` |
+| 事件 | `GET /api/v1/qa/runs/{run_id}/events`（SSE，`text/event-stream`） |
 | 配置 | `GET /api/v1/config/limits` |
+
+`/api/v1/runs`、`/api/v1/runs/{run_id}[/cancel|/retry|/resume|/citations/...|/events]` 是上表
+`/api/v1/qa/runs/...` 的等价别名，二选一即可，不要两套混用。`GET /api/v1/health/live` 与
+`GET /api/v1/health/ready` 不需要任何 Header，其余接口都需要第 2.1 节的网关凭据。
 
 请求体、响应字段、UUID 格式和 422 校验以 OpenAPI 为准。`owner_id`、`caller_id` 不由官网
 填写或覆盖；生产 API 使用 `X-App-Scoped-User-Id` 作为唯一租户身份。
@@ -92,12 +98,16 @@ OpenAPI 中的 Agent、考试、个人 Skill、审核、反馈或派生知识接
 5. 只有任务为 `succeeded` 且来源存在已发布文档时，才允许进入问答页面。
 6. 创建会话，调用 `POST /api/v1/conversations/{conversation_id}/questions`，保存返回的
    `run_id`。
-7. 轮询 Run 或读取事件；终态包括 `succeeded`、`failed`、`cancelled`。回答中的
+7. 轮询 Run 或读取事件。**任务（task）**终态为 `succeeded`、`partial_failed`、`failed`、
+   `cancelled`、`dead_letter`；**Run** 终态为 `completed`、`refused`、`failed`、`cancelled`、
+   `timed_out`（`refused` 表示证据不足而拒答，属于正常结果而非失败）。回答中的
    `evidence_id` 通过引用接口取得最小原文片段和 locator。
 8. 删除资料或 Space 前先刷新服务状态；删除后的对象对当前用户返回 404，不能继续展示旧缓存。
 
-上传和问答都必须携带新的 `idempotency_key`。网络重试使用同一个 key，避免重复消息或重复
-任务；不能用 React state 或 `localStorage` 作为唯一任务状态。
+只有**提问**接口需要 `idempotency_key`（`QuestionRequest.idempotency_key`，1–200 字符）：
+网络重试必须复用同一个 key，避免重复消息或重复 Run。上传与摄入没有幂等键参数——上传按
+文件内容哈希去重（响应里的 `is_unchanged` / `is_new_document` 表明是否复用了已有版本），
+任务本身也按目标版本幂等。不要用 React state 或 `localStorage` 作为唯一任务状态。
 
 ## 5. 错误和恢复约定
 
@@ -158,6 +168,10 @@ docker compose -f deploy/compose.yaml \
 执行 `alembic upgrade head`；`pgdata`、`redisdata`、`blobdata` 和模型卷必须保留，不能用
 `docker compose down --volumes` 作为普通发布步骤。
 
+`blobdata` 挂载到容器内 `/app/data/blobs`，而镜像以非 root（uid/gid 10001）运行：全新命名卷
+必须能继承 `app:app` 属主，否则上传会返回 500。交付 tag 的 Dockerfile 已预建该目录；若官网
+自行改写 Dockerfile 或改用绑定挂载，请先按[运维手册](operations.md)第 3.2 节核对属主。
+
 ### 6.3 持久化、升级和回滚
 
 - PostgreSQL 是 Space、文档版本、任务、会话、Run、引用的权威存储。
@@ -200,9 +214,10 @@ docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml --env-file
   python - < examples/first_phase_smoke.py
 ```
 
-真实 PostgreSQL/Redis 集成测试需要隔离依赖并设置 `RUN_INTEGRATION=1`。当前适配提交已在
-本地通过后端 format/lint/mypy、定向服务认证/OpenAPI 测试和 OpenAPI 确定性检查；完整 CI
-还必须在 GitHub Actions 的 Linux/Docker 环境跑完，不能把本地定向测试当作 CI 通过证据。
+真实 PostgreSQL/Redis 集成测试需要隔离依赖并设置 `RUN_INTEGRATION=1`。
+
+上述六个 CI 作业已在交付 tag `cc2026-yizhi-v2`（commit `958c186`）上全部通过；本地定向测试
+不能替代该证据，官网侧复测请以同一 commit 重新执行本节命令。
 
 ## 8. 官网侧待办和验收证据
 
@@ -217,3 +232,18 @@ docker compose -f deploy/compose.yaml -f deploy/compose.intranet.yaml --env-file
 - 页面刷新、服务重启、任务失败/重试、跨用户访问和未登录访问的端到端报告。
 
 完成上述事项后，才能把本项目从“服务适配完成”标记为“官网上线验收通过”。
+
+## 9. 交付物清单
+
+| 交付物 | 用途 |
+| --- | --- |
+| 源码 tag `cc2026-yizhi-v2`（commit `958c186`） | 官网唯一应固定的版本 |
+| [`docs/openapi.json`](openapi.json) | 机器可读接口契约（含两个必需 Header 与 401 响应） |
+| [`deploy/compose.intranet.yaml`](../deploy/compose.intranet.yaml) | 生产内网覆盖：项目服务不发布公网端口 |
+| [`deploy/compose.cpu.yaml`](../deploy/compose.cpu.yaml) | 无 GPU 时的 TEI CPU 覆盖 |
+| [`examples/first_phase_smoke.py`](../examples/first_phase_smoke.py) | 可执行端到端验收（上传→摄入→问答→引用→租户隔离→能力边界） |
+| [运维手册](operations.md) | 卷、备份恢复、升级回滚、临时文件清理、日志与排障 |
+| [数据与许可说明](data-and-licenses.md) | 第三方模型/依赖/数据/字体许可与待决策项 |
+| [CPU 资源基线](cc2026-cpu-baseline.md) | 实测内存/磁盘/时延/并发 + 目标机复测清单 |
+| [官网接入交付说明](cc2026-delivery.md) | 服务边界与首期能力范围摘要 |
+| [README](../README.md) | 本地启动、质量门禁与文档索引 |
